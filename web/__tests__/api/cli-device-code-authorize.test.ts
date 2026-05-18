@@ -28,6 +28,7 @@ jest.mock('@/lib/apiAuth.server', () => {
 jest.mock('firebase-admin/firestore', () => ({
   FieldValue: {
     serverTimestamp: jest.fn(() => ({ __op: 'serverTimestamp' })),
+    delete: jest.fn(() => ({ __op: 'delete' })),
   },
 }));
 
@@ -89,6 +90,10 @@ beforeEach(() => {
   mockDeviceCodeData = {
     status: 'pending',
     expiresAt: { toMillis: () => Date.now() + 60_000 },
+    // v1 doc carrying the cli's polling secret — authorize will consume
+    // and wipe this in the same transaction.
+    wrapVersion: 'v1',
+    deviceCode: 'a'.repeat(86),
   };
   mockTxGet.mockImplementation(async () => ({
     exists: mockDeviceCodeExists,
@@ -118,15 +123,47 @@ describe('POST /api/cli/device-code/authorize', () => {
     expect(mockTxGet).toHaveBeenCalledTimes(1);
     expect(mockTxSet).toHaveBeenCalledTimes(2);
     expect(mockTxUpdate).toHaveBeenCalledTimes(1);
-    expect(mockTxUpdate.mock.calls[0]![1]).toMatchObject({
+    const update = mockTxUpdate.mock.calls[0]![1] as Record<string, unknown>;
+    expect(update).toMatchObject({
       status: 'authorized',
       authorizedBy: 'user-1',
       name: 'CLI',
       scopes,
       environment: 'live',
       siteId: 'site-1',
+      wrapVersion: 'v1',
     });
-    expect(mockTxUpdate.mock.calls[0]![1].rawKey).toMatch(/^owk_live_/);
+    // v1: the raw key must not appear as plaintext in the firestore
+    // write — it is wiped via FieldValue.delete() (the test mock
+    // returns the sentinel {__op: 'delete'}). Only the encrypted blob
+    // (opaque without the cli's deviceCode) survives.
+    expect(update.rawKey).toEqual({ __op: 'delete' });
+    expect(update.deviceCode).toEqual({ __op: 'delete' });
+    expect(typeof update.encryptedCredentials).toBe('string');
+  });
+
+  it('falls back to plaintext rawKey for legacy (pre-v1) docs', async () => {
+    // Doc without wrapVersion / deviceCode — represents a doc created
+    // by an older deploy that is still mid-flight when the new
+    // authorize handler runs.
+    mockDeviceCodeData = {
+      status: 'pending',
+      expiresAt: { toMillis: () => Date.now() + 60_000 },
+    };
+
+    const res = await POST(
+      request({
+        code: 'PAIR-123',
+        name: 'CLI',
+        scopes: [{ resource: 'chat', id: 'site-1', permissions: ['read'] }],
+        environment: 'live',
+      }),
+    );
+    expect(res.status).toBe(200);
+    const update = mockTxUpdate.mock.calls[0]![1] as Record<string, unknown>;
+    expect(update.rawKey).toMatch(/^owk_live_/);
+    expect(update.encryptedCredentials).toBeUndefined();
+    expect(update.wrapVersion).toBeUndefined();
   });
 
   it('rejects an already authorised pairing phrase inside the transaction', async () => {

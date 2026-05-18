@@ -221,6 +221,93 @@ describe('POST /versions — version-number monotonicity', () => {
     expect(txState.versionWrites).toHaveLength(1);
     expect(txState.roostWrites).toHaveLength(1);
   });
+
+  /**
+   * Item 16: concurrent publish race.
+   *
+   * Two parallel publishes against the same roost must serialize: both
+   * `runTransaction` callbacks fire, but Firestore's optimistic CAS
+   * promotes one and forces the other to re-run against the post-commit
+   * snapshot. The version counter ends at exactly 2 (not 1, not 3) and
+   * both calls receive distinct, monotonic versionNumbers.
+   *
+   * The current mockRunTransaction is naïve (no retry simulation), so
+   * we patch it for this test only — same shape, plus a "winner-takes-all"
+   * CAS guard that re-runs the loser callback against the updated
+   * txState.
+   */
+  it('two parallel publishes serialize: counter goes 0→2 exactly once each', async () => {
+    // Swap in a CAS-aware runTransaction. Each invocation reads txState
+    // at entry and gates its commit on the version being unchanged at
+    // commit time.
+    mockRunTransaction.mockImplementation(
+      async (cb: (tx: unknown) => Promise<unknown>): Promise<unknown> => {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const versionCounterAtRead = txState.versionCounter;
+          const currentAtRead = txState.currentVersionId;
+          const previousAtRead = txState.previousVersionId;
+          let nthSetCall = 0;
+          const pendingVersionWrites: Array<Record<string, unknown>> = [];
+          const pendingRoostWrites: Array<Record<string, unknown>> = [];
+          const tx = {
+            get: async () =>
+              docSnapshot('rst_test', {
+                versionCounter: versionCounterAtRead,
+                currentVersionId: currentAtRead,
+                previousVersionId: previousAtRead,
+                name: 'lobby roost',
+                targets: [],
+              }),
+            set: jest.fn(
+              (_ref: unknown, payload: Record<string, unknown>) => {
+                if (nthSetCall === 0) pendingVersionWrites.push(payload);
+                else pendingRoostWrites.push(payload);
+                nthSetCall++;
+              },
+            ),
+            update: jest.fn(),
+          };
+          const result = await cb(tx);
+          // CAS check: only commit if txState.versionCounter hasn't moved
+          // since we read it.
+          if (txState.versionCounter === versionCounterAtRead) {
+            for (const w of pendingVersionWrites) txState.versionWrites.push(w);
+            for (const w of pendingRoostWrites) {
+              txState.roostWrites.push(w);
+              if (typeof w.versionCounter === 'number') {
+                txState.versionCounter = w.versionCounter as number;
+              }
+              if (typeof w.currentVersionId === 'string') {
+                txState.previousVersionId = txState.currentVersionId;
+                txState.currentVersionId = w.currentVersionId as string;
+              }
+            }
+            return result;
+          }
+          // Stale — re-run.
+        }
+        throw new Error('runTransaction failed after 3 attempts');
+      },
+    );
+
+    const [a, b] = await Promise.all([publish(), publish()]);
+
+    // Both publishes must succeed (the loser is retried internally).
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(201);
+
+    // versionNumber must be distinct and monotonic.
+    const numbers = [a.body.versionNumber, b.body.versionNumber].sort();
+    expect(numbers).toEqual([1, 2]);
+
+    // The roost's versionCounter must have advanced to exactly 2 — not 1
+    // (which would mean one commit overwrote the other) and not 3.
+    expect(txState.versionCounter).toBe(2);
+
+    // Two writes to each side of the transaction (one per publish).
+    expect(txState.versionWrites).toHaveLength(2);
+    expect(txState.roostWrites).toHaveLength(2);
+  });
 });
 
 /* ========================================================================== */

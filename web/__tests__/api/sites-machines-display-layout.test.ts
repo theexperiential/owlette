@@ -5,6 +5,7 @@ import { createMockRequest } from './helpers/utils';
 
 // Jest hoists mock factories above lexical initializers; `var` keeps this
 // backing store available when route modules invoke authorizedSiteHandler.
+// eslint-disable-next-line no-var
 var mockAuthorizedOptions: unknown[] | undefined;
 let mockRouteAuthContext: {
   userId: string;

@@ -140,28 +140,93 @@ function buildFakeDb(opts: FakeDbOptions = {}): FakeDbResult {
   }
 
   function makeCollectionRef(colPath: string): unknown {
-    function snapshot(idsToReturn: string[]) {
+    function snapshotWithRefs(
+      idsToReturn: string[],
+    ): {
+      empty: boolean;
+      size: number;
+      docs: Array<{
+        id: string;
+        ref: unknown;
+        data: () => Record<string, unknown>;
+      }>;
+    } {
       return {
         empty: idsToReturn.length === 0,
         size: idsToReturn.length,
-        docs: idsToReturn.map((id) => ({
-          id,
-          ref: makeDocRef(`${colPath}/${id}`),
-        })),
+        docs: idsToReturn.map((id) => {
+          const docPath = `${colPath}/${id}`;
+          const seed = docs.get(docPath);
+          return {
+            id,
+            ref: makeDocRef(docPath),
+            data: () =>
+              (seed?.data as Record<string, unknown> | undefined) ?? {},
+          };
+        }),
       };
     }
+
+    interface WhereClause {
+      field: string;
+      op: '==' | 'array-contains';
+      value: unknown;
+    }
+
+    function applyWheres(
+      ids: string[],
+      wheres: WhereClause[],
+    ): string[] {
+      if (wheres.length === 0) return ids;
+      return ids.filter((id) => {
+        const seed = docs.get(`${colPath}/${id}`);
+        const data = (seed?.data as Record<string, unknown> | undefined) ?? {};
+        return wheres.every((w) => {
+          const v = data[w.field];
+          if (w.op === '==') return v === w.value;
+          if (w.op === 'array-contains') {
+            return Array.isArray(v) && (v as unknown[]).includes(w.value);
+          }
+          return false;
+        });
+      });
+    }
+
     function query(state: {
       ordered?: boolean;
       limit?: number;
       startAfterId?: string;
+      wheres?: WhereClause[];
     }) {
       return {
         orderBy: () => query({ ...state, ordered: true }),
         limit: (n: number) => query({ ...state, limit: n }),
         startAfter: (doc: { id: string }) =>
           query({ ...state, startAfterId: doc.id }),
+        where: (field: string, op: '==' | 'array-contains', value: unknown) =>
+          query({
+            ...state,
+            wheres: [...(state.wheres ?? []), { field, op, value }],
+          }),
         get: async () => {
-          let list = [...(collections.get(colPath) ?? [])];
+          // For a `where()` query against the top-level `users` collection
+          // (used by the site classifier), enumerate all docs under that
+          // prefix — not just `collections.get(colPath)`, which only
+          // tracks subcollection contents.
+          let candidateIds: string[];
+          if ((state.wheres?.length ?? 0) > 0 && !collections.has(colPath)) {
+            const prefix = `${colPath}/`;
+            candidateIds = [...docs.keys()]
+              .filter(
+                (p) =>
+                  p.startsWith(prefix) && !p.slice(prefix.length).includes('/'),
+              )
+              .map((p) => p.slice(prefix.length))
+              .filter((id) => docs.get(`${colPath}/${id}`)?.exists);
+          } else {
+            candidateIds = [...(collections.get(colPath) ?? [])];
+          }
+          let list = applyWheres(candidateIds, state.wheres ?? []);
           if (state.ordered) list = list.sort((a, b) => a.localeCompare(b));
           if (state.startAfterId) {
             const idx = list.indexOf(state.startAfterId);
@@ -170,7 +235,7 @@ function buildFakeDb(opts: FakeDbOptions = {}): FakeDbResult {
           if (typeof state.limit === 'number') {
             list = list.slice(0, state.limit);
           }
-          return snapshot(list);
+          return snapshotWithRefs(list);
         },
       };
     }
@@ -181,6 +246,7 @@ function buildFakeDb(opts: FakeDbOptions = {}): FakeDbResult {
       orderBy: baseQuery.orderBy,
       limit: baseQuery.limit,
       startAfter: baseQuery.startAfter,
+      where: baseQuery.where,
       get: baseQuery.get,
     };
   }
@@ -275,7 +341,9 @@ function seedUser(
   const out: Record<string, DocSeed> = {};
   out[`users/${userId}`] = { exists: true, data: { sites, role: 'admin' } };
   for (const siteId of sites) {
-    out[`sites/${siteId}`] = { exists: true, data: { name: siteId } };
+    // Seed `owner` so the classifier treats the site as a sole-owner site.
+    // Tests that want member-site classification override the seed.
+    out[`sites/${siteId}`] = { exists: true, data: { name: siteId, owner: userId } };
   }
   return out;
 }
@@ -336,6 +404,12 @@ describe('deleteOwnAccount — happy path cascade', () => {
     const userId = 'uid_alice';
     const sites = ['site-a', 'site-b'];
     const seedDocs = seedUser(userId, sites);
+    // Seed the sites with `owner` so the classifier treats them as
+    // sole-owner sites (no other members; arrayContains query returns
+    // empty in the fake db).
+    for (const s of sites) {
+      seedDocs[`sites/${s}`] = { exists: true, data: { name: s, owner: userId } };
+    }
     const seedCollections = seedSubs(sites, {
       machines: 3,
       deployments: 2,
@@ -347,18 +421,22 @@ describe('deleteOwnAccount — happy path cascade', () => {
       userId,
       operationId: 'op_alice_1',
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
+    if (result.kind !== 'ok') throw new Error('expected ok result');
     expect(result.performed).toBe(true);
     expect(result.dryRun).toBe(false);
     expect(result.alreadyCompleted).toBe(false);
     expect(result.sites).toEqual(sites);
-    expect(result.deletedCounts).toEqual({
+    expect(result.deletedCounts).toMatchObject({
       machines: 6,        // 3 per site × 2 sites
       deployments: 4,     // 2 per site × 2 sites
       logs: 8,            // 4 per site × 2 sites
       sites: 2,
       users: 1,
+      memberSitesRemoved: 0,
     });
 
     // Every batch op should be a delete; no batch should exceed BATCH_SIZE.
@@ -389,6 +467,8 @@ describe('deleteOwnAccount — happy path cascade', () => {
       userId,
       operationId: 'op_order',
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
     // The 4 sub-doc deletes should land in the batch (commit happens before
@@ -412,6 +492,8 @@ describe('deleteOwnAccount — happy path cascade', () => {
       userId,
       operationId: 'op_progress',
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
     const progressWrites = fake.setCalls.filter(
@@ -420,7 +502,7 @@ describe('deleteOwnAccount — happy path cascade', () => {
     expect(progressWrites.length).toBe(2);
     expect(progressWrites[0].payload.status).toBe('in_progress');
     expect(progressWrites[1].payload.status).toBe('completed');
-    expect(progressWrites[1].payload.deletedCounts).toEqual({
+    expect(progressWrites[1].payload.deletedCounts).toMatchObject({
       machines: 0,
       deployments: 0,
       logs: 0,
@@ -452,8 +534,14 @@ describe('deleteOwnAccount — diff test vs. legacy client cascade', () => {
       userId,
       operationId: 'op_diff',
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
+    // The new cascade visits more paths than the legacy one (passkeys,
+    // api_keys, mfa_pending, etc.) — but with empty seeds those paths
+    // produce no deletes. The diff set we compare here is the SITE path
+    // set + user doc path, which must still match the legacy cascade.
     const serverDeleted = new Set<string>([
       ...fake.batchDeleteCalls,
       ...fake.deleteCalls,
@@ -495,11 +583,14 @@ describe('deleteOwnAccount — dry-run mode', () => {
       operationId: 'op_dry',
       dryRun: true,
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
+    if (result.kind !== 'ok') throw new Error('expected ok result');
     expect(result.performed).toBe(false);
     expect(result.dryRun).toBe(true);
-    expect(result.deletedCounts).toEqual({
+    expect(result.deletedCounts).toMatchObject({
       machines: 4,
       deployments: 2,
       logs: 6,
@@ -535,8 +626,11 @@ describe('deleteOwnAccount — dry-run mode', () => {
       operationId: 'op_dry_paths',
       dryRun: true,
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
+    if (result.kind !== 'ok') throw new Error('expected ok result');
     expect(result.deletedPaths).toEqual(
       expect.arrayContaining([
         'sites/site-q/machines/m_site-q_0',
@@ -564,8 +658,11 @@ describe('deleteOwnAccount — dry-run mode', () => {
       operationId: 'op_dry_chunk',
       dryRun: true,
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
+    if (result.kind !== 'ok') throw new Error('expected ok result');
     expect(result.deletedCounts.machines).toBe(250);
     expect(result.deletedPaths.filter((p) =>
       p.startsWith('sites/site-dry-big/machines/'),
@@ -597,7 +694,10 @@ describe('deleteOwnAccount — idempotency', () => {
       userId,
       operationId: 'op_idem_1',
       db: fake.db,
+      auth: null,
+      storage: null,
     });
+    if (first.kind !== 'ok') throw new Error('expected ok result');
     expect(first.performed).toBe(true);
     expect(first.alreadyCompleted).toBe(false);
 
@@ -608,7 +708,10 @@ describe('deleteOwnAccount — idempotency', () => {
       userId,
       operationId: 'op_idem_1',
       db: fake.db,
+      auth: null,
+      storage: null,
     });
+    if (second.kind !== 'ok') throw new Error('expected ok result');
     expect(second.performed).toBe(false);
     expect(second.alreadyCompleted).toBe(true);
     expect(second.deletedCounts).toEqual(first.deletedCounts);
@@ -642,8 +745,11 @@ describe('deleteOwnAccount — chunking', () => {
       userId,
       operationId: 'op_chunk',
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
+    if (result.kind !== 'ok') throw new Error('expected ok result');
     expect(result.deletedCounts.machines).toBe(250);
 
     // Every machine should have been deleted exactly once.
@@ -674,11 +780,14 @@ describe('deleteOwnAccount — edge cases', () => {
       userId,
       operationId: 'op_gone',
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
+    if (result.kind !== 'ok') throw new Error('expected ok result');
     expect(result.performed).toBe(false);
     expect(result.alreadyCompleted).toBe(true);
-    expect(result.deletedCounts).toEqual({
+    expect(result.deletedCounts).toMatchObject({
       machines: 0,
       deployments: 0,
       logs: 0,
@@ -697,7 +806,7 @@ describe('deleteOwnAccount — edge cases', () => {
           exists: true,
           data: { sites: ['site-real', 'site-ghost'], role: 'admin' },
         },
-        'sites/site-real': { exists: true, data: { name: 'real' } },
+        'sites/site-real': { exists: true, data: { name: 'real', owner: userId } },
         // site-ghost intentionally absent
       },
       seedCollections: {
@@ -709,8 +818,11 @@ describe('deleteOwnAccount — edge cases', () => {
       userId,
       operationId: 'op_ghost',
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
+    if (result.kind !== 'ok') throw new Error('expected ok result');
     expect(result.deletedCounts.sites).toBe(1); // only site-real
     expect(result.deletedCounts.machines).toBe(1);
     expect(fake.deleteCalls).toContain('sites/site-real');
@@ -734,8 +846,11 @@ describe('deleteOwnAccount — edge cases', () => {
       userId,
       operationId: 'op_pf',
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
+    if (result.kind !== 'ok') throw new Error('expected ok result');
     // Cascade still completed.
     expect(result.deletedCounts.machines).toBe(1);
     expect(result.deletedCounts.deployments).toBe(1);
@@ -758,9 +873,12 @@ describe('deleteOwnAccount — edge cases', () => {
       userId,
       operationId: 'op_no_sites',
       db: fake.db,
+      auth: null,
+      storage: null,
     });
 
-    expect(result.deletedCounts).toEqual({
+    if (result.kind !== 'ok') throw new Error('expected ok result');
+    expect(result.deletedCounts).toMatchObject({
       machines: 0,
       deployments: 0,
       logs: 0,
@@ -769,5 +887,196 @@ describe('deleteOwnAccount — edge cases', () => {
     });
     expect(fake.deleteCalls).toEqual([`users/${userId}`]);
     expect(fake.batchDeleteCalls).toEqual([]);
+  });
+
+  it('refuses with needs_successor when the user owns a site with other members', async () => {
+    const userId = 'uid_shared_owner';
+    const otherUid = 'uid_other_member';
+    const fake = buildFakeDb({
+      seedDocs: {
+        [`users/${userId}`]: {
+          exists: true,
+          data: { sites: ['site-shared'], role: 'admin' },
+        },
+        [`users/${otherUid}`]: {
+          exists: true,
+          data: { sites: ['site-shared'], role: 'member' },
+        },
+        'sites/site-shared': {
+          exists: true,
+          data: { name: 'shared', owner: userId },
+        },
+      },
+    });
+
+    const result = await deleteOwnAccount({
+      userId,
+      operationId: 'op_shared',
+      db: fake.db,
+      auth: null,
+      storage: null,
+    });
+
+    expect(result.kind).toBe('needs_successor');
+    if (result.kind !== 'needs_successor') throw new Error('expected needs_successor');
+    expect(result.ownedSharedSites).toEqual(['site-shared']);
+
+    // No deletes happened.
+    expect(fake.deleteCalls).toEqual([]);
+    expect(fake.batchDeleteCalls).toEqual([]);
+  });
+
+  it('treats member sites as arrayRemove-only — site doc untouched', async () => {
+    const userId = 'uid_member';
+    const ownerUid = 'uid_owner';
+    const fake = buildFakeDb({
+      seedDocs: {
+        [`users/${userId}`]: {
+          exists: true,
+          data: { sites: ['site-shared'], role: 'member' },
+        },
+        // The owner doc — present so `array-contains` queries see another
+        // member of the site (though we don't query for them in this path).
+        [`users/${ownerUid}`]: {
+          exists: true,
+          data: { sites: ['site-shared'], role: 'admin' },
+        },
+        'sites/site-shared': {
+          exists: true,
+          data: { name: 'shared', owner: ownerUid },
+        },
+      },
+      seedCollections: {
+        // Subcollections that MUST NOT be drained — the user is not owner.
+        'sites/site-shared/machines': ['m_keep'],
+        'sites/site-shared/deployments': ['d_keep'],
+        'sites/site-shared/logs': ['l_keep'],
+      },
+    });
+
+    const result = await deleteOwnAccount({
+      userId,
+      operationId: 'op_member',
+      db: fake.db,
+      auth: null,
+      storage: null,
+    });
+
+    if (result.kind !== 'ok') throw new Error('expected ok result');
+    expect(result.deletedCounts.memberSitesRemoved).toBe(1);
+    expect(result.deletedCounts.sites).toBe(0);
+    expect(result.deletedCounts.machines).toBe(0);
+    expect(result.deletedCounts.deployments).toBe(0);
+    expect(result.deletedCounts.logs).toBe(0);
+
+    // Site doc and its subcollections must remain intact for the owner.
+    expect(fake.deleteCalls).not.toContain('sites/site-shared');
+    expect(fake.batchDeleteCalls).not.toContain(
+      'sites/site-shared/machines/m_keep',
+    );
+    // Only the user doc is deleted.
+    expect(fake.deleteCalls).toEqual([`users/${userId}`]);
+  });
+
+  it('drains user-scoped subcollections (passkeys, api_keys) and top-level api_keys lookups', async () => {
+    const userId = 'uid_subs';
+    const fake = buildFakeDb({
+      seedDocs: {
+        [`users/${userId}`]: {
+          exists: true,
+          data: { sites: [], role: 'member' },
+        },
+        [`users/${userId}/passkeys/pk1`]: { exists: true, data: { id: 'pk1' } },
+        [`users/${userId}/passkeys/pk2`]: { exists: true, data: { id: 'pk2' } },
+        [`users/${userId}/api_keys/key_a`]: {
+          exists: true,
+          data: { keyHash: 'hash_a' },
+        },
+        [`users/${userId}/api_keys/key_b`]: {
+          exists: true,
+          data: { keyHash: 'hash_b' },
+        },
+        'api_keys/hash_a': { exists: true, data: { userId, keyId: 'key_a' } },
+        'api_keys/hash_b': { exists: true, data: { userId, keyId: 'key_b' } },
+      },
+      seedCollections: {
+        [`users/${userId}/passkeys`]: ['pk1', 'pk2'],
+        [`users/${userId}/api_keys`]: ['key_a', 'key_b'],
+      },
+    });
+
+    const result = await deleteOwnAccount({
+      userId,
+      operationId: 'op_subs',
+      db: fake.db,
+      auth: null,
+      storage: null,
+    });
+
+    if (result.kind !== 'ok') throw new Error('expected ok result');
+    expect(result.deletedCounts.passkeys).toBe(2);
+    expect(result.deletedCounts.apiKeys).toBe(2);
+    expect(result.deletedCounts.apiKeyLookups).toBe(2);
+
+    expect(fake.batchDeleteCalls).toEqual(
+      expect.arrayContaining([
+        `users/${userId}/passkeys/pk1`,
+        `users/${userId}/passkeys/pk2`,
+        `users/${userId}/api_keys/key_a`,
+        `users/${userId}/api_keys/key_b`,
+        'api_keys/hash_a',
+        'api_keys/hash_b',
+      ]),
+    );
+  });
+
+  it('revokes + deletes the Firebase Auth user when an Auth admin is provided', async () => {
+    const userId = 'uid_auth';
+    const revokeRefreshTokens = jest.fn(async () => undefined);
+    const deleteAuthUser = jest.fn(async () => undefined);
+    const fakeAuth = {
+      revokeRefreshTokens,
+      deleteUser: deleteAuthUser,
+    } as unknown as Parameters<typeof deleteOwnAccount>[0]['auth'];
+
+    const fake = buildFakeDb({ seedDocs: seedUser(userId, []) });
+
+    const result = await deleteOwnAccount({
+      userId,
+      operationId: 'op_auth',
+      db: fake.db,
+      auth: fakeAuth,
+      storage: null,
+    });
+
+    if (result.kind !== 'ok') throw new Error('expected ok result');
+    expect(result.authRevoked).toBe(true);
+    expect(revokeRefreshTokens).toHaveBeenCalledWith(userId);
+    expect(deleteAuthUser).toHaveBeenCalledWith(userId);
+  });
+
+  it('treats auth/user-not-found from the Auth admin as success (already gone)', async () => {
+    const userId = 'uid_auth_gone';
+    const fakeAuth = {
+      revokeRefreshTokens: jest.fn(async () => undefined),
+      deleteUser: jest.fn(async () => {
+        const err = new Error('not found') as Error & { code?: string };
+        err.code = 'auth/user-not-found';
+        throw err;
+      }),
+    } as unknown as Parameters<typeof deleteOwnAccount>[0]['auth'];
+
+    const fake = buildFakeDb({ seedDocs: seedUser(userId, []) });
+
+    const result = await deleteOwnAccount({
+      userId,
+      operationId: 'op_auth_gone',
+      db: fake.db,
+      auth: fakeAuth,
+      storage: null,
+    });
+
+    if (result.kind !== 'ok') throw new Error('expected ok result');
+    expect(result.authRevoked).toBe(true);
   });
 });

@@ -267,13 +267,20 @@ describe('machine-scope enforcement (via scopeMatches directly)', () => {
   });
 });
 
-describe('legacy-key fallback (no scopes field)', () => {
-  it('bypasses scope check with isLegacy: true', async () => {
-    mockedResolveAuth.mockResolvedValue(authFromScopes(null));
+describe('legacy-key empty scopes', () => {
+  it('rejects site scope check with empty legacy scopes', async () => {
+    mockedResolveAuth.mockResolvedValue(authFromScopes([]));
     const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.scopeCheck.isLegacy).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('scope_insufficient');
+      expect(body.required).toEqual({
+        resource: 'site',
+        id: SITE_ID,
+        permission: 'write',
+      });
     }
   });
 
@@ -289,17 +296,24 @@ describe('legacy-key fallback (no scopes field)', () => {
     expect(decorated.headers.get('X-Roost-Deprecation')).toBeNull();
   });
 
-  it('legacy key + roost route also bypasses', async () => {
-    mockedResolveAuth.mockResolvedValue(authFromScopes(null));
+  it('legacy key + roost route also rejects on scope check', async () => {
+    mockedResolveAuth.mockResolvedValue(authFromScopes([]));
     const result = await requireRoostAuthAndScope(
       makeRequest(),
       SITE_ID,
       ROOST_ID,
       'rollback',
     );
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.scopeCheck.isLegacy).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('scope_insufficient');
+      expect(body.required).toEqual({
+        resource: 'roost',
+        id: ROOST_ID,
+        permission: 'rollback',
+      });
     }
   });
 });
@@ -366,15 +380,22 @@ describe('requirePlatformAuthAndScope', () => {
     }
   });
 
-  it('allows a legacy superadmin key through the current compatibility path', async () => {
-    mockedResolveAuth.mockResolvedValue(authFromScopes(null));
+  it('rejects a legacy superadmin key without required platform scope', async () => {
+    mockedResolveAuth.mockResolvedValue(authFromScopes([]));
     mockPlatformRole('superadmin');
 
     const result = await requirePlatformAuthAndScope(makeRequest(), 'installer', 'admin');
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.scopeCheck.isLegacy).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('scope_insufficient');
+      expect(body.required).toEqual({
+        resource: 'installer',
+        id: '*',
+        permission: 'admin',
+      });
     }
   });
 });
@@ -400,10 +421,11 @@ describe('audit-log emission', () => {
     expect(mockedAuditEmit).not.toHaveBeenCalled();
   });
 
-  it('emits for legacy key (the bypass still counts as a usage)', async () => {
-    mockedResolveAuth.mockResolvedValue(authFromScopes(null));
-    await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
-    expect(mockedAuditEmit).toHaveBeenCalledTimes(1);
+  it('does NOT emit for legacy key with empty scopes because scope check fails', async () => {
+    mockedResolveAuth.mockResolvedValue(authFromScopes([]));
+    const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
+    expect(result.ok).toBe(false);
+    expect(mockedAuditEmit).not.toHaveBeenCalled();
   });
 });
 

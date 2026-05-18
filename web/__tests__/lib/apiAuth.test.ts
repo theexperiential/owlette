@@ -96,6 +96,13 @@ function keyContext(overrides: Partial<ApiKeyContext> = {}): ApiKeyContext {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  delete process.env.LEGACY_API_KEY_BYPASS_ENABLED;
+  delete process.env.LEGACY_API_KEY_ALLOW_HASH_LIST;
+});
+
+afterEach(() => {
+  delete process.env.LEGACY_API_KEY_BYPASS_ENABLED;
+  delete process.env.LEGACY_API_KEY_ALLOW_HASH_LIST;
 });
 
 // ─── requireSession ────────────────────────────────────────────────────────
@@ -209,7 +216,15 @@ describe('requireAdminOrIdToken', () => {
   it('returns userId for superadmin via x-api-key header', async () => {
     mockDocGet.mockImplementation((col: string) => {
       if (col === 'api_keys')
-        return Promise.resolve({ exists: true, data: () => ({ userId: 'super-1', keyId: 'k1' }) });
+        return Promise.resolve({
+          exists: true,
+          data: () => ({
+            userId: 'super-1',
+            keyId: 'k1',
+            scopes: [{ resource: 'user', id: '*', permissions: ['admin'] }],
+            expiresAt: Date.now() + 60_000,
+          }),
+        });
       if (col === 'users')
         return Promise.resolve({ exists: true, data: () => ({ role: 'superadmin' }) });
       return Promise.resolve({ exists: false });
@@ -226,7 +241,15 @@ describe('requireAdminOrIdToken', () => {
   it('returns userId for superadmin via api_key query param', async () => {
     mockDocGet.mockImplementation((col: string) => {
       if (col === 'api_keys')
-        return Promise.resolve({ exists: true, data: () => ({ userId: 'super-2', keyId: 'k2' }) });
+        return Promise.resolve({
+          exists: true,
+          data: () => ({
+            userId: 'super-2',
+            keyId: 'k2',
+            scopes: [{ resource: 'user', id: '*', permissions: ['admin'] }],
+            expiresAt: Date.now() + 60_000,
+          }),
+        });
       if (col === 'users')
         return Promise.resolve({ exists: true, data: () => ({ role: 'superadmin' }) });
       return Promise.resolve({ exists: false });
@@ -240,7 +263,15 @@ describe('requireAdminOrIdToken', () => {
   it('returns userId for superadmin via Authorization Bearer owk_', async () => {
     mockDocGet.mockImplementation((col: string) => {
       if (col === 'api_keys')
-        return Promise.resolve({ exists: true, data: () => ({ userId: 'super-3', keyId: 'k3' }) });
+        return Promise.resolve({
+          exists: true,
+          data: () => ({
+            userId: 'super-3',
+            keyId: 'k3',
+            scopes: [{ resource: 'user', id: '*', permissions: ['admin'] }],
+            expiresAt: Date.now() + 60_000,
+          }),
+        });
       if (col === 'users')
         return Promise.resolve({ exists: true, data: () => ({ role: 'superadmin' }) });
       return Promise.resolve({ exists: false });
@@ -578,6 +609,26 @@ describe('resolveAuth', () => {
     );
   });
 
+  it('rejects revoked keys', async () => {
+    mockDocGet.mockImplementation(
+      apiKeyLookup({
+        userId: 'u-revoked',
+        keyId: 'k-revoked',
+        environment: 'live',
+        revokedAt: Date.now(),
+        scopes: [{ resource: 'site', id: 's1', permissions: ['read'] }],
+        expiresAt: Date.now() - 1000,
+      }),
+    );
+
+    await expect(resolveAuth(apiKeyReq('owk_revoked'))).rejects.toThrow(
+      expect.objectContaining({
+        status: 401,
+        message: 'Unauthorized: Invalid API key',
+      }),
+    );
+  });
+
   it('allows a key whose expiresAt is in the near future (boundary)', async () => {
     mockDocGet.mockImplementation(
       apiKeyLookup({
@@ -592,14 +643,17 @@ describe('resolveAuth', () => {
     expect(auth.keyContext?.expiresAt).toBeGreaterThan(Date.now());
   });
 
-  it('treats a key with no scopes field as legacy', async () => {
+  it('rejects a key with no scopes field without bypass env', async () => {
     mockDocGet.mockImplementation(apiKeyLookup({ userId: 'u4', keyId: 'k4' }));
-    const auth = await resolveAuth(apiKeyReq('owk_legacy'));
-    expect(auth.keyContext?.isLegacy).toBe(true);
-    expect(auth.keyContext?.scopes).toBeNull();
+    await expect(resolveAuth(apiKeyReq('owk_legacy'))).rejects.toThrow(
+      expect.objectContaining({
+        status: 401,
+        message: 'Unauthorized: Invalid API key',
+      }),
+    );
   });
 
-  it('treats a key with an empty scopes[] array as legacy', async () => {
+  it('rejects a key with an empty scopes[] array without bypass env', async () => {
     mockDocGet.mockImplementation(
       apiKeyLookup({
         userId: 'u4b',
@@ -608,9 +662,56 @@ describe('resolveAuth', () => {
         scopes: [],
       }),
     );
-    const auth = await resolveAuth(apiKeyReq('owk_empty_scopes'));
-    expect(auth.keyContext?.isLegacy).toBe(true);
-    expect(auth.keyContext?.scopes).toBeNull();
+    await expect(resolveAuth(apiKeyReq('owk_empty_scopes'))).rejects.toThrow(
+      expect.objectContaining({
+        status: 401,
+        message: 'Unauthorized: Invalid API key',
+      }),
+    );
+  });
+
+  it('rejects legacy keys without bypass env', async () => {
+    mockDocGet.mockImplementation(
+      apiKeyLookup({
+        userId: 'u-legacy-no-bypass',
+        keyId: 'k-legacy-no-bypass',
+        environment: 'live',
+        scopes: [],
+      }),
+    );
+
+    await expect(resolveAuth(apiKeyReq('owk_legacy_no_bypass'))).rejects.toThrow(
+      expect.objectContaining({
+        status: 401,
+        message: 'Unauthorized: Invalid API key',
+      }),
+    );
+  });
+
+  it('allowlisted legacy key resolves but cannot pass requireScope', async () => {
+    const rawKey = 'owk_allowlisted_legacy';
+    const keyHash = createHash('sha256').update(rawKey).digest('hex');
+    process.env.LEGACY_API_KEY_BYPASS_ENABLED = 'true';
+    process.env.LEGACY_API_KEY_ALLOW_HASH_LIST = keyHash;
+    mockDocGet.mockImplementation(
+      apiKeyLookup({
+        userId: 'u-legacy-allowed',
+        keyId: 'k-legacy-allowed',
+        environment: 'live',
+        scopes: [],
+      }),
+    );
+
+    const auth = await resolveAuth(apiKeyReq(rawKey));
+    expect(auth.keyContext?.isLegacy).toBe(false);
+    expect(auth.keyContext?.scopes).toEqual([]);
+    expect(() => requireScope(auth, 'roost', 'r1', 'write')).toThrow(
+      expect.objectContaining({
+        status: 403,
+        code: 'scope_insufficient',
+        message: 'insufficient scope: requires write on roost:r1',
+      }),
+    );
   });
 
   it('rejects rotated key past retiresAt as invalid', async () => {
@@ -688,8 +789,14 @@ describe('resolveAuth', () => {
     expect(auth.keyContext?.environment).toBeNull();
   });
 
-  it('coerces missing expiresAt to null in keyContext (legacy path)', async () => {
-    mockDocGet.mockImplementation(apiKeyLookup({ userId: 'u-e', keyId: 'k-e' }));
+  it('coerces missing expiresAt to null in keyContext', async () => {
+    mockDocGet.mockImplementation(
+      apiKeyLookup({
+        userId: 'u-e',
+        keyId: 'k-e',
+        scopes: [{ resource: 'site', id: 's1', permissions: ['read'] }],
+      }),
+    );
     const auth = await resolveAuth(apiKeyReq('owk_no_expiry'));
     expect(auth.keyContext?.expiresAt).toBeNull();
   });
@@ -708,24 +815,38 @@ describe('requireScope', () => {
     expect(result.isLegacy).toBe(false);
   });
 
-  it('bypasses legacy key with isLegacy: true', () => {
-    const result = requireScope(
-      { userId: 'u1', keyContext: keyContext({ isLegacy: true }) },
-      'roost',
-      'r1',
-      'write',
+  it('rejects legacy key with empty scopes even when isLegacy is true', () => {
+    expect(() =>
+      requireScope(
+        { userId: 'u1', keyContext: keyContext({ isLegacy: true, scopes: [] }) },
+        'roost',
+        'r1',
+        'write',
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        status: 403,
+        code: 'scope_insufficient',
+        message: 'insufficient scope: requires write on roost:r1',
+      }),
     );
-    expect(result.isLegacy).toBe(true);
   });
 
-  it('bypasses when scopes is null even if isLegacy is false', () => {
-    const result = requireScope(
-      { userId: 'u1', keyContext: keyContext({ isLegacy: false, scopes: null }) },
-      'roost',
-      'r1',
-      'write',
+  it('rejects missing scopes even when isLegacy is false', () => {
+    expect(() =>
+      requireScope(
+        { userId: 'u1', keyContext: keyContext({ isLegacy: false, scopes: null }) },
+        'roost',
+        'r1',
+        'write',
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        status: 403,
+        code: 'scope_insufficient',
+        message: 'insufficient scope: requires write on roost:r1',
+      }),
     );
-    expect(result.isLegacy).toBe(true);
   });
 
   it('allows scoped key with exact match', () => {

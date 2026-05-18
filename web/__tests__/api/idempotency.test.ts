@@ -401,4 +401,51 @@ describe('withIdempotency wrapper', () => {
     expect(mocks.set).not.toHaveBeenCalled();
     expect(response.status).toBe(400);
   });
+
+  /**
+   * KNOWN BUG (round-1 audit, unfixed): idempotency.ts line ~138-140 reads
+   * the cache doc and proceeds when missing. Two parallel requests with the
+   * same key both observe `exists: false` (the first hasn't written yet)
+   * and both fall through to `proceed`, both run the handler, and both
+   * persist a cache entry. The second cache write clobbers the first.
+   *
+   * Fix would be a Firestore transaction in checkIdempotency that reads +
+   * creates a sentinel "in-flight" doc, with the second concurrent call
+   * either replaying once the sentinel is committed or returning 409.
+   *
+   * Skipping until the fix lands. The test below exercises the race and
+   * SHOULD fail today (handler called twice).
+   */
+  it.skip('TWO parallel calls with same key invoke the handler exactly ONCE [KNOWN UNFIXED RACE — idempotency.ts:138]', async () => {
+    // Both parallel reads see "not exists" until the first save runs.
+    let getCallCount = 0;
+    mocks.get.mockImplementation(async () => {
+      getCallCount++;
+      // Both initial reads see no cache hit (race window).
+      return { exists: false };
+    });
+
+    let handlerInvocations = 0;
+    const handler = jest.fn(async () => {
+      handlerInvocations++;
+      // Simulate handler taking some time so the parallel call is
+      // definitely in flight when we resolve.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return NextResponse.json({ ok: true, n: handlerInvocations }, { status: 201 });
+    });
+
+    const [a, b] = await Promise.all([
+      withIdempotency(reqWithKey('idem-race'), CTX, '{"a":1}', handler),
+      withIdempotency(reqWithKey('idem-race'), CTX, '{"a":1}', handler),
+    ]);
+
+    // The actual contract we WANT once the race is fixed:
+    expect(handlerInvocations).toBe(1);
+    // Both responses should reflect the SAME run result (the second is
+    // replayed from cache, with header Idempotent-Replayed:true).
+    const replayedHeader = [a, b].map((r) => r.headers.get('Idempotent-Replayed'));
+    expect(replayedHeader.filter((h) => h === 'true').length).toBe(1);
+
+    void getCallCount; // silence lint until fix lands
+  });
 });

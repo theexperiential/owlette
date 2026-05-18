@@ -15,8 +15,16 @@ jest.mock('@/lib/pairPhrases', () => ({
   normalizePairPhrase: jest.fn((p: string) => (p ? p.toLowerCase().trim() : null)),
 }));
 
+const mockGetSession = jest.fn();
+jest.mock('@/lib/sessionManager.server', () => ({
+  getSessionFromRequest: (...args: unknown[]) => mockGetSession(...args),
+}));
+
 jest.mock('firebase-admin/firestore', () => ({
-  FieldValue: { serverTimestamp: jest.fn().mockReturnValue('SERVER_TIMESTAMP') },
+  FieldValue: {
+    serverTimestamp: jest.fn().mockReturnValue('SERVER_TIMESTAMP'),
+    delete: jest.fn().mockReturnValue('__DELETE__'),
+  },
   Timestamp: {
     fromDate: jest.fn((d: Date) => ({ toMillis: () => d.getTime() })),
   },
@@ -101,6 +109,8 @@ describe('POST /api/agent/auth/device-code (generate)', () => {
     jest.clearAllMocks();
     mockDocGet.mockResolvedValue({ exists: false });
     mockDocSet.mockResolvedValue(undefined);
+    // Default: no session → anonymous installer call → interactive flow
+    mockGetSession.mockResolvedValue({ userId: null, expiresAt: null });
   });
 
   it('returns pairing phrase, deviceCode, and URLs on success', async () => {
@@ -119,6 +129,35 @@ describe('POST /api/agent/auth/device-code (generate)', () => {
     expect(body.expiresIn).toBe(600);
     expect(body.interval).toBe(5);
     expect(mockDocSet).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists deviceCode and wrapVersion on interactive (anonymous) start', async () => {
+    const req = makeRequest('/api/agent/auth/device-code', {
+      machineId: 'test-machine',
+      version: '2.5.9',
+    });
+
+    await generatePOST(req);
+
+    const written = mockDocSet.mock.calls[0]![0] as Record<string, unknown>;
+    expect(written.wrapVersion).toBe('v1');
+    expect(typeof written.deviceCode).toBe('string');
+    expect((written.deviceCode as string).length).toBeGreaterThan(40);
+    expect(written.preauthorizedIntent).toBeUndefined();
+  });
+
+  it('marks dashboard-originated codes as preauthorizedIntent and omits deviceCode', async () => {
+    mockGetSession.mockResolvedValue({
+      userId: 'user-123',
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const req = makeRequest('/api/agent/auth/device-code', {});
+    await generatePOST(req);
+
+    const written = mockDocSet.mock.calls[0]![0] as Record<string, unknown>;
+    expect(written.preauthorizedIntent).toBe(true);
+    expect(written.deviceCode).toBeUndefined();
   });
 
   it('returns 500 after 5 collision attempts', async () => {
@@ -204,13 +243,14 @@ describe('POST /api/agent/auth/device-code/poll', () => {
     expect(body.status).toBe('pending');
   });
 
-  it('returns 200 with tokens when authorized', async () => {
+  it('returns 200 with plaintext tokens when polling a pre-authorised doc by phrase', async () => {
     mockDocGet.mockResolvedValue({ exists: true });
     const futureTime = Date.now() + 600_000;
     mockTransactionGet.mockResolvedValue({
       exists: true,
       data: () => ({
         status: 'authorized',
+        preauthorized: true,
         accessToken: 'mock-access-token',
         refreshToken: 'mock-refresh-token',
         siteId: 'site-1',
@@ -229,6 +269,83 @@ describe('POST /api/agent/auth/device-code/poll', () => {
     expect(body.expiresIn).toBe(3600);
     expect(body.siteId).toBe('site-1');
     expect(mockTransactionDelete).toHaveBeenCalled();
+  });
+
+  it('rejects phrase-based polling for an interactive (v1) doc', async () => {
+    mockDocGet.mockResolvedValue({ exists: true });
+    const futureTime = Date.now() + 600_000;
+    mockTransactionGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'authorized',
+        wrapVersion: 'v1',
+        encryptedCredentials: 'AAAA',
+        siteId: 'site-1',
+        expiresAt: { toMillis: () => futureTime },
+      }),
+    });
+
+    const req = makeRequest('/api/agent/auth/device-code/poll', {
+      pairPhrase: 'test-pair-phrase',
+    });
+    const { status, body } = await parseResponse(await pollPOST(req));
+
+    expect(status).toBe(403);
+    expect(body.error).toContain('device code');
+    expect(mockTransactionDelete).not.toHaveBeenCalled();
+  });
+
+  it('returns 200 with encrypted blob when polling a v1 doc by deviceCode', async () => {
+    mockWhereGet.mockResolvedValue({
+      empty: false,
+      docs: [{ ref: { ...mockDocRef, id: 'test-pair-phrase' } }],
+    });
+    const futureTime = Date.now() + 600_000;
+    mockTransactionGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'authorized',
+        wrapVersion: 'v1',
+        encryptedCredentials: 'ENC',
+        expiresAt: { toMillis: () => futureTime },
+      }),
+    });
+
+    const req = makeRequest('/api/agent/auth/device-code/poll', {
+      deviceCode: 'opaque-device-code',
+    });
+    const { status, body } = await parseResponse(await pollPOST(req));
+
+    expect(status).toBe(200);
+    expect(body.wrapVersion).toBe('v1');
+    expect(body.encryptedCredentials).toBe('ENC');
+    expect(body.phrase).toBe('test-pair-phrase');
+    expect(mockTransactionDelete).toHaveBeenCalled();
+  });
+
+  it('rejects phrase-based polling for a legacy doc that is not preauthorised', async () => {
+    mockDocGet.mockResolvedValue({ exists: true });
+    const futureTime = Date.now() + 600_000;
+    mockTransactionGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'authorized',
+        // no wrapVersion, no preauthorized flag
+        accessToken: 'mock-access-token',
+        refreshToken: 'mock-refresh-token',
+        siteId: 'site-1',
+        expiresAt: { toMillis: () => futureTime },
+      }),
+    });
+
+    const req = makeRequest('/api/agent/auth/device-code/poll', {
+      pairPhrase: 'test-pair-phrase',
+    });
+    const { status, body } = await parseResponse(await pollPOST(req));
+
+    expect(status).toBe(403);
+    expect(body.error).toContain('device code');
+    expect(mockTransactionDelete).not.toHaveBeenCalled();
   });
 
   it('returns 410 when device code is expired', async () => {
@@ -370,7 +487,7 @@ describe('POST /api/agent/auth/device-code/authorize', () => {
     expect(body.error).toContain('already been used');
   });
 
-  it('authorizes successfully and returns machineId', async () => {
+  it('authorizes interactive (v1) docs by encrypting credentials and wiping plaintext fields', async () => {
     const futureTime = Date.now() + 600_000;
     mockTransactionGet.mockResolvedValue({
       exists: true,
@@ -378,6 +495,8 @@ describe('POST /api/agent/auth/device-code/authorize', () => {
         status: 'pending',
         machineId: 'test-machine',
         version: '2.5.9',
+        wrapVersion: 'v1',
+        deviceCode: 'a'.repeat(86), // base64url of 64 random bytes
         expiresAt: { toMillis: () => futureTime },
       }),
     });
@@ -395,5 +514,47 @@ describe('POST /api/agent/auth/device-code/authorize', () => {
     expect(mockTransactionSet).toHaveBeenCalled();
     expect(mockTransactionUpdate).toHaveBeenCalled();
     expect(global.fetch).toHaveBeenCalledTimes(2);
+
+    const update = mockTransactionUpdate.mock.calls[0]![1] as Record<string, unknown>;
+    expect(update.status).toBe('authorized');
+    expect(update.wrapVersion).toBe('v1');
+    expect(typeof update.encryptedCredentials).toBe('string');
+    // Plaintext credential fields and the cleartext deviceCode must all
+    // be wiped — they are set to the FieldValue.delete() sentinel
+    // ('__DELETE__' in the test mock), not a live string.
+    expect(update.accessToken).toBe('__DELETE__');
+    expect(update.refreshToken).toBe('__DELETE__');
+    expect(update.deviceCode).toBe('__DELETE__');
+  });
+
+  it('authorizes pre-authorised docs (no deviceCode on doc) with plaintext + preauthorized flag', async () => {
+    const futureTime = Date.now() + 600_000;
+    mockTransactionGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'pending',
+        machineId: null,
+        version: '2.5.9',
+        wrapVersion: 'v1',
+        preauthorizedIntent: true,
+        // deviceCode absent — dashboard origin
+        expiresAt: { toMillis: () => futureTime },
+      }),
+    });
+
+    const req = makeRequest('/api/agent/auth/device-code/authorize', {
+      pairPhrase: 'test-pair-phrase',
+      siteId: 'site-1',
+    });
+    const { status, body } = await parseResponse(await authorizePOST(req));
+
+    expect(status).toBe(200);
+    expect(body.success).toBe(true);
+    const update = mockTransactionUpdate.mock.calls[0]![1] as Record<string, unknown>;
+    expect(update.status).toBe('authorized');
+    expect(update.preauthorized).toBe(true);
+    expect(typeof update.accessToken).toBe('string');
+    expect(typeof update.refreshToken).toBe('string');
+    expect(update.encryptedCredentials).toBeUndefined();
   });
 });
