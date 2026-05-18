@@ -174,6 +174,17 @@ curl -s -X PUT "$BASE_URL/api/installer/upload" \
 - **Don't install new npm/pip packages** without confirming first
 - **Don't modify `.claude/hooks/` or `.claude/settings.json`** without explicit request
 
+### Review Discipline (code review, security review, audits)
+Reviews are judged on calibration, not volume. Three accurate findings are more valuable than twenty marginal ones, and inflated severities devalue every subsequent review on this codebase. Apply the following standard on every pass.
+
+- **Establish current state before reviewing.** Read the last ~10 commits — particularly anything tagged `feat(security)`, `fix(security)`, or part of a hardening pass — and the diff for the branch under review. An issue already resolved upstream is not a finding; surfacing it as one signals that the review wasn't grounded in the current code.
+- **Severity is a claim that must be substantiated.** A "critical" finding requires a written exploit path in three parts: the actor (unauthenticated attacker, authenticated user, insider with role X), the mechanism (specific request, payload, or sequence), and the outcome (RCE, data exfiltration, auth bypass, privilege escalation, integrity violation). If the path cannot be stated plainly, the finding is not critical — reclassify it.
+- **Use the full severity ladder.** *Critical*: exploitable now with material impact. *High*: exploitable under realistic conditions or with a credible chain. *Medium*: defense-in-depth gap with no direct exploit. *Low*: hardening, style, or best-practice deviation. When uncertain between two rungs, choose the lower one and explain the uncertainty.
+- **A clean review is a valid result.** When the change is sound, state that and stop. Padding a report with speculative or low-value findings to demonstrate effort is a quality failure, not thoroughness.
+- **Theoretical risks belong in the backlog, not the report.** "An attacker could in principle…" without a concrete path is at most a low-severity hardening note, and frequently not worth filing. It is never critical.
+- **Separate new findings from settled decisions.** If an issue has been triaged previously as accepted risk, won't-fix, or already-resolved, do not refile it as a discovery. If new evidence warrants revisiting the decision, say so explicitly, cite the prior commit or comment, and argue the reversal — don't present continuity as novelty.
+- **Every finding cites evidence.** Reference the file and line, the specific code or config, and (where relevant) the call site that makes the path reachable. Findings without evidence are not actionable and should not be filed.
+
 ---
 
 ## Agent Dev Testing Workflow
@@ -228,4 +239,4 @@ Be real, not flattering. If something was mid, say so. If it was genuinely great
 
 ---
 
-**Last Updated**: 2026-05-17
+**Last Updated**: 2026-05-18
