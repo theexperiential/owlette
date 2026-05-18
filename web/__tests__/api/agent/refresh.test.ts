@@ -98,23 +98,29 @@ jest.mock('@/lib/firebase-admin', () => ({
         update(ref: { hash: string }, payload: Record<string, unknown>) {
           const existing = tokenStore.get(ref.hash);
           if (!existing) return;
-          tokenStore.set(ref.hash, {
-            ...existing,
-            supersededAt:
+          // Only apply fields actually present in the payload — the prior
+          // mock unconditionally wrote supersededAt=Date.now() even when
+          // the route only bumped lastUsed, which broke legacy-agent tests.
+          const next: StoredToken = { ...existing };
+          if ('supersededAt' in payload) {
+            next.supersededAt =
               typeof payload.supersededAt === 'number'
                 ? (payload.supersededAt as number)
-                : Date.now(),
-            supersededBy:
-              typeof payload.supersededBy === 'string'
-                ? (payload.supersededBy as string)
-                : existing.supersededBy,
-            retiresAt:
-              payload.retiresAt &&
-              typeof (payload.retiresAt as { toMillis?: () => number }).toMillis ===
-                'function'
-                ? (payload.retiresAt as { toMillis: () => number }).toMillis()
-                : existing.retiresAt,
-          });
+                : Date.now(); // serverTimestamp() sentinel — approximate
+          }
+          if ('supersededBy' in payload && typeof payload.supersededBy === 'string') {
+            next.supersededBy = payload.supersededBy;
+          }
+          if ('retiresAt' in payload) {
+            const r = payload.retiresAt as { toMillis?: () => number } | number | undefined;
+            if (typeof r === 'number') {
+              next.retiresAt = r;
+            } else if (r && typeof r.toMillis === 'function') {
+              next.retiresAt = r.toMillis();
+            }
+          }
+          // `lastUsed` etc. aren't modeled in StoredToken; ignore.
+          tokenStore.set(ref.hash, next);
         },
         set(ref: { hash: string }, payload: Record<string, unknown>) {
           tokenStore.set(ref.hash, {
@@ -180,10 +186,32 @@ beforeEach(() => {
   mockSetCustomUserClaims.mockResolvedValue(undefined);
 });
 
-function refreshReq(token: string, machineId = 'm-1') {
+/**
+ * Sentinel passed as `agentVersion` to omit the X-Owlette-Agent-Version
+ * header entirely (legacy-agent path). JS default-param semantics mean
+ * passing `undefined` does NOT bypass the default, so we use an explicit
+ * sentinel instead.
+ */
+const NO_AGENT_HEADER = Symbol('NO_AGENT_HEADER');
+
+/**
+ * Build a mock refresh request. Default agent-version is '2.12.0' so the
+ * rotation path is exercised by default — tests that want the legacy
+ * (no-rotation) path pass `NO_AGENT_HEADER` or an older version string.
+ */
+function refreshReq(
+  token: string,
+  machineId = 'm-1',
+  agentVersion: string | typeof NO_AGENT_HEADER = '2.12.0',
+) {
+  const headers: Record<string, string> = {};
+  if (agentVersion !== NO_AGENT_HEADER) {
+    headers['x-owlette-agent-version'] = agentVersion;
+  }
   return createMockRequest('http://localhost/api/agent/auth/refresh', {
     method: 'POST',
     body: { refreshToken: token, machineId },
+    headers,
   });
 }
 
@@ -267,5 +295,181 @@ describe('POST /api/agent/auth/refresh — rotation', () => {
     expect(res.status).toBe(401);
     // The expired token should be deleted by the route.
     expect(tokenStore.has(hash)).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  agent-version gate — staged rollout of refresh-token rotation     */
+/* ------------------------------------------------------------------ */
+//
+// The rotation behaviour is opt-in by the agent advertising
+// X-Owlette-Agent-Version >= 2.12.0. Older / missing / malformed
+// versions fall through to the legacy non-rotating path so 2.11.x
+// agents in the field don't lose auth when this lands in prod.
+
+describe('POST /api/agent/auth/refresh — agent-version gate', () => {
+  it('legacy agent (no header) does NOT rotate — response omits refreshToken', async () => {
+    seedToken('legacy-no-header');
+
+    const res = await refreshPOST(
+      refreshReq('legacy-no-header', 'm-1', NO_AGENT_HEADER),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.accessToken).toBe('new-id-token');
+    expect(body.expiresIn).toBe(3600);
+    expect(body.refreshToken).toBeUndefined();
+  });
+
+  it('legacy agent: original token is NOT marked superseded', async () => {
+    seedToken('legacy-token-keepalive');
+    await refreshPOST(
+      refreshReq('legacy-token-keepalive', 'm-1', NO_AGENT_HEADER),
+    );
+
+    const stored = tokenStore.get(hashOf('legacy-token-keepalive'));
+    expect(stored).toBeTruthy();
+    expect(stored!.supersededAt).toBeUndefined();
+    expect(stored!.supersededBy).toBeUndefined();
+    expect(stored!.retiresAt).toBeUndefined();
+  });
+
+  it('legacy agent: the same token still works on the NEXT refresh (no grace clock)', async () => {
+    seedToken('legacy-stable');
+
+    // First refresh with no version header — no rotation.
+    const r1 = await refreshPOST(refreshReq('legacy-stable', 'm-1', NO_AGENT_HEADER));
+    expect(r1.status).toBe(200);
+
+    // Second refresh with the SAME token — still works, still no rotation.
+    const r2 = await refreshPOST(refreshReq('legacy-stable', 'm-1', NO_AGENT_HEADER));
+    expect(r2.status).toBe(200);
+    const body = await r2.json();
+    expect(body.refreshToken).toBeUndefined();
+  });
+
+  it('agent-version 2.11.3 (pre-rotation) does NOT rotate', async () => {
+    seedToken('agent-2113');
+
+    const res = await refreshPOST(
+      refreshReq('agent-2113', 'm-1', '2.11.3'),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.refreshToken).toBeUndefined();
+
+    const stored = tokenStore.get(hashOf('agent-2113'));
+    expect(stored!.supersededAt).toBeUndefined();
+  });
+
+  it('agent-version 2.12.0 (minimum-rotation) DOES rotate', async () => {
+    seedToken('agent-2120');
+
+    const res = await refreshPOST(
+      refreshReq('agent-2120', 'm-1', '2.12.0'),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(typeof body.refreshToken).toBe('string');
+    expect(body.refreshToken).not.toBe('agent-2120');
+
+    const stored = tokenStore.get(hashOf('agent-2120'));
+    expect(typeof stored!.supersededAt).toBe('number');
+  });
+
+  it('agent-version 3.0.0 (future major) DOES rotate', async () => {
+    seedToken('agent-3000');
+
+    const res = await refreshPOST(
+      refreshReq('agent-3000', 'm-1', '3.0.0'),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(typeof body.refreshToken).toBe('string');
+  });
+
+  it('malformed agent-version (gibberish) falls back to legacy — no rotation', async () => {
+    seedToken('agent-bogus');
+
+    const res = await refreshPOST(
+      refreshReq('agent-bogus', 'm-1', 'not-a-version'),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.refreshToken).toBeUndefined();
+
+    const stored = tokenStore.get(hashOf('agent-bogus'));
+    expect(stored!.supersededAt).toBeUndefined();
+  });
+
+  it('agent-version 2.12.0-rc.1 (pre-release suffix on 2.12.0) DOES rotate', async () => {
+    seedToken('agent-rc');
+
+    // Strip-suffix semantics: 2.12.0-rc.1 parses as [2,12,0] which meets
+    // the 2.12.0+ rotation threshold.
+    const res = await refreshPOST(
+      refreshReq('agent-rc', 'm-1', '2.12.0-rc.1'),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(typeof body.refreshToken).toBe('string');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  parseAgentVersion / shouldRotateRefreshToken — pure-helper tests  */
+/* ------------------------------------------------------------------ */
+
+describe('parseAgentVersion + shouldRotateRefreshToken', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const route = require('@/app/api/agent/auth/refresh/route') as {
+    parseAgentVersion: (v: unknown) => [number, number, number] | null;
+    shouldRotateRefreshToken: (v: unknown) => boolean;
+  };
+
+  describe('parseAgentVersion', () => {
+    it.each([
+      ['2.12.0', [2, 12, 0]],
+      ['2.11.3', [2, 11, 3]],
+      ['3.0.0', [3, 0, 0]],
+      ['2.12', [2, 12, 0]],                  // patch missing → defaults to 0
+      ['2.12.0-rc.1', [2, 12, 0]],           // strips pre-release suffix
+      ['2.12.0+build.123', [2, 12, 0]],      // strips build metadata
+    ])('parses %s → %j', (input, expected) => {
+      expect(route.parseAgentVersion(input)).toEqual(expected);
+    });
+
+    it.each([null, undefined, '', '2', 'abc', '2.x.0', '-1.0.0'])(
+      'returns null for malformed input %j',
+      (input) => {
+        expect(route.parseAgentVersion(input)).toBeNull();
+      },
+    );
+  });
+
+  describe('shouldRotateRefreshToken', () => {
+    it.each([
+      ['2.12.0', true],
+      ['2.12.5', true],
+      ['2.13.0', true],
+      ['3.0.0', true],
+      ['10.0.0', true],
+    ])('rotates for %s', (input, expected) => {
+      expect(route.shouldRotateRefreshToken(input)).toBe(expected);
+    });
+
+    it.each([
+      ['2.11.3', false],
+      ['2.11.99', false],
+      ['2.0.0', false],
+      ['1.99.99', false],
+      [null, false],
+      [undefined, false],
+      ['', false],
+      ['nonsense', false],
+    ])('does NOT rotate for %j', (input, expected) => {
+      expect(route.shouldRotateRefreshToken(input)).toBe(expected);
+    });
   });
 });

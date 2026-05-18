@@ -1,7 +1,19 @@
 /**
- * Refresh tokens rotate on every successful refresh.
+ * Refresh tokens rotate on every successful refresh — but ONLY for
+ * agents >= 2.12.0 that know how to persist the rotated token from the
+ * response. Older agents discard the rotated token and keep using the
+ * old one, which would lose auth ~5 min after the first rotation (when
+ * the supersession grace window expires).
+ *
+ * To stage the rollout safely we gate on `X-Owlette-Agent-Version`:
+ *   - 2.12.0+ → rotate (current behaviour); response includes refreshToken
+ *   - older   → legacy behaviour; just bump lastUsed on the existing token;
+ *               response omits refreshToken (matches pre-rotation contract)
+ *   - missing/malformed → legacy (fail-safe — assume old agent)
+ *
  * Superseded token docs remain readable for a 5-minute grace window so
- * clients can retry after a lost response without losing their session.
+ * 2.12.0+ clients can retry after a lost response without losing their
+ * session.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
@@ -10,6 +22,10 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import logger from '@/lib/logger';
 
 const REFRESH_TOKEN_GRACE_MS = 5 * 60 * 1000;
+
+/** Minimum agent version that knows how to persist a rotated refresh token. */
+const ROTATION_MIN_MAJOR = 2;
+const ROTATION_MIN_MINOR = 12;
 
 function timestampToMillis(value: unknown): number | undefined {
   if (!value) {
@@ -35,6 +51,42 @@ function timestampToMillis(value: unknown): number | undefined {
 }
 
 /**
+ * Parse a dotted-numeric semver prefix into a [major, minor, patch] tuple.
+ * Strips suffixes like "-rc.1" or "+build.123" — only the leading
+ * numeric segments are compared.
+ *
+ * Returns null when the input is missing/malformed (treated as "old agent"
+ * by callers — fail-safe to no-rotation behaviour).
+ */
+export function parseAgentVersion(
+  version: string | null | undefined,
+): [number, number, number] | null {
+  if (!version || typeof version !== 'string') return null;
+  const stripped = version.split(/[-+]/)[0];
+  const parts = stripped.split('.').map((p) => Number.parseInt(p, 10));
+  if (parts.length < 2 || parts.some((n) => !Number.isInteger(n) || n < 0)) {
+    return null;
+  }
+  return [parts[0], parts[1], parts[2] ?? 0];
+}
+
+/**
+ * Decide whether to rotate the refresh token for the supplied agent
+ * version header. See file-level docstring for the rollout rationale.
+ */
+export function shouldRotateRefreshToken(
+  agentVersion: string | null | undefined,
+): boolean {
+  const parsed = parseAgentVersion(agentVersion);
+  if (!parsed) return false;
+  const [major, minor] = parsed;
+  return (
+    major > ROTATION_MIN_MAJOR ||
+    (major === ROTATION_MIN_MAJOR && minor >= ROTATION_MIN_MINOR)
+  );
+}
+
+/**
  * POST /api/agent/auth/refresh
  *
  * Refresh an expired access token using a refresh token.
@@ -44,9 +96,13 @@ function timestampToMillis(value: unknown): number | undefined {
  * - refreshToken: string - Long-lived refresh token from initial exchange
  * - machineId: string - Machine identifier (for validation)
  *
+ * Request headers:
+ * - X-Owlette-Agent-Version: string - Agent semver (gates refresh-token rotation;
+ *   see file-level docstring). Missing/malformed → legacy non-rotation path.
+ *
  * Response (200 OK):
  * - accessToken: string - New OAuth 2.0 access token for Firestore API (1 hour expiry)
- * - refreshToken: string - New rotated refresh token
+ * - refreshToken: string - New rotated refresh token (only present when agent >= 2.12.0)
  * - expiresIn: number - Access token expiry in seconds (3600)
  *
  * Errors:
@@ -73,18 +129,29 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
+    // Decide rotation behaviour from the agent-version header. Old agents
+    // (< 2.12.0) don't persist a rotated token and would die ~5 min after
+    // their first refresh, so they stay on the legacy non-rotation path
+    // until they auto-update via the installer.
+    const agentVersionHeader = request.headers.get('x-owlette-agent-version');
+    const willRotate = shouldRotateRefreshToken(agentVersionHeader);
+
     // Hash the refresh token (stored hashed for security)
     const crypto = await import('crypto');
     const refreshTokenHash = crypto.createHash('sha256')
       .update(refreshToken)
       .digest('hex');
+    // Pre-generate the rotated token even when we won't use it — keeps the
+    // transaction body branch-free for the inner critical section and the
+    // crypto cost is negligible.
     const newRefreshToken = crypto.randomBytes(64).toString('base64url');
     const newRefreshTokenHash = crypto.createHash('sha256')
       .update(newRefreshToken)
       .digest('hex');
 
-    // Validate refresh token and rotate it atomically via transaction.
-    // This prevents concurrent refresh requests from creating inconsistent state.
+    // Validate refresh token and (when willRotate) rotate it atomically
+    // via transaction. This prevents concurrent refresh requests from
+    // creating inconsistent state.
     const adminDb = getAdminDb();
     const tokenRef = adminDb.collection('agent_refresh_tokens').doc(refreshTokenHash);
     const newTokenRef = adminDb.collection('agent_refresh_tokens').doc(newRefreshTokenHash);
@@ -96,13 +163,15 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     try {
       const result = await adminDb.runTransaction(async (transaction) => {
         const tokenDoc = await transaction.get(tokenRef);
-        const newTokenDoc = await transaction.get(newTokenRef);
+        // Only need to check the new-token doc when we're going to write
+        // it — saves a read for legacy refresh-no-rotate calls.
+        const newTokenDoc = willRotate ? await transaction.get(newTokenRef) : null;
 
         if (!tokenDoc.exists) {
           return { error: 'Invalid refresh token', status: 401 } as const;
         }
 
-        if (newTokenDoc.exists) {
+        if (newTokenDoc && newTokenDoc.exists) {
           throw new Error('Refresh token hash collision');
         }
 
@@ -141,23 +210,32 @@ export const POST = withRateLimit(async (request: NextRequest) => {
           return { error: 'Invalid refresh token data', status: 401 } as const;
         }
 
-        if (!isSuperseded) {
+        if (willRotate) {
+          if (!isSuperseded) {
+            transaction.update(tokenRef, {
+              supersededAt: FieldValue.serverTimestamp(),
+              supersededBy: newRefreshTokenHash,
+              retiresAt: Timestamp.fromMillis(now + REFRESH_TOKEN_GRACE_MS),
+            });
+          }
+
+          transaction.set(newTokenRef, {
+            siteId: txSiteId,
+            machineId,
+            version: txVersion,
+            createdBy: txCreatedBy,
+            createdAt: FieldValue.serverTimestamp(),
+            lastUsed: FieldValue.serverTimestamp(),
+            agentUid: txAgentUid,
+          });
+        } else {
+          // Legacy agent — keep the same token alive by bumping lastUsed.
+          // No supersession, no new doc; the agent's stored refresh token
+          // continues to work indefinitely as before 2.12.0.
           transaction.update(tokenRef, {
-            supersededAt: FieldValue.serverTimestamp(),
-            supersededBy: newRefreshTokenHash,
-            retiresAt: Timestamp.fromMillis(now + REFRESH_TOKEN_GRACE_MS),
+            lastUsed: FieldValue.serverTimestamp(),
           });
         }
-
-        transaction.set(newTokenRef, {
-          siteId: txSiteId,
-          machineId,
-          version: txVersion,
-          createdBy: txCreatedBy,
-          createdAt: FieldValue.serverTimestamp(),
-          lastUsed: FieldValue.serverTimestamp(),
-          agentUid: txAgentUid,
-        });
 
         return { siteId: txSiteId, version: txVersion, agentUid: txAgentUid } as const;
       });
@@ -221,15 +299,21 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     const authData = await authResponse.json();
     const idToken = authData.idToken; // This token now has the custom claims
 
-    // Refresh token rotation was already completed atomically inside the transaction above.
+    // Refresh token rotation (when willRotate) was already completed
+    // atomically inside the transaction above.
 
-    logger.info(`Token refreshed: site=${siteId}, machine=${machineId}`);
+    logger.info(
+      `Token refreshed: site=${siteId}, machine=${machineId}, ` +
+        `rotated=${willRotate}, agentVersion=${agentVersionHeader ?? 'unknown'}`,
+    );
 
     return NextResponse.json(
       {
         accessToken: idToken,
-        refreshToken: newRefreshToken,
         expiresIn: 3600, // 1 hour in seconds
+        // Only include the rotated refresh token for agents that asked for it
+        // (>= 2.12.0). Legacy agents keep using their original token.
+        ...(willRotate ? { refreshToken: newRefreshToken } : {}),
       },
       { status: 200 }
     );
