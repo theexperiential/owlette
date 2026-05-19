@@ -16,7 +16,7 @@ export const mockDbGet = jest.fn().mockResolvedValue({ exists: false, data: () =
 export const mockDbSet = jest.fn().mockResolvedValue(undefined);
 export const mockDbUpdate = jest.fn().mockResolvedValue(undefined);
 export const mockDbDelete = jest.fn().mockResolvedValue(undefined);
-export const mockRunTransaction = jest.fn(async (fn: Function) => {
+export const mockRunTransaction = jest.fn(async (fn: (tx: unknown) => unknown) => {
   // Simulate transaction by passing a mock transaction object
   const mockTransaction = {
     get: mockDbGet,
@@ -37,7 +37,7 @@ const createDocRef = (docId?: string) => ({
   collection: (subCol: string) => createCollectionRef(subCol),
 });
 
-const createCollectionRef = (colId?: string) => ({
+const createCollectionRef = (_colId?: string) => ({
   doc: (docId?: string) => createDocRef(docId),
   orderBy: jest.fn().mockReturnThis(),
   limit: jest.fn().mockReturnThis(),
@@ -68,7 +68,7 @@ export const mockFileSave = jest.fn().mockResolvedValue(undefined);
 
 const mockStorage = {
   bucket: () => ({
-    file: (path: string) => ({
+    file: (_path: string) => ({
       getSignedUrl: mockGetSignedUrl,
       exists: mockFileExists,
       getMetadata: mockGetMetadata,
@@ -90,7 +90,7 @@ export const resetAdminMocks = () => {
   mockDbSet.mockReset().mockResolvedValue(undefined);
   mockDbUpdate.mockReset().mockResolvedValue(undefined);
   mockDbDelete.mockReset().mockResolvedValue(undefined);
-  mockRunTransaction.mockReset().mockImplementation(async (fn: Function) => {
+  mockRunTransaction.mockReset().mockImplementation(async (fn: (tx: unknown) => unknown) => {
     const mockTransaction = {
       get: mockDbGet,
       set: mockDbSet,

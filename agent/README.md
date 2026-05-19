@@ -12,7 +12,7 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 - **Remote Screenshots**: Capture and send screenshots to the dashboard
 - **MCP Tools**: Tool-calling support for the Cortex AI assistant
 - **Self-Update**: Update the agent remotely from the web dashboard
-- **OAuth Authentication**: Secure token-based auth with the Owlette Dashboard
+- **Device-Code Pairing**: Secure token-based auth with a 3-word pairing phrase
 
 ---
 
@@ -21,7 +21,7 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 ### Prerequisites
 
 - Windows 10/11 or Windows Server
-- Python 3.9+ (installer will auto-install if missing)
+- Python 3.11 with tkinter for GUI (packaged installer bundles Python 3.11.8)
 - Firebase project with Firestore enabled
 
 ### Installation
@@ -30,20 +30,20 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 
    Download the installer from the Owlette web dashboard. It handles everything:
    - Installs embedded Python runtime and all dependencies
-   - Opens browser for OAuth authorization
+   - Runs device-code pairing with a 3-word phrase
    - Registers the agent with your site
    - Installs and starts the Windows service
 
-   See [INSTALLER-USAGE.md](INSTALLER-USAGE.md) for the full OAuth flow documentation.
+   See [INSTALLER-USAGE.md](INSTALLER-USAGE.md) for the full device-code pairing documentation.
 
 2. **Configure processes** (optional):
    - Use the GUI: `python src/owlette_gui.py`
    - Or manage from the web dashboard
 
 3. **Connect to Owlette Dashboard**:
-   - The installer automatically opens your browser for OAuth authorization
-   - Log in and authorize the agent
-   - Installation completes automatically with secure token storage
+   - The installer displays a 3-word pairing phrase and authorization URL
+   - Open the pairing page locally or enter the phrase from another device
+   - Select a site and authorize; the agent polls until tokens are returned
 
 ---
 
@@ -99,7 +99,7 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 | `enabled` | Enable Firebase cloud features |
 | `site_id` | Unique identifier for this site/location |
 
-**Authentication:** Modern installations use OAuth authentication (no manual credentials needed). Tokens are stored securely in encrypted local storage. See [INSTALLER-USAGE.md](INSTALLER-USAGE.md) for the OAuth flow details.
+**Authentication:** Modern installations use device-code pairing (no manual credentials needed). Tokens are stored encrypted at `C:\ProgramData\Owlette\.tokens.enc`. See [INSTALLER-USAGE.md](INSTALLER-USAGE.md) for the pairing flow details.
 
 ---
 
@@ -107,7 +107,7 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 
 If the installer doesn't work, follow these manual steps:
 
-1. **Install Python 3.9+**
+1. **Install Python 3.11 with tkinter**
    ```cmd
    # Download from python.org and install
    ```
@@ -131,8 +131,8 @@ If the installer doesn't work, follow these manual steps:
    ```
 
 5. **Connect to Owlette Dashboard** (optional but recommended)
-   - Use the OAuth installer from the web dashboard (recommended)
-   - Or for manual/development setups, see [INSTALLER-USAGE.md](INSTALLER-USAGE.md)
+   - Use the device-code pairing installer from the web dashboard (recommended)
+   - Or for manual/development setups, run `python src\configure_site.py`
 
 6. **Install service**
    ```cmd
@@ -171,7 +171,7 @@ The version automatically propagates to:
 - System tray display (`owlette_tray.py`)
 - Configuration GUI (`owlette_gui.py`)
 - Firestore agent registration (`firebase_client.py`)
-- OAuth device registration (`auth_manager.py`)
+- Device-code registration (`auth_manager.py`)
 - Installer filename (`Owlette-Installer-v2.2.0.exe`)
 
 **How it works:**
@@ -264,9 +264,9 @@ python owlette_service.py remove
 ### Service won't start
 
 1. **Check logs**: `logs/service.log`
-2. **Verify Python**: `python --version` should be 3.9+
+2. **Verify Python**: `python --version` should be 3.11
 3. **Check permissions**: Service needs admin rights
-4. **Check OAuth tokens**: Ensure agent completed OAuth authorization
+4. **Check pairing tokens**: Ensure agent completed device-code pairing
 
 ### Processes won't launch
 
@@ -277,13 +277,13 @@ python owlette_service.py remove
 
 ### Dashboard not connecting
 
-1. **Check authentication**: Ensure OAuth authorization completed successfully
-2. **Check tokens**: Tokens stored in encrypted local storage (use `auth_manager.py` to verify)
+1. **Check authentication**: Ensure device-code pairing completed successfully
+2. **Check tokens**: Tokens stored encrypted at `C:\ProgramData\Owlette\.tokens.enc` (use `auth_manager.py` to verify)
 3. **Check internet**: Service needs internet to connect to dashboard
 4. **Check config**: Ensure `firebase.enabled` is `true` in `config/config.json`
 5. **Check logs**: Look for authentication errors in `logs/service.log`
 6. **Offline mode**: Service will continue with cached config if dashboard unavailable
-7. **Re-authenticate**: Run installer again to refresh OAuth tokens if expired
+7. **Re-authenticate**: Run installer again or run `configure_site.py` to re-pair if tokens were revoked
 
 ### "Access Denied" errors
 
@@ -305,14 +305,14 @@ agent/
 │   ├── firebase_client.py         # Firebase integration & sync
 │   ├── firestore_rest_client.py   # Firestore REST API client
 │   ├── connection_manager.py      # Connection state machine & reconnect
-│   ├── auth_manager.py            # OAuth token management
+│   ├── auth_manager.py            # Token exchange and refresh
 │   ├── secure_storage.py          # Encrypted credential storage
 │   ├── shared_utils.py            # Shared utilities & constants
 │   ├── process_launcher.py        # Process start/stop logic
 │   ├── session_exec.py            # User-session process execution
 │   ├── health_probe.py            # Health check endpoint
 │   ├── mcp_tools.py               # Cortex AI tool implementations
-│   ├── configure_site.py          # Site join/leave OAuth flow
+│   ├── configure_site.py          # Site join/leave device-code pairing flow
 │   ├── installer_utils.py         # Remote deployment handler
 │   ├── project_utils.py           # Project distribution handler
 │   ├── registry_utils.py          # Windows registry operations
@@ -354,7 +354,7 @@ See [BUILD.md](BUILD.md) for comprehensive instructions on building the installe
 
 - **[INSTALLER-USAGE.md](INSTALLER-USAGE.md)** - Installation guide for end users
   - Environment selection (dev/prod)
-  - OAuth authentication flow
+  - Device-code pairing flow
   - Silent installation
   - Troubleshooting
 

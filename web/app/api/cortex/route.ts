@@ -12,17 +12,21 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { streamText, stepCountIs, type ModelMessage } from 'ai';
-import { requireSession } from '@/lib/apiAuth.server';
+import { resolveAuth, requireScope } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { createModel, buildSystemPrompt, type ProcessSummary } from '@/lib/llm';
 import { getToolsByTier } from '@/lib/mcp-tools';
+import { apiError } from '@/lib/apiErrorResponse';
 import {
   resolveLlmConfig,
   verifyUserSiteAccess,
+  resolveCortexMaxTier,
   isMachineOnline,
+  isCortexEnabled,
   getOnlineMachines,
   buildExecutableTools,
+  type SiteAccessLevel,
 } from '@/lib/cortex-utils.server';
 
 const SITE_TARGET_ID = '__site__';
@@ -106,7 +110,11 @@ async function isCortexLocal(
 // so we handle rate limiting manually if needed in the future.
 export async function POST(request: NextRequest) {
   try {
-    const userId = await requireSession(request);
+    // Accept session, ID-token, or scoped API key. Session/ID-token callers
+    // bypass scope enforcement (dashboard); api-key callers must hold
+    // `chat=<siteId>:write` to send a message into a conversation.
+    const auth = await resolveAuth(request);
+    const userId = auth.userId;
     const body = await request.json();
 
     const {
@@ -130,15 +138,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Scope check is only enforced for API-key callers; session/ID-token
+    // auth bypasses (own-site dashboard access is checked below via
+    // verifyUserSiteAccess). Throws 403 scope_insufficient on mismatch.
+    requireScope(auth, 'chat', siteId, 'write');
+
     const db = getAdminDb();
     const isSiteMode = machineId === SITE_TARGET_ID;
 
-    // Verify access
-    await verifyUserSiteAccess(db, userId, siteId);
+    // Verify access and resolve tier ceiling. Session/id-token callers use
+    // their site role. API-key callers are capped to read-only tools so a
+    // chat-scoped key cannot inherit the owner's admin role and dispatch
+    // destructive machine/process/deploy tools.
+    const access = await verifyUserSiteAccess(db, userId, siteId);
+    const effectiveAccess = auth.keyContext
+      ? { ...access, isSuperadmin: false, isSiteAdmin: false }
+      : access;
 
     // ─── Site-Wide Mode (unchanged — web-side LLM) ─────────────────────
     if (isSiteMode) {
-      return handleSiteWideMode(db, userId, siteId, messages, chatId);
+      return handleSiteWideMode(db, userId, siteId, messages, chatId, effectiveAccess);
     }
 
     // ─── Single Machine Mode ───────────────────────────────────────────
@@ -157,20 +176,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if local Cortex is running
-    const cortexLocal = await isCortexLocal(db, siteId, machineId);
+    const cortexEnabled = await isCortexEnabled(db, siteId, machineId);
+    if (!cortexEnabled) {
+      return NextResponse.json(
+        { error: `Cortex is disabled on "${machineName || machineId}". Re-enable it from the Cortex header to deliver tool calls.` },
+        { status: 423 },
+      );
+    }
+
+    // Non-admins are forced through the server-side LLM path so the tier
+    // cap (tier 1, read-only) is actually enforced. The local Cortex path
+    // runs tools inside the agent and does not yet honor a per-user tier
+    // cap — routing members through it would reopen the tier-3 exposure.
+    const cortexLocal = effectiveAccess.isSiteAdmin
+      ? await isCortexLocal(db, siteId, machineId)
+      : false;
 
     if (cortexLocal) {
       // ─── Local Cortex Path (SSE via Firestore onSnapshot) ──────────
       return handleLocalCortex(db, siteId, machineId, machineName, messages, chatId);
     } else {
       // ─── Fallback: Server-side LLM (existing approach) ────────────
-      return handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId);
+      return handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, effectiveAccess);
     }
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Internal server error';
-    console.error('Cortex API error:', error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return apiError(error, 'cortex');
   }
 }
 
@@ -340,16 +370,17 @@ async function handleServerSideLLM(
   machineName: string,
   messages: ModelMessage[],
   chatId: string,
+  access: SiteAccessLevel,
 ): Promise<Response> {
   const [llmConfig, processes] = await Promise.all([
     resolveLlmConfig(db, userId, siteId),
     fetchProcessSummaries(db, siteId, machineId),
   ]);
 
-  const toolDefs = getToolsByTier(3);
+  const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
   const executableTools = buildExecutableTools(
     db, siteId, machineId, chatId, toolDefs,
-    false, [],
+    false, [], { userId, userRole: access.role },
   );
 
   const model = createModel(llmConfig);
@@ -375,6 +406,7 @@ async function handleSiteWideMode(
   siteId: string,
   messages: ModelMessage[],
   chatId: string,
+  access: SiteAccessLevel,
 ): Promise<Response> {
   const onlineMachines = await getOnlineMachines(db, siteId);
   if (onlineMachines.length === 0) {
@@ -386,10 +418,10 @@ async function handleSiteWideMode(
 
   const llmConfig = await resolveLlmConfig(db, userId, siteId);
 
-  const toolDefs = getToolsByTier(3);
+  const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
   const executableTools = buildExecutableTools(
     db, siteId, SITE_TARGET_ID, chatId, toolDefs,
-    true, onlineMachines,
+    true, onlineMachines, { userId, userRole: access.role },
   );
 
   const model = createModel(llmConfig);

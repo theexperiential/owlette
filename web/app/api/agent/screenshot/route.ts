@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb, getAdminStorage } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * POST /api/agent/screenshot
@@ -63,6 +64,10 @@ export const POST = withRateLimit(
       // Verify the token's site_id matches
       if (decodedToken.site_id && decodedToken.site_id !== siteId) {
         return NextResponse.json({ error: 'site_id mismatch' }, { status: 403 });
+      }
+
+      if (decodedToken.machine_id !== machineId) {
+        return NextResponse.json({ error: 'machine_id_mismatch' }, { status: 403 });
       }
 
       // Decode base64 to buffer
@@ -175,8 +180,7 @@ export const POST = withRateLimit(
 
       return NextResponse.json({ success: true, sizeKB, url: urlWithCacheBuster });
     } catch (error: unknown) {
-      console.error('[agent/screenshot] Unhandled error:', error);
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+      return apiError(error, 'agent/screenshot');
     }
   },
   { strategy: 'api', identifier: 'ip' }

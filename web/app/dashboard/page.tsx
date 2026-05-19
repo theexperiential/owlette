@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useLayoutEffect, useState, useMemo, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites, type LaunchMode, type ScheduleBlock } from '@/hooks/useFirestore';
@@ -9,36 +10,54 @@ import { useSchedulePresets } from '@/hooks/useSchedulePresets';
 import { useDeployments } from '@/hooks/useDeployments';
 import { useMachineOperations } from '@/hooks/useMachineOperations';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
+import { useAgentAlertToasts, type ExeMissingToastAlert } from '@/hooks/useAgentAlertToasts';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, LayoutGrid, List, ChevronDown, ChevronUp, ChevronsUpDown, ChevronsDownUp, Square, Copy, Pencil, Trash2, Download, Monitor, Wifi, Cog, Settings2 } from 'lucide-react';
+import { Plus, LayoutGrid, List, ChevronsUpDown, ChevronsDownUp, Square, Copy, Trash2, Download, Monitor, Cog, Settings2, RotateCw } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody } from '@/components/ui/table';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Switch } from '@/components/ui/switch';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import DownloadButton from '@/components/DownloadButton';
-import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { RemoveMachineDialog } from '@/components/RemoveMachineDialog';
 import { ScreenshotDialog } from '@/components/ScreenshotDialog';
 import { LiveViewModal } from '@/components/LiveViewModal';
 import { PageHeader } from '@/components/PageHeader';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
-import { formatStorageRange } from '@/lib/storageUtils';
-import { MetricsDetailPanel, type MetricType } from '@/components/charts';
+// Pure tab-state helpers — imported directly from the lightweight module so
+// the dashboard bundle doesn't have to resolve @/components/charts' barrel
+// (which re-exports Recharts-heavy components like MetricsDetailPanel).
+import { initialMetricToState, serializeTabs } from '@/components/charts/metricsTabs';
+import type { MetricType } from '@/components/charts/ChartTooltip';
 import ScheduleEditor from '@/components/ScheduleEditor';
 import { MachineCardView } from './components/MachineCardView';
-import { MachineRow, MemoizedTableHeader as ListViewTableHeader } from './components/MachineListView';
+import { MachineRow, MachineTableHeader, type DeviceUnion, type ShowDropdownFlags } from './components/MachineListView';
+import { useDevicePrefs } from '@/hooks/useDevicePrefs';
+import { useSlidePanel } from '@/hooks/useSlidePanel';
+import { unionIds } from '@/lib/deviceResolvers';
 import { AddMachineButton } from './components/AddMachineButton';
+import { LoadingWord } from '@/components/LoadingWord';
 import type { Process } from '@/hooks/useFirestore';
+
+// Code-split the two heavy detail panels out of the dashboard bundle. Both
+// subtrees are only needed after the user clicks a metric/display cell, so
+// deferring their parse + compile avoids a frame-budget spike during the
+// grid-template-rows slide animation that reveals them. `ssr: false` keeps
+// them out of server rendering entirely — the panels are client-only (they
+// subscribe to live Firestore state) so there's no SSR benefit to pay for.
+const MetricsDetailPanel = dynamic(
+  () => import('@/components/charts/MetricsDetailPanel').then((m) => ({ default: m.MetricsDetailPanel })),
+  { ssr: false, loading: () => null },
+);
+const DisplayLayoutPanel = dynamic(
+  () => import('@/components/charts/DisplayLayoutPanel').then((m) => ({ default: m.DisplayLayoutPanel })),
+  { ssr: false, loading: () => null },
+);
 
 type ViewType = 'card' | 'list';
 
@@ -51,8 +70,8 @@ interface DetailPanelState {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, loading, signOut, isAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences, updateUserPreferences } = useAuth();
-  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
+  const { user, loading, isSuperadmin, isSiteAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences, updateUserPreferences } = useAuth();
+  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
   const { version, downloadUrl } = useInstallerVersion();
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -60,8 +79,6 @@ export default function DashboardPage() {
   const [viewType, setViewType] = useState<ViewType>('card');
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
 
-  // Delay showing "Getting Started" to avoid flash if machines are still loading
-  const [canShowGettingStarted, setCanShowGettingStarted] = useState(false);
 
   // Schedule Editor dialog state (single instance, opened by gear icon on any process)
   const [scheduleEditorOpen, setScheduleEditorOpen] = useState(false);
@@ -120,6 +137,20 @@ export default function DashboardPage() {
   });
 
   const { machines, loading: machinesLoading, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView } = useMachines(currentSiteId);
+  const { prefs: devicePrefs, setListPref } = useDevicePrefs();
+  const listPref = devicePrefs.listView;
+  const deviceUnion = useMemo<DeviceUnion>(() => ({
+    cpus:  unionIds(machines.map(m => m.devices?.cpus?.map(c => c.id) ?? [])),
+    disks: unionIds(machines.map(m => m.devices?.disks?.map(d => d.id) ?? [])),
+    gpus:  unionIds(machines.map(m => m.devices?.gpus?.map(g => g.id) ?? [])),
+    nics:  unionIds(machines.map(m => m.devices?.nics?.map(n => n.id) ?? [])),
+  }), [machines]);
+  const showDropdown = useMemo<ShowDropdownFlags>(() => ({
+    cpu:  machines.some(m => (m.devices?.cpus?.length  ?? 0) > 1),
+    disk: machines.some(m => (m.devices?.disks?.length ?? 0) > 1),
+    gpu:  machines.some(m => (m.devices?.gpus?.length  ?? 0) > 1),
+    nic:  machines.some(m => (m.devices?.nics?.length  ?? 0) > 1),
+  }), [machines]);
   const { presets: schedulePresets, createPreset, deletePreset: deleteSchedulePreset, updatePreset: updateSchedulePreset } = useSchedulePresets(currentSiteId);
   const { checkMachineHasActiveDeployment } = useDeployments(currentSiteId);
   const { removeMachineFromSite, removing: isRemovingMachine } = useMachineOperations(currentSiteId);
@@ -127,11 +158,14 @@ export default function DashboardPage() {
   // Per-row expand state for list view
   const [expandedMachineIds, setExpandedMachineIds] = useState<Set<string>>(() => new Set());
 
-  // Sync expanded set when machines change (expand new machines if global pref is expanded)
+  // Sync expanded set when machines change (expand new machines if global pref is expanded).
+  // Depend on machines.length (not `machines`) so we only re-run when the list grows/shrinks,
+  // not on every metrics snapshot that mutates an existing machine's fields.
   useEffect(() => {
     if (userPreferences.processesExpanded) {
       setExpandedMachineIds(new Set(machines.map(m => m.machineId)));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machines.length, userPreferences.processesExpanded]);
 
   // Remove Machine Dialog state
@@ -142,6 +176,11 @@ export default function DashboardPage() {
   const [killConfirmOpen, setKillConfirmOpen] = useState(false);
   const [killTarget, setKillTarget] = useState<{ machineId: string; processId: string; processName: string } | null>(null);
 
+  // Restart Process Confirmation state
+  const [restartConfirmOpen, setRestartConfirmOpen] = useState(false);
+  const [restartTarget, setRestartTarget] = useState<{ machineId: string; processId: string; processName: string } | null>(null);
+  const [restartInFlight, setRestartInFlight] = useState(false);
+
   // Screenshot Dialog state
   const [screenshotDialogOpen, setScreenshotDialogOpen] = useState(false);
   const [screenshotTarget, setScreenshotTarget] = useState<{ machineId: string; machineName: string; isOnline: boolean } | null>(null);
@@ -150,8 +189,29 @@ export default function DashboardPage() {
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   const [liveViewTarget, setLiveViewTarget] = useState<{ machineId: string; machineName: string } | null>(null);
 
-  // Metrics Detail Panel state (replaces top stats cards when active)
-  const [detailPanel, setDetailPanel] = useState<DetailPanelState | null>(null);
+  // Metrics Detail Panel state is the source of truth in userPreferences.activeGraphPanel
+  // (persisted across reloads). Derive the rendered panel from that pref once machines load.
+  const detailPanel = useMemo<DetailPanelState | null>(() => {
+    const p = userPreferences.activeGraphPanel;
+    if (!p) return null;
+    return { machineId: p.machineId, machineName: p.machineId, metric: p.metric as MetricType };
+  }, [userPreferences.activeGraphPanel]);
+
+  // Animate the panel's open/close (and machine-swap) with a height
+  // slide. Tab switches within the same panel (CPU → Memory → GPU)
+  // and panel-kind swaps (display ↔ metric on the same machine) are
+  // handled silently / via reflow — see `useSlidePanel` for the
+  // imperative dance.
+  const {
+    wrapperRef: slideWrapperRef,
+    contentRef: slideContentRef,
+    held: heldDetailPanel,
+    slideAnimating,
+  } = useSlidePanel<DetailPanelState>({
+    value: detailPanel,
+    reanimateKey: (p) => p.machineId,
+    reflowKey: (p) => (p.metric === 'display' ? 'display' : 'metric'),
+  });
 
   // Multilingual welcome messages with language info (memoized to avoid recreation)
   const welcomeMessages = useMemo(() => [
@@ -309,16 +369,20 @@ export default function DashboardPage() {
     updateUserPreferences({ processesExpanded: !userPreferences.processesExpanded }, { silent: true });
   }, [userPreferences.processesExpanded, updateUserPreferences]);
 
-  // Global expand/collapse all (both stats + processes)
+  const toggleDisplaysExpanded = useCallback(() => {
+    updateUserPreferences({ displaysExpanded: !userPreferences.displaysExpanded }, { silent: true });
+  }, [userPreferences.displaysExpanded, updateUserPreferences]);
+
+  // Global expand/collapse all (stats + processes + displays)
   const allExpanded = expandedMachineIds.size === machines.length && machines.length > 0;
 
   const toggleAllExpanded = useCallback(() => {
     if (allExpanded) {
       setExpandedMachineIds(new Set());
-      updateUserPreferences({ statsExpanded: false, processesExpanded: false }, { silent: true });
+      updateUserPreferences({ statsExpanded: false, processesExpanded: false, displaysExpanded: false }, { silent: true });
     } else {
       setExpandedMachineIds(new Set(machines.map(m => m.machineId)));
-      updateUserPreferences({ statsExpanded: true, processesExpanded: true }, { silent: true });
+      updateUserPreferences({ statsExpanded: true, processesExpanded: true, displaysExpanded: true }, { silent: true });
     }
   }, [allExpanded, machines, updateUserPreferences]);
 
@@ -331,18 +395,6 @@ export default function DashboardPage() {
       return next;
     });
   }, []);
-
-  const handleRowClick = (_machineId: string, canExpand: boolean) => {
-    // Don't toggle if user is selecting text
-    const selection = window.getSelection();
-    if (selection && selection.toString().length > 0) {
-      return;
-    }
-
-    if (canExpand) {
-      toggleProcessesExpanded();
-    }
-  };
 
   const handleKillProcess = (machineId: string, processId: string, processName: string) => {
     setKillTarget({ machineId, processId, processName });
@@ -357,13 +409,51 @@ export default function DashboardPage() {
     try {
       await killProcess(machineId, processId, processName);
       toast.success(`Kill command sent for "${processName}"`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('confirmKillProcess error:', error);
-      toast.error(error.message || 'Failed to kill process');
+      const msg = error instanceof Error ? error.message : 'Failed to kill process';
+      toast.error(msg);
     }
   };
 
-  const handleSetLaunchMode = async (machineId: string, processId: string, processName: string, mode: 'off' | 'always' | 'scheduled', exePath: string, schedules?: any[] | null, schedulePresetId?: string | null, successMessage?: string) => {
+  const handleRestartProcess = (machineId: string, processId: string, processName: string) => {
+    setRestartTarget({ machineId, processId, processName });
+    setRestartConfirmOpen(true);
+  };
+
+  const confirmRestartProcess = async () => {
+    if (!restartTarget) return;
+    const { machineId, processId, processName } = restartTarget;
+    setRestartInFlight(true);
+    try {
+      const res = await fetch(
+        `/api/sites/${encodeURIComponent(currentSiteId)}/machines/${encodeURIComponent(machineId)}/processes/${encodeURIComponent(processId)}/restart`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': crypto.randomUUID(),
+          },
+        },
+      );
+      const text = await res.text();
+      const body = text ? JSON.parse(text) : null;
+      if (!res.ok) {
+        throw new Error(body?.detail || body?.title || `Request failed with ${res.status}`);
+      }
+      toast.success(`restart queued for "${processName}"`);
+      setRestartConfirmOpen(false);
+      setRestartTarget(null);
+    } catch (error: unknown) {
+      console.error('confirmRestartProcess error:', error);
+      const msg = error instanceof Error ? error.message : 'failed to restart process';
+      toast.error(msg);
+    } finally {
+      setRestartInFlight(false);
+    }
+  };
+
+  const handleSetLaunchMode = async (machineId: string, processId: string, processName: string, mode: 'off' | 'always' | 'scheduled', exePath: string, schedules?: ScheduleBlock[] | null, schedulePresetId?: string | null, successMessage?: string) => {
     // Validate exe_path before enabling
     if (mode !== 'off' && (!exePath || exePath.trim() === '')) {
       toast.error(`cannot enable launch mode for "${processName}": executable path is not set. please edit the process and set a valid executable path.`);
@@ -378,13 +468,14 @@ export default function DashboardPage() {
       await setLaunchMode(machineId, processId, processName, mode, effectiveSchedules, schedulePresetId);
       const modeLabels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
       toast.success(successMessage ?? `Launch mode set to ${modeLabels[mode]} for "${processName}"`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('handleSetLaunchMode error:', error);
-      toast.error(error.message || 'Failed to set launch mode');
+      const msg = error instanceof Error ? error.message : 'Failed to set launch mode';
+      toast.error(msg);
     }
   };
 
-  const openEditProcessDialog = (machineId: string, process: any) => {
+  const openEditProcessDialog = (machineId: string, process: Process) => {
     setProcessDialogMode('edit');
     setEditingMachineId(machineId);
     setEditingProcessId(process.id);
@@ -436,6 +527,26 @@ export default function DashboardPage() {
     setProcessDialogOpen(true);
   };
 
+  const handleUseSuggestedExePath = (alert: ExeMissingToastAlert, suggestedPath: string) => {
+    const machine = machines.find((m) => m.machineId === alert.machineId);
+    const process = machine?.processes?.find(
+      (p) => p.id === alert.processId || p.name === alert.processName,
+    );
+
+    if (!machine || !process) {
+      void navigator.clipboard?.writeText(suggestedPath);
+      toast.success('suggested path copied');
+      return;
+    }
+
+    openEditProcessDialog(alert.machineId, {
+      ...process,
+      exe_path: suggestedPath,
+    });
+  };
+
+  useAgentAlertToasts(currentSiteId, handleUseSuggestedExePath);
+
   const handleSaveProcess = async () => {
     // Validation
     if (!editProcessForm.name || !editProcessForm.name.trim()) {
@@ -459,8 +570,9 @@ export default function DashboardPage() {
         toast.success(`Process "${editProcessForm.name}" updated successfully!`);
       }
       setProcessDialogOpen(false);
-    } catch (error: any) {
-      toast.error(error.message || `Failed to ${processDialogMode} process`);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : `Failed to ${processDialogMode} process`;
+      toast.error(msg);
     }
   };
 
@@ -470,8 +582,9 @@ export default function DashboardPage() {
       toast.success(`Process "${editProcessForm.name}" deleted successfully!`);
       setProcessDialogOpen(false);
       setDeleteConfirmOpen(false);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete process');
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Failed to delete process';
+      toast.error(msg);
     }
   };
 
@@ -488,25 +601,21 @@ export default function DashboardPage() {
       toast.success(`Machine "${machineToRemove.name}" removed from site successfully!`);
       setRemoveMachineDialogOpen(false);
       setMachineToRemove(null);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to remove machine');
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Failed to remove machine';
+      toast.error(msg);
     }
   };
 
-  // Read view preference from localStorage before first paint to avoid card→list flash
+  // Read view preference from localStorage before first paint to avoid card→list flash.
+  // useLayoutEffect runs synchronously after DOM mutations but BEFORE the browser
+  // paints, so the user only sees the final view. useEffect would paint the default
+  // 'card' first, then re-render to 'list' — visible flash on returning users.
   useLayoutEffect(() => {
     const savedView = localStorage.getItem('owlette_view_type');
     if (savedView === 'card' || savedView === 'list') {
       setViewType(savedView);
     }
-  }, []);
-
-  // Delay showing "Getting Started" by 2 seconds to avoid flash if machines load quickly
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setCanShowGettingStarted(true);
-    }, 2000); // 2 second delay
-    return () => clearTimeout(timer);
   }, []);
 
   // Save view preference to localStorage
@@ -515,7 +624,9 @@ export default function DashboardPage() {
     localStorage.setItem('owlette_view_type', view);
   };
 
-  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
+  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback).
+  // setState in effect is intentional: depends on async-loaded `sites` + `lastSiteId`
+  // which aren't available synchronously at mount, so a lazy initializer won't work.
   useEffect(() => {
     if (!sitesLoading && sites.length > 0 && !currentSiteId) {
       const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
@@ -532,19 +643,97 @@ export default function DashboardPage() {
     updateLastSite(siteId);
   };
 
-  // Handle metric click to open detail panel
+  // Gate the "getting started" empty-state card on being CERTAIN there's
+  // nothing to display. Do not simplify — this condition is load-bearing and
+  // every simplification attempted so far has reintroduced the "step 1: create
+  // your first site" flicker on reload.
+  //
+  // Why it's tricky: useMachines('') sets machinesLoading=false immediately
+  // when there's no currentSiteId yet, so `!machinesLoading` is TRUE during
+  // the initial render — before sites have even come back from Firestore.
+  // Using `!machinesLoading` (or anything that doesn't also gate on
+  // `!sitesLoading`) flashes the empty-state card for one paint on every
+  // reload.
+  //
+  // Valid empty states to show the card:
+  //   (a) User truly has no sites: sitesLoading=false && sites.length === 0
+  //   (b) User has sites and a selected site with zero machines:
+  //       sitesLoading=false && currentSiteId && machinesLoading=false && machines.length === 0
+  // Everything else = still loading → render null.
+  const showGettingStarted = useMemo(() => {
+    if (sitesLoading) return false;
+    if (sites.length === 0) return true;
+    // Have sites; need a selected one whose machines have finished loading.
+    return !!currentSiteId && !machinesLoading && machines.length === 0;
+  }, [sitesLoading, sites.length, currentSiteId, machinesLoading, machines.length]);
+
+  // Lightweight machine list for the detail panel's in-header switcher — only
+  // the id + online status it needs, memoized so the heavy panel doesn't
+  // re-render on every dashboard paint.
+  const switcherMachines = useMemo(
+    () => machines.map((m) => ({ machineId: m.machineId, online: m.online })),
+    [machines],
+  );
+
+  // Handle metric click to open detail panel (persisted).
+  // Each click SWAPS the panel's selection to the clicked metric — overwriting
+  // any existing graphTabs for this machine — rather than merging, so clicking
+  // different cells behaves like switching tabs, not like accumulating them.
   const handleMetricClick = (machineId: string, metric: MetricType) => {
-    const machine = machines.find(m => m.machineId === machineId);
-    setDetailPanel({
-      machineId,
-      machineName: machine?.machineId || machineId,
-      metric,
-    });
+    // 'display' is a panel route, not a chart tab — skip graphTabs write to avoid
+    // polluting persisted preferences with entries deserializeTabs will drop on read.
+    if (metric === 'display') {
+      updateUserPreferences(
+        { activeGraphPanel: { machineId, metric } },
+        { silent: true },
+      ).catch(() => { /* fire-and-forget, matches graphTabs pattern */ });
+      return;
+    }
+
+    // Build the fresh click intent. Clicking a generic 'disk' / 'gpu' cell
+    // (or a NIC util cell) expands to every per-device id on that machine so
+    // the user sees all devices of that type at once — not just the one that
+    // happened to be in the cell they clicked.
+    const clickIds = serializeTabs(initialMetricToState(metric));
+    const machine = machines.find((m) => m.machineId === machineId);
+    if (machine?.devices) {
+      if (metric === 'disk') {
+        for (const d of machine.devices.disks) clickIds.push(`disk:${d.id}`);
+      } else if (metric === 'gpu') {
+        for (const g of machine.devices.gpus) clickIds.push(`gpu:${g.id}`);
+      } else if (metric.endsWith('_tx_util') || metric.endsWith('_rx_util')) {
+        // NIC util click already seeded the clicked NIC in clickIds via
+        // initialMetricToState — dedupe so we don't add it twice.
+        const seen = new Set(clickIds);
+        for (const n of machine.devices.nics) {
+          const id = `nic:${n.id}`;
+          if (!seen.has(id)) clickIds.push(id);
+        }
+      }
+    }
+
+    updateUserPreferences(
+      {
+        activeGraphPanel: { machineId, metric },
+        graphTabs: { ...(userPreferences.graphTabs || {}), [machineId]: clickIds },
+      },
+      { silent: true },
+    ).catch(() => { /* fire-and-forget, matches graphTabs pattern */ });
+  };
+
+  // Switch the open detail panel to a different machine, keeping the current
+  // metric (re-expanded for the new machine's devices via handleMetricClick).
+  const handleSwitchMachine = (machineId: string) => {
+    if (!heldDetailPanel || heldDetailPanel.metric === 'display') return;
+    handleMetricClick(machineId, heldDetailPanel.metric);
   };
 
   // Close detail panel and return to stats cards
   const handleCloseDetailPanel = () => {
-    setDetailPanel(null);
+    updateUserPreferences(
+      { activeGraphPanel: null },
+      { silent: true },
+    ).catch(() => { /* fire-and-forget */ });
   };
 
   useEffect(() => {
@@ -563,7 +752,7 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-muted-foreground">loading...</p>
+        <p className="text-muted-foreground"><LoadingWord /></p>
       </div>
     );
   }
@@ -599,6 +788,8 @@ export default function DashboardPage() {
         sites={sites}
         currentSiteId={currentSiteId}
         machineCount={machines.length}
+        currentUserId={user?.uid}
+        isSuperadmin={isSuperadmin}
         onUpdateSite={updateSite}
         onDeleteSite={async (siteId) => {
           await deleteSite(siteId);
@@ -652,7 +843,7 @@ export default function DashboardPage() {
                 <Monitor className="h-4 w-4" />
               </div>
               <div>
-                <div className="flex items-baseline gap-0.5">
+                <div className="flex items-baseline gap-0.5 tabular-nums">
                   <span className={`text-xl font-bold ${onlineMachines > 0 ? 'text-emerald-400' : 'text-foreground'}`}>{onlineMachines}</span>
                   <span className="text-xs text-muted-foreground">/ {machines.length}</span>
                 </div>
@@ -669,7 +860,7 @@ export default function DashboardPage() {
                 <Cog className="h-4 w-4" />
               </div>
               <div>
-                <div className="flex items-baseline gap-0.5">
+                <div className="flex items-baseline gap-0.5 tabular-nums">
                   <span className="text-xl font-bold text-foreground">{totalProcesses}</span>
                   <span className="text-xs text-muted-foreground">managed</span>
                 </div>
@@ -679,22 +870,59 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Metrics Detail Panel */}
-        {detailPanel && (
-          <div className="mb-6">
-            <MetricsDetailPanel
-              machineId={detailPanel.machineId}
-              machineName={detailPanel.machineName}
-              siteId={currentSiteId}
-              initialMetric={detailPanel.metric}
-              onClose={handleCloseDetailPanel}
-            />
+        {/* Metrics Detail Panel — animates pixel `height` from 0 →
+            measured px on open and back to 0 on close. Wrapper height
+            is controlled imperatively by `useSlidePanel`; children
+            mount synchronously on open so the height transition has
+            fully-laid-out content to interpolate over. That trades a
+            small click-to-slide delay (mount cost) for a smooth slide
+            animation with no per-frame layout cost. */}
+        <div
+          ref={slideWrapperRef}
+          className="overflow-hidden transition-[height] duration-200 ease-out"
+          style={{ contain: 'layout paint' }}
+          aria-hidden={!detailPanel}
+        >
+          {/* Inner container: scrollHeight on this element measures the
+              natural content size (the wrapper's scrollHeight is clipped by
+              its own `height: 0`). `pb-6` (padding, not margin) absorbs the
+              old wrapper margin toggle into the measured height — so the
+              24px below-panel gap transitions alongside the panel itself
+              rather than snapping in/out at either end. */}
+          <div ref={slideContentRef} className="pb-6" style={{ contain: 'layout paint' }}>
+            {heldDetailPanel && (
+              heldDetailPanel.metric === 'display' ? (
+                <DisplayLayoutPanel
+                  machineId={heldDetailPanel.machineId}
+                  machineName={heldDetailPanel.machineName}
+                  siteId={currentSiteId}
+                  onClose={handleCloseDetailPanel}
+                />
+              ) : (
+                <MetricsDetailPanel
+                  machineId={heldDetailPanel.machineId}
+                  machineName={heldDetailPanel.machineName}
+                  siteId={currentSiteId}
+                  initialMetric={heldDetailPanel.metric}
+                  onClose={handleCloseDetailPanel}
+                  gpus={machines.find((m) => m.machineId === heldDetailPanel.machineId)?.devices?.gpus}
+                  machines={switcherMachines}
+                  onSwitchMachine={handleSwitchMachine}
+                />
+              )
+            )}
           </div>
-        )}
+        </div>
 
-        {/* Machines list */}
+        {/* Machines list — during the detail panel's slide animation we
+            mark this subtree so the global rule in globals.css can apply
+            `content-visibility: auto` + `contain-intrinsic-size` to each
+            row/card. Offscreen rows skip layout/paint while the wrapper
+            transitions, keeping the slide's frame budget clear. Flag lifts
+            as soon as bodyReady commits (or, on close, once the held panel
+            unmounts), so normal interaction is unaffected. */}
         {machines.length > 0 ? (
-          <div className="space-y-6">
+          <div className="space-y-6" data-slide-pausing={slideAnimating ? 'true' : undefined}>
             <div className="flex items-center justify-between">
               <h3 className="text-lg md:text-xl font-bold text-foreground">machines</h3>
 
@@ -707,32 +935,53 @@ export default function DashboardPage() {
 
                 {/* Expand/Collapse All + View Toggle */}
                 <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={toggleAllExpanded}
-                    className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
-                    title={allExpanded ? 'collapse all' : 'expand all'}
-                  >
-                    {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={toggleAllExpanded}
+                        className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      >
+                        {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{allExpanded ? 'collapse all' : 'expand all'}</p>
+                    </TooltipContent>
+                  </Tooltip>
                   <div className="h-4 w-px bg-border" />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleViewChange('card')}
-                    className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
-                  >
-                    <LayoutGrid className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleViewChange('list')}
-                    className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
-                  >
-                    <List className="h-4 w-4" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleViewChange('card')}
+                        className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                      >
+                        <LayoutGrid className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>card view</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleViewChange('list')}
+                        data-testid="view-toggle-list"
+                        className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                      >
+                        <List className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>list view</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
             </div>
@@ -744,14 +993,17 @@ export default function DashboardPage() {
                   machines={machines}
                   statsExpanded={userPreferences.statsExpanded}
                   processesExpanded={userPreferences.processesExpanded}
+                  displaysExpanded={userPreferences.displaysExpanded ?? false}
                   onToggleStats={toggleStatsExpanded}
                   onToggleProcesses={toggleProcessesExpanded}
+                  onToggleDisplays={toggleDisplaysExpanded}
                   currentSiteId={currentSiteId}
                   siteTimezone={currentSite?.timezone}
                   siteTimeFormat={userPreferences.timeFormat || '12h'}
                   onEditProcess={openEditProcessDialog}
                   onCreateProcess={openCreateProcessDialog}
                   onKillProcess={handleKillProcess}
+                  onRestartProcess={handleRestartProcess}
                   onSetLaunchMode={handleSetLaunchMode}
                   onConfigureSchedule={handleConfigureSchedule}
                   onRemoveMachine={openRemoveMachineDialog}
@@ -777,22 +1029,29 @@ export default function DashboardPage() {
             {viewType === 'list' && (
               <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
                 <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
-                  <ListViewTableHeader />
+                  <MachineTableHeader
+                    deviceUnion={deviceUnion}
+                    showDropdown={showDropdown}
+                    listPref={listPref}
+                    setListPref={setListPref}
+                  />
                   <TableBody>
                     {machines.map((machine) => (
                       <MachineRow
                         key={machine.machineId}
                         machine={machine}
+                        listPref={listPref}
                         isExpanded={expandedMachineIds.has(machine.machineId)}
                         currentSiteId={currentSiteId}
                         siteTimezone={currentSite?.timezone || 'UTC'}
                         siteTimeFormat={userPreferences.timeFormat || '12h'}
                         userPreferences={userPreferences}
-                        isAdmin={isAdmin}
+                        isSiteAdmin={isSiteAdmin(currentSiteId)}
                         onToggleExpanded={() => toggleMachineExpanded(machine.machineId)}
                         onEditProcess={(process) => openEditProcessDialog(machine.machineId, process)}
                         onCreateProcess={() => openCreateProcessDialog(machine.machineId)}
                         onKillProcess={(processId, processName) => handleKillProcess(machine.machineId, processId, processName)}
+                        onRestartProcess={(processId, processName) => handleRestartProcess(machine.machineId, processId, processName)}
                         onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
                           handleSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
                         }
@@ -801,6 +1060,7 @@ export default function DashboardPage() {
                         onMetricClick={(metricType) => handleMetricClick(machine.machineId, metricType)}
                         onReboot={() => rebootMachine(machine.machineId)}
                         onShutdown={() => shutdownMachine(machine.machineId)}
+                        onCancelReboot={() => cancelReboot(machine.machineId)}
                         onScreenshot={() => {
                           setScreenshotTarget({ machineId: machine.machineId, machineName: machine.machineId, isOnline: machine.online });
                           setScreenshotDialogOpen(true);
@@ -816,8 +1076,8 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-        ) : canShowGettingStarted ? (
-          <Card className="border-border bg-card animate-in fade-in duration-500">
+        ) : showGettingStarted ? (
+          <Card className="border-border bg-card animate-in fade-in duration-300">
             <CardHeader>
               <CardTitle className="text-foreground">getting started</CardTitle>
               <CardDescription className="text-muted-foreground">
@@ -866,7 +1126,7 @@ export default function DashboardPage() {
                         toast.success('download started', {
                           description: `downloading owlette v${version}`,
                         });
-                      } catch (err) {
+                      } catch {
                         toast.error('download failed', {
                           description: 'failed to start download. please try again.',
                         });
@@ -891,7 +1151,7 @@ export default function DashboardPage() {
                         toast.success('link copied', {
                           description: 'download link copied to clipboard',
                         });
-                      } catch (err) {
+                      } catch {
                         toast.error('copy failed', {
                           description: 'failed to copy link. please try again.',
                         });
@@ -980,23 +1240,29 @@ export default function DashboardPage() {
                           {labels[mode]}
                         </button>
                         <span className="w-px bg-blue-400/50" />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setProcessDialogOpen(false);
-                            handleConfigureSchedule(editingMachineId, {
-                              id: editingProcessId,
-                              name: editProcessForm.name,
-                              exe_path: editProcessForm.exe_path,
-                              schedules: editProcessForm.schedules || null,
-                              launch_mode: 'scheduled',
-                            } as Process);
-                          }}
-                          className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
-                          title="configure schedule"
-                        >
-                          <Settings2 className="h-3.5 w-3.5" />
-                        </button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProcessDialogOpen(false);
+                                handleConfigureSchedule(editingMachineId, {
+                                  id: editingProcessId,
+                                  name: editProcessForm.name,
+                                  exe_path: editProcessForm.exe_path,
+                                  schedules: editProcessForm.schedules || null,
+                                  launch_mode: 'scheduled',
+                                } as Process);
+                              }}
+                              className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
+                            >
+                              <Settings2 className="h-3.5 w-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>configure schedule</p>
+                          </TooltipContent>
+                        </Tooltip>
                       </span>
                     );
                   }
@@ -1144,9 +1410,9 @@ export default function DashboardPage() {
             )}
             <div className="flex gap-2 ml-auto">
               <Button
-                variant="outline"
+                variant="ghost"
                 onClick={() => setProcessDialogOpen(false)}
-                className="border-border bg-muted text-foreground hover:bg-accent hover:border-foreground/30 hover:text-white cursor-pointer"
+                className="bg-secondary border border-border cursor-pointer"
               >
                 cancel
               </Button>
@@ -1167,14 +1433,14 @@ export default function DashboardPage() {
           <DialogHeader>
             <DialogTitle className="text-foreground">delete process</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              are you sure you want to permanently delete "{editProcessForm.name}"? this action cannot be undone.
+              are you sure you want to permanently delete &quot;{editProcessForm.name}&quot;? this action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setDeleteConfirmOpen(false)}
-              className="border-border bg-muted text-foreground hover:bg-accent hover:border-foreground/30 hover:text-white cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -1219,8 +1485,9 @@ export default function DashboardPage() {
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setKillConfirmOpen(false)}
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -1230,6 +1497,46 @@ export default function DashboardPage() {
             >
               <Square className="h-4 w-4 mr-2" />
               kill process
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Restart Process Confirmation Dialog */}
+      <Dialog
+        open={restartConfirmOpen}
+        onOpenChange={(open) => {
+          if (restartInFlight) return;
+          setRestartConfirmOpen(open);
+          if (!open) setRestartTarget(null);
+        }}
+      >
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>restart {restartTarget?.processName}?</DialogTitle>
+            <DialogDescription>
+              restart <span className="font-semibold text-foreground">{restartTarget?.processName}</span> on <span className="font-semibold text-foreground">{restartTarget?.machineId}</span>? this will briefly stop the process before relaunching.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setRestartConfirmOpen(false);
+                setRestartTarget(null);
+              }}
+              disabled={restartInFlight}
+              className="bg-secondary border border-border cursor-pointer"
+            >
+              cancel
+            </Button>
+            <Button
+              variant="default"
+              onClick={confirmRestartProcess}
+              disabled={restartInFlight}
+            >
+              <RotateCw className={`h-4 w-4 mr-2 ${restartInFlight ? 'animate-spin' : ''}`} />
+              restart
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1262,6 +1569,7 @@ export default function DashboardPage() {
           onOpenChange={setScreenshotDialogOpen}
           machineId={screenshotTarget.machineId}
           machineName={screenshotTarget.machineName}
+          machineTimezone={machines.find(m => m.machineId === screenshotTarget.machineId)?.machineTimezone}
           siteId={currentSiteId}
           isOnline={screenshotTarget.isOnline}
           onCaptureScreenshot={() => captureScreenshot(screenshotTarget.machineId)}

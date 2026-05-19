@@ -42,7 +42,7 @@ export function GettingStartedCard({
       toast.success('Download Started', {
         description: `Downloading owlette v${version}`,
       });
-    } catch (err) {
+    } catch {
       toast.error('Download Failed', {
         description: 'Failed to start download. Please try again.',
       });
@@ -61,7 +61,7 @@ export function GettingStartedCard({
       toast.success('Link Copied', {
         description: 'Download link copied to clipboard',
       });
-    } catch (err) {
+    } catch {
       toast.error('Copy Failed', {
         description: 'Failed to copy link. Please try again.',
       });

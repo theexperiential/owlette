@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ChevronDown, Search, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { getAllTimezones, formatTimezoneLabel, getTimezoneOffset, COMMON_TIMEZONES, type TimezoneOption } from '@/lib/timeUtils';
+import { getAllTimezones, getTimezoneOffset, COMMON_TIMEZONES, type TimezoneOption } from '@/lib/timeUtils';
 
 interface TimezoneSelectProps {
   value: string;
@@ -17,18 +17,21 @@ interface TimezoneSelectProps {
 const COMMON_TZ_SET = new Set<string>(COMMON_TIMEZONES.map((tz) => tz.value));
 
 export function TimezoneSelect({ value, onValueChange, disabled, className, id }: TimezoneSelectProps) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpenRaw] = useState(false);
   const [search, setSearch] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (open) {
+  // Reset search + focus input when the popover opens. Handled in the
+  // onOpenChange callback rather than an effect so we don't trip
+  // react-hooks/set-state-in-effect.
+  const setOpen = useCallback((next: boolean) => {
+    setOpenRaw(next);
+    if (next) {
       setSearch('');
-      // Focus input after popover animation
       setTimeout(() => inputRef.current?.focus(), 0);
     }
-  }, [open]);
+  }, []);
 
   const allTimezones = useMemo(() => getAllTimezones(), []);
 

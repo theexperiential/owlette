@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import yaml from 'js-yaml';
+import { renderOpenApiReference } from '@/lib/openapiReference';
 
 let cachedSpec: object | null = null;
 
@@ -15,7 +16,7 @@ export async function GET() {
   if (!cachedSpec) {
     const yamlPath = join(process.cwd(), 'openapi.yaml');
     const yamlContent = readFileSync(yamlPath, 'utf-8');
-    cachedSpec = yaml.load(yamlContent) as object;
+    cachedSpec = renderOpenApiReference(yaml.load(yamlContent) as Record<string, unknown>);
   }
 
   return NextResponse.json(cachedSpec, {

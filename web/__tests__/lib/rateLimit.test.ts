@@ -1,6 +1,7 @@
 /** @jest-environment node */
 
 import { NextRequest } from 'next/server';
+import type { Ratelimit } from '@upstash/ratelimit';
 import { getClientIp, checkRateLimit, getRateLimitHeaders } from '@/lib/rateLimit';
 
 describe('getClientIp', () => {
@@ -35,6 +36,9 @@ describe('checkRateLimit', () => {
   it('returns success when ratelimiter is null (in-memory allows first request)', async () => {
     const result = await checkRateLimit(null, 'null-first-request');
     expect(result.success).toBe(true);
+    expect(result.limit).toBe(15);
+    expect(result.remaining).toBe(14);
+    expect(result.reset).toBeDefined();
   });
 
   it('returns failure after exceeding in-memory limit (15/min)', async () => {
@@ -45,6 +49,9 @@ describe('checkRateLimit', () => {
     }
     const denied = await checkRateLimit(null, id);
     expect(denied.success).toBe(false);
+    expect(denied.limit).toBe(15);
+    expect(denied.remaining).toBe(0);
+    expect(denied.retryAfter).toBeGreaterThan(0);
   });
 
   it('returns success with metadata when Redis limiter succeeds', async () => {
@@ -56,7 +63,7 @@ describe('checkRateLimit', () => {
         reset: Date.now() + 60000,
       }),
     };
-    const result = await checkRateLimit(mockLimiter as any, 'redis-success');
+    const result = await checkRateLimit(mockLimiter as unknown as Ratelimit, 'redis-success');
     expect(result.success).toBe(true);
     expect(result.limit).toBe(10);
     expect(result.remaining).toBe(9);
@@ -74,7 +81,7 @@ describe('checkRateLimit', () => {
         reset: resetTime,
       }),
     };
-    const result = await checkRateLimit(mockLimiter as any, 'redis-denied');
+    const result = await checkRateLimit(mockLimiter as unknown as Ratelimit, 'redis-denied');
     expect(result.success).toBe(false);
     expect(result.retryAfter).toBeGreaterThan(0);
     expect(result.remaining).toBe(0);
@@ -84,32 +91,55 @@ describe('checkRateLimit', () => {
     const mockLimiter = {
       limit: jest.fn().mockRejectedValue(new Error('Redis connection failed')),
     };
-    const result = await checkRateLimit(mockLimiter as any, 'redis-error-fallback');
+    const result = await checkRateLimit(mockLimiter as unknown as Ratelimit, 'redis-error-fallback');
     expect(result.success).toBe(true);
   });
 });
 
 describe('getRateLimitHeaders', () => {
-  it('returns all headers when all fields present', () => {
+  it('returns both IETF and legacy headers when all fields present', () => {
+    const resetMs = Date.now() + 60_000;
     const headers = getRateLimitHeaders({
       limit: 10,
       remaining: 5,
-      reset: 1700000000,
+      reset: resetMs,
       retryAfter: 30,
     });
-    expect(headers).toEqual({
-      'X-RateLimit-Limit': '10',
-      'X-RateLimit-Remaining': '5',
-      'X-RateLimit-Reset': '1700000000',
-      'Retry-After': '30',
-    });
+    expect(headers['RateLimit-Limit']).toBe('10');
+    expect(headers['RateLimit-Remaining']).toBe('5');
+    expect(headers['RateLimit-Reset']).toMatch(/^\d+$/);
+    expect(headers['X-RateLimit-Limit']).toBe('10');
+    expect(headers['X-RateLimit-Remaining']).toBe('5');
+    expect(headers['X-RateLimit-Reset']).toBe(String(resetMs));
+    expect(headers['Retry-After']).toBe('30');
+  });
+
+  it('emits RateLimit-Reset as delta-seconds (ietf), X- form as unix-ms', () => {
+    const now = Date.now();
+    const future = now + 90_000;
+    const headers = getRateLimitHeaders({ reset: future });
+    const delta = Number(headers['RateLimit-Reset']);
+    expect(delta).toBeGreaterThanOrEqual(89);
+    expect(delta).toBeLessThanOrEqual(91);
+    expect(headers['X-RateLimit-Reset']).toBe(String(future));
+  });
+
+  it('includes Roost-Rate-Limited-Reason when reason supplied', () => {
+    const headers = getRateLimitHeaders({ retryAfter: 5, reason: 'key-rate' });
+    expect(headers['Roost-Rate-Limited-Reason']).toBe('key-rate');
+  });
+
+  it('omits Roost-Rate-Limited-Reason when reason unspecified', () => {
+    const headers = getRateLimitHeaders({ limit: 10 });
+    expect(headers).not.toHaveProperty('Roost-Rate-Limited-Reason');
   });
 
   it('omits undefined fields from headers', () => {
     const headers = getRateLimitHeaders({ limit: 10 });
-    expect(headers).toEqual({ 'X-RateLimit-Limit': '10' });
-    expect(headers).not.toHaveProperty('X-RateLimit-Remaining');
-    expect(headers).not.toHaveProperty('X-RateLimit-Reset');
+    expect(headers['RateLimit-Limit']).toBe('10');
+    expect(headers['X-RateLimit-Limit']).toBe('10');
+    expect(headers).not.toHaveProperty('RateLimit-Remaining');
+    expect(headers).not.toHaveProperty('RateLimit-Reset');
     expect(headers).not.toHaveProperty('Retry-After');
   });
 });

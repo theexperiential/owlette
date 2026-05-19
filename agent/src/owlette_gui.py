@@ -64,6 +64,7 @@ class OwletteConfigApp:
         self.service_running = None
         self.details_collapsed = True  # Default to collapsed (will be loaded from config)
         self.last_save_time = 0  # Debounce for duplicate save events
+        self._pending_detail_refresh = False
 
         # Load config directly
         self.config = shared_utils.load_config()
@@ -366,7 +367,7 @@ class OwletteConfigApp:
         )
         self.overflow_button.pack(side='left', padx=(0, 10))
 
-        self.version_label = ctk.CTkLabel(self.footer_right, text=f"v{shared_utils.APP_VERSION} | AGPL-3.0", fg_color='transparent', text_color=shared_utils.TEXT_COLOR, font=("", 11))
+        self.version_label = ctk.CTkLabel(self.footer_right, text=f"v{shared_utils.APP_VERSION} | FSL-1.1-Apache-2.0", fg_color='transparent', text_color=shared_utils.TEXT_COLOR, font=("", 11))
         self.version_label.pack(side='left')
 
         # VERTICAL SEPARATOR between panels
@@ -564,6 +565,15 @@ class OwletteConfigApp:
             self.time_to_init_label, self.time_to_init_entry,
             self.visibility_label, self.visibility_menu,
             self.relaunch_attempts_label, self.relaunch_attempts_entry,
+        ]
+        self._detail_entry_widgets = [
+            self.name_entry,
+            self.exe_path_entry,
+            self.file_path_entry,
+            self.cwd_entry,
+            self.time_delay_entry,
+            self.time_to_init_entry,
+            self.relaunch_attempts_entry,
         ]
 
         # Save grid info for all detail widgets (used to restore after grid_remove)
@@ -1076,16 +1086,100 @@ class OwletteConfigApp:
         last_pid = max(pids, key=int) if pids else None
         return int(last_pid) if last_pid else None
 
+    def restart_process(self):
+        # Restart mirrors the kill_process flow: terminate the OS PID locally
+        # via shared_utils.graceful_terminate, then rely on the service's main
+        # monitoring loop to relaunch the process on its next tick (subject to
+        # launch_mode). The kill flow is purely local (no command dispatch),
+        # so restart matches that mechanism exactly — different audit copy
+        # and an up-front confirmation dialog are the only behavioral deltas.
+        if not self.selected_process:
+            CTkMessagebox(master=self.master, title="Error",
+                          message="You must select a process to restart it.", icon="cancel")
+            return
+
+        # Resolve process name for the confirmation dialog and audit log
+        process_name = None
+        for process in self.config.get('processes', []):
+            if process.get('id') == self.selected_process:
+                process_name = process.get('name')
+                break
+
+        # Confirmation — copy intentionally lowercase to match UI voice
+        display_name = process_name or self.selected_process
+        response = CTkMessagebox(
+            master=self.master,
+            title="restart process",
+            message=f"restart {display_name}? this will briefly stop the process before relaunching.",
+            icon="question",
+            option_1="Yes",
+            option_2="No",
+        )
+        if response.get() != 'Yes':
+            return
+
+        os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
+
+        if not os_pid:
+            CTkMessagebox(master=self.master, title="Error",
+                          message="No OS process ID found for the selected process.", icon="cancel")
+            return
+
+        # Run terminate in background thread to avoid freezing the GUI
+        # (graceful_terminate blocks up to 8s, log_event makes network calls).
+        # NOTE: we deliberately do NOT mark status as 'KILLED' here — that
+        # marker suppresses the service's crash-detection logging on the next
+        # tick. For a restart we want the service to observe the missing PID
+        # and relaunch via its normal autolaunch path; the audit event below
+        # documents that this was an operator-initiated restart.
+        def _do_restart():
+            try:
+                shared_utils.graceful_terminate(os_pid)
+
+                # Log process restart event to Firebase
+                if self.firebase_client and self.firebase_client.is_connected():
+                    try:
+                        self.firebase_client.log_event(
+                            action='process_restarted',
+                            level='info',
+                            process_name=process_name,
+                            details=f'Manual restart from GUI - terminated PID: {os_pid} (service will relaunch on next tick)'
+                        )
+                        logging.info(f"Logged process restart event for {process_name} (PID {os_pid})")
+                    except Exception as log_err:
+                        logging.error(f"Failed to log restart event: {log_err}")
+
+            except Exception as e:
+                self.master.after(0, lambda: CTkMessagebox(
+                    master=self.master, title="Error",
+                    message=f"Failed to restart the process: {e}", icon="cancel"))
+
+        threading.Thread(target=_do_restart, daemon=True).start()
+
     def kill_process(self):
         if self.selected_process:
-            os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
-
-            # Get process name for logging
+            # Get process name for logging + confirmation copy
             process_name = None
             for process in self.config.get('processes', []):
                 if process.get('id') == self.selected_process:
                     process_name = process.get('name')
                     break
+
+            # Confirmation — mirrors restart_process; copy intentionally
+            # lowercase to match UI voice.
+            display_name = process_name or self.selected_process
+            response = CTkMessagebox(
+                master=self.master,
+                title="kill process",
+                message=f"kill {display_name}? the process will be terminated and won't auto-relaunch until you start it again.",
+                icon="question",
+                option_1="Yes",
+                option_2="No",
+            )
+            if response.get() != 'Yes':
+                return
+
+            os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
 
             if os_pid:
                 # Run kill in background thread to avoid freezing the GUI
@@ -1140,12 +1234,28 @@ class OwletteConfigApp:
 
         return config_data
 
-    def update_process_list(self):
+    def _hash_process_for_external_change(self, process):
         import hashlib
-        import json
 
+        process_for_hash = dict(process)
+        process_for_hash.pop('status', None)
+        return hashlib.md5(json.dumps(process_for_hash, sort_keys=True).encode()).hexdigest()
+
+    def _detail_entry_has_focus(self, focus_widget):
+        if not focus_widget:
+            return False
+
+        focus_path = str(focus_widget)
+        for entry_widget in getattr(self, '_detail_entry_widgets', []):
+            entry_path = str(entry_widget)
+            if focus_path == entry_path or focus_path.startswith(f"{entry_path}."):
+                return True
+        return False
+
+    def update_process_list(self):
         # Get current keyboard focus (selected entry widget)
-        current_focus = str(self.master.focus_get())
+        current_focus_widget = self.master.focus_get()
+        current_focus = str(current_focus_widget)
         #logging.error(f'current focus = {current_focus}')
 
         # Get currently selected item from process list
@@ -1169,8 +1279,8 @@ class OwletteConfigApp:
 
                 if old_process and new_process:
                     # Calculate hashes to detect changes
-                    old_hash = hashlib.md5(json.dumps(old_process, sort_keys=True).encode()).hexdigest()
-                    new_hash = hashlib.md5(json.dumps(new_process, sort_keys=True).encode()).hexdigest()
+                    old_hash = self._hash_process_for_external_change(old_process)
+                    new_hash = self._hash_process_for_external_change(new_process)
 
                     if old_hash != new_hash:
                         config_changed_externally = True
@@ -1232,18 +1342,21 @@ class OwletteConfigApp:
                 except Exception as e:
                     logging.info(e)
 
-        # Auto-refresh displayed fields if config changed externally AND user is not editing
-        # This allows Firestore changes to appear immediately without overwriting user input
-        if config_changed_externally and self.selected_process:
-            # Check if user is currently editing any entry field
-            user_is_editing = current_focus and ('entry' in current_focus.lower() or 'text' in current_focus.lower())
-
-            if not user_is_editing:
-                # Safe to refresh - user is not actively typing
-                process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
-                if process:
-                    self.refresh_displayed_fields(process)
+        # Auto-refresh displayed fields if config changed externally.
+        # Non-text controls are safe to refresh while entries are focused; entry fields
+        # are retried after focus leaves so Firestore changes are not lost.
+        if self.selected_process and (config_changed_externally or self._pending_detail_refresh):
+            process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
+            if process:
+                self.refresh_displayed_non_text_fields(process)
+                if self._detail_entry_has_focus(current_focus_widget):
+                    self._pending_detail_refresh = True
+                else:
+                    self.refresh_displayed_entry_fields(process)
+                    self._pending_detail_refresh = False
                     logging.debug(f"Auto-refreshed displayed fields for external config change")  # Debug level - fires frequently
+            else:
+                self._pending_detail_refresh = False
 
     def update_process_list_periodically(self):
         try:
@@ -1489,8 +1602,11 @@ class OwletteConfigApp:
                 self.master.after(50, cmd)
             return action
 
-        # Kill
-        ctk.CTkButton(frame, text="  kill process", command=make_action(self.kill_process), **btn_opts).pack(fill='x', padx=4, pady=(4, 0))
+        # Restart
+        ctk.CTkButton(frame, text="  restart process", command=make_action(self.restart_process), **btn_opts).pack(fill='x', padx=4, pady=(4, 0))
+
+        # Kill (no top padding — restart sits directly above)
+        ctk.CTkButton(frame, text="  kill process", command=make_action(self.kill_process), **btn_opts).pack(fill='x', padx=4)
 
         # Separator
         ctk.CTkFrame(frame, fg_color=shared_utils.BORDER_COLOR, height=1).pack(fill='x', padx=8, pady=3)
@@ -1581,24 +1697,20 @@ class OwletteConfigApp:
         self.selected_process = process_id
         process = shared_utils.fetch_process_by_id(process_id, self.config)
         self._show_detail_fields(True)
+        self._pending_detail_refresh = False
         self.refresh_displayed_fields(process)
 
     def refresh_displayed_fields(self, process):
         """Update all displayed fields from process data (for external changes)"""
+        self.refresh_displayed_entry_fields(process)
+        self.refresh_displayed_non_text_fields(process)
+
+    def refresh_displayed_entry_fields(self, process):
+        """Update entry fields from process data."""
         self.name_entry.delete(0, tk.END)
         self.name_entry.insert(0, process.get('name', ''))
         self.exe_path_entry.delete(0, tk.END)
         self.exe_path_entry.insert(0, process.get('exe_path', ''))
-
-        # Map legacy visibility values to new options (backward compatibility)
-        visibility_value = process.get('visibility', 'Normal')
-        if visibility_value == 'Show':
-            visibility_value = 'Normal'
-        elif visibility_value == 'Hide':
-            visibility_value = 'Hidden'
-        self.visibility_menu.set(visibility_value)
-
-        self.priority_menu.set(process.get('priority', 'Normal'))
         self.file_path_entry.delete(0, tk.END)
         self.file_path_entry.insert(0, process.get('file_path', ''))
         self.cwd_entry.delete(0, tk.END)
@@ -1609,6 +1721,18 @@ class OwletteConfigApp:
         self.time_to_init_entry.insert(0, process.get('time_to_init', ''))
         self.relaunch_attempts_entry.delete(0, tk.END)
         self.relaunch_attempts_entry.insert(0, process.get('relaunch_attempts', ''))
+
+    def refresh_displayed_non_text_fields(self, process):
+        """Update non-text detail controls from process data."""
+        # Map legacy visibility values to new options (backward compatibility)
+        visibility_value = process.get('visibility', 'Normal')
+        if visibility_value == 'Show':
+            visibility_value = 'Normal'
+        elif visibility_value == 'Hide':
+            visibility_value = 'Hidden'
+        self.visibility_menu.set(visibility_value)
+
+        self.priority_menu.set(process.get('priority', 'Normal'))
         # Set launch mode dropdown
         mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
         display_map = {'off': 'Off', 'always': 'Always On', 'scheduled': 'Scheduled'}

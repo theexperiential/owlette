@@ -37,6 +37,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'what version of the owlette agent is running?', category: 'system-health' },
   { text: 'how much memory is available for new processes?', category: 'system-health' },
   { text: 'summarize the current state of this machine', category: 'system-health' },
+  { text: 'is a reboot pending on this machine?', category: 'system-health' },
 
   // ── gpu-display ────────────────────────────────────────────────────────
   { text: 'which nvidia driver version is installed?', category: 'gpu-display' },
@@ -64,6 +65,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'show me what\'s on screen right now', category: 'gpu-display' },
   { text: 'how much total VRAM does this GPU have?', category: 'gpu-display' },
   { text: 'are the GPU fans spinning at a normal speed?', category: 'gpu-display' },
+  { text: 'bump the GPU TDR delay to 10 seconds so long shader compiles don\'t crash', category: 'gpu-display' },
 
   // ── process-management ─────────────────────────────────────────────────
   { text: 'what processes is owlette managing right now?', category: 'process-management' },
@@ -86,6 +88,8 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'is any managed process using an unusual amount of memory?', category: 'process-management' },
   { text: 'show me how long each managed process has been running', category: 'process-management' },
   { text: 'are any processes stuck in a crash-restart loop?', category: 'process-management' },
+  { text: 'kill the main process and start it back up', category: 'process-management' },
+  { text: 'pop a toast saying "maintenance starting in 5 minutes — save your work"', category: 'process-management' },
 
   // ── network-connectivity ───────────────────────────────────────────────
   { text: 'what does the network config look like?', category: 'network-connectivity' },
@@ -108,6 +112,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'is the machine getting a DHCP address or is it static?', category: 'network-connectivity' },
   { text: 'check if port 80 and 443 are open outbound', category: 'network-connectivity' },
   { text: 'how many network adapters does this machine have?', category: 'network-connectivity' },
+  { text: 'flush DNS and reset the TCP/IP stack — it\'s having network issues', category: 'network-connectivity' },
 
   // ── storage-files ──────────────────────────────────────────────────────
   { text: 'how much disk space is left on C:?', category: 'storage-files' },
@@ -130,6 +135,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'are there any old log files that can be cleaned up?', category: 'storage-files' },
   { text: 'what\'s the read/write speed of the main drive?', category: 'storage-files' },
   { text: 'list the contents of the desktop folder', category: 'storage-files' },
+  { text: 'clean up temp files and the Windows Update cache — disk is almost full', category: 'storage-files' },
 
   // ── troubleshooting ────────────────────────────────────────────────────
   { text: 'are there any recent application crashes in the event log?', category: 'troubleshooting' },
@@ -157,6 +163,9 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'what process is causing the GPU to max out?', category: 'troubleshooting' },
   { text: 'check if the machine ran out of VRAM', category: 'troubleshooting' },
   { text: 'did anything unusual happen in the last hour?', category: 'troubleshooting' },
+  { text: 'show me any error or critical events from the system log in the last 24 hours', category: 'troubleshooting' },
+  { text: 'restart the print spooler service', category: 'troubleshooting' },
+  { text: 'this machine\'s been slow — check for pending reboots, skim the last hour of critical events, and if nothing\'s urgent, clean up temp files', category: 'troubleshooting' },
 
   // ── scheduling-automation ──────────────────────────────────────────────
   { text: 'set all processes to only run weekdays 9am to 6pm', category: 'scheduling-automation' },
@@ -177,6 +186,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'set up a weekday 7am to 7pm schedule', category: 'scheduling-automation' },
   { text: 'set up a Thursday through Saturday 6pm to midnight schedule', category: 'scheduling-automation' },
   { text: 'configure weekend-only hours: 10am to 4pm Saturday and Sunday', category: 'scheduling-automation' },
+  { text: 'disable the scheduled task "GoogleUpdaterTaskSystem"', category: 'scheduling-automation' },
 
   // ── security-events ────────────────────────────────────────────────────
   { text: 'any failed login attempts in the security log?', category: 'security-events' },
@@ -238,6 +248,12 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'check if the machine is set to auto-restart after power loss', category: 'installation-config' },
   { text: 'is Windows Update set to auto-install?', category: 'installation-config' },
   { text: 'what user account is this machine logged in as?', category: 'installation-config' },
+  { text: 'pause Windows Update for 7 days — we have an event on Thursday', category: 'installation-config' },
+  { text: 'turn off all Windows toast notifications — this is a kiosk', category: 'installation-config' },
+  { text: 'set this machine to the high performance power plan and disable sleep', category: 'installation-config' },
+  { text: 'read the value of HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run', category: 'installation-config' },
+  { text: 'disable the Xbox Game Bar', category: 'installation-config' },
+  { text: 'prep this machine for a 24/7 install: high performance power plan, disable sleep, disable notifications, pause Windows Update for 30 days, and flush DNS', category: 'installation-config' },
 ];
 
 /**

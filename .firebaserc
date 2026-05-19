@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default": "owlette-dev-3838a",
+    "dev": "owlette-dev-3838a",
+    "prod": "owlette-prod-90a12"
+  }
+}

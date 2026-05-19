@@ -15,3 +15,8 @@ export { ChartTooltip, metricConfig } from './ChartTooltip';
 export type { MetricType } from './ChartTooltip';
 
 export { MetricsDetailPanel } from './MetricsDetailPanel';
+
+// Re-exported from the lightweight pure-utils module so importers don't pay the
+// cost of loading Recharts just to build a persisted tab-id list at click time.
+export { initialMetricToState, serializeTabs } from './metricsTabs';
+export type { TabSelection } from './metricsTabs';

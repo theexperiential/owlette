@@ -1,6 +1,6 @@
 # remote commands
 
-The agent listens for commands from the web dashboard via Firestore. Commands are written to a pending queue, executed by the agent, and results are written to a completed queue.
+The agent listens for commands from the web dashboard via Firestore. Commands are written as entries in a pending command map, executed by the agent, and mirrored into a completed command map as progress, completion, failure, or cancellation records.
 
 ---
 
@@ -8,15 +8,21 @@ The agent listens for commands from the web dashboard via Firestore. Commands ar
 
 ```
 Dashboard                      Firestore                         Agent
-  │                               │                                │
-  │── write to pending ──────────▶│                                │
-  │   commands/pending/{id}       │── listener detects ───────────▶│
-  │                               │                                │── execute
-  │                               │                                │
-  │                               │◀── write to completed ─────────│
-  │◀── onSnapshot ──────────────────│   commands/completed/{id}      │
-  │   UI updates                  │                                │
+  |                               |                                |
+  |-- merge command id ---------->|                                |
+  |   into commands/pending       |-- listener detects ----------->|
+  |                               |                                |-- execute
+  |                               |                                |
+  |                               |<-- merge result/progress ------|
+  |<-- listener updates UI -------|   into commands/completed      |
 ```
+
+Each machine has two command documents:
+
+- `sites/{siteId}/machines/{machineId}/commands/pending`
+- `sites/{siteId}/machines/{machineId}/commands/completed`
+
+Both documents store command IDs as top-level map fields. A successful terminal write removes the matching field from `pending`.
 
 ---
 
@@ -26,48 +32,68 @@ Dashboard                      Firestore                         Agent
 
 | command | description | data payload |
 |---------|-------------|--------------|
-| `restart_process` | Kill and restart a process | `{process_name: string}` |
-| `kill_process` | Terminate a process | `{process_name: string}` |
-| `start_process` | Start a stopped process | `{process_name: string}` |
-| `set_launch_mode` | Set launch mode (off/always/scheduled) | `{process_name, mode, schedules?}` |
-| `capture_screenshot` | Capture desktop screenshot | `{monitor: number}` (0=all, 1=primary, etc.) |
+| `restart_process` | Restart a configured process | `{process_name?, process_id?}` |
+| `start_process` | Start a configured process | `{process_name?, process_id?}` |
+| `stop_process` | Stop a configured process | `{process_name?, process_id?}` |
+| `kill_process` | Terminate a process | `{process_name?, process_id?}` |
+| `set_launch_mode` | Set launch mode (`off`, `always`, or `scheduled`) | `{process_name?, process_id?, processId?, mode, schedules?}` |
+| `toggle_autolaunch` | Legacy launch-mode toggle | `{process_name?, process_id?, processId?, autolaunch}` |
+| `capture_screenshot` | Capture desktop screenshot | `{monitor}` (0=all, 1=primary, etc.) |
+
+For `set_launch_mode` and `toggle_autolaunch`, the agent matches `process_id` / `processId` first and falls back to `process_name`. `set_launch_mode` persists the requested `mode` and any supplied `schedules`.
 
 ### configuration
 
 | command | description | data payload |
 |---------|-------------|--------------|
-| `update_config` | Update process configuration from cloud | `{processes: [...]}` |
+| `update_config` | Update process configuration from cloud | `{config}` |
 
 ### software deployment
 
 | command | description | data payload |
 |---------|-------------|--------------|
-| `install_software` | Download and install software | `{installer_url, installer_name, silent_flags, verify_path, deployment_id}` |
-| `cancel_installation` | Cancel in-progress installation | `{deployment_id}` |
+| `install_software` | Download, checksum, and install software | `{installer_url, sha256_checksum, installer_name?, silent_flags?, verify_path?, timeout_seconds?, deployment_id?, parallel_install?, close_processes?, suppress_projects?}` |
+| `cancel_installation` | Cancel an in-progress installer process | `{installer_name}` |
+| `uninstall_software` | Run a software uninstaller | `{software_name, uninstall_command, silent_flags?, installer_type?, verify_paths?, timeout_seconds?, deployment_id?}` |
+| `cancel_uninstall` | Cancel an in-progress uninstall process | `{software_name}` |
 
 ### project distribution
 
+Current project distribution uses roost v2 handlers registered through the agent command router:
+
 | command | description | data payload |
 |---------|-------------|--------------|
-| `distribute_project` | Download and extract project files | `{project_url, project_name, extract_path, verify_files, distribution_id}` |
+| `sync_pull` | Fetch a roost version manifest, download required chunks, and assemble files at the target root | `{site_id, roost_id, version_id, version_url, extract_root}` |
+| `cancel_sync` | Signal cancellation for an in-flight roost sync | `{site_id, roost_id, version_id}` |
+| `rollback_to_version` | Pull an older roost version after the server-side rollback pointer changes | `{site_id, roost_id, version_id, version_url, extract_root}` |
+
+Legacy v1 ZIP distribution still ships in the agent for older dashboard paths:
+
+| command | description | data payload |
+|---------|-------------|--------------|
+| `distribute_project` | Legacy ZIP download and extraction | `{project_url, project_name?, extract_path?, distribution_id?}` |
+| `cancel_distribution` | Legacy ZIP distribution cancellation | `{project_name}` |
 
 ### system commands
 
 | command | description | data payload |
 |---------|-------------|--------------|
-| `reboot_machine` | Reboot the machine | `{delay: number}` (seconds, default: 0) |
-| `shutdown_machine` | Shut down the machine | `{delay: number}` (seconds, default: 0) |
-| `update_owlette` | Self-update the agent | `{installer_url, version}` |
-| `uninstall_owlette` | Uninstall the agent | `{}` |
+| `reboot_machine` | Reboot the machine after the agent announces a 30-second OS countdown | `{}` |
+| `shutdown_machine` | Shut down the machine after the agent announces a 30-second OS countdown | `{}` |
+| `cancel_reboot` | Abort a pending OS reboot/shutdown countdown | `{}` |
+| `dismiss_reboot_pending` | Clear dashboard reboot-pending state | `{process_name?}` |
+| `update_owlette` | Self-update the agent via a scheduled SYSTEM task | `{installer_url, checksum_sha256, target_version?, deployment_id?}` |
+
+The agent does not provide a remote self-uninstall command. Remote software removal uses `uninstall_software` for third-party applications.
 
 ### ai/cortex tools
 
 | command | description | data payload |
 |---------|-------------|--------------|
-| `mcp_tool_call` | Execute a Cortex tool | `{tool_name, arguments, chat_id}` |
+| `mcp_tool_call` | Execute a Cortex tool | `{tool_name, tool_params, chat_id?}` |
 
 !!! info "Cortex tool reference"
-    See the [Cortex Tools Reference](../reference/cortex-tools.md) for the complete list of 29 tools with parameters, tiers, and allowed commands.
+    See the [Cortex Tools Reference](../reference/cortex-tools.md) for the canonical tool list with parameters, tiers, and allowed commands.
 
 ---
 
@@ -75,27 +101,32 @@ Dashboard                      Firestore                         Agent
 
 ### pending command
 
-Written to `sites/{siteId}/machines/{machineId}/commands/pending/{commandId}`:
+Written as one field inside `sites/{siteId}/machines/{machineId}/commands/pending`:
 
 ```json
 {
-  "type": "restart_process",
-  "process_name": "TouchDesigner",
-  "timestamp": 1711234567890,
-  "status": "pending"
+  "restart_process_machineA_1711234567890": {
+    "type": "restart_process",
+    "process_name": "TouchDesigner",
+    "createdAt": "<server timestamp>",
+    "expiresAt": "<timestamp>",
+    "status": "pending"
+  }
 }
 ```
 
 ### completed command
 
-Moved to `sites/{siteId}/machines/{machineId}/commands/completed/{commandId}`:
+Merged into `sites/{siteId}/machines/{machineId}/commands/completed`, then removed from `pending`:
 
 ```json
 {
-  "type": "restart_process",
-  "result": "Process 'TouchDesigner' restarted successfully (PID: 12345)",
-  "status": "completed",
-  "completedAt": 1711234567900
+  "restart_process_machineA_1711234567890": {
+    "type": "restart_process",
+    "result": "Process 'TouchDesigner' restarted successfully (PID: 12345)",
+    "status": "completed",
+    "completedAt": "<server timestamp>"
+  }
 }
 ```
 
@@ -103,12 +134,16 @@ Moved to `sites/{siteId}/machines/{machineId}/commands/completed/{commandId}`:
 
 ```json
 {
-  "type": "restart_process",
-  "result": "Error: Process 'TouchDesigner' not found in configuration",
-  "status": "failed",
-  "completedAt": 1711234567900
+  "restart_process_machineA_1711234567890": {
+    "type": "restart_process",
+    "error": "Process 'TouchDesigner' not found in configuration",
+    "status": "failed",
+    "completedAt": "<server timestamp>"
+  }
 }
 ```
+
+Progress updates are also merged into the completed document under the same command ID with fields such as `status`, `progress`, `deployment_id`, and `updatedAt`. Terminal states include `completed`, `failed`, and `cancelled`.
 
 ---
 
@@ -116,10 +151,10 @@ Moved to `sites/{siteId}/machines/{machineId}/commands/completed/{commandId}`:
 
 When the dashboard sends a command with `wait: true`, it polls for completion:
 
-1. Write command to pending queue
-2. Poll `commands/completed/{commandId}` every 1.5 seconds
-3. Timeout after 30-120 seconds (configurable)
-4. Return result or timeout error
+1. Merge the command into the pending map document.
+2. Poll the completed map document for the command ID every 1.5 seconds.
+3. Timeout after 30-120 seconds, depending on the caller.
+4. Return the completed, failed, cancelled, or timeout result.
 
 This is used by the Admin API (`/api/admin/commands/send`) and Cortex tool execution.
 
@@ -130,19 +165,37 @@ This is used by the Admin API (`/api/admin/commands/send`) and Cortex tool execu
 The `install_software` command triggers a multi-step process:
 
 ```
-1. Download installer → %TEMP%\owlette_installers\
-   Progress: downloading 0% → 100%
+1. Download installer to the agent temp installer directory.
+   Progress: downloading 0% to 100%
 
-2. Execute installer with silent flags
-   Progress: installing (no percentage — waiting for exit code)
+2. Verify sha256_checksum.
+   Missing or mismatched checksums fail the command before execution.
 
-3. Verify installation (if verify_path provided)
-   Check: file exists at verify_path?
+3. Optionally stop conflicting processes and suppress managed projects.
+   Controlled by close_processes and suppress_projects.
 
-4. Cleanup temp file
+4. Execute installer with silent flags in the interactive user's session.
+   Progress: installing, then waiting for exit code.
 
-5. Report result to Firestore
+5. Verify installation if verify_path is provided or derived from /DIR.
+
+6. Cleanup temp file, release install locks, and sync software inventory.
 ```
+
+### install_software payload
+
+| field | required | default | notes |
+|-------|----------|---------|-------|
+| `installer_url` | yes | none | URL downloaded by the agent. |
+| `sha256_checksum` | yes | none | Command is refused without this checksum. |
+| `installer_name` | no | `installer.exe` | Used for the temp filename and process tracking. |
+| `silent_flags` | no | empty string | Passed to the installer. `/DIR=...` can auto-fill `verify_path`. |
+| `verify_path` | no | auto-derived from `/DIR` when possible | Checked after installer success. |
+| `timeout_seconds` | no | `2400` | Installer timeout in seconds. |
+| `deployment_id` | no | none | Included in progress records. |
+| `parallel_install` | no | `false` | Temporarily hides matching registry keys during install. |
+| `close_processes` | no | `[]` | Process names to terminate before install. |
+| `suppress_projects` | no | `[]` | Managed project IDs to lock during install. |
 
 ### supported installer types
 
@@ -157,23 +210,28 @@ The `install_software` command triggers a multi-step process:
 
 ## project distribution flow
 
-The `distribute_project` command:
+### roost v2 sync
+
+The `sync_pull` command is the current distribution path:
 
 ```
-1. Download ZIP → %TEMP%\owlette_projects\
-   Progress: downloading 0% → 100%
-
-2. Extract ZIP to target path
-   Default: ~/Documents/OwletteProjects
-   Progress: extracting 0% → 100%
-
-3. Verify files (if verify_files provided)
-   Check: each file/folder exists at extract path
-
-4. Cleanup temp ZIP
-
-5. Report result to Firestore
+1. Validate required site, roost, version, URL, and target-root fields.
+2. Check the site-level roost kill switch.
+3. Report the target state as pending.
+4. Mint a fresh version download URL when the Firebase client can do so.
+5. Fetch and validate the version manifest.
+6. Diff against the most recent local committed version for that roost.
+7. Register or resume a local distribution row.
+8. Download missing chunks with throttled progress updates.
+9. Assemble files atomically into extract_root.
+10. Commit the distribution and report final target state.
 ```
+
+`cancel_sync` looks up the matching in-flight distribution by `site_id`, `roost_id`, and `version_id`, then signals its cancellation event. `rollback_to_version` reuses the same `sync_pull` path; the server-side roost rollback has already selected the older version.
+
+### legacy v1 ZIP distribution
+
+`distribute_project` remains available for older dashboard paths only. It downloads a ZIP archive, extracts it to `extract_path` or the default Owlette projects directory, optionally checks expected extracted paths, cleans up the ZIP, and reports progress with the legacy `distribution_id`.
 
 ---
 
@@ -181,28 +239,15 @@ The `distribute_project` command:
 
 ### reboot / shutdown
 
-Uses Windows `shutdown` command:
+Manual reboot and shutdown commands do not accept configurable countdown fields. The agent sets local shutdown intent, announces the state to Firestore, then invokes Windows with a fixed 30-second countdown:
 
 ```python
-# Reboot
-os.system(f"shutdown /r /t {delay}")
-
-# Shutdown
-os.system(f"shutdown /s /t {delay}")
+subprocess.run(['shutdown', '/r', '/t', '30', '/c', 'owlette remote reboot requested'])
+subprocess.run(['shutdown', '/s', '/t', '30', '/c', 'owlette remote shutdown requested'])
 ```
 
-The agent logs the event to Firestore before executing.
+`cancel_reboot` aborts the pending OS countdown with `shutdown /a` and clears the dashboard flags when Firestore is available.
 
 ### self-update
 
-1. Download new installer to temp directory
-2. Stop the owlette service
-3. Execute installer with `/VERYSILENT` flags
-4. Installer upgrades in place, restarts service
-5. New agent version starts and reconnects
-
-### uninstall
-
-1. Run the Inno Setup uninstaller with `/VERYSILENT /FORCECLOSEAPPLICATIONS`
-2. Service and all components are removed
-3. Machine goes offline in dashboard
+`update_owlette` requires `installer_url` and `checksum_sha256`. The agent derives `target_version` from the payload or URL, downloads the installer to `C:\ProgramData\owlette\tmp`, verifies the checksum, writes an update marker, and launches the installer through a one-time scheduled task running as SYSTEM. A recovery scheduled task attempts to restart the service if it does not return after the update.

@@ -7,11 +7,7 @@ import { Plus, Minus } from 'lucide-react';
 const faqs: { q: string; a: React.ReactNode }[] = [
   {
     q: "is it actually free?",
-    a: "during beta, yes. no credit card, no trial clock, no free-tier sleight of hand. after beta it's $10/machine/month — no seats, no tiers, no hidden fees. just machines.",
-  },
-  {
-    q: "will it work with my software?",
-    a: "if it runs on windows and has a process, yes. touchdesigner, unreal engine, unity, obs, vlc, your custom node.js app, that internal tool nobody documented in 2019 — all fair game. owlette monitors processes, not specific applications.",
+    a: "during beta, yes — both tiers, no credit card, no trial clock. after beta: core is $10/machine/month for monitoring, control, deploy, displays, and cortex on a single site. pro is $50/machine/month (3-machine minimum) and adds the public API, CLI, SDK, webhooks, unlimited sites, and roost — incremental project sync with 1 TB included storage per site. no per-user fees on either.",
   },
   {
     q: "does it work on mac or linux?",
@@ -26,40 +22,44 @@ const faqs: { q: string; a: React.ReactNode }[] = [
     a: "no inbound ports, no vpn. agents connect outbound over https (port 443) to google's firebase infrastructure. if your network allows general internet access, it just works. locked-down environments may need to whitelist *.googleapis.com and *.firebaseio.com.",
   },
   {
-    q: "how fast does auto-recovery happen?",
-    a: "crashed processes are detected and restarted within about 10 seconds. fast enough that most end-users never notice. fast enough that your machine quietly died inside and came back before anyone found the body.",
-  },
-  {
     q: "what's cortex?",
     a: "cortex is owlette's ai fleet assistant — ask it the questions you ask yourself every day: \"which nvidia driver are we running?\", \"restart the media server on node 3\", \"what crashed at 3am?\" it translates natural language into real commands across your fleet. you bring your own api key (openai, anthropic, or any compatible provider).",
   },
   {
-    q: "if a kiosk crashes and nobody's there to see it, did it really crash?",
-    a: "yes. owlette saw it. owlette always sees it.",
+    q: "what's roost?",
+    a: "roost is owlette's project sync. point it at a folder — a TouchDesigner project, a content drop, a build output — and it ships only the bytes that changed to every machine on the site, atomically: a machine gets the whole new version or stays on the old one, never a half-copied mess. every deploy is versioned, so you can roll back to any of the last 50 for up to 30 days. it's part of the pro tier and includes 1 TB of storage per site ($0.05/GB after that). no more zipping a folder and RDP-ing into ten machines at 2am.",
   },
   {
     q: "is my data secure?",
-    a: "agents connect over tls, credentials are encrypted on-device using a machine-bound key, and oauth tokens are never logged or stored in plaintext. access is managed through firebase auth with optional passkey and two-factor authentication. all your base are belong to... you.",
-  },
-  {
-    q: "what's the difference between a site and a machine?",
-    a: "a site is a logical grouping — \"nyc office\", \"main stage\", \"lobby\". a machine is an individual windows pc inside that site. most people start with one site and add more as their fleet grows.",
-  },
-  {
-    q: "is mayonnaise an instrument?",
-    a: <>nein, patrick, mayonnaise ist kein instrument. <a href="https://www.youtube.com/watch?v=coM3idB-jpI" target="_blank" rel="noopener noreferrer" className="text-accent-cyan hover:underline underline-offset-4">beweis.</a></>,
+    a: "agents connect over tls, credentials are encrypted on-device using a machine-bound key, and oauth tokens are never logged or stored in plaintext. access is managed through firebase auth with optional passkey and two-factor authentication.",
   },
   {
     q: "can i self-host it?",
-    a: "yes — owlette is agpl-3.0. the full source is on github. fair warning: it requires firebase, a railway (or equivalent) deployment for the web app, and a willingness to blow past your usage limits at 3am debugging support tickets from your neighbor's camper because your furnace broke and it's -10 outside. we won't talk you out of it, but the hosted version exists for a reason.",
+    a: "yes — owlette is FSL-1.1-Apache-2.0 (converts to apache 2.0 two years after each release). the full source is on github. fair warning: it requires firebase, a railway (or equivalent) deployment for the web app, and a willingness to blow past your usage limits at 3am debugging support tickets from your neighbor's camper because your furnace broke and it's -10 outside. we won't talk you out of it, but the hosted version exists for a reason.",
   },
 ];
 
 export function FAQSection() {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
+  // Matches the grid-template-rows collapse transition (0.3s) + a small buffer.
+  const COLLAPSE_MS = 320;
+
+  const toggle = (i: number, el: HTMLElement | null) => {
+    if (openIndex === i) {
+      setOpenIndex(null);
+      return;
+    }
+    // If an item above is open, let its panel finish collapsing before anchoring.
+    // (block: 'start' honours the global scroll-padding-top, so it clears the header.)
+    const delay = openIndex !== null && openIndex < i ? COLLAPSE_MS : 0;
+    setOpenIndex(i);
+    if (!el) return;
+    setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), delay);
+  };
+
   return (
-    <section className="pt-16 sm:pt-24 pb-32 sm:pb-48 px-4 sm:px-6">
+    <section id="faq" className="pt-16 sm:pt-24 pb-32 sm:pb-48 px-4 sm:px-6 -scroll-mt-8 sm:-scroll-mt-16">
       <div className="max-w-3xl mx-auto">
         <div className="text-center mb-10 sm:mb-14">
           <h2 className="section-headline text-foreground mb-4">
@@ -78,7 +78,7 @@ export function FAQSection() {
                 }`}
               >
                 <button
-                  onClick={() => setOpenIndex(isOpen ? null : i)}
+                  onClick={(e) => toggle(i, e.currentTarget)}
                   className="w-full flex items-center justify-between gap-4 py-7 text-left cursor-pointer"
                   aria-expanded={isOpen}
                 >

@@ -356,25 +356,51 @@ def restart_service(icon, item):
 
 # Function to exit
 def exit_action(icon, item):
+    """Exit owlette — closes the GUI, stops the OwletteService, and quits the tray.
+
+    Stopping the service requires admin rights and goes through Service Control
+    Manager (`net stop OwletteService`), which is the ONLY reliable way to stop
+    the service: NSSM is configured to auto-restart on any process exit, so
+    writing a "shutdown flag" the service polls (the previous design) does not
+    actually stop the service — NSSM immediately restarts it. Triggering the
+    stop via SCM is a controlled stop, which NSSM respects and does not auto-
+    restart from.
+
+    The user will see a UAC prompt. There is no way around this on Windows for
+    a non-elevated process to stop a service.
+    """
     try:
+        # Close all owlette GUI windows first.
         for key, window_title in shared_utils.WINDOW_TITLES.items():
-            # Try to close the configuration window if it's open
-            hwnd = win32gui.FindWindow(None, window_title)
-            if hwnd:
-                # Close the window
-                win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+            try:
+                hwnd = win32gui.FindWindow(None, window_title)
+                if hwnd:
+                    win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+            except Exception as e:
+                logging.debug(f"Could not close window '{window_title}': {e}")
 
-        # Write shutdown flag file for service to detect
-        shutdown_flag = shared_utils.get_data_path('tmp/shutdown.flag')
-        os.makedirs(os.path.dirname(shutdown_flag), exist_ok=True)
-        with open(shutdown_flag, 'w') as f:
-            f.write('exit')
-        logging.info("Shutdown flag written - service will exit gracefully")
+        # Stop the OwletteService via SCM with elevation. ShellExecuteW with the
+        # 'runas' verb triggers the UAC prompt; the actual stop happens in an
+        # elevated cmd.exe child process. We do NOT wait synchronously here —
+        # the tray needs to remain responsive while UAC is on screen.
+        try:
+            ctypes.windll.shell32.ShellExecuteW(
+                None,
+                "runas",
+                "cmd.exe",
+                "/c net stop OwletteService",
+                None,
+                0,  # SW_HIDE — no console window flash
+            )
+            logging.info("Issued elevated 'net stop OwletteService' (UAC prompt shown)")
+        except Exception as e:
+            logging.error(f"Failed to issue elevated service stop: {e}")
 
-        # Give service a moment to detect the flag and shut down
+        # Give the SCM a moment to actually stop the service before the tray
+        # icon disappears, so the user sees a clean transition.
         time.sleep(2)
     except Exception as e:
-        logging.error(f"Failed to initiate shutdown: {e}")
+        logging.error(f"Failed to initiate exit: {e}")
     icon.stop()
 
 

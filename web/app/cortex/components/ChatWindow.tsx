@@ -4,9 +4,21 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { type UIMessage } from 'ai';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Brain, User, KeyRound, X } from 'lucide-react';
+import { ArrowUp, Brain, X } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserAvatar } from '@/components/UserAvatar';
 import { ToolCallCard } from './ToolCallCard';
+import { CopyButton } from './CopyButton';
+import { SynapticIndicator } from './SynapticIndicator';
 import { getRandomSuggestions } from '../data/suggestedQuestions';
+import { YOU_TRANSLATIONS } from '@/lib/dashboardConstants';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+
+function pickYouTranslation(messageId: string) {
+  let hash = 0;
+  for (let i = 0; i < messageId.length; i++) hash = (hash * 31 + messageId.charCodeAt(i)) | 0;
+  return YOU_TRANSLATIONS[Math.abs(hash) % YOU_TRANSLATIONS.length];
+}
 
 interface ChatWindowProps {
   messages: UIMessage[];
@@ -15,11 +27,14 @@ interface ChatWindowProps {
   onOpenSettings?: () => void;
 }
 
-export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: ChatWindowProps) {
+export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
+  const { user } = useAuth();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isUserScrolledUp = useRef(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
   const suggestions = useMemo(() => getRandomSuggestions(4), []);
 
   const handleScroll = () => {
@@ -28,6 +43,11 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
     // "Near bottom" = within 100px of the bottom edge
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
     isUserScrolledUp.current = !nearBottom;
+    setShowScrollTop(el.scrollTop > 200);
+  };
+
+  const scrollToTop = () => {
+    topRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   useEffect(() => {
@@ -54,7 +74,7 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-2">cortex</h2>
           <p className="text-sm text-muted-foreground">
             debug, diagnose, and manage your remote machines.
-            i can run commands, check configs, and investigate issues you can't see from the dashboard.
+            i can run commands, check configs, and investigate issues you can&apos;t see from the dashboard.
           </p>
 
           <div className="mt-4 grid grid-cols-2 gap-2">
@@ -85,7 +105,25 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
   }
 
   return (
-    <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+    <div className="relative flex-1 min-h-0 flex flex-col">
+      {/* Scroll to top button */}
+      <button
+        type="button"
+        onClick={scrollToTop}
+        aria-label="Back to top"
+        className={`absolute top-3 right-4 z-10 flex items-center justify-center h-8 min-w-8 px-2 rounded-full border border-border bg-background/80 backdrop-blur text-muted-foreground hover:text-foreground hover:bg-accent shadow-sm cursor-pointer transition-opacity duration-200 overflow-hidden group/scrolltop ${
+          showScrollTop ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+      >
+        <ArrowUp className="h-4 w-4 flex-shrink-0" />
+        <span className="max-w-0 group-hover/scrolltop:max-w-[120px] group-hover/scrolltop:ml-1.5 overflow-hidden whitespace-nowrap text-xs transition-[max-width,margin] duration-200">
+          back to top
+        </span>
+      </button>
+
+      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+      <div ref={topRef} />
+
       {/* Lightbox overlay */}
       {expandedImage && (
         <div
@@ -109,29 +147,56 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
         </div>
       )}
 
-      {messages.map((message) => (
-        <div key={message.id} className="flex gap-3 max-w-3xl mx-auto">
-          {/* Avatar */}
-          <div className="flex-shrink-0 mt-1">
-            {message.role === 'user' ? (
-              <div className="h-7 w-7 rounded-full bg-accent-cyan flex items-center justify-center">
-                <User className="h-4 w-4 text-gray-900" />
-              </div>
-            ) : (
-              <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
-                <Brain className="h-4 w-4 text-foreground" />
+      {messages.map((message) => {
+        const isUser = message.role === 'user';
+        return (
+        <div key={message.id} className="max-w-3xl mx-auto">
+          <div className={`group flex gap-3 ${isUser ? 'justify-end' : ''}`}>
+            {/* Cortex: avatar + rail column on the left */}
+            {!isUser && (
+              <div className="flex-shrink-0 flex flex-col items-center">
+                <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
+                  <Brain className="h-4 w-4 text-foreground" />
+                </div>
+                <div className="mt-1 flex-1 w-0.5 bg-accent-cyan/25" />
               </div>
             )}
-          </div>
 
-          {/* Content */}
-          <div className="flex-1 min-w-0">
-            <div className="text-xs text-muted-foreground mb-1">
-              {message.role === 'user' ? 'you' : 'cortex'}
-            </div>
+            {/* Content */}
+            <div className={`min-w-0 ${isUser ? 'max-w-[75%]' : 'flex-1'}`}>
+              <div className={`flex items-center gap-2 h-7 text-sm font-semibold text-foreground mb-1 ${isUser ? 'justify-end' : ''}`}>
+                {(() => {
+                  const fullText = message.parts
+                    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+                    .map((p) => p.text)
+                    .join('\n\n')
+                    .trim();
+                  const copyBtn = fullText.length > 0 ? (
+                    <CopyButton
+                      value={fullText}
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-cyan focus-visible:outline-offset-2 rounded-sm transition-opacity"
+                    />
+                  ) : null;
+                  const label = isUser ? (() => {
+                    const t = pickYouTranslation(message.id);
+                    return (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="cursor-help">{t.text}</span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>you ({t.language})</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })() : <span>cortex</span>;
+                  return isUser ? <>{copyBtn}{label}</> : <>{label}{copyBtn}</>;
+                })()}
+              </div>
 
-            {/* Render parts (text + images + tool calls) */}
-            {message.parts.map((part, i) => {
+              <div className={isUser ? 'opacity-80 text-right' : ''}>
+              {/* Render parts (text + images + tool calls) */}
+              {message.parts.map((part, i) => {
               if (part.type === 'text') {
                 return (
                   <div
@@ -185,31 +250,41 @@ export function ChatWindow({ messages, isLoading, hasApiKey, onOpenSettings }: C
               }
 
               return null;
-            })}
+              })}
+              </div>
+            </div>
+
+            {/* User: avatar + rail column on the right */}
+            {isUser && (
+              <div className="flex-shrink-0 flex flex-col items-center">
+                <UserAvatar user={user} size="sm" />
+                <div className="mt-1 flex-1 w-0.5 bg-muted-foreground/25" />
+              </div>
+            )}
           </div>
         </div>
-      ))}
+        );
+      })}
 
       {/* Loading indicator */}
       {isLoading && messages[messages.length - 1]?.role === 'user' && (
-        <div className="flex items-center gap-3 max-w-3xl mx-auto">
-          <div className="flex-shrink-0">
-            <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
-              <Brain className="h-4 w-4 text-foreground" />
+        <div className="max-w-3xl mx-auto">
+          <div className="flex items-center gap-3 border-l-2 pl-3 border-accent-cyan/40">
+            <div className="flex-shrink-0">
+              <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
+                <Brain className="h-4 w-4 text-foreground" />
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <div className="flex gap-1">
-              <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0ms]" />
-              <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:150ms]" />
-              <span className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:300ms]" />
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <SynapticIndicator />
+              thinking...
             </div>
-            thinking...
           </div>
         </div>
       )}
 
       <div ref={bottomRef} />
+      </div>
     </div>
   );
 }

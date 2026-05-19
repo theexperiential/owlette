@@ -20,6 +20,8 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
+import { apiError } from '@/lib/apiErrorResponse';
+import { markSessionMfaVerified } from '@/lib/sessionManager.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -60,6 +62,27 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     const db = getAdminDb();
+
+    // SECURITY: refuse to overwrite existing MFA state via this route.
+    // Without this guard, an attacker with a captured session who has
+    // already passed primary auth (but NOT MFA — `/api/*` routes are not
+    // gated by the proxy MFA check) could call /api/mfa/setup to mint a
+    // new pending secret, then call this route to overwrite the victim's
+    // mfaSecret+backupCodes with the attacker's, and even mark the
+    // session mfaVerified — full MFA bypass. Re-enrollment must go
+    // through /api/mfa/disable first (which requires proof of current
+    // factor possession), and only then through setup+verify-setup.
+    const userDocPre = await db.collection('users').doc(userId).get();
+    if (userDocPre.exists && userDocPre.data()?.mfaEnrolled === true) {
+      return NextResponse.json(
+        {
+          error:
+            'MFA is already enrolled. Disable it via /api/mfa/disable (which requires proof of your current factor) before re-enrolling.',
+          code: 'mfa_already_enrolled',
+        },
+        { status: 409 },
+      );
+    }
 
     // Get pending setup
     const pendingDoc = await db.collection('mfa_pending').doc(userId).get();
@@ -117,6 +140,13 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     // Delete pending setup
     await db.collection('mfa_pending').doc(userId).delete();
 
+    // The user just proved possession of the new factor — promote the
+    // session straight to MFA-verified so they don't get bounced to the
+    // verify-2fa page on the next protected-path navigation. From this
+    // point on, `users/{uid}.mfaEnrolled === true` so every subsequent
+    // session-create will require a fresh challenge.
+    await markSessionMfaVerified();
+
     return NextResponse.json({
       success: true,
     });
@@ -124,11 +154,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('[MFA Verify Setup] Error:', error);
-    return NextResponse.json(
-      { error: 'Failed to verify MFA setup' },
-      { status: 500 }
-    );
+    return apiError(error, 'mfa/verify-setup');
   }
 }, {
   strategy: 'auth',

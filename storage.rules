@@ -2,32 +2,33 @@ rules_version = '2';
 
 // Owlette Firebase Storage Security Rules
 // Version: 2.0.0
-// Last Updated: 2025-11-02
+// Last Updated: 2026-04-24
 //
 // Security Model:
 // - Public read access for agent installer downloads
-// - Admin-only write access for uploading installers
+// - Superadmin-only write access for uploading installers (platform-wide op)
 // - Authenticated access for other storage (if needed in future)
 
 service firebase.storage {
   match /b/{bucket}/o {
 
-    // Helper function: Check if user is admin
-    function isAdmin() {
+    // Check if user is a platform superadmin. Installer uploads are a
+    // platform-wide op — the site-scoped `admin` role does not qualify.
+    function isSuperadmin() {
       return request.auth != null &&
-             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
     }
 
     // ============================================
-    // Agent Installers - Public Read, Admin Write
+    // Agent Installers - Public Read, Superadmin Write
     // ============================================
 
     match /agent-installers/{allPaths=**} {
       // PUBLIC READ: Anyone can download agent installers
       allow read: if true;
 
-      // ADMIN WRITE: Only admins can upload/delete installers
-      allow write, delete: if isAdmin();
+      // SUPERADMIN WRITE: Only platform superadmins can upload/delete installers
+      allow write, delete: if isSuperadmin();
     }
 
     // ============================================
@@ -43,6 +44,28 @@ service firebase.storage {
         && request.auth.uid == userId
         && request.resource.size < 5 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
+    }
+
+    // ============================================
+    // User Avatars - Authenticated Read, Owner Write
+    // ============================================
+
+    // Match any file named `avatar.<ext>` under the user's folder. The `.{ext}`
+    // inline-variable syntax isn't supported by the rules compiler, so we capture
+    // the whole filename and gate by regex. Read is gated too so unrelated files
+    // that might land under users/{userId}/ in future don't leak.
+    match /users/{userId}/{fileName} {
+      // Any authenticated user can view avatars (displayed across the dashboard/cortex)
+      allow read: if request.auth != null
+        && fileName.matches('avatar\\..+');
+
+      // Only the owning user can upload/delete; max 1 MB, images only
+      allow write, delete: if request.auth != null
+        && request.auth.uid == userId
+        && fileName.matches('avatar\\..+')
+        && (request.resource == null
+            || (request.resource.size < 1 * 1024 * 1024
+                && request.resource.contentType.matches('image/.*')));
     }
 
     // ============================================

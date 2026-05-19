@@ -25,7 +25,10 @@ export function MachineSelector({ machines, selectedMachineId, onSelect }: Machi
 
   return (
     <Select value={selectedMachineId} onValueChange={onSelect}>
-      <SelectTrigger className="w-[220px] bg-secondary border-border text-foreground">
+      <SelectTrigger
+        aria-label="cortex target"
+        className="w-[220px] bg-secondary border-border text-foreground"
+      >
         <div className="flex items-center gap-2">
           {isSiteMode ? (
             <Globe className="h-4 w-4 text-muted-foreground" />

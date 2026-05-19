@@ -1,0 +1,38 @@
+#!/usr/bin/env node
+// Launcher for the owlette CLI. Prefers the compiled `dist/index.js` when
+// present (production / published install); falls back to the TS source
+// via ts-node during local development so `./cli/bin/owlette --help` works
+// without a prior `npm run build`.
+//
+// Keep this file thin — any real logic lives in src/index.ts.
+
+'use strict';
+
+const path = require('path');
+const fs = require('fs');
+
+const compiled = path.join(__dirname, '..', 'dist', 'index.js');
+
+let mod;
+if (fs.existsSync(compiled)) {
+  mod = require(compiled);
+} else {
+  try {
+    require('ts-node/register/transpile-only');
+    mod = require(path.join(__dirname, '..', 'src', 'index.ts'));
+  } catch (err) {
+    process.stderr.write(
+      `owlette: compiled output not found at ${compiled} and ts-node is not installed.\n` +
+        `  run \`npm install\` + \`npm run build\` inside cli/ first, or install ts-node as a dev dependency.\n`,
+    );
+    process.stderr.write(String((err && err.message) || err) + '\n');
+    process.exit(1);
+  }
+}
+
+if (typeof mod.main === 'function') {
+  mod.main().catch((err) => {
+    process.stderr.write(`[owlette] ${(err && err.message) || err}\n`);
+    process.exit(1);
+  });
+}

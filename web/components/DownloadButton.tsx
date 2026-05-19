@@ -40,7 +40,7 @@ export default function DownloadButton() {
       toast.success('download started', {
         description: `downloading owlette v${version}`,
       });
-    } catch (err) {
+    } catch {
       toast.error('download failed', {
         description: 'failed to start download. please try again.',
       });
@@ -60,7 +60,7 @@ export default function DownloadButton() {
       toast.success('link copied', {
         description: `download link for v${version} copied to clipboard.`,
       });
-    } catch (err) {
+    } catch {
       toast.error('copy failed', {
         description: 'failed to copy link to clipboard.',
       });
@@ -83,6 +83,7 @@ export default function DownloadButton() {
               size="sm"
               onClick={handleDownload}
               disabled={isLoading || !downloadUrl}
+              aria-label="download owlette agent"
               className="flex items-center hover:bg-secondary hover:text-white cursor-pointer text-white p-1 sm:p-1.5 md:p-2"
             >
               {isLoading ? (
@@ -114,6 +115,7 @@ export default function DownloadButton() {
               size="sm"
               onClick={handleCopyLink}
               disabled={isLoading || !downloadUrl}
+              aria-label="copy owlette agent download link"
               className="flex items-center hover:bg-secondary hover:text-white cursor-pointer text-white p-1 sm:p-1.5 md:p-2"
             >
               <Copy className="h-3 w-3 sm:h-3.5 sm:w-3.5 md:h-4 md:w-4" />

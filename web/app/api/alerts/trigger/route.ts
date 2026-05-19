@@ -5,6 +5,7 @@ import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, SEVERITY_COLORS, METRIC_LABELS } from '@/lib/emailTemplates.server';
 import { fireWebhooks } from '@/lib/webhookSender.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * POST /api/alerts/trigger
@@ -150,8 +151,7 @@ export async function POST(request: NextRequest) {
       webhooksFired,
     });
   } catch (error: unknown) {
-    console.error('[alerts/trigger] Unhandled error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'alerts/trigger');
   }
 }
 

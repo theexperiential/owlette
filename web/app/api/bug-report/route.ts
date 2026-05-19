@@ -5,6 +5,7 @@ import { requireSession, ApiAuthError } from '@/lib/apiAuth.server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * POST /api/bug-report
@@ -179,8 +180,7 @@ export const POST = withRateLimit(
       if (error instanceof ApiAuthError) {
         return NextResponse.json({ error: error.message }, { status: error.status });
       }
-      console.error('[bug-report] Unhandled error:', error);
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+      return apiError(error, 'bug-report');
     }
   },
   { strategy: 'user', identifier: 'ip' }

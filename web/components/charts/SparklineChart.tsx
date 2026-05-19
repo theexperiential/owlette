@@ -33,15 +33,6 @@ interface SparklineChartProps {
   loading?: boolean;
 }
 
-// Map metric types to explicit colors (CSS variables don't work in SVG stroke)
-const colorMap: Record<MetricColor, string> = {
-  cpu: 'oklch(0.75 0.18 195)',    // cyan accent (matches --accent-cyan)
-  memory: 'oklch(0.65 0.25 250)', // blue (matches sidebar-primary)
-  disk: 'rgb(34, 197, 94)',       // green-500
-  gpu: 'rgb(249, 115, 22)',       // orange-500
-  temp: 'rgb(239, 68, 68)',       // red-500
-};
-
 // Unique gradient IDs per color to avoid conflicts
 const gradientIds: Record<MetricColor, string> = {
   cpu: 'sparkline-gradient-cpu',
@@ -82,7 +73,6 @@ export function SparklineChart({
     );
   }
 
-  const strokeColor = colorMap[color];
   const gradientId = gradientIds[color];
 
   return (

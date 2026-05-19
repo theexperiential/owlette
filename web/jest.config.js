@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const nextJest = require('next/jest')
 
 /** @type {import('jest').Config} */
@@ -63,6 +64,8 @@ const config = {
     '/node_modules/',
     '/.next/',
     '__tests__/api/helpers/',
+    '/e2e/', // Playwright specs — use `npm run e2e`, not jest.
+    '/__tests__/rules/', // Firestore rules tests — use `npm run test:rules` (boots emulator).
   ],
 
   // Transform ignore patterns

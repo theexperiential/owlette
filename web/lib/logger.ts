@@ -10,7 +10,7 @@ type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 interface LogOptions {
   context?: string;
-  data?: any;
+  data?: unknown;
 }
 
 class Logger {

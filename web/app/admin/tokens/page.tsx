@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
+import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +18,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { KeyRound, Trash2, RefreshCw, AlertTriangle, Clock, CheckCircle } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { AdminButton } from '@/components/admin/AdminButton';
 
@@ -32,8 +34,8 @@ interface TokenInfo {
 }
 
 export default function TokensPage() {
-  const { user, isAdmin, userSites, lastSiteId, updateLastSite } = useAuth();
-  const { sites } = useSites(user?.uid, userSites, isAdmin);
+  const { user, isSuperadmin, userSites, lastSiteId, updateLastSite, userPreferences } = useAuth();
+  const { sites } = useSites(user?.uid, userSites, isSuperadmin);
   const [selectedSiteId, setSelectedSiteId] = useState<string>('');
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -42,6 +44,31 @@ export default function TokensPage() {
   const [tokenToRevoke, setTokenToRevoke] = useState<TokenInfo | null>(null);
   const [isRevoking, setIsRevoking] = useState(false);
 
+  const fetchTokens = useCallback(async () => {
+    if (!selectedSiteId) return;
+
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/agent-tokens`, {
+        cache: 'no-store',
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to fetch tokens');
+      }
+
+      setTokens(data.tokens);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error('Failed to load tokens', {
+        description: message,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedSiteId]);
+
   // Fetch tokens when site changes
   useEffect(() => {
     if (selectedSiteId) {
@@ -49,7 +76,7 @@ export default function TokensPage() {
     } else {
       setTokens([]);
     }
-  }, [selectedSiteId]);
+  }, [selectedSiteId, fetchTokens]);
 
   // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
@@ -68,38 +95,15 @@ export default function TokensPage() {
     updateLastSite(siteId);
   };
 
-  const fetchTokens = async () => {
-    if (!selectedSiteId) return;
-
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/admin/tokens/list?siteId=${selectedSiteId}`);
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to fetch tokens');
-      }
-
-      setTokens(data.tokens);
-    } catch (error: any) {
-      toast.error('Failed to load tokens', {
-        description: error.message,
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleRevokeToken = async () => {
     if (!tokenToRevoke) return;
 
     setIsRevoking(true);
     try {
-      const response = await fetch('/api/admin/tokens/revoke', {
+      const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/agent-tokens/revoke`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          siteId: selectedSiteId,
           tokenId: tokenToRevoke.id,  // Use unique token ID, not machineId
         }),
       });
@@ -116,9 +120,10 @@ export default function TokensPage() {
 
       // Refresh token list
       fetchTokens();
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       toast.error('Failed to revoke token', {
-        description: error.message,
+        description: message,
       });
     } finally {
       setIsRevoking(false);
@@ -130,11 +135,10 @@ export default function TokensPage() {
   const handleRevokeAll = async () => {
     setIsRevoking(true);
     try {
-      const response = await fetch('/api/admin/tokens/revoke', {
+      const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/agent-tokens/revoke`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          siteId: selectedSiteId,
           all: true,
         }),
       });
@@ -151,9 +155,10 @@ export default function TokensPage() {
 
       // Refresh token list
       fetchTokens();
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
       toast.error('Failed to revoke tokens', {
-        description: error.message,
+        description: message,
       });
     } finally {
       setIsRevoking(false);
@@ -161,10 +166,20 @@ export default function TokensPage() {
     }
   };
 
+  // Resolve the selected site's timezone for display-mode-aware rendering.
+  // This is a site-scoped admin surface — there is no single "machine" anchor.
+  const selectedSite = sites.find(s => s.id === selectedSiteId);
+  const selectedSiteTimezone = selectedSite?.timezone;
+
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return 'Never';
-    const date = new Date(dateStr);
-    return date.toLocaleString();
+    return formatSiteScopedTimestamp(
+      dateStr,
+      userPreferences.timeDisplayMode || 'machine',
+      userPreferences.timezone,
+      selectedSiteTimezone,
+      userPreferences.timeFormat || '12h'
+    );
   };
 
   const getExpiryStatus = (expiresAt: string | null) => {
@@ -208,15 +223,22 @@ export default function TokensPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={fetchTokens}
-              disabled={!selectedSiteId || loading}
-              className="border-border text-foreground hover:bg-accent! hover:text-foreground!"
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={fetchTokens}
+                  disabled={!selectedSiteId || loading}
+                  className="border-border text-foreground hover:bg-accent! hover:text-foreground!"
+                >
+                  <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>refresh tokens</p>
+              </TooltipContent>
+            </Tooltip>
             {tokens.length > 0 && (
               <Button
                 variant="destructive"

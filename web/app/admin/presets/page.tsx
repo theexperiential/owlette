@@ -5,7 +5,7 @@ import { useSystemPresets, type SystemPreset } from '@/hooks/useSystemPresets';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Settings, Plus, Loader2, Pencil, Trash2, Package } from 'lucide-react';
+import { Plus, Loader2, Pencil, Trash2, Package } from 'lucide-react';
 import { toast } from 'sonner';
 import SystemPresetDialog from '@/components/SystemPresetDialog';
 
@@ -62,9 +62,10 @@ export default function SystemPresetsPage() {
       });
       setDeleteDialogOpen(false);
       setPresetToDelete(null);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Delete Failed', {
-        description: err.message || 'Failed to delete preset.',
+        description: message || 'Failed to delete preset.',
       });
     } finally {
       setDeleting(false);
@@ -244,8 +245,8 @@ export default function SystemPresetsPage() {
                               variant="ghost"
                               size="icon"
                               onClick={() => handleEdit(preset)}
+                              aria-label={`edit ${preset.name}`}
                               className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
-                              title="Edit"
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
@@ -253,8 +254,8 @@ export default function SystemPresetsPage() {
                               variant="ghost"
                               size="icon"
                               onClick={() => handleDelete(preset)}
+                              aria-label={`delete ${preset.name}`}
                               className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
-                              title="Delete"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
@@ -318,6 +319,7 @@ export default function SystemPresetsPage() {
                       variant="ghost"
                       size="icon"
                       onClick={() => handleEdit(preset)}
+                      aria-label={`edit ${preset.name}`}
                       className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -326,6 +328,7 @@ export default function SystemPresetsPage() {
                       variant="ghost"
                       size="icon"
                       onClick={() => handleDelete(preset)}
+                      aria-label={`delete ${preset.name}`}
                       className="h-8 w-8 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -350,18 +353,18 @@ export default function SystemPresetsPage() {
             <DialogHeader>
               <DialogTitle>delete preset</DialogTitle>
               <DialogDescription className="text-muted-foreground">
-                Are you sure you want to delete "{presetToDelete?.name}"? This action cannot be undone.
+                Are you sure you want to delete &quot;{presetToDelete?.name}&quot;? This action cannot be undone.
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <Button
-                variant="outline"
+                variant="ghost"
                 onClick={() => {
                   setDeleteDialogOpen(false);
                   setPresetToDelete(null);
                 }}
                 disabled={deleting}
-                className="border-border bg-background text-foreground hover:bg-accent! cursor-pointer"
+                className="bg-secondary border border-border cursor-pointer"
               >
                 cancel
               </Button>

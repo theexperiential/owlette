@@ -29,52 +29,45 @@ export interface InstallerVersionInfo {
  */
 export function useInstallerVersion() {
   const [versionInfo, setVersionInfo] = useState<InstallerVersionInfo | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(!!db);
+  const [error, setError] = useState<string | null>(db ? null : 'Firebase is not configured');
 
   useEffect(() => {
-    if (!db) {
-      setError('Firebase is not configured');
-      setLoading(false);
-      return;
-    }
+    if (!db) return;
 
-    try {
-      const latestRef = doc(db, 'installer_metadata', 'latest');
+    // `doc()` only throws on invalid path segments (both literal here) and
+    // onSnapshot surfaces runtime listener errors through its error callback —
+    // no sync try/catch needed, and avoids the react-hooks/set-state-in-effect
+    // violation that a sync catch-block setState would trigger.
+    const latestRef = doc(db, 'installer_metadata', 'latest');
 
-      const unsubscribe = onSnapshot(
-        latestRef,
-        (doc) => {
-          if (doc.exists()) {
-            const data = doc.data();
-            setVersionInfo({
-              version: data.version,
-              downloadUrl: data.download_url,
-              fileSize: data.file_size,
-              releaseDate: data.release_date,
-              releaseNotes: data.release_notes,
-            });
-            setError(null);
-          } else {
-            setError('No installer version available');
-          }
-          setLoading(false);
-        },
-        (err) => {
-          console.error('Error fetching installer version:', err);
-          const friendlyMessage = handleError(err);
-          setError(friendlyMessage);
-          setLoading(false);
+    const unsubscribe = onSnapshot(
+      latestRef,
+      (doc) => {
+        if (doc.exists()) {
+          const data = doc.data();
+          setVersionInfo({
+            version: data.version,
+            downloadUrl: data.download_url,
+            fileSize: data.file_size,
+            releaseDate: data.release_date,
+            releaseNotes: data.release_notes,
+          });
+          setError(null);
+        } else {
+          setError('No installer version available');
         }
-      );
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Error fetching installer version:', err);
+        const friendlyMessage = handleError(err);
+        setError(friendlyMessage);
+        setLoading(false);
+      }
+    );
 
-      return () => unsubscribe();
-    } catch (err) {
-      console.error('Error setting up version listener:', err);
-      const friendlyMessage = handleError(err);
-      setError(friendlyMessage);
-      setLoading(false);
-    }
+    return () => unsubscribe();
   }, []);
 
   return {

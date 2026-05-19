@@ -11,7 +11,6 @@ import { Loader2, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSystemPresets, type SystemPreset } from '@/hooks/useSystemPresets';
 import { useAuth } from '@/contexts/AuthContext';
-import { serverTimestamp } from 'firebase/firestore';
 
 /**
  * SystemPresetDialog Component
@@ -89,7 +88,7 @@ export default function SystemPresetDialog({
   const handleAutoFillTd = async () => {
     setFetchingTd(true);
     try {
-      const res = await fetch('/api/admin/fetch-td-version');
+      const res = await fetch('/api/platform/touchdesigner/builds');
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Failed to fetch' }));
         throw new Error(data.error || `HTTP ${res.status}`);
@@ -112,9 +111,10 @@ export default function SystemPresetDialog({
       toast.success('Auto-filled', {
         description: `TouchDesigner ${latest.version} ready to save.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Failed to fetch TD version', {
-        description: err.message || 'Could not reach derivative.ca',
+        description: message || 'Could not reach derivative.ca',
       });
     } finally {
       setFetchingTd(false);
@@ -153,8 +153,9 @@ export default function SystemPresetDialog({
     setSaving(true);
 
     try {
-      // Build base preset data
-      const baseData: any = {
+      // Build base preset data (sparse — optional fields only included when set;
+      // Firestore doesn't accept undefined). `createdAt` is stamped by the hook.
+      const baseData: Omit<SystemPreset, 'id' | 'createdAt' | 'updatedAt' | 'createdBy'> = {
         name,
         software_name: softwareName,
         category,
@@ -164,12 +165,10 @@ export default function SystemPresetDialog({
         is_owlette_agent: false,
         timeout_seconds: timeoutSeconds,
         order,
+        ...(description?.trim() ? { description: description.trim() } : {}),
+        ...(icon?.trim() ? { icon: icon.trim() } : {}),
+        ...(verifyPath?.trim() ? { verify_path: verifyPath.trim() } : {}),
       };
-
-      // Add optional fields only if they have values (Firestore doesn't accept undefined)
-      if (description?.trim()) baseData.description = description.trim();
-      if (icon?.trim()) baseData.icon = icon.trim();
-      if (verifyPath?.trim()) baseData.verify_path = verifyPath.trim();
 
       if (isEditMode && preset) {
         // Update existing preset
@@ -179,10 +178,9 @@ export default function SystemPresetDialog({
           description: `"${name}" has been updated successfully.`,
         });
       } else {
-        // Create new preset
+        // Create new preset (hook sets createdAt = serverTimestamp())
         await createPreset({
           ...baseData,
-          createdAt: serverTimestamp() as any,
           createdBy: user?.uid || 'unknown',
         });
 
@@ -192,9 +190,10 @@ export default function SystemPresetDialog({
       }
 
       onOpenChange(false);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error(isEditMode ? 'Update Failed' : 'Create Failed', {
-        description: err.message || 'An error occurred while saving the preset.',
+        description: message || 'An error occurred while saving the preset.',
       });
     } finally {
       setSaving(false);
@@ -433,10 +432,10 @@ export default function SystemPresetDialog({
 
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={() => onOpenChange(false)}
             disabled={saving}
-            className="border-border bg-background text-white hover:bg-muted cursor-pointer"
+            className="bg-secondary border border-border cursor-pointer"
           >
             cancel
           </Button>

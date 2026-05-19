@@ -1,0 +1,119 @@
+---
+hide:
+  - navigation
+---
+
+# auth
+
+`auth` groups the three verbs that manage the active profile's stored credential. it acts on the user's local config — the cli's own state — and never touches a site or machine. tier: `[ready]` for all three verbs.
+
+verbs:
+
+- [`auth login`](#auth-login) — device-code pairing flow that mints + stores an `owk_*` api key
+- [`auth status`](#auth-status) — alias of [`whoami`](whoami.md); prints byte-identical output
+- [`auth logout`](#auth-logout) — strips the token from the active profile
+
+---
+
+## auth login
+
+starts the device-code flow against `/api/cli/device-code`, prints a 3-word pairing phrase + verification url, polls until the dashboard authorises, then stores the issued `owk_*` key for the active profile. the cli uses the OS keychain when the local platform tooling is available; otherwise it falls back to `~/.config/owlette/credentials.json` with `0600` permissions. `~/.config/owlette/config.toml` stores only non-secret profile metadata such as `api_url` and `environment`.
+
+```bash
+owlette auth login [--no-browser]
+```
+
+| flag | type | required | description |
+|---|---|---|---|
+| `--no-browser` | boolean | no | skip the automatic browser open — print the url and let the user copy it (use on ssh / headless ci) |
+
+inherits the global `--profile <name>` flag so you can pair into a non-default profile (e.g. `--profile dev` to write into `[profiles.dev]`).
+
+### examples
+
+```bash
+# default flow — opens browser, polls until you click "authorize"
+owlette auth login
+```
+
+```bash
+# headless host — print the pairing phrase + url and copy them somewhere with a browser
+owlette auth login --no-browser
+```
+
+```bash
+# pair into a separate profile (e.g. for the dev tenant)
+owlette --profile dev --api-url https://dev.owlette.app auth login
+```
+
+backing: `POST /api/cli/device-code` (start) → `POST /api/cli/device-code/poll` (poll, 5s minimum interval, 10-minute hard cap).
+
+---
+
+## auth status
+
+alias of [`owlette whoami`](whoami.md) — calls `GET /api/whoami` with the active profile's token and prints the server-resolved identity. produces byte-identical stdout/stderr to `whoami` (same shared `runWhoami` runner under the hood), so anything you script against one works against the other.
+
+```bash
+owlette auth status [--json]
+```
+
+no verb-specific flags. inherits `--json` and `--profile` from the global set.
+
+### examples
+
+```bash
+# human-readable summary
+owlette auth status
+```
+
+```bash
+# json envelope — same shape as `owlette whoami --json`
+owlette auth status --json | jq '.whoami.key.scopes'
+```
+
+backing: `GET /api/whoami`.
+
+---
+
+## auth logout
+
+clears the stored credential for the active profile. local-only — does not revoke the key server-side. to actually revoke a key, use `owlette key revoke <keyId>`.
+
+```bash
+owlette auth logout
+```
+
+no verb-specific flags. inherits `--profile` from the global set.
+
+### examples
+
+```bash
+# clear the default profile's token
+owlette auth logout
+```
+
+```bash
+# clear the dev profile's token only — default stays signed in
+owlette --profile dev auth logout
+```
+
+backing: none — local file write only.
+
+---
+
+## exit codes
+
+- `0` — success (token written, status printed, or token cleared)
+- `1` — network failure, non-2xx api response, login polling timeout, or expired pairing phrase
+- `2` — `auth status` only: no token configured for the active profile (run `auth login` first)
+
+---
+
+## notes
+
+- **scope**: user (acts on the active profile in the local config file)
+- **tier**: `[ready]` for all three verbs
+- **token storage**: OS keychain when available, otherwise `~/.config/owlette/credentials.json` with file mode forced to `0o600`. legacy `token` fields in `config.toml` are still read but new logins do not write them
+- **profile selection**: `--profile <name>` (or `OWLETTE_PROFILE`) selects which `[profiles.X]` block reads/writes
+- **related**: [`whoami`](whoami.md) (identical to `auth status`), [`key`](key.md) for server-side key management, [overview](../overview.md) for config precedence

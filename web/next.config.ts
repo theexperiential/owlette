@@ -2,14 +2,22 @@ import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
 import { version } from "./package.json";
 
-const isDev = process.env.NODE_ENV === 'development';
+const e2eDistDir = process.env.OWLETTE_NEXT_DIST_DIR;
+const allowedDevOrigins = (process.env.NEXT_ALLOWED_DEV_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 const nextConfig: NextConfig = {
   reactStrictMode: false,
+  ...(e2eDistDir ? { distDir: e2eDistDir } : {}),
   env: {
     NEXT_PUBLIC_APP_VERSION: version,
   },
-  allowedDevOrigins: ['http://100.64.45.42:3000'],
+  allowedDevOrigins,
+  images: {
+    formats: ['image/avif', 'image/webp'],
+  },
   async headers() {
     return [
       {
@@ -23,7 +31,13 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        // Apply security headers to all routes
+        // Apply static security headers to all routes.
+        // CSP is emitted from proxy.ts instead of next.config.ts because it
+        // needs a fresh per-request nonce. Script inline execution must use
+        // that nonce (with strict-dynamic) rather than 'unsafe-inline'. Style
+        // inline execution allows 'unsafe-inline' because Next 16 emits
+        // inline <style> blocks during client navigation that the request-
+        // header nonce doesn't cover — see proxy.ts for the full rationale.
         source: '/:path*',
         headers: [
           {
@@ -54,25 +68,9 @@ const nextConfig: NextConfig = {
             value: '1; mode=block',
           },
           {
-            // Content Security Policy - controls what resources can be loaded
-            // Note: 'unsafe-inline' in style-src is required by Tailwind CSS
-            // Note: 'unsafe-inline' in script-src is required by Google OAuth sign-in popups
-            // TODO: Replace with nonce-based CSP via Next.js middleware for stronger XSS protection
-            key: 'Content-Security-Policy',
-            value: [
-              "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com https://*.gstatic.com", // Google OAuth requires inline scripts
-              "style-src 'self' 'unsafe-inline'", // Tailwind CSS requires unsafe-inline
-              "img-src 'self' data: blob: https:",
-              "font-src 'self' data:",
-              "connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com https://*.ingest.sentry.io", // Firebase endpoints + Google OAuth
-              "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com", // Allow Google OAuth popup and Firebase auth
-              "frame-ancestors 'none'", // Equivalent to X-Frame-Options: DENY
-              "base-uri 'self'",
-              "form-action 'self'",
-              "object-src 'none'", // Prevent plugin-based attacks (Flash, Java applets)
-              ...(isDev ? [] : ["upgrade-insecure-requests"]), // Force HTTPS for all resources (skip in dev for LAN access)
-            ].join('; '),
+            // Enforce HTTPS for 1 year — prevents downgrade/MITM attacks
+            key: 'Strict-Transport-Security',
+            value: 'max-age=31536000; includeSubDomains',
           },
         ],
       },

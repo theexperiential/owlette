@@ -9,6 +9,12 @@
  * - GET /api/auth/session - Get session status (debugging/validation)
  *
  * SECURITY: Rate limited to prevent session creation spam (10 requests/min per IP)
+ *
+ * MFA enforcement (Wave 2 — server-enforced MFA):
+ *   POST bakes `mfaRequired` / `mfaVerified` into the session at create
+ *   time from `users/{uid}.mfaEnrolled`. The GET response exposes those
+ *   fields so the login page can render the right redirect (the server-side
+ *   proxy enforces the gate regardless; the client-side flag is UX only).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -19,6 +25,7 @@ import {
 } from '@/lib/sessionManager.server';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { getAdminAuth } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * POST /api/auth/session
@@ -52,7 +59,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       const adminAuth = getAdminAuth();
       const decoded = await adminAuth.verifyIdToken(idToken);
       verifiedUserId = decoded.uid;
-    } catch (error) {
+    } catch {
       return NextResponse.json(
         { error: 'Invalid or expired ID token' },
         { status: 401 }
@@ -75,7 +82,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Create session
+    // Create session — this internally reads users/{uid}.mfaEnrolled and
+    // bakes mfaRequired/mfaVerified into the cookie. The proxy enforces
+    // the gate; we don't need to surface those flags in the POST response.
     await createSession(verifiedUserId, durationDays);
 
     return NextResponse.json({
@@ -84,11 +93,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       expiresIn: durationDays * 24 * 60 * 60, // seconds
     });
   } catch (error) {
-    console.error('[Session API] Failed to create session:', error);
-    return NextResponse.json(
-      { error: 'Failed to create session' },
-      { status: 500 }
-    );
+    return apiError(error, 'auth/session POST');
   }
 }, {
   strategy: 'auth',
@@ -108,11 +113,7 @@ export async function DELETE() {
       message: 'Session destroyed',
     });
   } catch (error) {
-    console.error('[Session API] Failed to destroy session:', error);
-    return NextResponse.json(
-      { error: 'Failed to destroy session' },
-      { status: 500 }
-    );
+    return apiError(error, 'auth/session DELETE');
   }
 }
 
@@ -124,8 +125,15 @@ export async function DELETE() {
  * {
  *   "authenticated": boolean,
  *   "userId": string | null,
- *   "expiresAt": number | null
+ *   "expiresAt": number | null,
+ *   "mfaRequired": boolean | null,    // null for pre-Wave-2 sessions
+ *   "mfaVerified": boolean | null,    // null for pre-Wave-2 sessions
+ *   "mfaCompletedAt": number | null
  * }
+ *
+ * Note: the proxy is the authoritative MFA gate. Clients should treat the
+ * MFA fields here as UX hints (e.g. to decide which page to push next),
+ * not as a trust boundary.
  */
 export async function GET() {
   try {
@@ -136,6 +144,9 @@ export async function GET() {
         authenticated: false,
         userId: null,
         expiresAt: null,
+        mfaRequired: null,
+        mfaVerified: null,
+        mfaCompletedAt: null,
       });
     }
 
@@ -144,12 +155,17 @@ export async function GET() {
       userId: sessionData.userId,
       expiresAt: sessionData.expiresAt,
       expiresIn: Math.max(0, Math.floor((sessionData.expiresAt - Date.now()) / 1000)), // seconds
+      mfaRequired:
+        typeof sessionData.mfaRequired === 'boolean'
+          ? sessionData.mfaRequired
+          : null,
+      mfaVerified:
+        typeof sessionData.mfaVerified === 'boolean'
+          ? sessionData.mfaVerified
+          : null,
+      mfaCompletedAt: sessionData.mfaCompletedAt ?? null,
     });
   } catch (error) {
-    console.error('[Session API] Failed to get session:', error);
-    return NextResponse.json(
-      { error: 'Failed to get session' },
-      { status: 500 }
-    );
+    return apiError(error, 'auth/session GET');
   }
 }

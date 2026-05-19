@@ -34,6 +34,9 @@ from datetime import datetime
 # Import shared utilities
 import shared_utils
 import registry_utils
+import hardware_profile
+import display_manager
+import nvapi_display
 
 # Import new OAuth-based modules (replace firebase_admin)
 from auth_manager import AuthManager, AuthenticationError, TokenRefreshError
@@ -41,6 +44,45 @@ from firestore_rest_client import FirestoreRestClient, SERVER_TIMESTAMP, DELETE_
 
 # Import centralized connection manager
 from connection_manager import ConnectionManager, ConnectionState, ConnectionEvent
+
+
+def should_emit_progress(
+    prev_state: Optional[dict],
+    status: str,
+    progress: Optional[int],
+    force: bool,
+    now: float,
+    min_seconds: float,
+    min_pct: int,
+) -> tuple:
+    """
+    Pure throttle-decision helper for update_command_progress (wave 4b.5).
+
+    Returns (should_emit, new_state). Caller persists new_state on emit.
+
+    Coalesces same-status writes within BOTH thresholds (time AND percent).
+    Status changes always emit (transitions are observable cliffs).
+    force=True bypasses throttling — use for terminal events that MUST land.
+
+    Extracted as a module-level function so it can be unit-tested without
+    instantiating FirebaseClient (which pulls in cryptography/PyO3 and
+    fights pytest's interpreter reuse).
+    """
+    new_state = {'ts': now, 'status': status, 'progress': progress}
+    if force:
+        return True, new_state
+    if prev_state is None or prev_state.get('status') != status:
+        # never throttle status transitions or first writes
+        return True, new_state
+    elapsed = now - prev_state['ts']
+    last_pct = prev_state.get('progress')
+    if progress is not None and last_pct is not None:
+        pct_delta = abs(progress - last_pct)
+    else:
+        pct_delta = 0
+    if elapsed < min_seconds and pct_delta < min_pct:
+        return False, prev_state  # coalesce: skip this write
+    return True, new_state
 
 
 class FirebaseClient:
@@ -73,6 +115,13 @@ class FirebaseClient:
 
         # Logging
         self.logger = logging.getLogger("OwletteFirebase")
+
+        # Per-cmd_id throttle state for update_command_progress.
+        # {cmd_id: {'ts': float, 'status': str, 'progress': int|None}}
+        # Coalesces rapid-fire chunk-progress updates so a 64k-chunk roost
+        # distribution doesn't write 64k firestore docs per machine.
+        self._progress_throttle: Dict[str, dict] = {}
+        self._progress_throttle_lock = threading.Lock()
 
         # =================================================================
         # Connection Manager (centralized state management)
@@ -142,6 +191,48 @@ class FirebaseClient:
         # Track last synced software inventory hash to prevent unnecessary writes
         self._last_software_inventory_hash: Optional[str] = None
 
+        # Hardware profile state (schemaVersion 1)
+        # _last_profile_check: monotonic timestamp of the last build_profile() call
+        # _cached_profile: most recent profile dict returned by _ensure_profile
+        # _cached_profile_hash: on-disk signature hash (loaded lazily from profile_hash.json)
+        # _last_primary: previous compute_primary result, used for hysteresis
+        self._last_profile_check: float = 0.0
+        self._cached_profile: Optional[Dict] = None
+        self._cached_profile_hash: Optional[str] = None
+        self._last_primary: Optional[Dict] = None
+        self._profile_hash_path: str = shared_utils.get_data_path('tmp/profile_hash.json')
+
+        # Alert pending queue. Network drops at the exact moment an
+        # operator-critical event fires would silently lose a fire-and-forget
+        # API call without a buffer. Send failures append here; the
+        # connection-state listener drains the buffer when ConnectionState
+        # transitions back to CONNECTED.
+        # In-memory only — service restart wipes the queue. Cap of 100
+        # prevents unbounded growth during a long outage; oldest entries
+        # are dropped first when full.
+        self._pending_alerts: list = []
+        self._pending_alerts_lock = threading.Lock()
+        self._PENDING_ALERTS_MAX = 100
+
+        # Display profile state (schemaVersion 1). Mirrors the hardware-profile
+        # cache: rate-limited rebuild, signature-hashed uploads, on-disk hash
+        # persisted across service restarts so we don't re-upload on boot when
+        # nothing changed. Kept completely separate from metrics/presence —
+        # writes go to hardware/display, never touching online/lastHeartbeat.
+        self._last_display_check: float = 0.0
+        self._cached_display_profile: Optional[Dict] = None
+        self._cached_display_hash: Optional[str] = None
+        self._display_hash_path: str = shared_utils.get_data_path('.display_profile_hash')
+
+        # Display-modes catalogue state (A3.2). On-demand (not heartbeat-driven)
+        # — the dashboard fires an `enumerate_display_modes` command when the
+        # editor opens. The `signatureHash` matches the display profile's hash,
+        # so an unchanged topology produces a no-op upload. Separate on-disk
+        # cache file from the profile hash so either can be invalidated
+        # independently.
+        self._cached_display_modes_hash: Optional[str] = None
+        self._display_modes_hash_path: str = shared_utils.get_data_path('.display_modes_hash')
+
         # =================================================================
         # Initialize Firebase connection
         # =================================================================
@@ -173,6 +264,16 @@ class FirebaseClient:
                 self.logger.error(f"Token validation failed: {e}")
                 return False
 
+            # Safety belt: close any lingering client from a prior connect
+            # that didn't go through _do_disconnect (shouldn't happen, but
+            # guarantees we never stack two live HTTP sessions).
+            old_db = getattr(self, 'db', None)
+            if old_db is not None:
+                try:
+                    old_db.close()
+                except Exception as e:
+                    self.logger.debug(f"Old Firestore client close failed (ignored): {e}")
+
             # Initialize Firestore REST client
             self.db = FirestoreRestClient(
                 project_id=self.project_id,
@@ -189,11 +290,18 @@ class FirebaseClient:
     def _do_disconnect(self):
         """
         Called by ConnectionManager during shutdown.
-        Performs cleanup operations.
+        Releases the Firestore REST client's HTTP session pool so we don't
+        leak sockets across reconnect cycles (token refresh flaps, network
+        outages, config toggles). Safe no-op if already disconnected.
         """
         self.logger.debug("Disconnect callback: cleaning up resources")
-        # Firestore REST client doesn't need explicit cleanup
-        # but we could add cleanup here if needed
+        db = getattr(self, 'db', None)
+        if db is not None:
+            try:
+                db.close()
+            except Exception as e:
+                self.logger.debug(f"Firestore client close failed (ignored): {e}")
+            self.db = None
 
     def _on_connected(self):
         """
@@ -210,6 +318,11 @@ class FirebaseClient:
             # Send immediate heartbeat and metrics
             self._update_presence(True)
             self.logger.debug("Heartbeat sent after connection")
+
+            # Ensure hardware profile is uploaded once on (re)connect — on a
+            # signature change this writes the new profile doc before metrics,
+            # so consumers never see metrics referencing a stale profileHash.
+            self._ensure_profile()
 
             metrics = shared_utils.get_system_metrics()
             self._upload_metrics(metrics)
@@ -229,6 +342,12 @@ class FirebaseClient:
         if event.new_state == ConnectionState.FATAL_ERROR:
             # Machine may have been removed from site
             self._handle_fatal_error(event.reason)
+        elif event.new_state == ConnectionState.CONNECTED:
+            # Drain any alerts that failed to send while we were offline.
+            # Runs on a daemon thread so a slow drain doesn't block the
+            # connection-state listener (other listeners would otherwise
+            # queue behind this one).
+            self._drain_pending_alerts_async()
 
     def _handle_fatal_error(self, reason: str):
         """
@@ -481,6 +600,15 @@ class FirebaseClient:
                         # Upload metrics
                         metrics = shared_utils.get_system_metrics()
                         self._upload_metrics(metrics)
+
+                        # Refresh session_state.json last_alive — this is the
+                        # canonical heartbeat path. Used by the next startup
+                        # classifier to compute the "last seen alive" gap.
+                        try:
+                            import session_state
+                            session_state.update_alive()
+                        except Exception as e:
+                            self.logger.debug(f"session_state.update_alive failed in metrics loop: {e}")
 
                         # Report success to connection manager
                         self.connection_manager.report_success()
@@ -736,8 +864,440 @@ class FirebaseClient:
             self.logger.error(f"Error updating presence: {e}")
             self.connection_manager.report_error(e, "Presence update")
 
+    # =========================================================================
+    # Hardware Profile (schemaVersion 1)
+    # =========================================================================
+
+    _PROFILE_CHECK_INTERVAL = 300.0  # seconds between full build_profile() rebuilds
+    _DISPLAY_CHECK_INTERVAL = 300.0  # seconds between full build_display_profile() rebuilds
+
+    # update_command_progress throttling. coalesce same-status writes that
+    # are within both thresholds (per cmd_id). status changes + force=True
+    # always write through.
+    PROGRESS_THROTTLE_SECONDS = 30.0
+    PROGRESS_THROTTLE_PERCENT = 5
+
+    def _load_cached_profile_hash(self) -> Optional[str]:
+        """Load the cached profile signature hash from disk (once per process)."""
+        if self._cached_profile_hash is not None:
+            return self._cached_profile_hash
+        try:
+            data = shared_utils.read_json_from_file(self._profile_hash_path)
+            if isinstance(data, dict):
+                hash_val = data.get('signatureHash')
+                if isinstance(hash_val, str) and hash_val:
+                    self._cached_profile_hash = hash_val
+        except Exception as e:
+            self.logger.debug(f"No cached profile hash available: {e}")
+        return self._cached_profile_hash
+
+    def _write_cached_profile_hash(self, signature_hash: str):
+        """Persist the profile signature hash to disk."""
+        try:
+            os.makedirs(os.path.dirname(self._profile_hash_path), exist_ok=True)
+            shared_utils.write_json_to_file({'signatureHash': signature_hash}, self._profile_hash_path)
+            self._cached_profile_hash = signature_hash
+        except Exception as e:
+            self.logger.warning(f"Failed to persist profile hash: {e}")
+
+    def _ensure_profile(self) -> Optional[Dict[str, Any]]:
+        """
+        Ensure the hardware profile is up-to-date in Firestore.
+
+        Rebuilds the profile at most once every _PROFILE_CHECK_INTERVAL seconds.
+        If the signature hash changed since the last upload, writes the new
+        profile to sites/{siteId}/machines/{machineId}/hardware/profile and
+        updates the local cache. All errors are swallowed so heartbeat never
+        crashes.
+
+        Returns:
+            The current profile dict, or the cached profile if the rate-limit
+            gate skipped a rebuild, or None on catastrophic failure.
+        """
+        now = time.monotonic()
+        if self._cached_profile is not None and (now - self._last_profile_check) < self._PROFILE_CHECK_INTERVAL:
+            return self._cached_profile
+
+        # Stamp the check time BEFORE attempting build_profile so a persistent
+        # failure (e.g. stuck WMI, hung disk_usage) still honors the 5-minute
+        # gate instead of re-running expensive queries on every heartbeat tick.
+        self._last_profile_check = now
+
+        try:
+            profile = hardware_profile.build_profile()
+        except Exception as e:
+            self.logger.warning(f"build_profile failed: {e}")
+            return self._cached_profile
+
+        self._cached_profile = profile
+
+        signature = profile.get('signatureHash')
+        if not signature:
+            return profile
+
+        cached_hash = self._load_cached_profile_hash()
+        if signature == cached_hash:
+            return profile
+
+        # Signature changed — upload to Firestore.
+        if not self.connected or not self.db:
+            # Offline or not yet connected; retain cached state, retry next tick.
+            return profile
+
+        try:
+            profile_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('hardware').document('profile')
+            profile_ref.set(profile, merge=False)
+            self._write_cached_profile_hash(signature)
+            self.logger.info(f"Hardware profile uploaded (hash={signature[:12]})")
+        except Exception as e:
+            self.logger.warning(f"Failed to upload hardware profile: {e}")
+
+        return profile
+
+    def _load_cached_display_hash(self) -> Optional[str]:
+        """Load the cached display profile signature hash from disk (once per process)."""
+        if self._cached_display_hash is not None:
+            return self._cached_display_hash
+        try:
+            data = shared_utils.read_json_from_file(self._display_hash_path)
+            if isinstance(data, dict):
+                hash_val = data.get('signatureHash')
+                if isinstance(hash_val, str) and hash_val:
+                    self._cached_display_hash = hash_val
+        except Exception as e:
+            self.logger.debug(f"No cached display profile hash available: {e}")
+        return self._cached_display_hash
+
+    def _write_cached_display_hash(self, signature_hash: str):
+        """Persist the display profile signature hash to disk."""
+        try:
+            os.makedirs(os.path.dirname(self._display_hash_path), exist_ok=True)
+            shared_utils.write_json_to_file({'signatureHash': signature_hash}, self._display_hash_path)
+            self._cached_display_hash = signature_hash
+        except Exception as e:
+            self.logger.warning(f"Failed to persist display profile hash: {e}")
+
+    def _load_cached_display_modes_hash(self) -> Optional[str]:
+        """Load the cached display-modes catalogue signature hash from disk
+        (once per process). Mirrors ``_load_cached_display_hash``.
+        """
+        if self._cached_display_modes_hash is not None:
+            return self._cached_display_modes_hash
+        try:
+            data = shared_utils.read_json_from_file(self._display_modes_hash_path)
+            if isinstance(data, dict):
+                hash_val = data.get('signatureHash')
+                if isinstance(hash_val, str) and hash_val:
+                    self._cached_display_modes_hash = hash_val
+        except Exception as e:
+            self.logger.debug(f"No cached display-modes hash available: {e}")
+        return self._cached_display_modes_hash
+
+    def _write_cached_display_modes_hash(self, signature_hash: str):
+        """Persist the display-modes catalogue signature hash to disk."""
+        try:
+            os.makedirs(os.path.dirname(self._display_modes_hash_path), exist_ok=True)
+            shared_utils.write_json_to_file(
+                {'signatureHash': signature_hash}, self._display_modes_hash_path,
+            )
+            self._cached_display_modes_hash = signature_hash
+        except Exception as e:
+            self.logger.warning(f"Failed to persist display-modes hash: {e}")
+
+    def _ensure_display_modes_catalogue(self, force: bool = False) -> Dict[str, Any]:
+        """Enumerate supported display modes for every active monitor and
+        upload the result to Firestore, skipping the upload when the
+        ``signatureHash`` matches the last upload (hardware unchanged).
+
+        Triggered on-demand by the ``enumerate_display_modes`` command — the
+        dashboard fires it when an operator opens the layout editor. Not part
+        of the heartbeat loop because the catalogue changes rarely (same
+        cadence as ``hardware/display``) and only active editors need it.
+
+        Returns a summary dict shaped for the service command handler::
+
+            {
+              'ok': True,
+              'uploaded': bool,
+              'monitorCount': int,
+              'modeCount': int,
+              'signatureHash': str | None,
+              'reason': str | None,  # set when uploaded=False explains why
+            }
+
+            or on failure:
+
+            {'ok': False, 'error': str, 'code': DisplayErrorCode}
+        """
+        # Kill switch — operators can disable all display work at config time
+        # without stopping the service. Same check as `_ensure_display_profile`
+        # so both paths honour the flag consistently.
+        try:
+            if shared_utils.read_config(['displays', 'enabled']) is False:
+                return {
+                    'ok': True,
+                    'uploaded': False,
+                    'monitorCount': 0,
+                    'modeCount': 0,
+                    'signatureHash': None,
+                    'reason': 'displays_disabled',
+                }
+        except Exception:
+            pass
+
+        result = display_manager.enumerate_modes_via_user_session()
+        if not result.get('ok'):
+            # Helper spawn / timeout / hard failure — pass through error + code.
+            return result
+
+        by_edid = result.get('byEdidHash') or {}
+        monitor_count = len(by_edid)
+        mode_count = sum(
+            len((info or {}).get('modes') or [])
+            for info in by_edid.values()
+        )
+        signature = result.get('signatureHash')
+
+        # Transient CCD stall inside the helper — skip upload + preserve cached
+        # hash so the next dispatch tries again. Distinct from a hard failure
+        # (which would have returned ok:False above).
+        if result.get('enumerationFailed'):
+            return {
+                'ok': True,
+                'uploaded': False,
+                'monitorCount': monitor_count,
+                'modeCount': mode_count,
+                'signatureHash': signature,
+                'reason': 'enumeration_failed',
+            }
+
+        if not signature:
+            return {
+                'ok': True,
+                'uploaded': False,
+                'monitorCount': monitor_count,
+                'modeCount': mode_count,
+                'signatureHash': None,
+                'reason': 'no_signature',
+            }
+
+        # Cache-by-hash skip — the whole point of A3.2.
+        cached_hash = self._load_cached_display_modes_hash()
+        if not force and signature == cached_hash:
+            return {
+                'ok': True,
+                'uploaded': False,
+                'monitorCount': monitor_count,
+                'modeCount': mode_count,
+                'signatureHash': signature,
+                'reason': 'unchanged',
+            }
+
+        if not self.connected or not self.db:
+            return {
+                'ok': True,
+                'uploaded': False,
+                'monitorCount': monitor_count,
+                'modeCount': mode_count,
+                'signatureHash': signature,
+                'reason': 'offline',
+            }
+
+        doc = {
+            'schemaVersion': result.get('schemaVersion'),
+            'signatureHash': signature,
+            'capturedAt': result.get('capturedAt'),
+            'byEdidHash': by_edid,
+        }
+        try:
+            modes_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('hardware').document('displayModes')
+            modes_ref.set(doc, merge=False)
+            self._write_cached_display_modes_hash(signature)
+            self.logger.info(
+                f"Display modes catalogue uploaded "
+                f"(hash={signature[:12]}, monitors={monitor_count}, modes={mode_count})"
+            )
+            return {
+                'ok': True,
+                'uploaded': True,
+                'monitorCount': monitor_count,
+                'modeCount': mode_count,
+                'signatureHash': signature,
+            }
+        except Exception as e:
+            self.logger.warning(f"Failed to upload display modes catalogue: {e}")
+            return {
+                'ok': False,
+                'error': str(e),
+                'code': 'upload_failed',
+            }
+
+    def update_display_autorestore_state(self, state_patch: dict) -> None:
+        """Partial-update of config/{siteId}/machines/{machineId}.displays.autoRestore.circuitBreaker.
+
+        state_patch fields (all optional — only the keys present in the patch are written):
+            failures: int        — current consecutive-failure counter
+            tripped: bool        — True when failures >= 3; manual reset only
+            trippedAt: str       — iso8601 timestamp of the trip event
+            lastFailureAt: str   — iso8601 timestamp of last failure
+            lastSuccessAt: str   — iso8601 timestamp of last successful auto-restore
+            lastError: str       — last failure's error message (truncated to 500 chars by the caller)
+
+        The merge target is the `circuitBreaker` subobject ONLY. Sibling fields under
+        `displays.autoRestore` (e.g. `enabled`, `enabledBy`, `enabledAt`) MUST NOT be
+        touched — those are operator-set via the dashboard and writing them here would
+        silently overwrite operator intent. The Firestore document path is the same
+        one the existing `_ensure_display_modes_catalogue` uses for siteId/machineId
+        resolution.
+
+        Non-blocking semantics — failures are silently logged + swallowed (mirrors
+        `send_process_alert` and `_ensure_display_modes_catalogue`). Returns nothing.
+        """
+        if not state_patch:
+            return
+
+        if not self.connected or not self.db:
+            self.logger.debug(
+                "Skipping display autoRestore state write — not connected to Firestore"
+            )
+            return
+
+        try:
+            config_ref = self.db.collection('config').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+            config_ref.set({
+                'displays': {
+                    'autoRestore': {
+                        'circuitBreaker': state_patch,
+                    },
+                },
+            }, merge=True)
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to update display autoRestore circuit-breaker state: {e}"
+            )
+
+    def _ensure_display_profile(self, force: bool = False) -> Optional[Dict[str, Any]]:
+        """
+        Ensure the display profile is up-to-date in Firestore.
+
+        Rebuilds the display topology at most once every _DISPLAY_CHECK_INTERVAL
+        seconds — unless ``force=True`` is passed, in which case the rate-limit
+        gate is bypassed (used by the main-loop topology change detector to
+        push fresh state to the dashboard without waiting up to 5 minutes for
+        the next idle metrics tick). Merges NVAPI Mosaic / GSync data on top
+        of the CCD snapshot. If the signature hash changed since the last
+        upload, writes the new profile to
+        sites/{siteId}/machines/{machineId}/hardware/display and updates the
+        local cache. All errors are swallowed so heartbeat never crashes.
+
+        This document is entirely separate from metrics / presence writes —
+        it never touches online / lastHeartbeat fields.
+
+        Returns:
+            The current display profile dict, or the cached profile if the
+            rate-limit gate skipped a rebuild, or None on catastrophic failure.
+        """
+        # Kill switch — when displays.enabled is explicitly False, skip ALL
+        # display work (enumeration + upload). Checked before the rate-limit
+        # gate so operators toggling the flag see an immediate effect rather
+        # than waiting out the 5-minute cache window. Fail-open on unreadable
+        # config so first-boot (before config.json exists) is not blocked.
+        try:
+            if shared_utils.read_config(['displays', 'enabled']) is False:
+                return self._cached_display_profile
+        except Exception:
+            pass
+
+        now = time.monotonic()
+        if not force and self._cached_display_profile is not None and (now - self._last_display_check) < self._DISPLAY_CHECK_INTERVAL:
+            return self._cached_display_profile
+
+        # Stamp the check time BEFORE attempting build_display_profile so a
+        # persistent failure (e.g. stuck CCD call, driver hang) still honors
+        # the 5-minute gate instead of re-running expensive queries on every
+        # heartbeat tick.
+        self._last_display_check = now
+
+        try:
+            profile = display_manager.build_display_profile()
+        except Exception as e:
+            self.logger.warning(f"build_display_profile failed: {e}")
+            return self._cached_display_profile
+
+        # Merge NVAPI Mosaic data on top of the CCD snapshot. Mosaic presence
+        # also flips the signatureHash via display_signature(), which considers
+        # mosaicActive part of the identity — but build_display_profile() set
+        # the hash before we flipped mosaicActive, so recompute below.
+        try:
+            mosaic = nvapi_display.detect_mosaic()
+            if mosaic:
+                profile['mosaicActive'] = True
+                profile['mosaicGrids'] = mosaic.get('grids', [])
+        except Exception as e:
+            self.logger.debug(f"detect_mosaic failed: {e}")
+
+        try:
+            sync = nvapi_display.detect_sync()
+            if sync:
+                profile['syncDevices'] = sync.get('devices', [])
+        except Exception as e:
+            self.logger.debug(f"detect_sync failed: {e}")
+
+        # Recompute signature after merging Mosaic state so mosaicActive flips
+        # force a re-upload even when the underlying monitor layout is identical.
+        try:
+            profile['signatureHash'] = display_manager.display_signature(profile)
+        except Exception as e:
+            self.logger.warning(f"display_signature failed: {e}")
+
+        self._cached_display_profile = profile
+
+        # If CCD enumeration failed (timeout / driver stall), the profile is a
+        # placeholder with an empty monitors list — uploading it would clobber
+        # valid Firestore data. Retain the cached state and retry next tick.
+        if profile.get('enumerationFailed'):
+            self.logger.debug("Skipping display profile upload: enumeration failed")
+            return self._cached_display_profile
+
+        signature = profile.get('signatureHash')
+        if not signature:
+            return profile
+
+        cached_hash = self._load_cached_display_hash()
+        if signature == cached_hash:
+            return profile
+
+        # Signature changed — upload to Firestore.
+        if not self.connected or not self.db:
+            # Offline or not yet connected; retain cached state, retry next tick.
+            return profile
+
+        try:
+            profile_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('hardware').document('display')
+            profile_ref.set(profile, merge=False)
+            self._write_cached_display_hash(signature)
+            self.logger.info(f"Display profile uploaded (hash={signature[:12]})")
+        except Exception as e:
+            self.logger.warning(f"Failed to upload display profile: {e}")
+
+        return profile
+
     def _upload_metrics(self, metrics: Dict[str, Any]):
-        """Upload system metrics to Firestore."""
+        """Upload system metrics to Firestore.
+
+        The `metrics` argument provides the lean in-line dict from
+        shared_utils.get_system_metrics_with_config (memory + processes).
+        Dynamic hardware metrics (cpus/disks/gpus/nics/network) are collected
+        here from the current hardware_profile so the shape stays aligned with
+        the uploaded schemaVersion 1 profile document.
+        """
         if not self.connected or not self.db:
             return
 
@@ -745,26 +1305,97 @@ class FirebaseClient:
             .collection('machines').document(self.machine_id)
 
         try:
+            # Ensure profile is uploaded / up-to-date. Needed for IDs alignment.
+            profile = self._ensure_profile()
+
+            # Ensure display topology is uploaded / up-to-date. Writes to its
+            # own hardware/display doc — never touches metrics or presence.
+            # Guarded so display failures can never break metrics upload.
+            try:
+                self._ensure_display_profile()
+            except Exception as e:
+                self.logger.warning(f"_ensure_display_profile failed: {e}")
+
+            # Collect dynamic per-device metrics keyed by profile IDs.
+            try:
+                dynamic = hardware_profile.collect_dynamic_metrics(profile) if profile else {}
+            except Exception as e:
+                self.logger.warning(f"collect_dynamic_metrics failed: {e}")
+                dynamic = {}
+
+            # Primary device picks (with hysteresis against previous tick).
+            try:
+                primary = hardware_profile.compute_primary(dynamic, self._last_primary)
+                self._last_primary = primary
+            except Exception as e:
+                self.logger.warning(f"compute_primary failed: {e}")
+                primary = self._last_primary or {'cpu': None, 'disk': None, 'gpu': None, 'nic': None}
+
+            # Memory and processes come from the caller-provided metrics dict.
+            memory_data = metrics.get('memory', {})
             processes_data = metrics.get('processes', {})
+
             self.logger.debug(f"Uploading metrics with {len(processes_data)} processes: {list(processes_data.keys())}")
 
-            # Use update() with dot notation so metrics.processes is REPLACED
-            # entirely (not deep-merged). This ensures deleted processes don't
+            profile_hash = profile.get('signatureHash') if profile else None
+
+            # Display drift count: published on every heartbeat so the
+            # dashboard list/card views can render the drift dot without each
+            # opening its own assigned-layout subscription. Computed from the
+            # cached display profile (live monitors) and the assigned layout
+            # in the agent's cached config doc.
+            try:
+                live_monitors = (
+                    self._cached_display_profile.get('monitors')
+                    if isinstance(self._cached_display_profile, dict) else None
+                )
+                assigned_monitors = shared_utils.read_config(
+                    ['displays', 'assigned', 'monitors']
+                )
+                display_drift_count = display_manager.compute_drift_count(
+                    live_monitors, assigned_monitors
+                )
+            except Exception as e:
+                self.logger.debug(f"compute_drift_count failed: {e}")
+                display_drift_count = 0
+
+            # Use update() with dot notation so nested maps are REPLACED entirely
+            # (not deep-merged). This ensures deleted processes/devices don't
             # persist as ghost entries in Firestore.
             metrics_ref.update({
                 'online': True,
                 'lastHeartbeat': SERVER_TIMESTAMP,
                 'agent_version': shared_utils.APP_VERSION,
                 'machine_timezone': shared_utils.get_machine_timezone(),
+                'machine_timezone_iana': shared_utils.get_machine_timezone_iana(),
                 'machineId': self.machine_id,
                 'siteId': self.site_id,
-                'metrics.cpu': metrics.get('cpu', {}),
-                'metrics.memory': metrics.get('memory', {}),
-                'metrics.disk': metrics.get('disk', {}),
-                'metrics.gpu': metrics.get('gpu', {}),
-                'metrics.network': metrics.get('network', {}),
+                # Wave 6.4 capability handshake — the dashboard reads
+                # `capabilities.displayRemoteApply` and disables the apply
+                # button when missing or below version 1, so pre-Wave-3
+                # agents can't be sent commands they can't handle. Bumped
+                # when the helper IPC contract changes; unrelated to
+                # `agent_version` (which moves on every release).
+                'capabilities.displayRemoteApply': 1,
+                'metrics.schemaVersion': 2,
+                'metrics.profileHash': profile_hash,
                 'metrics.timestamp': SERVER_TIMESTAMP,
-                'metrics.processes': processes_data
+                'metrics.cpus': dynamic.get('cpus', {}),
+                'metrics.disks': dynamic.get('disks', {}),
+                'metrics.diskio': dynamic.get('diskio', {}),
+                'metrics.gpus': dynamic.get('gpus', {}),
+                'metrics.nics': dynamic.get('nics', {}),
+                'metrics.memory': memory_data,
+                'metrics.network': dynamic.get('network', {}),
+                'metrics.primary': primary,
+                'metrics.processes': processes_data,
+                'metrics.displayDriftCount': display_drift_count,
+                # Clean up legacy v1 singular fields so they don't linger
+                # alongside v2 plurals. DELETE_FIELD is a no-op if the key
+                # is already absent, so this is safe on fresh docs too.
+                'metrics.cpu': DELETE_FIELD,
+                'metrics.disk': DELETE_FIELD,
+                'metrics.gpu': DELETE_FIELD,
             })
 
         except Exception as e:
@@ -869,7 +1500,7 @@ class FirebaseClient:
             finally:
                 self._slow_command_queue.task_done()
 
-    def update_command_progress(self, cmd_id: str, status: str, deployment_id: Optional[str] = None, progress: Optional[int] = None):
+    def update_command_progress(self, cmd_id: str, status: str, deployment_id: Optional[str] = None, progress: Optional[int] = None, force: bool = False):
         """
         Update command progress in Firestore (for intermediate states like downloading/installing).
 
@@ -878,9 +1509,34 @@ class FirebaseClient:
             status: Current status (e.g., 'downloading', 'installing')
             deployment_id: Optional deployment ID to track
             progress: Optional progress percentage (0-100)
+            force: bypass throttling (use for terminal states + status transitions
+                   that MUST land — UI sticking at 95% is the bug throttling causes
+                   if the final 100% is dropped). default False.
+
+        Throttling: per-cmd_id, writes are coalesced to "every 5% OR every 30s,
+        whichever first" to prevent firestore cost explosion on a 64k-chunk
+        distribution. status changes always write through; only same-status
+        progress-only updates are subject to throttling.
         """
         if not self.connected or not self.db:
             return
+
+        # Pure throttle decision — extracted so it can be unit-tested in
+        # isolation without instantiating FirebaseClient (which pulls in
+        # cryptography/PyO3 and fights pytest's interpreter reuse).
+        should_emit, new_state = should_emit_progress(
+            prev_state=self._progress_throttle.get(cmd_id),
+            status=status,
+            progress=progress,
+            force=force,
+            now=time.time(),
+            min_seconds=self.PROGRESS_THROTTLE_SECONDS,
+            min_pct=self.PROGRESS_THROTTLE_PERCENT,
+        )
+        if not should_emit:
+            return
+        with self._progress_throttle_lock:
+            self._progress_throttle[cmd_id] = new_state
 
         try:
             completed_ref = self.db.collection('sites').document(self.site_id)\
@@ -1266,6 +1922,33 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to set machine flag {flag_name}: {e}")
 
+    def set_machine_flags(self, flags: dict):
+        """Atomically set multiple flags on the machine document in a SINGLE write.
+
+        Use this instead of multiple set_machine_flag() calls when the dashboard
+        must observe several fields together — e.g. rebootScheduledAt + rebooting
+        + rebootCancellable for the scheduled-reboot announcement. Multiple
+        separate set_machine_flag() calls would produce multiple Firestore writes
+        and intermediate listener ticks where the dashboard sees a half-applied
+        state (e.g. rebooting=true but rebootScheduledAt still null), causing
+        the cancel-button countdown to lag or render incorrectly.
+
+        UNLIKE set_machine_flag(), this method RAISES on failure rather than
+        silently logging. Callers that depend on atomic visibility (e.g. the
+        scheduled-reboot announce path) must catch and react to the exception.
+        """
+        if not self.connected or not self.db:
+            raise RuntimeError("Firebase client not connected")
+
+        machine_ref = self.db.collection('sites').document(self.site_id)\
+            .collection('machines').document(self.machine_id)
+
+        machine_ref.set(flags, merge=True)
+        self.logger.debug(
+            f"[FLAG] Atomically set {len(flags)} flags on machine document: "
+            f"{list(flags.keys())}"
+        )
+
     def set_reboot_pending(self, process_name, reason, timestamp):
         """Write a reboot_pending object to the machine document when relaunch limit is exceeded."""
         if not self.connected or not self.db:
@@ -1308,30 +1991,49 @@ class FirebaseClient:
         except Exception as e:
             self.logger.error(f"Failed to clear reboot pending: {e}")
 
-    def get_reboot_schedule(self):
-        """Read the rebootSchedule field from the machine document.
+    def mirror_reboot_state(self, state):
+        """Best-effort mirror of local reboot_state.json to Firestore for dashboard visibility.
 
-        Returns:
-            dict with 'enabled' and 'schedules' keys, or None if not set.
+        Writes to sites/{siteId}/machines/{machineId}.rebootState. Silent on
+        offline — local state file remains source of truth.
+
+        Args:
+            state: dict from reboot_state.read_state() — has 'lastFiredByEntry' and 'attempt'.
         """
         if not self.connected or not self.db:
-            return None
+            return
 
         try:
-            machine_path = f"sites/{self.site_id}/machines/{self.machine_id}"
-            machine_doc = self.db.get_document(machine_path)
-            if machine_doc:
-                return machine_doc.get('rebootSchedule')
-            return None
+            machine_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            # Only mirror the fields the dashboard cares about. Use Firestore
+            # server timestamp for attempt.lastAttemptAt if it's the sentinel string.
+            attempt = state.get('attempt')
+            mirror_attempt = None
+            if attempt:
+                mirror_attempt = {
+                    'entryId': attempt.get('entryId'),
+                    'scheduledFor': attempt.get('scheduledFor'),
+                    'lastAttemptAt': attempt.get('lastAttemptAt'),
+                    'status': attempt.get('status'),
+                }
+
+            machine_ref.set({
+                'rebootState': {
+                    'lastFiredByEntry': state.get('lastFiredByEntry', {}),
+                    'attempt': mirror_attempt,
+                }
+            }, merge=True)
+            self.logger.debug("[REBOOT] Mirrored reboot state to Firestore")
         except Exception as e:
-            self.logger.debug(f"Could not read reboot schedule: {e}")
-            return None
+            self.logger.debug(f"Failed to mirror reboot state (non-critical): {e}")
 
     # =========================================================================
     # Event Logging
     # =========================================================================
 
-    def log_event(self, action: str, level: str, process_name: str = None, details: str = None, user_id: str = None, **kwargs):
+    def log_event(self, action: str, level: str, process_name: str = None, details: str = None, user_id: str = None, extra_fields: dict = None, doc_id: str = None, **kwargs):
         """
         Log a process event to Firestore for dashboard monitoring.
         Non-blocking - failures are silently ignored to prevent logging from crashing the app.
@@ -1342,9 +2044,23 @@ class FirebaseClient:
             process_name: Name of the process involved (optional)
             details: Additional details about the event (optional)
             user_id: User ID if action was triggered by a user (optional)
+            extra_fields: Additional top-level fields to merge into the Firestore
+                event document (optional). Reserved keys (timestamp, action,
+                level, machineId, machineName, processName, details, userId,
+                screenshotUrl) are ignored to protect the canonical shape.
+            doc_id: Optional explicit Firestore document ID. If provided, acts
+                as a dedup key — re-submitting the same event idempotently
+                overwrites the existing document. Used for deferred flushes
+                (e.g. watchdog restart events) where the caller needs to
+                guarantee at-most-once-visible semantics.
+
+        Returns:
+            The Firestore document ID on success, or None on failure / when
+            not connected. Callers who need to record submission success
+            (e.g. watchdog_state.mark_submitted) should check this.
         """
         if not self.connected or not self.db:
-            return
+            return None
 
         try:
             logs_ref = self.db.collection('sites').document(self.site_id)\
@@ -1367,42 +2083,217 @@ class FirebaseClient:
             if kwargs.get('screenshot_url'):
                 event_data['screenshotUrl'] = kwargs['screenshot_url']
 
+            if extra_fields:
+                reserved = {
+                    'timestamp', 'action', 'level', 'machineId', 'machineName',
+                    'processName', 'details', 'userId', 'screenshotUrl',
+                }
+                for key, value in extra_fields.items():
+                    if key in reserved:
+                        continue
+                    event_data[key] = value
+
             import uuid
-            doc_id = str(uuid.uuid4())
+            if not doc_id:
+                doc_id = str(uuid.uuid4())
             doc_ref = logs_ref.document(doc_id)
             doc_ref.set(event_data)
 
             self.logger.debug(f"[EVENT LOGGED] {action} - {process_name} ({level})")
+            return doc_id
 
         except Exception as e:
             self.logger.debug(f"[EVENT LOG FAILED] {action}: {e}")
+            return None
 
     def send_process_alert(self, process_name, error_message, event_type='process_crash'):
-        """Send process alert to web API. Non-blocking (fire and forget)."""
+        """Backward-compatible wrapper for process alerts."""
+        self.send_alert(event_type, {
+            'process_name': process_name,
+            'error_message': error_message or 'Process exited unexpectedly',
+        })
+
+    def send_display_alert(self, event_type: str, data: dict):
+        """Backward-compatible wrapper for display alerts."""
+        self.send_alert(event_type, data)
+
+    def send_alert(self, event_type: str, data: dict):
+        """Send a generic agent alert to the web API.
+
+        Carries arbitrary alert data in the canonical API shape:
+
+          1. Carries an arbitrary ``data`` dict rather than fixed fields
+             (alert payloads are event-specific).
+          2. On send failure, queues into ``_pending_alerts`` so the
+             connection-state listener can drain on reconnect. Critical
+             so operator-relevant events survive transient network outages.
+
+        Non-blocking: spawns a daemon thread for the actual POST.
+        """
         def _send():
             try:
                 token = self.auth_manager.get_valid_token()
                 api_base = shared_utils.get_api_base_url()
                 import requests
-                requests.post(
+                response = requests.post(
                     f"{api_base}/agent/alert",
                     json={
                         'siteId': self.site_id,
                         'machineId': self.machine_id,
                         'eventType': event_type,
-                        'processName': process_name,
-                        'errorMessage': error_message or 'Process exited unexpectedly',
+                        'data': data,
                         'agentVersion': shared_utils.APP_VERSION,
                     },
                     headers={'Authorization': f'Bearer {token}'},
                     timeout=10
                 )
-                self.logger.info(f"[ALERT] Process alert sent: {event_type} - {process_name}")
+                response.raise_for_status()
+                self.logger.info(f"[ALERT] Alert sent: {event_type}")
             except Exception as e:
-                self.logger.warning(f"Failed to send process alert: {e}")
+                self.logger.warning(
+                    f"Failed to send alert ({event_type}); queueing for retry: {e}"
+                )
+                self._enqueue_pending_alert(event_type, data)
 
         thread = threading.Thread(target=_send, daemon=True)
         thread.start()
+
+    def _enqueue_pending_alert(self, event_type: str, data: dict):
+        """Append a failed alert to the in-memory pending queue.
+        Drops the oldest entry when the queue hits its cap so a long
+        outage can't OOM the agent. The drain runs on the next
+        ConnectionState.CONNECTED transition.
+        """
+        with self._pending_alerts_lock:
+            if len(self._pending_alerts) >= self._PENDING_ALERTS_MAX:
+                dropped = self._pending_alerts.pop(0)
+                self.logger.warning(
+                    f"[ALERT] Pending alert queue full; dropped oldest "
+                    f"({dropped.get('event_type')})"
+                )
+            self._pending_alerts.append({
+                'event_type': event_type,
+                'data': data,
+            })
+
+    def _drain_pending_alerts_async(self):
+        """Spawn a daemon thread to retry queued alerts. Called by
+        the connection-state listener on transition to CONNECTED.
+        """
+        with self._pending_alerts_lock:
+            pending = list(self._pending_alerts)
+            self._pending_alerts.clear()
+        if not pending:
+            return
+
+        def _drain():
+            self.logger.info(
+                f"[ALERT] Draining {len(pending)} pending alerts after reconnect"
+            )
+            for entry in pending:
+                # Re-route through send_alert so a second outage
+                # mid-drain re-enqueues each failure cleanly. No back-off
+                # needed — connection_manager already tracks reachability.
+                self.send_alert(entry['event_type'], entry['data'])
+
+        threading.Thread(target=_drain, daemon=True).start()
+
+    def get_chunk_download_urls(self, chunk_hashes: list) -> dict:
+        """
+        Fetch signed R2 download URLs for one or more chunks. Used by
+        sync_downloader (roost v2) to materialize a fresh URL per chunk
+        — signed URLs are short-lived (≤15 min) so workers re-fetch on
+        403 / expired-url responses.
+
+        Calls POST /api/chunks/download-urls with the agent's OAuth
+        bearer token. The route enforces per-tenant siteId scoping
+        against the token claims, so a compromised agent token can only
+        fetch URLs for its own site's chunks.
+
+        Args:
+            chunk_hashes: list of lowercase 64-char SHA-256 hex strings.
+                Max 1000 per request (server-side cap).
+
+        Returns:
+            dict mapping {hash: download_url} for every requested chunk.
+
+        Raises:
+            requests.RequestException on network/HTTP failure.
+            ValueError if the response shape is malformed.
+        """
+        if not chunk_hashes:
+            return {}
+        token = self.auth_manager.get_valid_token()
+        api_base = shared_utils.get_api_base_url()
+        import requests
+
+        # Server-side cap is MAX_HASHES_PER_REQUEST=1000. Batch at 500 so
+        # (a) a future cap reduction doesn't regress us, (b) one transient
+        # failure only loses ~500 hashes of work, (c) we never hit the
+        # Cloudflare/edge request-size cap on pathological roosts.
+        BATCH = 500
+        hashes = list(chunk_hashes)
+        merged: dict = {}
+        for start in range(0, len(hashes), BATCH):
+            batch = hashes[start:start + BATCH]
+            resp = requests.post(
+                f"{api_base}/chunks/download-urls",
+                json={'siteId': self.site_id, 'hashes': batch},
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            urls = body.get('urls')
+            if not isinstance(urls, dict):
+                raise ValueError(
+                    f"chunks/download-urls returned malformed body "
+                    f"(missing 'urls' dict): {body!r}"
+                )
+            merged.update(urls)
+        return merged
+
+    def get_version_download_url(self, roost_id: str, version_id: str) -> str:
+        """
+        Mint a fresh short-lived signed GET URL for a version JSON body.
+
+        Version URLs are only valid for 15 min, so a URL baked into the
+        roost doc at publish time is usually already expired by the time
+        a canary wave starts. Each sync_pull attempt calls this to get a
+        fresh URL just before the fetch — matches the per-chunk pattern.
+
+        Args:
+            roost_id: the roost this version belongs to.
+            version_id: the 64-char SHA-256 hex id of the version.
+
+        Returns:
+            A signed GET URL the agent can fetch directly.
+
+        Raises:
+            requests.RequestException on network/HTTP failure.
+            ValueError if the response shape is malformed.
+        """
+        token = self.auth_manager.get_valid_token()
+        api_base = shared_utils.get_api_base_url()
+        import requests
+        resp = requests.post(
+            f"{api_base}/roosts/{roost_id}/version-url",
+            json={
+                'siteId': self.site_id,
+                'versionId': version_id,
+            },
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        url = body.get('url')
+        if not isinstance(url, str) or not url:
+            raise ValueError(
+                f"version-url returned malformed body "
+                f"(missing 'url' string): {body!r}"
+            )
+        return url
 
     def ship_logs(self, log_entries: list):
         """

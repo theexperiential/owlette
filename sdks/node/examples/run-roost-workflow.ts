@@ -1,0 +1,98 @@
+/**
+ * Minimal public-api workflow:
+ *   1. authenticate the token with /api/whoami
+ *   2. list sites and machines
+ *   3. inspect the target site and roost
+ *   4. publish BUILD_DIR as a new roost version
+ *
+ * Required env vars:
+ *   OWLETTE_TOKEN
+ *   OWLETTE_SITE_ID
+ *   OWLETTE_ROOST_ID
+ *   BUILD_DIR defaults to ./dist
+ *
+ * Optional:
+ *   OWLETTE_API_URL defaults to https://owlette.app
+ *   OWLETTE_DEPLOY=1 queues a deploy after the publish
+ */
+
+import { Owlette, OwletteApiError } from '@owlette/sdk';
+
+const token = process.env.OWLETTE_TOKEN;
+const apiUrl = process.env.OWLETTE_API_URL ?? 'https://owlette.app';
+const siteId = process.env.OWLETTE_SITE_ID;
+const roostId = process.env.OWLETTE_ROOST_ID;
+const buildDir = process.env.BUILD_DIR ?? './dist';
+const shouldDeploy = process.env.OWLETTE_DEPLOY === '1';
+
+async function main(): Promise<number> {
+  for (const [name, value] of [
+    ['OWLETTE_TOKEN', token],
+    ['OWLETTE_SITE_ID', siteId],
+    ['OWLETTE_ROOST_ID', roostId],
+  ]) {
+    if (!value) {
+      console.error(`missing env var: ${name}`);
+      return 1;
+    }
+  }
+
+  const owlette = new Owlette({ token: token!, apiUrl });
+
+  try {
+    const [identity, version] = await Promise.all([
+      owlette.account.whoami(),
+      owlette.account.version(),
+    ]);
+    console.log('api', version.current, 'user', identity.email ?? identity.userId);
+    console.log('key', identity.key?.keyPrefix ?? 'session', 'primary site', identity.primarySiteId);
+
+    const sites = await owlette.sites.list();
+    console.log('sites', sites.length);
+    for (const site of sites.slice(0, 10)) {
+      console.log('site', site.id, site.name);
+    }
+
+    const machines = await owlette.machines.list(siteId!);
+    console.log('machines', machines.length);
+    for (const machine of machines.slice(0, 10)) {
+      console.log('machine', machine.id, machine.name, machine.online ? 'online' : 'offline');
+    }
+
+    const [site, currentRoost] = await Promise.all([
+      owlette.sites.get(siteId!),
+      owlette.roosts.get(roostId!, { siteId: siteId! }),
+    ]);
+    console.log('site', site.id, site.name);
+    console.log('roost', currentRoost.roostId, currentRoost.name);
+
+    const published = await owlette.roosts.push(buildDir, roostId!, {
+      siteId: siteId!,
+      description: `node sdk publish ${new Date().toISOString()}`,
+      onProgress: (evt) => {
+        if (evt.phase === 'upload') console.log('upload', `${evt.uploaded}/${evt.total}`);
+        if (evt.phase === 'publish') console.log('publish attempt', evt.attempt);
+      },
+    });
+
+    console.log('published', `v${published.versionNumber}`, published.versionId);
+
+    if (shouldDeploy) {
+      const deploy = await owlette.roosts.deploy(roostId!, {
+        siteId: siteId!,
+        versionId: published.versionId,
+      });
+      console.log('deploy queued', deploy.rolloutId, deploy.stage);
+    }
+    return 0;
+  } catch (err) {
+    if (err instanceof OwletteApiError) {
+      console.error('api error', err.status, err.code, err.problem.detail ?? err.message);
+    } else {
+      console.error('unexpected error', err);
+    }
+    return 1;
+  }
+}
+
+main().then((code) => process.exit(code));

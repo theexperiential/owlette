@@ -5,14 +5,9 @@ import {
   collection,
   query,
   onSnapshot,
-  doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -31,8 +26,6 @@ import {
   Plus,
   Trash2,
   Send,
-  Eye,
-  EyeOff,
   Copy,
   CheckCircle,
   XCircle,
@@ -58,12 +51,55 @@ interface WebhookData {
 
 const SUPPORTED_EVENTS = [
   { id: 'machine.offline', label: 'machine offline', description: 'machine stops sending heartbeats' },
-  { id: 'process.crashed', label: 'process crashed', description: 'a monitored process crashes' },
-  { id: 'process.restarted', label: 'process restarted', description: 'a monitored process is restarted' },
+  { id: 'deployment.started', label: 'deployment started', description: 'software deployment starts' },
+  { id: 'version.published', label: 'version published', description: 'a software version is published' },
   { id: 'machine.online', label: 'machine online', description: 'machine comes back online (future)' },
   { id: 'deployment.completed', label: 'deployment completed', description: 'software deployment succeeds (future)' },
   { id: 'deployment.failed', label: 'deployment failed', description: 'software deployment fails (future)' },
+  // Keep this list aligned with the public webhook API's canonical event catalog.
+  { id: 'version.rolled_back', label: 'version rolled back', description: 'a published version is rolled back' },
+  { id: 'chunk.garbage_collected', label: 'chunk garbage collected', description: 'unused deployment chunks are removed' },
+  { id: 'chunk.verify_failed', label: 'chunk verify failed', description: 'deployment chunk verification fails' },
+  { id: 'quota.warning', label: 'quota warning', description: 'site usage approaches quota' },
+  { id: 'quota.exceeded', label: 'quota exceeded', description: 'site usage exceeds quota' },
+  { id: 'api_key.used', label: 'api key used', description: 'an API key is used' },
+  { id: 'api_key.expired', label: 'api key expired', description: 'an API key expires' },
 ];
+
+async function apiJson<T>(url: string, init: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    throw new Error(body?.detail || body?.title || `Request failed with ${res.status}`);
+  }
+  return body as T;
+}
+
+function toDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? new Date(parsed) : null;
+  }
+  if (typeof value === 'object') {
+    const timestamp = value as { toDate?: () => Date; seconds?: number; _seconds?: number };
+    if (typeof timestamp.toDate === 'function') return timestamp.toDate();
+    if (typeof timestamp.seconds === 'number') return new Date(timestamp.seconds * 1000);
+    if (typeof timestamp._seconds === 'number') return new Date(timestamp._seconds * 1000);
+  }
+  return null;
+}
+
+function toStatusCode(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
 
 /* -------------------------------------------------------------------------- */
 /*  Shared hook for webhook data                                               */
@@ -80,20 +116,25 @@ function useWebhooks(siteId: string) {
     const unsub = onSnapshot(q, (snapshot) => {
       const items: WebhookData[] = snapshot.docs.map((d) => {
         const data = d.data();
+        if (data.deletedAt) return null;
+        const description = typeof data.description === 'string' ? data.description : '';
+        const legacyName = typeof data.name === 'string' ? data.name : '';
+        const signingSecret = typeof data.signingSecret === 'string' ? data.signingSecret : '';
+        const legacySecret = typeof data.secret === 'string' ? data.secret : '';
         return {
           id: d.id,
           url: data.url || '',
-          name: data.name || '',
+          name: legacyName || description || data.url || '',
           events: data.events || [],
-          enabled: data.enabled ?? true,
-          secret: data.secret || '',
-          createdAt: data.createdAt?.toDate?.() || null,
+          enabled: data.enabled ?? data.paused !== true,
+          secret: legacySecret || signingSecret,
+          createdAt: toDate(data.createdAt),
           createdBy: data.createdBy || '',
-          lastTriggered: data.lastTriggered?.toDate?.() || null,
-          lastStatus: data.lastStatus || 0,
-          failCount: data.failCount || 0,
+          lastTriggered: toDate(data.lastTriggered) || toDate(data.lastDeliveryAt),
+          lastStatus: toStatusCode(data.lastStatus ?? data.lastDeliveryStatus),
+          failCount: data.failCount ?? data.failureCount ?? 0,
         };
-      });
+      }).filter((item): item is WebhookData => item !== null);
       setWebhooks(items);
       setLoading(false);
     });
@@ -113,7 +154,6 @@ export function WebhookList({ siteId }: { siteId: string }) {
   const [testingId, setTestingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-  const [revealedSecrets, setRevealedSecrets] = useState<Set<string>>(new Set());
   const [editingWebhook, setEditingWebhook] = useState<WebhookData | null>(null);
   const [editName, setEditName] = useState('');
   const [editUrl, setEditUrl] = useState('');
@@ -142,8 +182,15 @@ export function WebhookList({ siteId }: { siteId: string }) {
     }
     setEditSaving(true);
     try {
-      const ref = doc(db!, `sites/${siteId}/webhooks`, editingWebhook.id);
-      await updateDoc(ref, { name: editName.trim(), url: editUrl.trim(), events: editEvents });
+      await apiJson(`/api/webhooks/${encodeURIComponent(editingWebhook.id)}?siteId=${encodeURIComponent(siteId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          description: editName.trim(),
+          url: editUrl.trim(),
+          events: editEvents,
+        }),
+      });
       toast.success('webhook updated');
       setEditingWebhook(null);
     } catch {
@@ -161,8 +208,11 @@ export function WebhookList({ siteId }: { siteId: string }) {
 
   const handleToggle = async (webhook: WebhookData) => {
     try {
-      const ref = doc(db!, `sites/${siteId}/webhooks`, webhook.id);
-      await updateDoc(ref, { enabled: !webhook.enabled, failCount: 0 });
+      await apiJson(`/api/webhooks/${encodeURIComponent(webhook.id)}?siteId=${encodeURIComponent(siteId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paused: webhook.enabled }),
+      });
       toast.success(webhook.enabled ? 'webhook disabled' : 'webhook enabled');
     } catch {
       toast.error('failed to update webhook');
@@ -172,7 +222,9 @@ export function WebhookList({ siteId }: { siteId: string }) {
   const handleDelete = async (webhookId: string) => {
     setDeletingId(webhookId);
     try {
-      await deleteDoc(doc(db!, `sites/${siteId}/webhooks`, webhookId));
+      await apiJson(`/api/webhooks/${encodeURIComponent(webhookId)}?siteId=${encodeURIComponent(siteId)}`, {
+        method: 'DELETE',
+      });
       toast.success('webhook deleted');
       setDeleteConfirmId(null);
     } catch {
@@ -204,11 +256,6 @@ export function WebhookList({ siteId }: { siteId: string }) {
     } finally {
       setTestingId(null);
     }
-  };
-
-  const copySecret = (secret: string) => {
-    navigator.clipboard.writeText(secret);
-    toast.success('secret copied to clipboard');
   };
 
   const getStatusBadge = (webhook: WebhookData) => {
@@ -330,10 +377,10 @@ export function WebhookList({ siteId }: { siteId: string }) {
                   {deletingId === webhook.id ? 'deleting...' : 'confirm'}
                 </Button>
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
                   onClick={() => setDeleteConfirmId(null)}
-                  className="border-border hover:bg-accent hover:text-foreground cursor-pointer"
+                  className="bg-secondary border border-border cursor-pointer"
                 >
                   cancel
                 </Button>
@@ -354,7 +401,7 @@ export function WebhookList({ siteId }: { siteId: string }) {
 
       {/* Edit webhook dialog */}
       <Dialog open={!!editingWebhook} onOpenChange={(open) => { if (!open) setEditingWebhook(null); }}>
-        <DialogContent className="bg-background border-border max-w-2xl">
+        <DialogContent className="bg-background border-border max-w-2xl max-h-[calc(100vh-2rem)] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Pencil className="h-5 w-5" />
@@ -367,8 +414,9 @@ export function WebhookList({ siteId }: { siteId: string }) {
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>name</Label>
+              <Label htmlFor="webhook-edit-name">name</Label>
               <Input
+                id="webhook-edit-name"
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
                 className="bg-background border-border"
@@ -376,8 +424,9 @@ export function WebhookList({ siteId }: { siteId: string }) {
             </div>
 
             <div className="space-y-2">
-              <Label>URL (https required)</Label>
+              <Label htmlFor="webhook-edit-url">URL (https required)</Label>
               <Input
+                id="webhook-edit-url"
                 value={editUrl}
                 onChange={(e) => setEditUrl(e.target.value)}
                 className="bg-background border-border"
@@ -409,9 +458,9 @@ export function WebhookList({ siteId }: { siteId: string }) {
 
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setEditingWebhook(null)}
-              className="border-border hover:bg-accent hover:text-foreground cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -443,7 +492,7 @@ interface AddWebhookDialogProps {
 export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebhookDialogProps) {
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
-  const [newEvents, setNewEvents] = useState<string[]>(['machine.offline', 'process.crashed']);
+  const [newEvents, setNewEvents] = useState<string[]>(['machine.offline', 'deployment.failed']);
   const [saving, setSaving] = useState(false);
   const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
 
@@ -452,7 +501,7 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
     if (open) {
       setNewName('');
       setNewUrl('');
-      setNewEvents(['machine.offline', 'process.crashed']);
+      setNewEvents(['machine.offline', 'deployment.failed']);
     }
   }, [open]);
 
@@ -474,25 +523,17 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
 
     setSaving(true);
     try {
-      const array = new Uint8Array(32);
-      crypto.getRandomValues(array);
-      const secret = Array.from(array, (b) => b.toString(16).padStart(2, '0')).join('');
-
-      const webhookRef = doc(collection(db!, `sites/${siteId}/webhooks`));
-      await setDoc(webhookRef, {
-        url: newUrl.trim(),
-        name: newName.trim(),
-        events: newEvents,
-        enabled: true,
-        secret,
-        createdAt: new Date(),
-        createdBy: '',
-        lastTriggered: null,
-        lastStatus: 0,
-        failCount: 0,
+      const response = await apiJson<{ signingSecret: string }>(`/api/webhooks?siteId=${encodeURIComponent(siteId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: newUrl.trim(),
+          description: newName.trim(),
+          events: newEvents,
+        }),
       });
 
-      setGeneratedSecret(secret);
+      setGeneratedSecret(response.signingSecret);
       onOpenChange(false);
       toast.success('webhook created');
     } catch (error: unknown) {
@@ -512,7 +553,7 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="bg-background border-border max-w-2xl">
+        <DialogContent className="bg-background border-border max-w-2xl max-h-[calc(100vh-2rem)] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Webhook className="h-5 w-5" />
@@ -525,8 +566,9 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>name</Label>
+              <Label htmlFor="webhook-add-name">name</Label>
               <Input
+                id="webhook-add-name"
                 placeholder='e.g. "Slack #alerts"'
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
@@ -535,8 +577,9 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
             </div>
 
             <div className="space-y-2">
-              <Label>URL (https required)</Label>
+              <Label htmlFor="webhook-add-url">URL (https required)</Label>
               <Input
+                id="webhook-add-url"
                 placeholder="https://hooks.slack.com/services/..."
                 value={newUrl}
                 onChange={(e) => setNewUrl(e.target.value)}
@@ -579,9 +622,9 @@ export default function AddWebhookDialog({ siteId, open, onOpenChange }: AddWebh
 
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => onOpenChange(false)}
-              className="border-border hover:bg-accent hover:text-foreground cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>

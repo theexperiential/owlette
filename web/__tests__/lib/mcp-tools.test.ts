@@ -8,7 +8,6 @@ import {
   requiresConfirmation,
   EXISTING_COMMAND_MAPPINGS,
   type McpToolDefinition,
-  type ToolTier,
 } from '@/lib/mcp-tools';
 
 // ─── Tool Registry ──────────────────────────────────────────────────────────
@@ -29,6 +28,7 @@ const EXPECTED_TIER1 = [
   'get_agent_logs',
   'get_agent_health',
   'get_system_presets',
+  'check_pending_reboot',
 ] as const;
 
 const EXPECTED_TIER2 = [
@@ -36,7 +36,25 @@ const EXPECTED_TIER2 = [
   'kill_process',
   'start_process',
   'set_launch_mode',
+  'update_process',
+  'add_process',
+  'delete_process',
   'capture_screenshot',
+  // Wave 1
+  'manage_process',
+  'manage_windows_service',
+  'configure_gpu_tdr',
+  'manage_windows_update',
+  'manage_notifications',
+  'configure_power_plan',
+  // Wave 2
+  'manage_scheduled_task',
+  'network_reset',
+  'registry_operation',
+  'clean_disk_space',
+  'get_event_logs_filtered',
+  'manage_windows_feature',
+  'show_notification',
 ] as const;
 
 const EXPECTED_TIER3 = [
@@ -232,6 +250,12 @@ describe('mcp-tools: required parameters', () => {
     expect(tool.parameters.required).toContain('process_name');
   });
 
+  it('process CRUD tools require the correct identifiers', () => {
+    expect(getToolByName('update_process')!.parameters.required).toEqual(['process_name']);
+    expect(getToolByName('add_process')!.parameters.required).toEqual(['name', 'exe_path']);
+    expect(getToolByName('delete_process')!.parameters.required).toEqual(['process_name']);
+  });
+
   it('deploy_software requires software_name', () => {
     const tool = getToolByName('deploy_software')!;
     expect(tool.parameters.required).toContain('software_name');
@@ -284,11 +308,49 @@ describe('mcp-tools: agent parity', () => {
   });
 
   // Server-side tools (executed on web server, not relayed to agent)
-  const SERVER_SIDE_TOOLS = ['get_site_logs', 'get_system_presets', 'deploy_software'];
+  const SERVER_SIDE_TOOLS = [
+    'get_site_logs',
+    'get_system_presets',
+    'deploy_software',
+    'update_process',
+    'add_process',
+    'delete_process',
+  ];
 
   it('server-side tools have web definitions', () => {
     for (const name of SERVER_SIDE_TOOLS) {
       expect(getToolByName(name)).toBeDefined();
+    }
+  });
+});
+
+describe('mcp-tools: process CRUD schemas', () => {
+  it('update_process exposes every supported patch field', () => {
+    const tool = getToolByName('update_process')!;
+    expect(Object.keys(tool.parameters.properties)).toEqual(
+      expect.arrayContaining([
+        'process_name',
+        'name',
+        'exe_path',
+        'file_path',
+        'cwd',
+        'priority',
+        'visibility',
+        'time_delay',
+        'time_to_init',
+        'relaunch_attempts',
+        'launch_mode',
+        'schedules',
+        'schedulePresetId',
+      ]),
+    );
+  });
+
+  it('add_process and update_process share process config field schemas', () => {
+    const add = getToolByName('add_process')!;
+    const update = getToolByName('update_process')!;
+    for (const field of Object.keys(add.parameters.properties)) {
+      expect(update.parameters.properties[field]).toEqual(add.parameters.properties[field]);
     }
   });
 });

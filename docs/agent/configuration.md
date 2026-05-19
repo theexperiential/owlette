@@ -1,6 +1,10 @@
 # configuration
 
-The agent can be configured locally via the GUI, remotely from the web dashboard, or by editing `config.json` directly. Changes from any source sync to all others within ~1-2 seconds.
+The agent can be configured locally via the GUI, remotely from the web dashboard, or by editing `config.json` directly. The local source file is `C:\ProgramData\Owlette\config\config.json`.
+
+Changes from the GUI, service, and dashboard sync through Firestore within roughly 1-2 seconds.
+
+When the GUI is open, launch mode and schedule labels refresh from external dashboard or service changes. Text fields that are actively focused defer remote refresh until focus leaves.
 
 ---
 
@@ -8,112 +12,162 @@ The agent can be configured locally via the GUI, remotely from the web dashboard
 
 The GUI is a CustomTkinter application that runs as a separate process from the service. Launch it from:
 
-- **System tray** → Right-click → "Open GUI"
-- **Start Menu** → owlette
+- **System tray** -> Right-click -> "Open GUI"
+- **Start Menu** -> owlette
 - **Directly**: `C:\ProgramData\Owlette\python\pythonw.exe C:\ProgramData\Owlette\agent\src\owlette_gui.py`
 
 ### gui features
 
 | section | controls |
 |---------|----------|
-| **Site Connection** | Join/Leave site, connection status, site ID |
+| **Site Connection** | Join/leave site, connection status, site ID |
 | **Processes** | Add, edit, remove monitored processes |
-| **Process Settings** | Executable path, arguments, priority, visibility, delays |
-| **Footer** | Config button (opens config.json), Logs button (opens logs folder), version info |
+| **Process Settings** | Executable path, file path or arguments, working directory, priority, visibility, delays, launch mode, relaunch attempts |
+| **Footer** | Config button that opens `config.json`, logs button, version info |
 
 ---
 
 ## config.json
 
-The configuration file is stored at `C:\ProgramData\Owlette\agent\config\config.json`.
+The configuration file is stored at `C:\ProgramData\Owlette\config\config.json`.
 
-### top-level structure
+When no config exists, the agent generates this default structure:
 
 ```json
 {
-  "version": "1.5.0",
-  "environment": "production",
-  "firebase": {
-    "enabled": true,
-    "site_id": "your-site-id"
-  },
-  "processes": [...],
-  "logging": {
-    "level": "INFO",
-    "max_file_size_mb": 10,
-    "max_backup_count": 5,
-    "cleanup_days": 90
-  }
+    "version": "1.6.0",
+    "environment": "production",
+    "processes": [],
+    "logging": {
+        "level": "INFO",
+        "max_age_days": 90,
+        "firebase_shipping": {
+            "enabled": false,
+            "ship_errors_only": true
+        }
+    },
+    "sentry": {
+        "enabled": false,
+        "dsn": ""
+    },
+    "displays": {
+        "enabled": true,
+        "assigned": null,
+        "auto_enforce": false,
+        "remoteApplyEnabled": false
+    },
+    "watchdog": {
+        "enabled": true,
+        "thresholds": {
+            "failure_seconds": 360,
+            "boot_grace_seconds": 180
+        },
+        "budget": {
+            "max_per_window": 3,
+            "window_seconds": 3600
+        },
+        "preconditions": {
+            "require_internet": true,
+            "fatal_error_suppression_seconds": 3600
+        }
+    }
 }
 ```
 
-### configuration fields
+If the agent regenerates a config and an existing `firebase` section is present, it preserves that section so pairing credentials are not lost.
 
-| field | type | description |
-|-------|------|-------------|
-| `version` | string | Config schema version (auto-upgraded) |
-| `environment` | string | `"production"` (owlette.app) or `"development"` (dev.owlette.app) |
-| `firebase.enabled` | boolean | Whether cloud sync is active |
-| `firebase.site_id` | string | The site this machine belongs to |
-| `processes` | array | List of monitored processes (see below) |
-| `logging.level` | string | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
-| `logging.max_file_size_mb` | number | Max log file size before rotation (default: 10) |
-| `logging.max_backup_count` | number | Number of rotated log files to keep (default: 5) |
-| `logging.cleanup_days` | number | Delete log files older than this (default: 90) |
+### top-level fields
+
+| field | type | editable | description |
+|-------|------|----------|-------------|
+| `version` | string | no | Config schema version. The agent upgrades older configs to the current schema. |
+| `environment` | string | yes | `production` uses owlette.app; `development` uses dev.owlette.app. |
+| `processes` | array | yes | Monitored process entries. The generator starts with an empty array. |
+| `logging` | object | yes | Local log level, retention, and optional Firebase log shipping. |
+| `sentry` | object | yes | Optional Sentry reporting settings. |
+| `displays` | object | yes | Display-topology monitoring and remote apply settings. |
+| `watchdog` | object | yes | Service watchdog thresholds, restart budget, and restart preconditions. |
+| `firebase` | object | no | Pairing and cloud-sync state. The agent may preserve or write this section, but users should not edit it manually. |
+
+### logging fields
+
+| field | type | default | description |
+|-------|------|---------|-------------|
+| `logging.level` | string | `"INFO"` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. |
+| `logging.max_age_days` | number | `90` | Delete local log files older than this many days. |
+| `logging.firebase_shipping.enabled` | boolean | `false` | Sends buffered logs to Firebase when enabled. |
+| `logging.firebase_shipping.ship_errors_only` | boolean | `true` | When shipping is enabled, sends only error and critical logs unless set to `false`. |
+
+### user-editable sections
+
+| section | keys |
+|---------|------|
+| `environment` | `"production"` or `"development"` |
+| `sentry` | `enabled`, `dsn` |
+| `displays` | `enabled`, `assigned`, `auto_enforce`, `remoteApplyEnabled` |
+| `watchdog.thresholds` | `failure_seconds`, `boot_grace_seconds` |
+| `watchdog.budget` | `max_per_window`, `window_seconds` |
+| `watchdog.preconditions` | `require_internet`, `fatal_error_suppression_seconds` |
 
 ---
 
 ## process configuration
 
-Each process in the `processes` array has these settings:
+Each process in the `processes` array uses the current process keys. The generator creates an empty array; this is the shape written by the GUI and dashboard when a process is added:
 
 ```json
 {
-  "name": "TouchDesigner",
-  "exe_path": "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe",
-  "file_path": "C:\\Projects\\MyProject.toe",
-  "command_line_args": "",
-  "autolaunch": true,
-  "priority": "Normal",
-  "visibility": "Normal",
-  "launch_delay": 0,
-  "init_time": 10,
-  "relaunch_attempts": 5
+    "id": "b8f1a4d2-8b1e-4df9-b7ff-7d4c3c10f9f1",
+    "processId": "b8f1a4d2-8b1e-4df9-b7ff-7d4c3c10f9f1",
+    "name": "TouchDesigner",
+    "exe_path": "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe",
+    "file_path": "C:\\Projects\\MyProject.toe",
+    "cwd": "C:\\Projects",
+    "priority": "Normal",
+    "visibility": "Normal",
+    "time_delay": "0",
+    "time_to_init": "10",
+    "relaunch_attempts": "5",
+    "launch_mode": "always",
+    "autolaunch": true,
+    "schedules": null,
+    "schedulePresetId": null
 }
 ```
 
 ### process fields
 
-| field | type | default | description |
-|-------|------|---------|-------------|
-| `name` | string | required | Display name for the process |
-| `exe_path` | string | required | Full path to the executable |
-| `file_path` | string | `""` | File to open with the executable (e.g., `.toe` project file) |
-| `command_line_args` | string | `""` | Additional command-line arguments |
-| `autolaunch` | boolean | `true` | Whether to auto-start and auto-restart this process |
-| `priority` | string | `"Normal"` | Windows process priority class |
-| `visibility` | string | `"Normal"` | Window visibility mode |
-| `launch_delay` | number | `0` | Seconds to wait before launching (useful for startup ordering) |
-| `init_time` | number | `10` | Seconds to wait after launch before monitoring responsiveness |
-| `relaunch_attempts` | number | `5` | Max restart attempts before prompting for system reboot |
-
-### priority options
-
-| value | description |
-|-------|-------------|
-| `"Idle"` | Lowest priority — only runs when CPU is idle |
-| `"Below Normal"` | Lower than normal |
-| `"Normal"` | Default Windows priority |
-| `"Above Normal"` | Higher than normal |
-| `"High"` | High priority — use with caution |
-| `"Realtime"` | Highest priority — can starve other processes |
+| field | type | description |
+|-------|------|-------------|
+| `id` | string | Stable UUID for the process entry. |
+| `processId` | string | Public/API process id. Current server write paths keep it in lockstep with `id`; legacy local entries may omit it until normalized. |
+| `name` | string | Display name for the process. |
+| `exe_path` | string | Full path to the executable. |
+| `file_path` | string | File to open with the executable, or command-line arguments when the value is not a file on disk. |
+| `cwd` | string or null | Working directory. Empty string and null are treated as unset. |
+| `priority` | string | Priority label stored with the process. The GUI exposes `Low`, `Normal`, `High`, and `Realtime`. |
+| `visibility` | string | Window state used by the launcher. See accepted values below. |
+| `time_delay` | string or number | Seconds to wait before launching this process during startup or scheduled activation. |
+| `time_to_init` | string or number | Seconds to wait after launch before monitoring responsiveness. |
+| `relaunch_attempts` | string or number | Restart-attempt budget. `0` means unlimited relaunch attempts. |
+| `launch_mode` | string | `off`, `always`, or `scheduled`. |
+| `autolaunch` | boolean | Backward-compatible flag derived from `launch_mode`. Keep it aligned with `launch_mode != "off"`. |
+| `schedules` | array or null | Schedule blocks for `launch_mode: "scheduled"`. Null means no schedule is configured. |
+| `schedule` | object or null | Legacy/API schedule wrapper with `mode` and optional `blocks`; current dashboard writes use `launch_mode` plus `schedules`. |
+| `schedulePresetId` | string or null | Optional site schedule preset id associated with the saved schedule. |
 
 ### visibility options
 
+The local GUI exposes `Normal` and `Hidden`. The launcher also accepts `Minimized` and `Maximized` when a process entry is edited manually.
+
 | value | description |
 |-------|-------------|
-| `"Normal"` | Standard visible window |
-| `"Hidden"` | No visible window (uses VBScript wrapper for console apps) |
+| `"Normal"` | Standard visible window. |
+| `"Hidden"` | Hidden process. Console apps are launched without a visible console window. |
+| `"Minimized"` | Visible window starts minimized. |
+| `"Maximized"` | Visible window starts maximized. |
+
+Legacy `Show` and `Hide` values are normalized by the service to `Normal` and `Hidden`.
 
 ---
 
@@ -121,37 +175,32 @@ Each process in the `processes` array has these settings:
 
 From the dashboard, you can edit process settings remotely:
 
-1. Click on a machine in the dashboard
-2. Click on a process to open the **Process Dialog**
-3. Edit settings (name, path, arguments, priority, etc.)
-4. Click **Save**
+1. Click on a machine in the dashboard.
+2. Click on a process to open the process dialog.
+3. Edit settings such as name, paths, priority, visibility, delays, launch mode, and schedules.
+4. Click **Save**.
 
-Changes propagate through Firestore to the agent within ~1-2 seconds. The agent applies the new configuration without restarting.
+The dashboard writes process updates to Firestore. The agent listener applies the new configuration locally and writes the updated config file without requiring a service restart.
 
 ---
 
 ## configuration sync
 
-```
-                    ┌─────────────────┐
-                    │  Cloud Firestore │
-                    │  config/{siteId} │
-                    │  /machines/{id}  │
-                    └────────┬────────┘
-                             │
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-        ┌──────────┐  ┌──────────┐  ┌──────────┐
-        │   GUI    │  │  Service │  │Dashboard │
-        │  (local) │  │  (local) │  │  (web)   │
-        └──────────┘  └──────────┘  └──────────┘
+```text
+                  Cloud Firestore
+             config and machine state
+                         |
+          +--------------+--------------+
+          |              |              |
+      local GUI       service       dashboard
+      config.json    config.json    web writes
 ```
 
-- **GUI → Service**: GUI writes to `config.json`, service detects file change
-- **Service → Firestore**: Service uploads config on change
-- **Firestore → Service**: Service listener detects cloud config changes
-- **Dashboard → Firestore**: Dashboard writes directly to Firestore
-- **MD5 hash tracking** prevents feedback loops (config changes originated locally aren't re-processed when echoed back from Firestore)
+- **GUI -> service**: The GUI writes to `config.json`; the service detects the file change.
+- **Service -> Firestore**: The service uploads local config changes.
+- **Firestore -> service**: The service listener applies remote config changes.
+- **Dashboard -> Firestore**: The dashboard writes config changes directly to Firestore.
+- **Hash tracking** prevents feedback loops when a local config change is echoed back from Firestore.
 
 !!! warning "Don't modify the firebase section remotely"
-    The `firebase` section of `config.json` is protected — remote config updates never overwrite it. Changing it remotely would break the agent's connection to Firestore.
+    The `firebase` section of `config.json` is protected. Remote config updates never overwrite it. Changing it manually can break the agent's connection to Firestore.

@@ -6,6 +6,7 @@ import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { fireWebhooks } from '@/lib/webhookSender.server';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * GET /api/cron/health-check
@@ -134,8 +135,7 @@ export async function GET(request: NextRequest) {
       }
     }
   } catch (error) {
-    console.error('[cron/health-check] Error scanning machines:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'cron/health-check');
   }
 
   if (allAlerts.length === 0) {

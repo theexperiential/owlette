@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -26,8 +26,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Bell, Plus, Trash2, Loader2, Zap, Pencil } from 'lucide-react';
+import { Bell, Plus, Trash2, Loader2, Zap, Pencil, Sparkles, X } from 'lucide-react';
 import { toast } from 'sonner';
+
+/**
+ * [B4.3] Display alerts launch banner. Auto-hides after this date regardless
+ * of whether the user has dismissed it; prevents the migration banner from
+ * lingering forever as new users sign up months after the feature shipped.
+ * 30 days from the feature launch date.
+ */
+const DISPLAY_ALERTS_BANNER_END = new Date('2026-05-25T00:00:00Z');
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -131,8 +139,23 @@ function getMetricLabel(metric: string): string {
 /* ------------------------------------------------------------------ */
 
 export default function AlertsPage() {
-  const { user, isAdmin, userSites, lastSiteId, updateLastSite } = useAuth();
-  const { sites } = useSites(user?.uid, userSites, isAdmin);
+  const { user, isSuperadmin, userSites, lastSiteId, updateLastSite, userPreferences, updateUserPreferences } = useAuth();
+
+  // [B4.3] Show the launch banner for any user who hasn't dismissed it AND
+  // for whom the time-window cutoff hasn't passed. Once both conditions
+  // are met (or the user clicks "got it"), the banner is hidden permanently
+  // for them. Render-time derivation — no extra state needed.
+  const showDisplayAlertsBanner =
+    !userPreferences.displayAlertsBannerDismissed &&
+    Date.now() < DISPLAY_ALERTS_BANNER_END.getTime();
+  const dismissDisplayAlertsBanner = useCallback(async () => {
+    try {
+      await updateUserPreferences({ displayAlertsBannerDismissed: true }, { silent: true });
+    } catch (e) {
+      console.error('Failed to dismiss display alerts banner:', e);
+    }
+  }, [updateUserPreferences]);
+  const { sites } = useSites(user?.uid, userSites, isSuperadmin);
 
   const [selectedSiteId, setSelectedSiteId] = useState<string>('');
   const [rules, setRules] = useState<AlertRule[]>([]);
@@ -179,7 +202,7 @@ export default function AlertsPage() {
       } else {
         setRules([]);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to fetch alert rules:', err);
       toast.error('Failed to load alert rules');
     } finally {
@@ -193,15 +216,21 @@ export default function AlertsPage() {
     }
   }, [selectedSiteId, fetchRules]);
 
-  // Persist rules to Firestore
+  // Persist rules through the site-scoped API.
   const saveRules = async (updatedRules: AlertRule[]) => {
     if (!db || !selectedSiteId) return;
     setSaving(true);
     try {
-      const alertsRef = doc(db, 'sites', selectedSiteId, 'settings', 'alerts');
-      await setDoc(alertsRef, { rules: updatedRules }, { merge: true });
+      const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/alerts`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rules: updatedRules }),
+      });
+      if (!response.ok) {
+        throw new Error('Failed to save alert rules');
+      }
       setRules(updatedRules);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Failed to save alert rules:', err);
       toast.error('Failed to save alert rules');
     } finally {
@@ -336,6 +365,38 @@ export default function AlertsPage() {
   return (
     <div className="p-8">
       <div className="max-w-screen-2xl mx-auto">
+        {/* [B4.3] Migration banner for the new display-alerts feature.
+            Surfaces the new alert category to existing operators who already
+            have other alert categories enabled but might not realize display
+            events are now part of the same opt-out system. Dismissable per
+            user; auto-hides at DISPLAY_ALERTS_BANNER_END. */}
+        {showDisplayAlertsBanner && (
+          <div
+            className="mb-6 flex items-start gap-3 rounded-lg border border-accent-cyan/30 bg-accent-cyan/5 p-4"
+            role="status"
+          >
+            <Sparkles className="h-5 w-5 text-accent-cyan shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground">
+                new: display alerts — manage here
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                owlette can now email you when monitors disappear, layouts drift, or apply
+                fails. opt out anytime in account settings → display events.
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={dismissDisplayAlertsBanner}
+              aria-label="dismiss display alerts banner"
+              className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground hover:bg-accent-cyan/10 cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
+
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-4">
@@ -628,9 +689,9 @@ export default function AlertsPage() {
 
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setDialogOpen(false)}
-              className="hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -658,9 +719,9 @@ export default function AlertsPage() {
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setDeleteDialogOpen(false)}
-              className="hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>

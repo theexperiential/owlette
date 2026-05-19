@@ -53,6 +53,14 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* Enable height/width transitions between `auto` and concrete values.
+   Without this, `transition-[height]` is a no-op when going to/from
+   `height: auto`. Supported in Chrome/Edge 129+ and Safari 18+;
+   Firefox ignores it and falls back to an instant resize. */
+:root {
+  interpolate-size: allow-keywords;
+}
+
 :root {
   --radius: 0.375rem;
   --background: oklch(1 0 0);
@@ -185,6 +193,34 @@
   html {
     @apply bg-background text-foreground;
     scroll-behavior: smooth;
+    /* Keep #-anchor jumps clear of the fixed landing header (h-16 = 4rem) plus a little air. */
+    scroll-padding-top: 5rem;
+  }
+
+  /* Respect the user's OS-level motion preference. Disables both
+     tailwindcss-animate enter/exit classes and Tailwind's animate-*
+     utilities (spin, pulse, bounce, ping) without touching the rare
+     cases where we need animation (progress indicators, etc — those
+     should opt back in explicitly if we add any). */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      transition-delay: 0ms !important;
+      scroll-behavior: auto !important;
+    }
+
+    .hero-enter,
+    .hero-enter-nav,
+    .hero-enter-delay-1,
+    .hero-enter-delay-2,
+    .hero-enter-delay-3 {
+      animation: none !important;
+      opacity: 1 !important;
+      transform: none !important;
+    }
   }
   body {
     overflow-x: hidden;
@@ -320,6 +356,37 @@
 .hero-enter-delay-2  { opacity: 0; animation: hero-enter 0.6s ease-out 600ms both; }
 .hero-enter-delay-3  { opacity: 0; animation: hero-enter 0.8s ease-out 800ms both; }
 
+/* Radix Collapsible slide animations.
+   Radix exposes the content's measured height as `--radix-collapsible-content-height`,
+   so we can animate from 0 to auto without JS measuring. Apply to any
+   <CollapsibleContent> with the matching data-[state] utility classes. */
+@keyframes collapsible-down {
+  from { height: 0; }
+  to   { height: var(--radix-collapsible-content-height); }
+}
+@keyframes collapsible-up {
+  from { height: var(--radix-collapsible-content-height); }
+  to   { height: 0; }
+}
+.animate-collapsible-down { animation: collapsible-down 200ms ease-out; }
+.animate-collapsible-up   { animation: collapsible-up   180ms ease-in; }
+
+@keyframes display-test-result-flash {
+  0% {
+    border-color: rgb(245 158 11 / 0.8);
+    background-color: rgb(245 158 11 / 0.18);
+    box-shadow: inset 0 0 0 1px rgb(245 158 11 / 0.45);
+  }
+  100% {
+    border-color: var(--border);
+    background-color: color-mix(in oklab, var(--muted) 40%, transparent);
+    box-shadow: inset 0 0 0 0 rgb(245 158 11 / 0);
+  }
+}
+.animate-display-test-result-flash {
+  animation: display-test-result-flash 1100ms ease-out 1;
+}
+
 /* Cortex markdown styling */
 .cortex-markdown {
   line-height: 1.75;
@@ -411,4 +478,19 @@
 
 .cortex-markdown a:hover {
   text-decoration: underline;
+}
+
+/* Slide-panel performance hint — the dashboard marks the machines-list
+ * subtree with `data-slide-pausing="true"` while the detail panel's
+ * pixel-height transition is running. During that window, each machines
+ * grid card opts into `content-visibility: auto`, letting the browser
+ * skip layout and paint for cards currently outside the viewport. The
+ * `contain-intrinsic-size` reservation keeps the scrollbar and page
+ * height stable while skipped cards are virtualised out. As soon as the
+ * transition ends, the flag is removed and cards return to normal
+ * rendering — so this only affects the ~200-300ms of the slide, nothing
+ * else. */
+[data-slide-pausing="true"] .machines-grid > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 360px;
 }

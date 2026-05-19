@@ -180,7 +180,7 @@ export const validateEnum = <T extends string>(
 /**
  * Reserved site IDs that cannot be used
  */
-const RESERVED_SITE_IDS = [
+const RESERVED_SITE_IDS: readonly string[] = [
   'admin',
   'api',
   'auth',
@@ -235,7 +235,7 @@ export const validateSiteId = (siteId: string): ValidationResult => {
   }
 
   // Check for reserved words
-  if (RESERVED_SITE_IDS.includes(siteId as any)) {
+  if (RESERVED_SITE_IDS.includes(siteId)) {
     return {
       isValid: false,
       error: `"${siteId}" is a reserved word and cannot be used as a site ID`,

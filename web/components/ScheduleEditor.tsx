@@ -4,22 +4,15 @@ import { useState } from 'react';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Plus, Minus, Trash2, ChevronUp, ChevronDown, Save, Pencil, X } from 'lucide-react';
 import type { ScheduleBlock } from '@/hooks/useFirestore';
 import type { SchedulePreset } from '@/hooks/useSchedulePresets';
 import { BLOCK_COLORS, BUILT_IN_PRESETS, ensureBlockColors } from '@/lib/scheduleDefaults';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
-
-const DAY_LABELS = [
-  { key: 'mon', label: 'M' },
-  { key: 'tue', label: 'T' },
-  { key: 'wed', label: 'W' },
-  { key: 'thu', label: 'T' },
-  { key: 'fri', label: 'F' },
-  { key: 'sat', label: 'S' },
-  { key: 'sun', label: 'S' },
-];
+import DayPillSelector from '@/components/DayPillSelector';
+import { TimezoneChip } from '@/components/TimezoneChip';
 
 // ─── Time Picker ─────────────────────────────────────────────────────────────
 
@@ -40,7 +33,7 @@ function formatTimeDisplay(value: string, use24h: boolean): string {
 }
 
 /** Parse typed time input into "HH:MM" 24h format. Returns null if unrecognizable. */
-function parseTimeInput(input: string, use24h: boolean): string | null {
+function parseTimeInput(input: string, _use24h: boolean): string | null {
   const s = input.trim().toLowerCase().replace(/\s+/g, ' ');
 
   // "H:MM" or "HH:MM" with optional am/pm — e.g. "9:30", "17:00", "5:00 pm"
@@ -80,7 +73,7 @@ function parseTimeInput(input: string, use24h: boolean): string | null {
   return null;
 }
 
-function TimePicker({ value, onChange, compact }: TimePickerProps) {
+export function TimePicker({ value, onChange, compact }: TimePickerProps) {
   const { userPreferences } = useAuth();
   const use24h = (userPreferences.timeFormat || '12h') === '24h';
   const [draft, setDraft] = useState<string | null>(null);
@@ -104,7 +97,7 @@ function TimePicker({ value, onChange, compact }: TimePickerProps) {
 
   const displayed = formatTimeDisplay(value, use24h);
   const inputWidth = use24h ? 'w-14' : 'w-[4.5rem]';
-  const inputPy = compact ? 'py-0.5 text-[11px]' : 'py-1 text-xs';
+  const inputPy = compact ? 'py-0.5 text-[11px]' : 'py-1 text-sm';
 
   return (
     <div className="flex items-center gap-0.5">
@@ -124,22 +117,34 @@ function TimePicker({ value, onChange, compact }: TimePickerProps) {
         title="Type a time (e.g. 9:00, 5pm, 17:00) or use ↑↓ arrows"
       />
       <div className="flex flex-col">
-        <button
-          type="button"
-          onMouseDown={(e) => { e.preventDefault(); setDraft(formatTimeDisplay(adjust(15), use24h)); }}
-          className="text-muted-foreground hover:text-foreground cursor-pointer leading-none py-px"
-          title="+15 min"
-        >
-          <ChevronUp className="h-2.5 w-2.5" />
-        </button>
-        <button
-          type="button"
-          onMouseDown={(e) => { e.preventDefault(); setDraft(formatTimeDisplay(adjust(-15), use24h)); }}
-          className="text-muted-foreground hover:text-foreground cursor-pointer leading-none py-px"
-          title="-15 min"
-        >
-          <ChevronDown className="h-2.5 w-2.5" />
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); setDraft(formatTimeDisplay(adjust(15), use24h)); }}
+              className="text-muted-foreground hover:text-foreground cursor-pointer leading-none py-px"
+            >
+              <ChevronUp className="h-2.5 w-2.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>+15 min</p>
+          </TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); setDraft(formatTimeDisplay(adjust(-15), use24h)); }}
+              className="text-muted-foreground hover:text-foreground cursor-pointer leading-none py-px"
+            >
+              <ChevronDown className="h-2.5 w-2.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p>-15 min</p>
+          </TooltipContent>
+        </Tooltip>
       </div>
     </div>
   );
@@ -230,14 +235,6 @@ export function ScheduleBlocksEditor({ blocks, onChange, compact }: ScheduleBloc
     onChange(blocks.filter((_, i) => i !== index));
   };
 
-  const toggleDay = (blockIndex: number, day: string) => {
-    const block = blocks[blockIndex];
-    const days = block.days.includes(day)
-      ? block.days.filter(d => d !== day)
-      : [...block.days, day];
-    updateBlock(blockIndex, { ...block, days });
-  };
-
   const updateRange = (blockIndex: number, rangeIndex: number, field: 'start' | 'stop', value: string) => {
     const block = blocks[blockIndex];
     const ranges = [...block.ranges];
@@ -260,8 +257,6 @@ export function ScheduleBlocksEditor({ blocks, onChange, compact }: ScheduleBloc
     updateBlock(blockIndex, { ...block, name: name || undefined });
   };
 
-  const pillSize = compact ? 'w-7 h-7 text-[10px]' : 'w-8 h-8 text-xs';
-
   return (
     <div className="space-y-3">
       {blocks.map((block, blockIndex) => {
@@ -276,7 +271,7 @@ export function ScheduleBlocksEditor({ blocks, onChange, compact }: ScheduleBloc
                 value={block.name || ''}
                 onChange={(e) => updateBlockName(blockIndex, e.target.value)}
                 placeholder={`block ${blockIndex + 1}`}
-                className="text-xs font-medium bg-background border border-border rounded-md px-2 py-1 text-foreground placeholder:text-muted-foreground/50 w-full min-w-0 outline-none focus:border-muted-foreground transition-colors"
+                className="text-sm font-medium bg-background border border-border rounded-md px-2.5 py-1.5 text-foreground placeholder:text-muted-foreground/50 w-full min-w-0 outline-none focus:border-muted-foreground transition-colors"
               />
             </div>
             {blocks.length > 1 && (
@@ -292,26 +287,13 @@ export function ScheduleBlocksEditor({ blocks, onChange, compact }: ScheduleBloc
           </div>
 
           {/* Day pills */}
-          <div className="flex gap-1">
-            {DAY_LABELS.map((day, i) => {
-              const isActive = block.days.includes(day.key);
-              return (
-                <button
-                  key={day.key}
-                  type="button"
-                  onClick={() => toggleDay(blockIndex, day.key)}
-                  className={`${pillSize} rounded-full font-medium transition-colors cursor-pointer ${
-                    isActive
-                      ? `${color.pill} ${color.pillText}`
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80'
-                  }`}
-                  title={['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'][i]}
-                >
-                  {day.label}
-                </button>
-              );
-            })}
-          </div>
+          <DayPillSelector
+            value={block.days}
+            onChange={(days) => updateBlock(blockIndex, { ...block, days })}
+            variant="pill"
+            compact={compact}
+            activeClassName={`${color.pill} ${color.pillText}`}
+          />
 
           {/* Time ranges */}
           <div className="space-y-2">
@@ -337,25 +319,37 @@ export function ScheduleBlocksEditor({ blocks, onChange, compact }: ScheduleBloc
                       </span>
                     )}
                     {block.ranges.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeRange(blockIndex, rangeIndex)}
-                        className="h-6 w-6 rounded-md text-muted-foreground hover:text-red-400 hover:bg-muted transition-colors cursor-pointer flex items-center justify-center flex-shrink-0"
-                        title="remove time range"
-                      >
-                        <Minus className="h-3 w-3" />
-                      </button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => removeRange(blockIndex, rangeIndex)}
+                            className="h-6 w-6 rounded-md text-muted-foreground hover:text-red-400 hover:bg-muted transition-colors cursor-pointer flex items-center justify-center flex-shrink-0"
+                          >
+                            <Minus className="h-3 w-3" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>remove time range</p>
+                        </TooltipContent>
+                      </Tooltip>
                     )}
                     {/* Add time range button on the last row */}
                     {rangeIndex === block.ranges.length - 1 && (
-                      <button
-                        type="button"
-                        onClick={() => addRange(blockIndex)}
-                        className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer flex items-center justify-center flex-shrink-0"
-                        title="add time range"
-                      >
-                        <Plus className="h-3 w-3" />
-                      </button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => addRange(blockIndex)}
+                            className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer flex items-center justify-center flex-shrink-0"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>add time range</p>
+                        </TooltipContent>
+                      </Tooltip>
                     )}
                   </div>
                   {isOvernight && (
@@ -435,7 +429,7 @@ export default function ScheduleEditor({
 }: ScheduleEditorProps) {
   // Always show built-in presets, then append any custom presets from Firestore
   const builtInAsPresets = BUILT_IN_PRESETS.map((bp, i) => ({
-    id: `builtin-${i}`, ...bp, isBuiltIn: true, order: i, createdBy: '', createdAt: null as any,
+    id: `builtin-${i}`, ...bp, isBuiltIn: true, order: i, createdBy: '', createdAt: null,
   }));
   const customPresets = (presets || []).filter(p => !p.isBuiltIn);
   const displayPresets = [...builtInAsPresets, ...customPresets];
@@ -501,121 +495,172 @@ export default function ScheduleEditor({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg bg-card border-border text-foreground">
+      <DialogContent className="sm:max-w-lg bg-card border-border text-foreground gap-6">
         <DialogHeader>
           <DialogTitle>configure schedule</DialogTitle>
           {siteTimezone && (
-            <DialogDescription className="text-muted-foreground text-xs">
-              times in {siteTimezone.replace(/_/g, ' ').split('/').pop()}
+            <DialogDescription asChild>
+              <div>
+                <TimezoneChip tz={siteTimezone} source="site" />
+              </div>
             </DialogDescription>
           )}
         </DialogHeader>
 
-        {/* Preset bar */}
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {displayPresets.map((preset) => {
-              const isActive = activePresetId === preset.id;
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => applyPreset(preset)}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors cursor-pointer ${
-                    isActive
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
-                  }`}
-                >
-                  {preset.name}
-                </button>
-              );
-            })}
-            {/* New preset */}
-            {onCreatePreset && !savingPreset && (
-              <button
-                type="button"
-                onClick={() => setSavingPreset(true)}
-                className="px-2 py-1 rounded-full text-[11px] text-muted-foreground hover:text-foreground border border-dashed border-border hover:border-muted-foreground transition-colors cursor-pointer"
-              >
-                <Plus className="h-3 w-3 inline mr-0.5" />
-                new preset
-              </button>
-            )}
-          </div>
-          {/* Rename/delete row for selected custom preset */}
+        {/* Preset bar.
+            Each pill sits in a `relative` wrapper; the per-pill action row
+            (update/rename/delete) or inline rename form is absolutely
+            positioned under it and centered horizontally, so the actions
+            read as belonging to that specific chip without stretching the
+            pill's flex slot. The row reserves `pb-10` when a panel is
+            attached so the next section doesn't collide with the overlay. */}
+        <div className="space-y-1.5">
           {(() => {
             const selectedPreset = activePresetId ? displayPresets.find(p => p.id === activePresetId) : null;
-            if (editingPresetId) {
-              return (
-                <form onSubmit={(e) => { e.preventDefault(); handleRenamePreset(); }} className="flex items-center gap-1.5">
-                  <Input
-                    value={editPresetName}
-                    onChange={(e) => setEditPresetName(e.target.value)}
-                    className="h-7 w-28 text-[11px] px-2 bg-background border-border"
-                    autoFocus
-                  />
-                  <button type="submit" className="p-1 text-muted-foreground hover:text-foreground cursor-pointer" title="save"><Save className="h-3.5 w-3.5" /></button>
-                  <button type="button" onClick={() => setEditingPresetId(null)} className="p-1 text-muted-foreground hover:text-foreground cursor-pointer" title="cancel"><X className="h-3.5 w-3.5" /></button>
-                </form>
-              );
-            }
-            if (savingPreset && onCreatePreset) {
-              return (
-                <form onSubmit={(e) => { e.preventDefault(); handleCreatePreset(); }} className="flex items-center gap-1.5">
-                  <Input
-                    value={newPresetName}
-                    onChange={(e) => setNewPresetName(e.target.value)}
-                    placeholder="preset name"
-                    className="h-7 w-28 text-[11px] px-2 bg-background border-border"
-                    autoFocus
-                  />
-                  <button type="submit" className="p-1 text-muted-foreground hover:text-foreground cursor-pointer" title="save preset"><Save className="h-3.5 w-3.5" /></button>
-                  <button type="button" onClick={() => { setSavingPreset(false); setNewPresetName(''); }} className="p-1 text-muted-foreground hover:text-foreground cursor-pointer" title="cancel"><X className="h-3.5 w-3.5" /></button>
-                </form>
-              );
-            }
-            if (selectedPreset && !selectedPreset.isBuiltIn && onDeletePreset && onUpdatePreset) {
-              // Check if current blocks differ from the preset's stored blocks
-              const currentKey = JSON.stringify(blocks.map(b => ({ days: [...b.days].sort(), ranges: b.ranges })));
-              const presetKey = JSON.stringify(selectedPreset.blocks.map((b: ScheduleBlock) => ({ days: [...b.days].sort(), ranges: b.ranges })));
-              const hasChanges = currentKey !== presetKey;
+            // Dirty check: current blocks differ from the selected preset's stored blocks.
+            const currentKey = JSON.stringify(blocks.map(b => ({ days: [...b.days].sort(), ranges: b.ranges })));
+            const presetKey = selectedPreset
+              ? JSON.stringify(selectedPreset.blocks.map((b: ScheduleBlock) => ({ days: [...b.days].sort(), ranges: b.ranges })))
+              : '';
+            const hasChanges = !!selectedPreset && currentKey !== presetKey;
+            const hasAttachedPanel =
+              !!selectedPreset &&
+              !selectedPreset.isBuiltIn &&
+              !!onDeletePreset &&
+              !!onUpdatePreset &&
+              !savingPreset;
 
-              return (
-                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                  {hasChanges && (
+            return (
+              <>
+                <div
+                  className={`flex flex-wrap items-start gap-x-1.5 gap-y-2 ${
+                    hasAttachedPanel ? 'pb-10' : ''
+                  }`}
+                >
+                  {displayPresets.map((preset) => {
+                    const isActive = activePresetId === preset.id;
+                    const isCustom =
+                      isActive &&
+                      selectedPreset &&
+                      !selectedPreset.isBuiltIn &&
+                      !!onDeletePreset &&
+                      !!onUpdatePreset &&
+                      !savingPreset;
+                    const showRenameForm = isCustom && editingPresetId === preset.id;
+                    const showActions = isCustom && !showRenameForm;
+                    return (
+                      <div key={preset.id} className="relative">
+                        <button
+                          type="button"
+                          onClick={() => applyPreset(preset)}
+                          className={`px-2.5 py-1 rounded-full text-[13px] font-medium transition-colors duration-150 cursor-pointer ${
+                            isActive
+                              ? 'bg-blue-600/20 text-blue-100 ring-1 ring-blue-500/40'
+                              : 'bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground'
+                          }`}
+                        >
+                          {preset.name}
+                        </button>
+
+                        {/* Per-pill inline rename form */}
+                        {showRenameForm && (
+                          <form
+                            onSubmit={(e) => { e.preventDefault(); handleRenamePreset(); }}
+                            className="absolute left-1/2 top-full z-10 mt-1 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap"
+                          >
+                            <Input
+                              value={editPresetName}
+                              onChange={(e) => setEditPresetName(e.target.value)}
+                              className="h-7 w-28 text-[11px] px-2 bg-background border-border"
+                              autoFocus
+                            />
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button type="submit" className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><Save className="h-3.5 w-3.5" /></button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>save</p>
+                              </TooltipContent>
+                            </Tooltip>
+                            <button type="button" onClick={() => setEditingPresetId(null)} className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><X className="h-3.5 w-3.5" /></button>
+                          </form>
+                        )}
+
+                        {/* Per-pill action row */}
+                        {showActions && selectedPreset && (
+                          <div className="absolute left-1/2 top-full z-10 mt-1 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap text-[11px] leading-5 text-muted-foreground">
+                            {hasChanges && onUpdatePreset && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const valid = blocks.filter(b => b.days.length > 0 && b.ranges.length > 0);
+                                  onUpdatePreset(selectedPreset.id, { blocks: valid });
+                                }}
+                                className="flex items-center gap-1 text-accent-cyan hover:text-accent-cyan-hover cursor-pointer transition-colors"
+                              >
+                                <Save className="h-3 w-3" />
+                                update preset
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => { setEditingPresetId(selectedPreset.id); setEditPresetName(selectedPreset.name); }}
+                              className="flex items-center gap-1 hover:text-foreground cursor-pointer transition-colors"
+                            >
+                              <Pencil className="h-3 w-3" />
+                              rename
+                            </button>
+                            {onDeletePreset && (
+                              <button
+                                type="button"
+                                onClick={() => onDeletePreset(selectedPreset.id)}
+                                className="flex items-center gap-1 hover:text-red-400 cursor-pointer transition-colors"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                delete
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {/* New preset */}
+                  {onCreatePreset && !savingPreset && (
                     <button
                       type="button"
-                      onClick={() => {
-                        const valid = blocks.filter(b => b.days.length > 0 && b.ranges.length > 0);
-                        onUpdatePreset(selectedPreset.id, { blocks: valid });
-                      }}
-                      className="flex items-center gap-1 text-accent-cyan hover:text-accent-cyan-hover cursor-pointer transition-colors"
+                      onClick={() => setSavingPreset(true)}
+                      className="px-2.5 py-1 rounded-full text-[13px] text-muted-foreground/80 hover:text-foreground border border-dashed border-border/70 hover:border-muted-foreground transition-colors duration-150 cursor-pointer"
                     >
-                      <Save className="h-3 w-3" />
-                      update preset
+                      <Plus className="h-3.5 w-3.5 inline mr-1" />
+                      new preset
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => { setEditingPresetId(selectedPreset.id); setEditPresetName(selectedPreset.name); }}
-                    className="flex items-center gap-1 hover:text-foreground cursor-pointer transition-colors"
-                  >
-                    <Pencil className="h-3 w-3" />
-                    rename
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDeletePreset(selectedPreset.id)}
-                    className="flex items-center gap-1 hover:text-red-400 cursor-pointer transition-colors"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                    delete
-                  </button>
                 </div>
-              );
-            }
-            return null;
+
+                {/* Inline create form — not scoped to any pill, sits below the row. */}
+                {savingPreset && onCreatePreset && (
+                  <form onSubmit={(e) => { e.preventDefault(); handleCreatePreset(); }} className="flex items-center gap-1.5">
+                    <Input
+                      value={newPresetName}
+                      onChange={(e) => setNewPresetName(e.target.value)}
+                      placeholder="preset name"
+                      className="h-7 w-28 text-[11px] px-2 bg-background border-border"
+                      autoFocus
+                    />
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button type="submit" className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><Save className="h-3.5 w-3.5" /></button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>save preset</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <button type="button" onClick={() => { setSavingPreset(false); setNewPresetName(''); }} className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"><X className="h-3.5 w-3.5" /></button>
+                  </form>
+                )}
+              </>
+            );
           })()}
         </div>
 
@@ -630,7 +675,7 @@ export default function ScheduleEditor({
         )}
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} className="cursor-pointer">
+          <Button variant="ghost" onClick={() => onOpenChange(false)} className="bg-secondary border border-border cursor-pointer">
             cancel
           </Button>
           <Button onClick={handleSave} className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer">

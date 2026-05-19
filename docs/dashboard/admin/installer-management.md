@@ -2,42 +2,53 @@
 
 Upload, manage, and distribute agent installer versions.
 
-**Location**: Admin Panel → Installer Versions (`/admin/installers`)
+**Location**: admin panel -> installers (`/admin/installers`)
+
+The dashboard uses the same canonical `/api/installer/*` public management API as the CLI and SDKs. All actions require a superadmin session.
 
 ---
 
 ## uploading a new version
 
-1. Click **"Upload New Version"**
-2. **Upload file**: Drag & drop or browse for the `.exe` installer
-3. **Version number**: Enter version in `X.Y.Z` format (e.g., `2.1.8`)
-4. **Release notes** (optional): Describe what changed
-5. **Set as latest**: Check to make this the default download version
-6. Click **"Upload Installer"**
-7. Watch the upload progress bar
-8. Version appears in the table immediately
+1. Click **upload new version**.
+2. Select or drag in a `.exe` installer. The dialog accepts only `.exe` files and auto-detects `X.Y.Z` from filenames such as `Owlette-Installer-v2.11.0.exe`.
+3. Confirm the `X.Y.Z` version number, add optional release notes, leave **Set as latest version (recommended)** checked unless this is a staged upload, then click **upload installer**.
 
-### requirements
+The dashboard uses a three-step upload flow:
 
-- File must be `.exe` format
-- Version format: `X.Y.Z` (semantic versioning)
-- File is renamed to `Owlette-Installer-v{version}.exe` in Firebase Storage
-- SHA-256 checksum is computed automatically
+1. **request URL**: `POST /api/installer/upload` with `version`, `fileName`, `contentType`, optional `releaseNotes`, and `setAsLatest` (defaults to `true`). The route requires an `Idempotency-Key`, validates the version and `.exe` filename, creates an `installer_uploads/{uploadId}` record, and returns a signed `uploadUrl`, `uploadId`, `storagePath`, and `expiresAt`. The signed URL expires after 15 minutes.
+2. **upload binary**: the browser `PUT`s the installer binary directly to the signed Storage URL and shows upload progress.
+3. **finalize**: `PUT /api/installer/upload` with the `uploadId` and dashboard-computed `checksum_sha256`. The route requires an `Idempotency-Key`, verifies the pending upload record has not expired, confirms the object exists, recomputes SHA-256 from the stored binary, rejects mismatches with `checksum_mismatch`, writes version metadata, and updates latest if requested.
 
 ---
 
 ## version table
 
-Each version shows:
+Each active version shows:
 
 | column | description |
 |--------|-------------|
-| **Version** | Version number (e.g., 2.1.8) |
-| **File Size** | Installer file size |
-| **Release Date** | When it was uploaded |
-| **Release Notes** | Change description |
-| **Uploaded By** | Admin who uploaded it |
-| **Status** | "Latest" badge if current |
+| **version** | Version number |
+| **file size** | Installer file size |
+| **uploaded** | Upload date |
+| **uploaded by** | User who uploaded it |
+| **release notes** | Change description, or `no notes` |
+| **actions** | set as latest, download, copy link, or delete |
+
+Soft-deleted versions are hidden from the dashboard list.
+
+Each finalized version stores this metadata under `installer_metadata/data/versions/{version}`:
+
+| field | source |
+|-------|--------|
+| `version` | Confirmed `X.Y.Z` version from the upload dialog |
+| `download_url` | Long-lived signed read URL generated during finalize |
+| `checksum_sha256` | Server-computed checksum for the stored binary |
+| `release_notes` | Optional notes from the upload dialog |
+| `file_size` | Storage object size in bytes |
+| `uploaded_at` / `release_date` | Finalize timestamp |
+| `uploaded_by` | User or API key actor that finalized the upload |
+| `deletedAt` | `null` for active versions; set when soft-deleted |
 
 ---
 
@@ -45,48 +56,55 @@ Each version shows:
 
 ### set as latest
 
-1. Find the version in the table
-2. Click **"Set as Latest"**
-3. The download button in the dashboard header immediately updates for all users
+Uploads set the latest pointer by default. Clearing **Set as latest version (recommended)** keeps the version available in the table without changing the public latest installer.
 
-Use this for **rollback** — if the latest version has issues, set an older version as latest.
+Promote any uploaded, active non-latest version later with **set as latest**, which calls `POST /api/installer/{version}/set-latest` and rewrites `installer_metadata/latest`. Use this for rollback if a newer installer has issues.
 
 ### download
 
-Click the download icon next to any version to download it directly from Firebase Storage.
+Downloads use the signed `download_url` returned by the installer API.
 
 ### delete
 
-1. Click the trash icon next to a version
-2. Confirm deletion
+Delete soft-deletes the version through `DELETE /api/installer/{version}`. It does not remove the Storage object during the interactive action.
 
-!!! warning
-    You cannot delete the version currently set as "latest". Set a different version as latest first, then delete the old one.
+You cannot delete:
+
+- the current latest version (`latest_version_protected`)
+- a version when doing so would leave fewer than two active versions (`min_versions_violated`)
+
+---
+
+## cleanup
+
+The **clean up** action identifies superseded patch versions:
+
+- not the newest patch in its `major.minor` series
+- older than the retention window
+- not the current latest version
+
+Each candidate is soft-deleted via the public API.
 
 ---
 
 ## public download button
 
-All users (including non-admins) see a **download button** in the dashboard header:
-
-- Always points to the "latest" version
-- Shows version number on hover
-- Opens in a new tab for direct download
-- Updates in real-time when admins change the latest version
+All users see a dashboard download button that points to the current latest installer. The unauthenticated permalink remains `GET /download`; admin management metadata comes from `GET /api/installer/latest`.
 
 ---
 
 ## storage
 
-Installers are stored in Firebase Storage under:
+Installers are stored under:
 
-```
-installers/Owlette-Installer-v{version}.exe
+```text
+agent-installers/versions/{version}/Owlette-Installer-v{version}.exe
 ```
 
 Metadata is stored in Firestore under:
 
-```
-installer_metadata/latest          — Current latest version info
-installer_metadata/data/versions/  — All version records
+```text
+installer_metadata/latest
+installer_metadata/data/versions/
+installer_uploads/{uploadId}
 ```

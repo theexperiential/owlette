@@ -35,6 +35,9 @@ Server-side only — used for generating agent OAuth tokens and verifying sessio
 !!! warning
     When setting `FIREBASE_PRIVATE_KEY` in Railway, wrap the value in double quotes and preserve the `\n` newline escapes exactly as exported from Firebase.
 
+!!! note
+    The web runtime reads the split variables above from `web/lib/firebase-admin.ts`. `FIREBASE_SERVICE_ACCOUNT_KEY` JSON blobs are legacy documentation only for this app and are not read by the current server code.
+
 ---
 
 ## session management (required)
@@ -75,6 +78,31 @@ Owlette uses [Upstash](https://upstash.com) Redis for API rate limiting. Create 
 
 ---
 
+## cloudflare r2 (required for roost)
+
+The roost upload, chunk-check, and version-body routes use Cloudflare R2 through its S3-compatible API. The web runtime reads these variables in `web/lib/r2Client.server.ts`.
+
+| variable | format | description |
+|----------|--------|-------------|
+| `R2_S3_ENDPOINT` | `https://<account-id>.r2.cloudflarestorage.com` | S3-compatible endpoint. This is where the Cloudflare account id is configured at runtime. |
+| `R2_S3_ACCESS_KEY_ID` | R2 access key id | S3-compatible R2 token with Object Read & Write access to the owlette buckets |
+| `R2_S3_SECRET_ACCESS_KEY` | R2 secret access key | Matching secret for `R2_S3_ACCESS_KEY_ID` |
+
+Bucket names are not environment variables in the current web code. `bucketFor()` derives them from the active roost environment:
+
+| roost env | content bucket | manifests bucket |
+|-----------|----------------|------------------|
+| `prod` | `owlette-prod-content` | `owlette-prod-manifests` |
+| `dev` | `owlette-dev-content` | `owlette-dev-manifests` |
+
+`ROOST_ENV=prod` or `ROOST_ENV=dev` can override environment detection. Without that override, production is selected when `RAILWAY_ENVIRONMENT=production` or `RAILWAY_PUBLIC_DOMAIN=owlette.app`; otherwise the code defaults to `dev`.
+
+There is no separate public URL prefix runtime variable. R2 buckets should remain private; upload and download access uses presigned URLs. Version metadata URLs are derived from the selected manifests bucket and `R2_S3_ENDPOINT`.
+
+`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_R2_API_TOKEN` are provisioning inputs for `scripts/provision-r2.mjs`, not web runtime variables.
+
+---
+
 ## url configuration (required in production)
 
 | variable | description |
@@ -95,6 +123,38 @@ Generate:
 ```bash
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
+
+---
+
+## public status page (required for external launch)
+
+These are server-side only. They wire `/api/cron/status-ping` to the hosted public status page.
+
+| variable | description |
+|----------|-------------|
+| `OWLETTE_STATUS_BASE_URL` | Optional base URL for synthetic checks; defaults to the request origin or `https://owlette.app` |
+| `INSTATUS_API_KEY` | Instatus API token |
+| `INSTATUS_PAGE_ID` | Instatus hosted page id; not tied to the later `status.owlette.app` custom-domain upgrade |
+| `INSTATUS_API_BASE_URL` | Optional API override; defaults to `https://api.instatus.com` |
+| `INSTATUS_COMPONENT_STATUS_METHOD` | Optional component update method; defaults to `PUT` |
+| `INSTATUS_COMPONENT_STATUS_URL_TEMPLATE` | Optional component update URL template using `{pageId}` and `{componentId}` placeholders; default is `/v2/{pageId}/components/{componentId}` under `INSTATUS_API_BASE_URL` |
+| `INSTATUS_COMPONENT_DASHBOARD_ID` | Component id for dashboard |
+| `INSTATUS_COMPONENT_API_ID` | Component id for API |
+| `INSTATUS_COMPONENT_AGENT_REGISTRY_ID` | Component id for agent registry |
+| `INSTATUS_COMPONENT_WEBHOOK_DELIVERY_ID` | Component id for webhook delivery |
+| `INSTATUS_COMPONENT_R2_UPLOADS_ID` | Component id for R2 uploads |
+| `INSTATUS_COMPONENT_FIRESTORE_ID` | Component id for Firestore |
+| `INSTATUS_COMPONENT_CORTEX_CHAT_ID` | Component id for Cortex chat |
+
+Do not store the Instatus API key in docs or screenshots. Record only component ids and env var names in the operator reference.
+
+---
+
+## public API launch state
+
+There is no environment variable that enables the public API launch. The launch state is tracked in the public API launch ticket and [runbook](../api/launch-runbook.md), while API routes continue to enforce authentication, scopes, rate limits, and audit behavior.
+
+Do not add an `OWLETTE_PUBLIC_API_LAUNCHED` style flag unless the web code also enforces that flag on the relevant routes and the rollback behavior is documented.
 
 ---
 
@@ -128,12 +188,26 @@ Required only if you want autonomous Cortex (AI auto-investigates process crashe
 
 ---
 
+## observability (optional)
+
+| variable | description |
+|----------|-------------|
+| `NEXT_PUBLIC_SENTRY_DSN` | Sentry DSN. Sentry is disabled when this is unset. |
+| `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | Sentry environment name such as `development`, `staging`, or `production`. |
+| `SENTRY_AUTH_TOKEN` | Optional source-map upload token for CI/Railway builds. |
+| `SENTRY_ORG` | Optional Sentry organization slug for source-map upload. |
+| `SENTRY_PROJECT` | Optional Sentry project slug for source-map upload. |
+| `SECURITY_BOUNDARY_SENTRY_METRICS` | Optional flag for security-boundary metric emission. |
+
+---
+
 ## environment (auto-set)
 
 | variable | value | set by |
 |----------|-------|--------|
 | `NODE_ENV` | `production` | `railway.toml` |
 | `PORT` | `3000` | Railway (auto-injected) |
+| `RAILWAY_ENVIRONMENT` | `production` or Railway environment name | Railway (auto-injected) |
 
 ---
 
@@ -163,8 +237,16 @@ MFA_ENCRYPTION_KEY=your-32-char-mfa-key
 UPSTASH_REDIS_REST_URL=https://...upstash.io
 UPSTASH_REDIS_REST_TOKEN=...
 
+# Cloudflare R2
+R2_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+R2_S3_ACCESS_KEY_ID=...
+R2_S3_SECRET_ACCESS_KEY=...
+
 # URL
 NEXT_PUBLIC_BASE_URL=https://your-app.railway.app
+
+# Cron
+CRON_SECRET=your-64-char-hex
 ```
 
 ### full configuration
@@ -198,6 +280,12 @@ SEND_WELCOME_EMAIL=true
 UPSTASH_REDIS_REST_URL=https://...upstash.io
 UPSTASH_REDIS_REST_TOKEN=...
 
+# Cloudflare R2
+R2_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+R2_S3_ACCESS_KEY_ID=...
+R2_S3_SECRET_ACCESS_KEY=...
+ROOST_ENV=prod
+
 # URL
 NEXT_PUBLIC_BASE_URL=https://owlette.app
 RAILWAY_PUBLIC_DOMAIN=owlette.app
@@ -205,11 +293,30 @@ RAILWAY_PUBLIC_DOMAIN=owlette.app
 # Cron
 CRON_SECRET=your-64-char-hex
 
+# Public Status Page
+OWLETTE_STATUS_BASE_URL=https://owlette.app
+INSTATUS_API_KEY=...
+INSTATUS_PAGE_ID=...
+INSTATUS_COMPONENT_DASHBOARD_ID=...
+INSTATUS_COMPONENT_API_ID=...
+INSTATUS_COMPONENT_AGENT_REGISTRY_ID=...
+INSTATUS_COMPONENT_WEBHOOK_DELIVERY_ID=...
+INSTATUS_COMPONENT_R2_UPLOADS_ID=...
+INSTATUS_COMPONENT_FIRESTORE_ID=...
+INSTATUS_COMPONENT_CORTEX_CHAT_ID=...
+
 # LLM Encryption
 LLM_ENCRYPTION_KEY=your-64-char-hex
 
 # Autonomous Cortex (optional)
 CORTEX_INTERNAL_SECRET=your-64-char-hex
+
+# Observability (optional)
+NEXT_PUBLIC_SENTRY_DSN=https://examplePublicKey@o0.ingest.sentry.io/0
+NEXT_PUBLIC_SENTRY_ENVIRONMENT=production
+SENTRY_AUTH_TOKEN=sntrys_...
+SENTRY_ORG=your-org
+SENTRY_PROJECT=owlette-web
 ```
 
 ---

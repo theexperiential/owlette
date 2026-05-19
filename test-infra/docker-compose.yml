@@ -1,0 +1,93 @@
+# Local development + CI test infrastructure for roost (wave 1.6 piecemeal).
+#
+# Provides a MinIO instance that stands in for Cloudflare R2 at dev + CI
+# time. The web API's signed-URL issuance + chunk verification + GC
+# paths all speak the S3 API; MinIO serves the same dialect so code
+# targeting R2 via the aws-sdk-s3 library works unchanged here.
+#
+# Usage:
+#   docker compose -f test-infra/docker-compose.yml up -d
+#   # wait a few seconds; `init-buckets` exits once setup is done
+#
+# Endpoints:
+#   MinIO API  : http://localhost:9000   (the S3-compatible endpoint)
+#   MinIO Web  : http://localhost:9001   (admin console)
+#   Credentials: minioadmin / minioadmin (dev-only, never used in prod)
+#
+# Buckets created match the production R2 layout (storage/r2-bucket-policy.json):
+#   owlette-dev-content      — chunk objects at project-content/{siteId}/{hash[:2]}/{hash}
+#   owlette-dev-manifests    — manifest bodies at project-manifests/{siteId}/{folderId}/{manifestId}.json
+#
+# Teardown: `docker compose -f test-infra/docker-compose.yml down -v`
+#           The `-v` removes the data volume — destroys all uploaded chunks.
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    container_name: roost-minio
+    ports:
+      - "9000:9000"   # s3 API
+      - "9001:9001"   # web console
+    environment:
+      # dev credentials — hardcoded intentionally so CI runs don't need
+      # secrets. production R2 uses its own IAM; this only ever serves
+      # local and ephemeral-CI traffic.
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      # anonymous access is denied by default; bucket policies are
+      # applied by the init service below.
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  # One-shot container that uses the `mc` CLI to create the buckets and
+  # apply the same deny-anonymous / signed-only policies as production
+  # R2 (from storage/r2-bucket-policy.json). Exits 0 on success — run
+  # it explicitly with `docker compose run init-buckets` to re-apply
+  # after a volume reset.
+  init-buckets:
+    image: minio/mc:RELEASE.2025-07-21T05-28-08Z
+    container_name: roost-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    entrypoint: ["/bin/sh", "/scripts/init.sh"]
+    volumes:
+      - ./minio/init.sh:/scripts/init.sh:ro
+      - ../storage/r2-bucket-policy.json:/scripts/r2-bucket-policy.json:ro
+
+  agent-runner:
+    build:
+      context: ./agent-runner
+      dockerfile: Dockerfile
+      additional_contexts:
+        repo: ..
+    depends_on:
+      minio:
+        condition: service_healthy
+      init-buckets:
+        condition: service_completed_successfully
+    environment:
+      PROGRAMDATA: /tmp/owlette-programdata
+      XDG_DATA_HOME: /tmp/owlette-data
+      OWLETTE_ENVIRONMENT: development
+      OWLETTE_FIREBASE_PROJECT_ID: demo-test
+      FIRESTORE_EMULATOR_HOST: firestore:8080
+      OWLETTE_R2_ENDPOINT: http://minio:9000
+      OWLETTE_R2_ACCESS_KEY_ID: minioadmin
+      OWLETTE_R2_SECRET_ACCESS_KEY: minioadmin
+      OWLETTE_R2_CONTENT_BUCKET: owlette-dev-content
+      OWLETTE_R2_MANIFESTS_BUCKET: owlette-dev-manifests
+
+volumes:
+  minio-data:
+    name: roost-minio-data

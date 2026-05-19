@@ -16,7 +16,7 @@ Cross-cutting troubleshooting guide for common issues across the entire owlette 
 **Check**:
 
 1. Verify internet connectivity on the agent machine
-2. Check firewall rules — outbound HTTPS (port 443) must be allowed to `*.googleapis.com` and `*.firebaseio.com`
+2. Check firewall rules — outbound HTTPS (port 443) must be allowed to `owlette.app`, `dev.owlette.app`, `*.googleapis.com`, `*.firebaseio.com`, and the Cloudflare R2 endpoint used for roost chunks (usually `*.r2.cloudflarestorage.com`)
 3. Check `C:\ProgramData\Owlette\logs\service.log` for specific errors
 4. Verify `firebase.enabled` is `true` in config.json
 5. Verify `firebase.site_id` matches a site that exists in Firestore
@@ -40,17 +40,29 @@ Cross-cutting troubleshooting guide for common issues across the entire owlette 
 2. **Check agent service**: `sc query OwletteService` (should show RUNNING)
 3. **Check ConnectionManager state** in logs — look for BACKOFF or DISCONNECTED
 4. **Verify site_id** — Agent and dashboard must be looking at the same site
-5. **Check Firestore directly** — Go to Firebase Console → Firestore → `sites/{siteId}/machines/{machineId}/presence` → check `lastHeartbeat`
+5. **Check Firestore directly** — Go to Firebase Console → Firestore → `sites/{siteId}/machines/{machineId}` → check the machine document fields `online`, `lastHeartbeat`, `agent_version`, and `metrics`
 
 ---
 
 ## processes not auto-restarting
 
-1. Verify `autolaunch` is `true` for the process
+1. Verify `launch_mode` is `always`, or `scheduled` with the current time inside a configured schedule window
 2. Check if `relaunch_attempts` limit was reached (reboot prompt should appear)
-3. Verify `exe_path` exists on the machine (INACTIVE state means file not found)
+3. Verify `exe_path` exists on the machine (`INACTIVE` state means file not found)
 4. Check agent logs for launch errors
 5. Verify the service is running and the main loop is executing (look for periodic log entries)
+
+---
+
+## process won't launch after an app upgrade
+
+**Symptoms**: A managed process shows `INACTIVE`, or the dashboard shows an executable-missing toast after software was upgraded or installed side-by-side.
+
+1. Open the dashboard toast or activity log entry with action `exe_missing`.
+2. Review the suggested paths. The agent scans nearby sibling directories for executables with the same filename.
+3. Use the toast's **use path** action, or open the process edit dialog manually and update **executable path**.
+4. Save the process. If launch mode is `always`, the agent should launch it on the next monitoring pass. If launch mode is `scheduled`, it launches when the next matching schedule window opens.
+5. If no suggestion appears, browse the machine for the new executable path and update the process manually.
 
 ---
 
@@ -88,12 +100,13 @@ Check `service.log` for refresh errors. Common causes:
 
 ---
 
-## project distribution failed
+## roost sync failed
 
-1. **Download failed** — Test URL in browser; ensure it's a direct download link
-2. **Extraction failed** — Verify the ZIP is valid; check disk space
-3. **Verification failed** — Check that verify file paths match the actual ZIP structure
-4. **Permission denied** — The extract path may not be writable
+1. **R2 configuration failed** — Check web runtime logs for missing `R2_S3_ENDPOINT`, `R2_S3_ACCESS_KEY_ID`, or `R2_S3_SECRET_ACCESS_KEY`. The endpoint should be reachable from the web app and agents over HTTPS.
+2. **Chunk upload or verification failed** — Retry the upload from the roost page and confirm the agent machine can reach signed R2 URLs. A publish can fail if the version references chunks that were not uploaded or were rejected after hash verification.
+3. **Target fanout stalled** — Check `sites/{siteId}/roosts/{roostId}/target_state/{machineId}`. Current target states include `pending`, `downloading`, `assembling`, `committed`, `failed`, and `cancelled`.
+4. **`sync_pull` stuck or failed** — Check `service.log` on the target machine for `sync_pull` errors. If no target-state document appears, confirm the machine is online and has a pending command in `sites/{siteId}/machines/{machineId}/commands/pending`.
+5. **Permission denied** — The configured extract root may not be writable or may be outside the agent's allowed extract roots.
 
 ---
 
@@ -162,7 +175,9 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 | Service | `C:\ProgramData\Owlette\logs\service.log` |
 | GUI | `C:\ProgramData\Owlette\logs\gui.log` |
 | Tray | `C:\ProgramData\Owlette\logs\tray.log` |
-| Installer | `C:\ProgramData\Owlette\logs\setup.log` |
+| Pairing | `C:\ProgramData\Owlette\logs\pairing_debug.log` |
+| Self-update installer | `C:\ProgramData\Owlette\logs\installer_update.log` |
+| Interactive installer | Only where Inno Setup is launched with `/LOG=<path>`; use `/LOG="C:\ProgramData\Owlette\logs\setup.log"` to write a setup log there |
 
 ### dashboard logs
 

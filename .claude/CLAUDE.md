@@ -2,7 +2,18 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. Monorepo: Python Windows service (agent) + Next.js web dashboard (web) + Firebase/Firestore backend.
 
-**Version**: 2.6.1 | **License**: AGPL-3.0
+**Version**: 2.12.2 | **License**: FSL-1.1-Apache-2.0
+
+## In-Flight Major Initiative: roost (project distribution v2)
+
+A multi-quarter rewrite of project distribution into a content-addressed sync platform (Cloudflare R2, immutable manifests, atomic deploy, rollback). Branded as "roost" (always lowercase). Plan + tasks live at `dev/active/project-distribution-v2/`. Memory: `project_roost.md`.
+
+**Key decisions** (do not relitigate):
+- No `/api/v2/` URL prefix — the new routes ARE the API (`/api/chunks/`, `/api/roosts/`).
+- No backwards compatibility with v1 agents — clean cutover, v3.0.0 agent is required to consume new uploads.
+- No header-based version negotiation (no `Accept: application/vnd.owlette.v2+json`).
+- v3-deferred (do NOT rebuild in v2): bidirectional sync, LAN swarm, Ed25519 manifest signing, FastCDC. (Public CLI was originally on this list but shipped via the api-sprint + roost-public-api waves — now `@owlette/cli` v1.0.0-rc.0; see `project_npm_packages.md`.)
+- Nav label `projects` → `roost`. `verify_files` field dropped (manifest is authoritative).
 
 ---
 
@@ -21,7 +32,8 @@ Owlette is a cloud-connected Windows process management and remote deployment sy
 # Web
 cd web && npm install && npm run dev     # Dev server (localhost:3000)
 cd web && npm run build                  # Production build
-cd web && npm test                       # Jest tests
+cd web && npm test                       # Jest unit tests
+cd web && npm run e2e                    # Playwright E2E suite (requires JDK 21 + firebase-tools@13 globally)
 cd web && npm run lint                   # Lint
 
 # Agent
@@ -35,6 +47,8 @@ node scripts/sync-versions.js X.Y.Z
 ```
 
 Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules` (independent). See `docs/version-management.md`.
+
+**E2E prereqs**: JDK 21 on PATH (Temurin), `npm i -g firebase-tools@13`, `npx playwright install chromium --with-deps` (once). Emulator ports: Auth :9099, Firestore :8080, Storage :9199. App runs on :3100 during E2E (not :3000). Report output: `web/e2e/.output/report/`. Full guide: `web/e2e/README.md`.
 
 ---
 
@@ -50,6 +64,8 @@ Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules
 - Check for completeness: if a pattern is introduced (e.g. lazy init), verify it's wired up end-to-end (references stored, cleanup handled, state updates propagated)
 - No dead code, no commented-out code, no placeholder TODOs that won't be addressed in this commit
 - All changes must be self-contained and fully functional — never commit something that "works but will need a follow-up fix"
+
+**Lint as you go — don't let errors accumulate.** After editing any web file, run `npx eslint <file>` on that file (or `npm run lint` for a broader change) and fix every error and warning you introduced before moving on. Never commit new lint errors, and never rationalise them as "pre-existing" if your edit touched the same file. The repo has historical lint debt — your job is to not add to it, and to clean up any issues in lines you modified. Same principle for TypeScript: if `tsc` / IDE diagnostics flag your change, fix it before the next edit, not at commit time.
 
 ---
 
@@ -90,31 +106,53 @@ Agents authenticate via a device code flow — no browser login on the target ma
 node scripts/sync-versions.js X.Y.Z
 git add -A && git commit -m "chore: bump version to X.Y.Z" && git push origin dev
 
-# 2. Build installer (~5 min)
-cd agent && powershell -Command "& './build_installer_full.bat'"
+# 2. Build installer (~5 min, non-interactive)
+# build_installer_full.bat ends with `pause` and has `pause` on every error
+# branch, so it MUST be run with stdin redirected from NUL or it will hang
+# the harness forever. Invoke by FULL PATH (cmd /c won't reliably cd via
+# PowerShell quote-stripping) and capture the log explicitly. Run in the
+# background — exit code 0 means the .exe is built; check the log on failure.
+#
+#   powershell (foreground/background):
+#     cmd /c "C:\Users\admin\Documents\Git\Owlette\agent\build_installer_full.bat < NUL > C:\Users\admin\AppData\Local\Temp\installer-build.log 2>&1"
+#
+#   bash:
+#     cd c:/Users/admin/Documents/Git/Owlette/agent && cmd //c "build_installer_full.bat" < /dev/null > /tmp/installer-build.log 2>&1
+#     # (if //c gets mangled by Git Bash, fall back to the powershell cmd /c form above)
+#
+# DO NOT use `cd agent && powershell -Command "& './build_installer_full.bat'"` —
+# the trailing pause will hang non-interactive shells indefinitely.
 # Output: agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
 
 # 3. Compute checksum
 sha256sum agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
 
 # 4. Upload via API (3-step: request URL → upload binary → finalize)
+# Endpoint is `/api/installer/upload` (api-sprint route — old `/api/admin/installer/upload` was removed).
+# Auth: api key with `installer=*:write` scope (superadmin-only at minting). `x-api-key` or `Authorization: Bearer owk_…` both work.
+# Idempotency-Key REQUIRED on both POST and PUT — the route is wrapped in `withIdempotency(..., { requireKey: true })`.
 API_KEY=$(grep OWLETTE_API_KEY .claude/.env.local | cut -d= -f2)
 BASE_URL="https://dev.owlette.app"  # or https://owlette.app for prod
 
 # Step 1: Get signed upload URL
-curl -s -X POST "$BASE_URL/api/admin/installer/upload" \
-  -H "Content-Type: application/json" -H "x-api-key: $API_KEY" \
+curl -s -X POST "$BASE_URL/api/installer/upload" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $API_KEY" \
+  -H "Idempotency-Key: installer-upload-X.Y.Z-$(date +%s)" \
   -d '{"version":"X.Y.Z","fileName":"Owlette-Installer-vX.Y.Z.exe","releaseNotes":"...","setAsLatest":true}'
-# → returns uploadUrl, uploadId
+# → returns uploadUrl, uploadId, storagePath, expiresAt (15-min window)
 
-# Step 2: Upload binary to signed URL
+# Step 2: Upload binary to the signed GCS URL (no Idempotency-Key here — it's a direct GCS PUT)
 curl -X PUT "$UPLOAD_URL" -H "Content-Type: application/octet-stream" \
   --data-binary @agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
 
-# Step 3: Finalize (verifies file, writes installer_metadata, sets as latest)
-curl -s -X PUT "$BASE_URL/api/admin/installer/upload" \
-  -H "Content-Type: application/json" -H "x-api-key: $API_KEY" \
-  -d '{"uploadId":"<from step 1>","checksum_sha256":"<from step 3>"}'
+# Step 3: Finalize (verifies file in storage, computes/checks checksum, writes installer_metadata, sets as latest)
+curl -s -X PUT "$BASE_URL/api/installer/upload" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $API_KEY" \
+  -H "Idempotency-Key: installer-finalize-X.Y.Z-$(date +%s)" \
+  -d '{"uploadId":"<from step 1>","checksum_sha256":"<sha256 from earlier>"}'
+# checksum_sha256 is optional — server computes it if omitted, but providing it gets a 412 `checksum_mismatch` on corruption.
 ```
 
 ---
@@ -134,6 +172,11 @@ curl -s -X PUT "$BASE_URL/api/admin/installer/upload" \
 - **Never use blocking operations** in the 10-second main service loop — stalls all monitoring
 - **Never spawn reconnection logic** outside `ConnectionManager` — it has circuit breaker and backoff
 
+### UI Copy Style
+- **All user-facing copy is lowercase** — page titles, buttons, dialog headings, labels, descriptions, tooltips, placeholder text, empty-state copy, toasts. Match the voice of the rest of the UI.
+- Exceptions (keep normal casing): proper nouns/product names in external contexts, acronyms (`LLM`, `API`, `URL`, `GPU`, `OAuth`), code identifiers, machine IDs / site IDs / user-entered strings, and legal/compliance text where casing is load-bearing.
+- When adding new copy, default to lowercase. When editing existing strings, match the surrounding casing — don't mix sentence case into a lowercase screen or vice versa.
+
 ### Web Landmines
 - **Never call Firestore directly from components** — use hooks in `web/hooks/`
 - **Never hardcode colors** — use CSS variables / Tailwind theme tokens
@@ -144,6 +187,17 @@ curl -s -X PUT "$BASE_URL/api/admin/installer/upload" \
 - **Don't create new `docs/*.md` files** without being asked
 - **Don't install new npm/pip packages** without confirming first
 - **Don't modify `.claude/hooks/` or `.claude/settings.json`** without explicit request
+
+### Review Discipline (code review, security review, audits)
+Reviews are judged on calibration, not volume. Three accurate findings are more valuable than twenty marginal ones, and inflated severities devalue every subsequent review on this codebase. Apply the following standard on every pass.
+
+- **Establish current state before reviewing.** Read the last ~10 commits — particularly anything tagged `feat(security)`, `fix(security)`, or part of a hardening pass — and the diff for the branch under review. An issue already resolved upstream is not a finding; surfacing it as one signals that the review wasn't grounded in the current code.
+- **Severity is a claim that must be substantiated.** A "critical" finding requires a written exploit path in three parts: the actor (unauthenticated attacker, authenticated user, insider with role X), the mechanism (specific request, payload, or sequence), and the outcome (RCE, data exfiltration, auth bypass, privilege escalation, integrity violation). If the path cannot be stated plainly, the finding is not critical — reclassify it.
+- **Use the full severity ladder.** *Critical*: exploitable now with material impact. *High*: exploitable under realistic conditions or with a credible chain. *Medium*: defense-in-depth gap with no direct exploit. *Low*: hardening, style, or best-practice deviation. When uncertain between two rungs, choose the lower one and explain the uncertainty.
+- **A clean review is a valid result.** When the change is sound, state that and stop. Padding a report with speculative or low-value findings to demonstrate effort is a quality failure, not thoroughness.
+- **Theoretical risks belong in the backlog, not the report.** "An attacker could in principle…" without a concrete path is at most a low-severity hardening note, and frequently not worth filing. It is never critical.
+- **Separate new findings from settled decisions.** If an issue has been triaged previously as accepted risk, won't-fix, or already-resolved, do not refile it as a discovery. If new evidence warrants revisiting the decision, say so explicitly, cite the prior commit or comment, and argue the reversal — don't present continuity as novelty.
+- **Every finding cites evidence.** Reference the file and line, the specific code or config, and (where relevant) the call site that makes the path reachable. Findings without evidence are not actionable and should not be filed.
 
 ---
 
@@ -199,4 +253,4 @@ Be real, not flattering. If something was mid, say so. If it was genuinely great
 
 ---
 
-**Last Updated**: 2026-04-01
+**Last Updated**: 2026-05-19

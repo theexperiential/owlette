@@ -1,9 +1,123 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, getDocs, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { useEffect, useState, useRef, useMemo } from 'react';
+import { collection, onSnapshot, doc, getDoc, Timestamp, type Unsubscribe } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
+import type { SiteTier } from '@/lib/siteTier';
+
+/**
+ * Every shape a Firestore timestamp-ish field can arrive in on the client:
+ * Timestamp instance, plain number (Unix seconds), plain {seconds,nanoseconds}
+ * from cache rehydration, legacy admin-SDK {_seconds,_nanoseconds}, ISO string,
+ * or Date. parseFirestoreSeconds handles all of them.
+ */
+export type FirestoreTs =
+  | Timestamp
+  | number
+  | { seconds: number; nanoseconds?: number }
+  | { _seconds: number; _nanoseconds?: number }
+  | string
+  | Date
+  | null
+  | undefined;
+
+/**
+ * Extract milliseconds from any FirestoreTs shape — used for sort comparisons
+ * on createdAt / completedAt / etc. Legacy numeric values are assumed to be
+ * milliseconds (written via Date.now()). Returns 0 for falsy / unparseable.
+ */
+export function firestoreTsToMs(ts: FirestoreTs): number {
+  if (ts == null) return 0;
+  if (typeof ts === 'number') return ts;
+  if (ts instanceof Date) return ts.getTime();
+  if (typeof ts === 'string') {
+    const n = Date.parse(ts);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (typeof ts === 'object') {
+    const v = ts as { toMillis?: () => number; seconds?: number; _seconds?: number };
+    if (typeof v.toMillis === 'function') {
+      try { return v.toMillis(); } catch { return 0; }
+    }
+    if (typeof v.seconds === 'number') return v.seconds * 1000;
+    if (typeof v._seconds === 'number') return v._seconds * 1000;
+  }
+  return 0;
+}
+
+/**
+ * Robustly parse a Firestore timestamp-shaped value into Unix seconds.
+ *
+ * Returns 0 for falsy / unparseable inputs (which downstream code interprets as
+ * "no value" — formatHeartbeatTime renders `--`, isOnline returns false).
+ *
+ * Necessary because Firebase JS SDK can return the same logical timestamp in
+ * several different shapes depending on listener path, cache rehydration,
+ * persistence layer, and SDK version. The previous parser only handled
+ * `Timestamp` instances and plain numbers, silently dropping every other shape
+ * (including plain `{seconds, nanoseconds}` objects rehydrated from cache),
+ * which manifested as a flapping online/offline pill on the dashboard.
+ */
+function parseFirestoreSeconds(value: unknown): number {
+  if (value == null) return 0;
+
+  // Number (already in Unix seconds — written by client code or hook itself)
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  // Object — could be Firebase Timestamp instance, plain {seconds, nanoseconds},
+  // legacy admin SDK {_seconds, _nanoseconds}, or a JS Date.
+  if (typeof value === 'object') {
+    const v = value as {
+      toMillis?: () => number;
+      seconds?: number;
+      _seconds?: number;
+    };
+    // Firebase Timestamp instance — has toMillis(); prefer it for accuracy
+    if (typeof v.toMillis === 'function') {
+      try {
+        const ms = v.toMillis();
+        return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+      } catch {
+        // fall through to property reads
+      }
+    }
+    // Plain {seconds, nanoseconds} — emitted by cache rehydration in some SDK paths
+    if (typeof v.seconds === 'number') return v.seconds;
+    // Legacy admin-SDK shape {_seconds, _nanoseconds}
+    if (typeof v._seconds === 'number') return v._seconds;
+    // JS Date (defensive — shouldn't reach client this way, but handle it)
+    if (value instanceof Date) return Math.floor(value.getTime() / 1000);
+  }
+
+  // String — defensive parse for ISO datetime strings (some Firestore code
+  // paths return timestamps as ISO strings rather than Timestamp objects)
+  if (typeof value === 'string') {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : 0;
+  }
+
+  return 0;
+}
+
+async function apiJson<T>(
+  url: string,
+  init: RequestInit,
+): Promise<T> {
+  const res = await fetch(url, init);
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    throw new Error(body?.detail || body?.title || `Request failed with ${res.status}`);
+  }
+  return body as T;
+}
+
+function makeIdempotencyKey(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 export type LaunchMode = 'off' | 'always' | 'scheduled';
 
@@ -17,6 +131,18 @@ export interface ScheduleBlock {
   colorIndex?: number; // Stable color assignment (persists when blocks are deleted)
   days: string[];      // e.g. ['mon', 'tue', 'wed', 'thu', 'fri']
   ranges: TimeRange[];
+}
+
+/** A single scheduled reboot entry — fires once per matching day at the given time. */
+export interface RebootScheduleEntry {
+  id: string;       // crypto.randomUUID() at creation, stable across edits
+  days: string[];   // e.g. ['mon','tue','wed','thu','fri']
+  time: string;     // "HH:MM" 24h
+}
+
+export interface RebootSchedule {
+  enabled: boolean;
+  entries: RebootScheduleEntry[];
 }
 
 export interface Process {
@@ -46,26 +172,122 @@ export interface Process {
   _optimisticPresetId?: string | null;
 }
 
+/**
+ * Static CPU hardware profile attached to a machine.
+ */
+export interface CpuProfile {
+  id: string;              // "CPU0", "CPU1", ...
+  model: string;
+  physicalCores: number;
+  logicalCores: number;
+  socketIndex: number;
+}
+
+export interface DiskProfile {
+  id: string;              // mountpoint, e.g. "C:"
+  label: string;
+  fs: string;
+  totalGb: number;
+}
+
+export interface GpuProfile {
+  id: string;              // UUID or hash
+  name: string;
+  vramTotalGb: number;
+  pciBus: string | null;
+}
+
+export interface NicProfile {
+  id: string;              // interface name, e.g. "Ethernet 2"
+  mac: string | null;
+  linkSpeedMbps: number;
+}
+
+export interface HardwareProfile {
+  schemaVersion: number;
+  signatureHash: string;
+  capturedAt: FirestoreTs;
+  agentVersion: string;
+  cpus: CpuProfile[];
+  disks: DiskProfile[];
+  gpus: GpuProfile[];
+  nics: NicProfile[];
+}
+
+export interface CpuMetric   { percent: number; temperature?: number | null }
+export interface MemoryMetric { percent: number; usedGb: number }
+export interface DiskMetric  { percent: number; usedGb: number }
+export interface GpuMetric   { usagePercent: number; vramUsedGb: number; temperature?: number | null }
+export interface NicMetric   { txBps: number; rxBps: number; txUtil: number; rxUtil: number }
+export interface NetworkMetric { latencyMs?: number | null; packetLossPct?: number | null; gatewayIp?: string | null }
+
+export interface PrimaryDevices {
+  cpu?: string | null;
+  disk?: string | null;
+  gpu?: string | null;
+  nic?: string | null;
+}
+
+/**
+ * Joined view of a profiled device (CPU / disk / GPU / NIC) with its live metric.
+ *
+ * - `isMissing`  true when the profile entry exists but no matching metric key
+ *                 was found in the most recent metrics upload (agent hasn't
+ *                 reported it yet, or it's transiently absent).
+ * - `isOrphan`   true when a metric key exists but there's no matching profile
+ *                 entry (hardware changed since last profile capture — shown
+ *                 with a "syncing" indicator until the agent re-uploads the
+ *                 profile doc).
+ *
+ * Orphan entries carry the metric plus a synthesized profile shell (id/label
+ * only), so the profile half is `Partial<P>` rather than the full `P`.
+ */
+export type DeviceEntry<P, M> = Partial<P> & Partial<M> & {
+  id: string;
+  isMissing: boolean;
+  isOrphan: boolean;
+};
+
 export interface Machine {
   machineId: string;
   lastHeartbeat: number;
   online: boolean;
   agent_version?: string;  // Agent version for update detection (e.g., "2.0.0")
+  machineTimezone?: string;  // IANA timezone (e.g. "America/Los_Angeles") from agent's tzlocal lookup. Undefined if the agent has not yet deployed the IANA-aware build.
+  cortexEnabled?: boolean;  // User-controlled kill switch for Cortex tool-call delivery. Undefined/true = enabled.
   rebooting?: boolean;
   shuttingDown?: boolean;
+  rebootScheduledAt?: number;    // Unix seconds — countdown anchor (matches lastHeartbeat convention)
+  shutdownScheduledAt?: number;
   rebootPending?: {
     active: boolean;
     processName: string | null;
     reason: string | null;
     timestamp: number | null;
   };
-  rebootSchedule?: {
-    enabled: boolean;
-    schedules: ScheduleBlock[];
+  rebootSchedule?: RebootSchedule;
+  /**
+   * Mirrors `displays.autoRestore.circuitBreaker.tripped` from the config doc.
+   * Surfaced on the dashboard list/card views as a small red dot next to the
+   * existing drift indicator so operators can see "auto-restore is broken on
+   * this machine" without expanding the panel. Sourced from the same single
+   * collection-wide config listener that already streams `rebootSchedule` —
+   * no new per-card subscriptions. Undefined / false on machines whose agent
+   * hasn't enabled auto-restore.
+   */
+  displayBreakerTripped?: boolean;
+  rebootState?: {
+    lastFiredByEntry?: { [entryId: string]: string }; // ISO date "YYYY-MM-DD"
+    attempt?: {
+      entryId: string;
+      scheduledFor: string;       // ISO instant
+      lastAttemptAt: FirestoreTs;
+      status: 'pending' | 'failed';
+    } | null;
   };
   lastScreenshot?: {
     url: string;       // Firebase Storage public URL
-    timestamp: any;    // Firestore Timestamp (new) or number (legacy)
+    timestamp: FirestoreTs;
     sizeKB: number;
   };
   liveView?: {
@@ -75,11 +297,16 @@ export interface Machine {
     expiresAt?: number;
   };
   metrics?: {
-    cpu: { name?: string; percent: number; unit: string; temperature?: number };
-    memory: { percent: number; total_gb: number; used_gb: number; unit: string };
-    disk: { percent: number; total_gb: number; used_gb: number; unit: string };
-    gpu?: { name: string; usage_percent: number; vram_total_gb: number; vram_used_gb: number; unit: string; temperature?: number };
-    network?: {
+    schemaVersion?: number;
+    profileHash?: string;
+    timestamp?: FirestoreTs;
+    cpus?:   Record<string, CpuMetric>;
+    memory?: MemoryMetric;
+    disks?:  Record<string, DiskMetric>;
+    gpus?:   Record<string, GpuMetric>;
+    nics?:   Record<string, NicMetric>;
+    network?: NetworkMetric & {
+      /** @deprecated v1 legacy — per-interface map moved to top-level `metrics.nics` in v2. Kept for rollout-window shim. */
       interfaces?: Record<string, {
         tx_bps: number;
         rx_bps: number;
@@ -87,11 +314,59 @@ export interface Machine {
         rx_util: number;
         link_speed: number;
       }>;
+      /** @deprecated v1 legacy — use `gatewayIp` (v2). */
       gateway_ip?: string | null;
+      /** @deprecated v1 legacy — use `latencyMs` (v2). */
       latency_ms?: number | null;
+      /** @deprecated v1 legacy — use `packetLossPct` (v2). */
       packet_loss_pct?: number | null;
     };
+    primary?: PrimaryDevices;
     processes?: Record<string, string>;
+
+    /**
+     * Number of monitors whose live configuration differs from the assigned
+     * layout (matched by edidHash). Computed agent-side every heartbeat so
+     * the dashboard list/card views can render the drift dot without
+     * subscribing to displayProfiles + displayAssignments per row. Absent on
+     * agents older than the version that introduced this field — treat as 0.
+     */
+    displayDriftCount?: number;
+
+    /**
+     * Per-logical-volume disk IO, keyed by volume id (e.g. `"C:"`, `"L:"`).
+     * Sibling of `disks`; keys align 1:1 with `disks` entries so a card's
+     * selected drive can look up its own IO directly. Populated by agents
+     * >= v2.8.2.
+     */
+    diskio?: Record<string, {
+      readBps: number;
+      writeBps: number;
+      readIops: number;
+      writeIops: number;
+      busyPct: number;
+    }>;
+
+    /** @deprecated v1 legacy singular field — kept for rollout-window shim. Remove once all agents are >= 2.9.0. */
+    cpu?: { name?: string; percent: number; unit: string; temperature?: number };
+    /** @deprecated v1 legacy singular field — kept for rollout-window shim. Remove once all agents are >= 2.9.0. */
+    disk?: { percent: number; total_gb: number; used_gb: number; unit: string };
+    /** @deprecated v1 legacy singular field — kept for rollout-window shim. Remove once all agents are >= 2.9.0. */
+    gpu?: { name: string; usage_percent: number; vram_total_gb: number; vram_used_gb: number; unit: string; temperature?: number };
+  };
+  profile?: HardwareProfile;
+  /**
+   * Joined profile + metrics view. Populated by `useMachines` after the
+   * per-machine `hardware/profile` doc and the live metrics have both arrived.
+   * Orphan entries (metrics key with no matching profile entry) are appended
+   * with `isOrphan: true`; profiled devices with no current metric carry
+   * `isMissing: true`.
+   */
+  devices?: {
+    cpus: DeviceEntry<CpuProfile, CpuMetric>[];
+    disks: DeviceEntry<DiskProfile, DiskMetric>[];
+    gpus: DeviceEntry<GpuProfile, GpuMetric>[];
+    nics: DeviceEntry<NicProfile, NicMetric>[];
   };
   processes?: Process[];
 }
@@ -99,11 +374,239 @@ export interface Machine {
 export interface Site {
   id: string;
   name: string;
-  createdAt: any; // Firestore Timestamp (new) or number (legacy)
+  createdAt: FirestoreTs;
   timezone?: string;  // IANA timezone, e.g., "America/New_York"
+  owner?: string;  // UID of the user who owns this site
+  /**
+   * Pricing tier. Optional because existing site docs predate the field —
+   * always resolve via `getSiteTier()` from `@/lib/siteTier` so the
+   * undefined → BETA_DEFAULT_TIER fallback stays in one place.
+   */
+  tier?: SiteTier;
 }
 
-export function useSites(userId?: string, userSites?: string[], isAdmin?: boolean) {
+/**
+ * Narrow the `tier` field read from a Firestore site doc. Anything that
+ * isn't the literal `'core'` or `'pro'` becomes `undefined`, which lets
+ * `getSiteTier()` apply the beta default consistently.
+ */
+function parseSiteTier(raw: unknown): SiteTier | undefined {
+  return raw === 'core' || raw === 'pro' ? raw : undefined;
+}
+
+// DELETE once all agents are >= 2.9.0
+const LEGACY_METRICS_SHIM = true;
+
+/**
+ * Synthesize v2-shaped `metrics` and `profile` from a legacy (schemaVersion < 2)
+ * machine doc, so downstream code can always assume the v2 layout.
+ *
+ * Returns a shallow clone of the input machine with `metrics` and `profile`
+ * replaced by synthesized v2 equivalents. If the machine already looks v2
+ * (or there's nothing to shim), returns the input unchanged.
+ */
+function shimLegacyMachine(machine: Machine): Machine {
+  if (!LEGACY_METRICS_SHIM) return machine;
+
+  const legacy = machine.metrics;
+  if (!legacy) return machine;
+  // Already v2 — nothing to do.
+  if (legacy.schemaVersion === 2) return machine;
+  // Only shim if the legacy singular field is present (otherwise this is
+  // an empty/placeholder metrics object and there's nothing to synthesize).
+  if (!legacy.cpu) return machine;
+
+  const legacyNetwork = legacy.network ?? {};
+  const legacyInterfaces = legacyNetwork.interfaces ?? {};
+  const firstNicId = Object.keys(legacyInterfaces)[0];
+
+  const cpus: Record<string, CpuMetric> = {
+    CPU0: {
+      percent: legacy.cpu.percent,
+      temperature: legacy.cpu.temperature ?? null,
+    },
+  };
+
+  const disks: Record<string, DiskMetric> = legacy.disk
+    ? { 'C:': { percent: legacy.disk.percent, usedGb: legacy.disk.used_gb } }
+    : {};
+
+  const gpus: Record<string, GpuMetric> = legacy.gpu
+    ? {
+        GPU0: {
+          usagePercent: legacy.gpu.usage_percent,
+          vramUsedGb: legacy.gpu.vram_used_gb,
+          temperature: legacy.gpu.temperature ?? null,
+        },
+      }
+    : {};
+
+  const nics: Record<string, NicMetric> = {};
+  for (const [id, n] of Object.entries(legacyInterfaces)) {
+    nics[id] = {
+      txBps: n.tx_bps,
+      rxBps: n.rx_bps,
+      txUtil: n.tx_util,
+      rxUtil: n.rx_util,
+    };
+  }
+
+  // Legacy memory is snake_case at runtime (`used_gb`) even though the TS
+  // type claims camelCase — the v2 interface describes the post-shim shape.
+  // Read via a narrow structural type and normalize.
+  const legacyMemory = legacy.memory as unknown as
+    | { percent: number; used_gb?: number; usedGb?: number }
+    | undefined;
+  const memory: MemoryMetric | undefined = legacyMemory
+    ? {
+        percent: legacyMemory.percent,
+        usedGb: legacyMemory.used_gb ?? legacyMemory.usedGb ?? 0,
+      }
+    : undefined;
+
+  const network: NetworkMetric = {
+    latencyMs: legacyNetwork.latency_ms ?? null,
+    packetLossPct: legacyNetwork.packet_loss_pct ?? null,
+    gatewayIp: legacyNetwork.gateway_ip ?? null,
+  };
+
+  const primary: PrimaryDevices = {
+    cpu: 'CPU0',
+    disk: legacy.disk ? 'C:' : null,
+    gpu: legacy.gpu ? 'GPU0' : null,
+    nic: firstNicId ?? null,
+  };
+
+  const shimmedMetrics: Machine['metrics'] = {
+    ...legacy,
+    schemaVersion: 2,
+    cpus,
+    disks,
+    gpus,
+    nics,
+    memory,
+    network,
+    primary,
+  };
+
+  const shimmedProfile: HardwareProfile = {
+    schemaVersion: 0,
+    signatureHash: 'legacy',
+    capturedAt: 0,
+    agentVersion: 'legacy',
+    cpus: [{
+      id: 'CPU0',
+      model: legacy.cpu.name || 'Unknown',
+      physicalCores: 0,
+      logicalCores: 0,
+      socketIndex: 0,
+    }],
+    disks: legacy.disk
+      ? [{ id: 'C:', label: 'System', fs: 'NTFS', totalGb: legacy.disk.total_gb }]
+      : [],
+    gpus: legacy.gpu
+      ? [{
+          id: 'GPU0',
+          name: legacy.gpu.name,
+          vramTotalGb: legacy.gpu.vram_total_gb,
+          pciBus: null,
+        }]
+      : [],
+    nics: Object.entries(legacyInterfaces).map(([id, n]) => ({
+      id,
+      mac: null,
+      linkSpeedMbps: n.link_speed,
+    })),
+  };
+
+  // If the machine already has a real profile (e.g. a v2 agent uploaded its
+  // profile doc but its next metrics write is still legacy-shaped during the
+  // rollout window), preserve it — only synthesize a profile when none exists.
+  return {
+    ...machine,
+    metrics: shimmedMetrics,
+    profile: machine.profile ?? shimmedProfile,
+  };
+}
+
+/**
+ * Join a machine's `metrics` with its `profile` to produce the `devices`
+ * field. Profiled devices with no current metric are flagged `isMissing`;
+ * metric keys with no matching profile entry are appended as orphans.
+ */
+function joinMachineDevices(machine: Machine): Machine {
+  const metrics = machine.metrics;
+  const profile = machine.profile ?? (
+    metrics
+      ? {
+          schemaVersion: 0,
+          signatureHash: 'metric-only',
+          capturedAt: 0,
+          agentVersion: machine.agent_version ?? 'unknown',
+          cpus: Object.keys(metrics.cpus ?? {}).map((id, index) => ({
+            id,
+            model: id,
+            physicalCores: 0,
+            logicalCores: 0,
+            socketIndex: index,
+          })),
+          disks: [],
+          gpus: Object.keys(metrics.gpus ?? {}).map((id) => ({
+            id,
+            name: id,
+            vramTotalGb: 0,
+            pciBus: null,
+          })),
+          nics: Object.keys(metrics.nics ?? {}).map((id) => ({
+            id,
+            mac: null,
+            linkSpeedMbps: 0,
+          })),
+        } satisfies HardwareProfile
+      : undefined
+  );
+  if (!profile) return machine;
+
+  const buildBucket = <P extends { id: string }, M>(
+    profileList: P[] | undefined,
+    metricMap: Record<string, M> | undefined,
+  ): DeviceEntry<P, M>[] => {
+    const result: DeviceEntry<P, M>[] = [];
+    const seen = new Set<string>();
+    for (const p of profileList ?? []) {
+      const metric = metricMap?.[p.id];
+      result.push({
+        ...p,
+        ...(metric ?? {}),
+        isMissing: !metric,
+        isOrphan: false,
+      } as unknown as DeviceEntry<P, M>);
+      seen.add(p.id);
+    }
+    // Orphans: metric keys not present in the profile.
+    for (const [id, metric] of Object.entries(metricMap ?? {})) {
+      if (seen.has(id)) continue;
+      result.push({
+        id,
+        ...(metric as M),
+        isMissing: false,
+        isOrphan: true,
+      } as unknown as DeviceEntry<P, M>);
+    }
+    return result;
+  };
+
+  const devices = {
+    cpus: buildBucket<CpuProfile, CpuMetric>(profile.cpus, metrics?.cpus),
+    disks: buildBucket<DiskProfile, DiskMetric>(profile.disks, metrics?.disks),
+    gpus: buildBucket<GpuProfile, GpuMetric>(profile.gpus, metrics?.gpus),
+    nics: buildBucket<NicProfile, NicMetric>(profile.nics, metrics?.nics),
+  };
+
+  return { ...machine, devices };
+}
+
+export function useSites(userId?: string, userSites?: string[], isSuperadmin?: boolean) {
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -116,15 +619,29 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
     }
 
     // If user data not loaded yet, wait
-    if (userSites === undefined || isAdmin === undefined || userId === undefined) {
+    if (userSites === undefined || isSuperadmin === undefined || userId === undefined) {
       setLoading(true);
       return;
     }
 
+    // Reset to loading on any dep change. Do NOT remove — this is what prevents
+    // the dashboard's "step 1: create your first site" flicker on reload.
+    //
+    // Why: AuthContext initializes `userSites` as `[]` before the user doc
+    // snapshot arrives. Firebase's `onAuthStateChanged` sets `user` synchronously
+    // but awaits the session-cookie call before subscribing to the user doc,
+    // so React can render an intermediate frame with `user` set but `userSites`
+    // still at the default `[]`. Without this reset, the `userSites.length === 0`
+    // branch below sets `loading=false` during that intermediate frame, and
+    // when `userSites` later populates, `loading` stays false — the dashboard
+    // then paints the empty-state card for one frame before the real sites
+    // snapshot arrives. Resetting here guarantees `loading` only lands on
+    // `false` once we have a stable, definitive answer.
+    setLoading(true);
 
     try {
-      // ADMINS: Query all sites
-      if (isAdmin) {
+      // SUPERADMINS: Query all sites (platform god-mode)
+      if (isSuperadmin) {
         const sitesRef = collection(db, 'sites');
         const unsubscribe = onSnapshot(
           sitesRef,
@@ -137,10 +654,12 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
                 name: data.name || doc.id,
                 createdAt: data.createdAt || Date.now(),
                 timezone: data.timezone,
+                owner: data.owner,
+                tier: parseSiteTier(data.tier),
               });
             });
             siteData.sort((a, b) => a.name.localeCompare(b.name));
-            console.log('👑 Admin - loaded all sites:', siteData.map(s => s.id));
+            console.log('👑 Superadmin - loaded all sites:', siteData.map(s => s.id));
             setSites(siteData);
             setLoading(false);
           },
@@ -153,7 +672,7 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
         return () => unsubscribe();
       }
 
-      // NON-ADMINS: Fetch each assigned site individually by ID.
+      // NON-SUPERADMINS: Fetch each assigned site individually by ID.
       // Collection queries (e.g. where('owner', '==', uid)) fail because
       // Firestore rules use get() calls that can't be evaluated for queries.
       const unsubscribes: (() => void)[] = [];
@@ -167,6 +686,9 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
       };
 
       if (userSites.length === 0) {
+        // Stable empty state — clear any stale sites from a previous userSites
+        // value and let the dashboard render its empty state.
+        setSites([]);
         setLoading(false);
       }
 
@@ -182,6 +704,8 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
                 name: data.name || siteId,
                 createdAt: data.createdAt || Date.now(),
                 timezone: data.timezone,
+                owner: data.owner,
+                tier: parseSiteTier(data.tier),
               });
             } else {
               siteDataMap.delete(siteId);
@@ -201,14 +725,15 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
       return () => {
         unsubscribes.forEach(unsub => unsub());
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('Error in useSites:', err);
-      setError(err.message);
+      setError(message);
       setLoading(false);
     }
-  }, [userId, userSites, isAdmin]);
+  }, [userId, userSites, isSuperadmin]);
 
-  const createSite = async (siteId: string, name: string, userId: string, timezone?: string): Promise<string> => {
+  const createSite = async (siteId: string, name: string, _userId: string, timezone?: string): Promise<string> => {
     if (!db) throw new Error('Firebase not configured');
 
     // Validate site ID format
@@ -222,16 +747,19 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
     // so getDoc would fail with permission-denied. Firestore rules protect against overwrites:
     // setDoc on an existing doc triggers the 'update' rule (requires canAccessSite), so a
     // non-owner can't overwrite someone else's site. Availability is checked in CreateSiteDialog.
-    const siteRef = doc(db, 'sites', siteId);
     try {
-      await setDoc(siteRef, {
-        name,
-        createdAt: serverTimestamp(),
-        owner: userId,
-        timezone: timezone || 'UTC',
+      await apiJson('/api/sites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          siteId,
+          name,
+          timezone: timezone || 'UTC',
+        }),
       });
-    } catch (err: any) {
-      if (err?.code === 'permission-denied') {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : '';
+      if (message.includes('already exists')) {
         throw new Error(`Site ID "${siteId}" is already taken. Please choose a different ID.`);
       }
       throw err;
@@ -254,8 +782,11 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
 
     if (Object.keys(updateData).length === 0) return;
 
-    const siteRef = doc(db, 'sites', siteId);
-    await updateDoc(siteRef, updateData);
+    await apiJson(`/api/sites/${encodeURIComponent(siteId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updateData),
+    });
   };
 
   const deleteSite = async (siteId: string) => {
@@ -264,8 +795,11 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
     // Delete the site document
     // Note: Firestore doesn't automatically delete subcollections (machines)
     // In a production app, you might want to use a Cloud Function to handle this
-    const siteRef = doc(db, 'sites', siteId);
-    await deleteDoc(siteRef);
+    await apiJson(`/api/sites/${encodeURIComponent(siteId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
 
     // TODO: Clean up user references to this site
     // This should query all users with this siteId in their sites array
@@ -298,14 +832,77 @@ export function useSites(userId?: string, userSites?: string[], isAdmin?: boolea
   return { sites, loading, error, createSite, updateSite, deleteSite, checkSiteIdAvailability };
 }
 
+// Module-level constant prevents a fresh [] reference on every render when
+// useMachines' loadedSiteId doesn't match `siteId`, which would otherwise
+// churn consumers' memo/effect deps.
+const EMPTY_MACHINES: Machine[] = [];
+const PROFILE_LISTENER_LIMIT = 50;
+
+export function useMachineHardware(siteId: string | null, machineId: string | null) {
+  const requestedKey = db && siteId && machineId ? `${siteId}/${machineId}` : null;
+  const [state, setState] = useState<{
+    key: string | null;
+    profile: HardwareProfile | null;
+    error: string | null;
+  }>({ key: null, profile: null, error: null });
+
+  useEffect(() => {
+    if (!db || !siteId || !machineId || !requestedKey) return;
+
+    const profileRef = doc(db, 'sites', siteId, 'machines', machineId, 'hardware', 'profile');
+    const unsubscribe = onSnapshot(
+      profileRef,
+      (profileSnap) => {
+        setState({
+          key: requestedKey,
+          profile: profileSnap.exists() ? profileSnap.data() as HardwareProfile : null,
+          error: null,
+        });
+      },
+      (e) => {
+        console.debug(`Profile listener error for ${machineId}:`, e);
+        setState({ key: requestedKey, profile: null, error: e.message });
+      },
+    );
+
+    return () => unsubscribe();
+  }, [siteId, machineId, requestedKey]);
+
+  const hasFreshState = requestedKey !== null && state.key === requestedKey;
+  return {
+    profile: hasFreshState ? state.profile : null,
+    loading: requestedKey !== null && !hasFreshState,
+    error: !db ? 'Firebase not configured' : (hasFreshState ? state.error : null),
+  };
+}
+
 export function useMachines(siteId: string) {
   const [machines, setMachines] = useState<Machine[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [profiles, setProfiles] = useState<Record<string, HardwareProfile>>({});
+  // loadedSiteId pins `machines` to the site it was populated for. The consumer
+  // sees an empty list + loading=true whenever it doesn't match `siteId`, so
+  // the effect never has to synchronously flip loading true on siteId change.
+  const [loadedSiteId, setLoadedSiteId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(db ? null : 'Firebase not configured');
+
+  // Supplementary hardware/profile listeners. Kept capped because one listener
+  // per machine pushes large sites into Firebase's soft client listener ceiling;
+  // machines beyond the cap still get metric-only `devices` derived below.
+  const profileListenersRef = useRef<Record<string, Unsubscribe>>({});
 
   // Config doc overrides: authoritative launch_mode/schedules from config collection
   // This prevents the 10-second flicker on page load where status doc has stale values
-  const configOverridesRef = useRef<Record<string, Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }>>>({});
+  const configOverridesRef = useRef<Record<string, Record<string, { launch_mode?: string; schedules?: ScheduleBlock[] | null; schedulePresetId?: string | null }>>>({});
+
+  // Reboot schedule lives in the config doc (not the status doc) so it can be
+  // pushed down to the agent's local cache and survive Firestore disconnections.
+  const rebootScheduleOverridesRef = useRef<Record<string, RebootSchedule | undefined>>({});
+
+  // Display auto-restore circuit-breaker state lives in the same config doc
+  // (`displays.autoRestore.circuitBreaker.tripped`). Mirrored onto each
+  // machine so the list/card views can render the breaker indicator without
+  // opening a per-row subscription. Keyed by machineId; absent entry == false.
+  const displayBreakerTrippedOverridesRef = useRef<Record<string, boolean>>({});
 
   // Real-time listener on config docs for authoritative launch_mode/schedules.
   // Config doc is source of truth — status doc may lag behind by 10-120s.
@@ -315,10 +912,12 @@ export function useMachines(siteId: string) {
     const configCol = collection(db, 'config', siteId, 'machines');
     const unsubConfig = onSnapshot(configCol, (snapshot) => {
       const overrides: typeof configOverridesRef.current = {};
+      const rebootOverrides: typeof rebootScheduleOverridesRef.current = {};
+      const breakerOverrides: typeof displayBreakerTrippedOverridesRef.current = {};
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
         if (data.processes && Array.isArray(data.processes)) {
-          const processMap: Record<string, { launch_mode?: string; schedules?: any; schedulePresetId?: string | null }> = {};
+          const processMap: Record<string, { launch_mode?: string; schedules?: ScheduleBlock[] | null; schedulePresetId?: string | null }> = {};
           for (const proc of data.processes) {
             if (proc.id) {
               processMap[proc.id] = {
@@ -330,16 +929,30 @@ export function useMachines(siteId: string) {
           }
           overrides[docSnap.id] = processMap;
         }
+        // Reboot schedule lives in the config doc per the offline-capable design.
+        if (data.rebootSchedule) {
+          rebootOverrides[docSnap.id] = data.rebootSchedule as RebootSchedule;
+        }
+        // Display auto-restore breaker state lives under `displays.autoRestore`.
+        // Only record `true` so the absent-entry == false invariant holds; when
+        // the agent later writes `tripped: false` the entry simply isn't added,
+        // which is what the consumer expects.
+        if (data.displays?.autoRestore?.circuitBreaker?.tripped === true) {
+          breakerOverrides[docSnap.id] = true;
+        }
       });
       configOverridesRef.current = overrides;
+      rebootScheduleOverridesRef.current = rebootOverrides;
+      displayBreakerTrippedOverridesRef.current = breakerOverrides;
 
       // Apply overrides to any already-loaded machines
       setMachines(prev => prev.map(machine => {
         const machineOverrides = overrides[machine.machineId];
-        if (!machineOverrides || !machine.processes) return machine;
-        return {
-          ...machine,
-          processes: machine.processes.map(p => {
+        const rebootSchedule = rebootOverrides[machine.machineId];
+        const displayBreakerTripped = breakerOverrides[machine.machineId] === true;
+        const next: Machine = { ...machine, rebootSchedule, displayBreakerTripped };
+        if (machineOverrides && next.processes) {
+          next.processes = next.processes.map(p => {
             const override = machineOverrides[p.id];
             if (!override) return p;
             return {
@@ -348,8 +961,9 @@ export function useMachines(siteId: string) {
               schedules: override.schedules ?? p.schedules,
               schedulePresetId: override.schedulePresetId,
             };
-          }),
-        };
+          });
+        }
+        return next;
       }));
     }, (e) => {
       // Non-critical — status doc values still work, just may lag
@@ -361,6 +975,13 @@ export function useMachines(siteId: string) {
   // Client-side heartbeat timeout checker
   // Re-evaluates machine online status every 30 seconds based on lastHeartbeat age
   // This catches machines that went offline without writing online=false (crashes, installer kills, etc.)
+  //
+  // IMPORTANT: if `lastHeartbeat === 0` (parser fell through, or doc just
+  // arrived without a heartbeat field), do NOT aggressively flip the machine
+  // offline. Trust `machine.online` from the snapshot listener until we have
+  // a real heartbeat to compare against. Without this guard, any timestamp
+  // shape the parser doesn't recognize causes a flapping online/offline pill
+  // every 30s as this interval fires.
   useEffect(() => {
     if (machines.length === 0) return;
 
@@ -370,6 +991,11 @@ export function useMachines(siteId: string) {
         let hasChanges = false;
 
         const updated = prevMachines.map(machine => {
+          // Skip the staleness check entirely if we have no usable heartbeat —
+          // trust the snapshot's online flag rather than spuriously flipping offline.
+          if (!machine.lastHeartbeat || machine.lastHeartbeat <= 0) {
+            return machine;
+          }
           const heartbeatAge = now - machine.lastHeartbeat;
           const shouldBeOnline = (machine.online === true) && (heartbeatAge < 180);
 
@@ -390,188 +1016,268 @@ export function useMachines(siteId: string) {
   }, [machines.length]); // Re-create interval when machine count changes
 
   useEffect(() => {
-    if (!db || !siteId) {
-      setLoading(false);
-      setError('Firebase not configured or no site selected');
-      return;
-    }
+    if (!db || !siteId) return;
 
-    try {
-      // Listen to machines collection in real-time
-      const machinesRef = collection(db, 'sites', siteId, 'machines');
+    // Don't reset state synchronously here — loading is derived from
+    // `loadedSiteId !== siteId` below, which already gates the output to an
+    // empty list until the first snapshot of the new site lands.
+    //
+    // No try/catch wrapping the listener setup: `collection()` only throws on
+    // invalid path segments (guarded above) and onSnapshot exposes a separate
+    // error callback for runtime listener errors. Sync throws here would be
+    // programmer errors we want surfaced, not swallowed into error state.
+    const machinesRef = collection(db, 'sites', siteId, 'machines');
 
-      const unsubscribe = onSnapshot(
-        machinesRef,
-        (snapshot) => {
-          setMachines(prevMachines => {
-            const machineData: Machine[] = [];
+    const unsubscribe = onSnapshot(
+      machinesRef,
+      (snapshot) => {
+        // When the snapshot is served from local cache (e.g. on remount after
+        // navigating back to the dashboard), `lastHeartbeat` is whatever was
+        // cached last — wall-clock "now" has advanced but the cached timestamp
+        // hasn't, so the heartbeat-age check below would spuriously flip every
+        // machine to offline for a split second until the server snapshot
+        // arrives. Skip the age check on cached reads and trust `data.online`;
+        // the follow-up server snapshot (ms later) re-applies the full check,
+        // and the 30s interval still catches silent crashes.
+        const isFromCache = snapshot.metadata.fromCache;
 
-            snapshot.forEach((doc) => {
-              const data = doc.data();
+        // Reconcile capped hardware/profile listeners with the current set of
+        // machines. The first N IDs are deterministic because the collection is
+        // later sorted by machineId; detail views can use useMachineHardware for
+        // an uncapped single-machine profile listener.
+        const currentMachineIds = new Set<string>();
+        snapshot.forEach((d) => currentMachineIds.add(d.id));
+        const profiledMachineIds = Array.from(currentMachineIds)
+          .sort((a, b) => a.localeCompare(b))
+          .slice(0, PROFILE_LISTENER_LIMIT);
+        const profiledMachineIdSet = new Set(profiledMachineIds);
 
-              // Find previous machine data to preserve GPU if not in update
-              const prevMachine = prevMachines.find(m => m.machineId === doc.id);
-
-            // Parse processes from the processes object - try both locations
-            let processes: Process[] = [];
-            const processesData = data.metrics?.processes || data.processes;
-
-            // Build a lookup of previous process state to preserve optimistic updates
-            // and avoid flicker when metrics uploads briefly lack launch_mode during write
-            const prevProcessMap: Record<string, {
-              launch_mode?: LaunchMode;
-              schedules?: any;
-              _optimisticLaunchMode?: LaunchMode;
-              _optimisticAutolaunch?: boolean;
-              _optimisticSchedules?: ScheduleBlock[] | null;
-              _optimisticPresetId?: string | null;
-            }> = {};
-            if (prevMachine?.processes) {
-              for (const p of prevMachine.processes) {
-                prevProcessMap[p.id] = {
-                  launch_mode: p.launch_mode,
-                  schedules: p.schedules,
-                  _optimisticLaunchMode: p._optimisticLaunchMode,
-                  _optimisticAutolaunch: p._optimisticAutolaunch,
-                  _optimisticSchedules: p._optimisticSchedules,
-                  _optimisticPresetId: p._optimisticPresetId,
-                };
-              }
-            }
-
-            if (processesData && typeof processesData === 'object') {
-              processes = Object.entries(processesData)
-                .map(([id, processData]: [string, any]) => {
-                  const prev = prevProcessMap[id];
-                  // Config doc is authoritative for launch_mode/schedules — override status doc values
-                  const configOverride = configOverridesRef.current[doc.id]?.[id];
-                  const firestoreMode = configOverride?.launch_mode || processData.launch_mode || prev?.launch_mode || (processData.autolaunch ? 'always' : 'off') as LaunchMode;
-                  const firestoreSchedules = configOverride?.schedules ?? processData.schedules ?? prev?.schedules ?? null;
-                  const firestorePresetId = configOverride?.schedulePresetId ?? processData.schedulePresetId ?? null;
-
-                  // Preserve optimistic state until Firestore catches up
-                  // Clear optimistic flag once Firestore agrees with the optimistic value
-                  const optimisticMode = prev?._optimisticLaunchMode;
-                  const keepOptimistic = optimisticMode !== undefined && optimisticMode !== firestoreMode;
-
-                  return {
-                    id,
-                    name: processData.name || 'Unknown',
-                    status: processData.status || 'UNKNOWN',
-                    pid: processData.pid || null,
-                    autolaunch: processData.autolaunch || false,
-                    launch_mode: firestoreMode,
-                    schedulePresetId: firestorePresetId,
-                    schedules: firestoreSchedules,
-                    exe_path: processData.exe_path || '',
-                    file_path: processData.file_path || '',
-                    cwd: processData.cwd || '',
-                    priority: processData.priority || 'Normal',
-                    visibility: processData.visibility || 'Show',
-                    time_delay: processData.time_delay || '0',
-                    time_to_init: processData.time_to_init || '10',
-                    relaunch_attempts: processData.relaunch_attempts || '3',
-                    responsive: processData.responsive ?? true,
-                    last_updated: processData.last_updated || 0,
-                    index: processData.index ?? 999,
-                    // Carry optimistic state forward until Firestore confirms
-                    ...(keepOptimistic ? {
-                      _optimisticLaunchMode: prev._optimisticLaunchMode,
-                      _optimisticAutolaunch: prev._optimisticAutolaunch,
-                      _optimisticSchedules: prev._optimisticSchedules,
-                      _optimisticPresetId: prev._optimisticPresetId,
-                    } : {}),
-                  };
-                })
-                .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
-            }
-
-            // Convert Firestore Timestamp to Unix timestamp in seconds
-            let lastHeartbeat = 0;
-            if (data.lastHeartbeat) {
-              if (typeof data.lastHeartbeat === 'object' && 'seconds' in data.lastHeartbeat) {
-                // Firestore Timestamp object
-                lastHeartbeat = data.lastHeartbeat.seconds;
-              } else if (typeof data.lastHeartbeat === 'number') {
-                // Already a number
-                lastHeartbeat = data.lastHeartbeat;
-              }
-            }
-
-            // Determine online status: use both boolean flag AND heartbeat timestamp
-            // Machine is online if BOTH conditions are true:
-            // 1. online flag is true
-            // 2. Last heartbeat was within 180 seconds
-            //    Agent sends metrics every 30s (active) or 120s (idle), so 180s allows 60s buffer
-            const now = Math.floor(Date.now() / 1000); // Current time in seconds
-            const heartbeatAge = now - lastHeartbeat; // Age in seconds
-            const isOnline = (data.online === true) && (heartbeatAge < 180);
-
-              // Preserve GPU data if current update has invalid/missing GPU (name is "N/A" or missing)
-              const metrics = data.metrics ? {
-                ...data.metrics,
-                gpu: (data.metrics.gpu?.name && data.metrics.gpu.name !== 'N/A')
-                  ? data.metrics.gpu
-                  : prevMachine?.metrics?.gpu
-              } : prevMachine?.metrics;
-
-              machineData.push({
-                machineId: doc.id,
-                lastHeartbeat,
-                online: isOnline,
-                agent_version: data.agent_version,  // Agent version for update detection
-                rebootSchedule: data.rebootSchedule,
-                metrics,
-                processes,
-              });
-            });
-
-            // Sort machines by ID for stable ordering (prevents flickering)
-            machineData.sort((a, b) => a.machineId.localeCompare(b.machineId));
-
-            return machineData;
+        // Tear down listeners for machines no longer selected by the cap.
+        for (const machineId of Object.keys(profileListenersRef.current)) {
+          if (profiledMachineIdSet.has(machineId)) continue;
+          profileListenersRef.current[machineId]();
+          delete profileListenersRef.current[machineId];
+          setProfiles((prev) => {
+            if (!(machineId in prev)) return prev;
+            const next = { ...prev };
+            delete next[machineId];
+            return next;
           });
-          setLoading(false);
-        },
-        (err) => {
-          console.error('Error fetching machines:', err);
-          setError(err.message);
-          setLoading(false);
         }
-      );
 
-      return () => unsubscribe();
-    } catch (err: any) {
-      setError(err.message);
-      setLoading(false);
-    }
+        // Open listeners for newly selected machines.
+        for (const machineId of profiledMachineIds) {
+          if (profileListenersRef.current[machineId]) continue;
+          const profileRef = doc(db!, 'sites', siteId, 'machines', machineId, 'hardware', 'profile');
+          profileListenersRef.current[machineId] = onSnapshot(
+            profileRef,
+            (profileSnap) => {
+              if (!profileSnap.exists()) {
+                setProfiles((prev) => {
+                  if (!(machineId in prev)) return prev;
+                  const next = { ...prev };
+                  delete next[machineId];
+                  return next;
+                });
+                return;
+              }
+              const profileData = profileSnap.data() as HardwareProfile;
+              setProfiles((prev) => ({ ...prev, [machineId]: profileData }));
+            },
+            (e) => {
+              // Non-critical — profile is supplementary; metrics still render.
+              console.debug(`Profile listener error for ${machineId}:`, e);
+            },
+          );
+        }
+
+        setMachines(prevMachines => {
+          const machineData: Machine[] = [];
+
+          snapshot.forEach((doc) => {
+            const data = doc.data();
+
+            // Find previous machine data to preserve GPU if not in update
+            const prevMachine = prevMachines.find(m => m.machineId === doc.id);
+
+          // Parse processes from the processes object - try both locations
+          let processes: Process[] = [];
+          const processesData = data.metrics?.processes || data.processes;
+
+          // Build a lookup of previous process state to preserve optimistic updates
+          // and avoid flicker when metrics uploads briefly lack launch_mode during write
+          const prevProcessMap: Record<string, {
+            launch_mode?: LaunchMode;
+            schedules?: ScheduleBlock[] | null;
+            _optimisticLaunchMode?: LaunchMode;
+            _optimisticAutolaunch?: boolean;
+            _optimisticSchedules?: ScheduleBlock[] | null;
+            _optimisticPresetId?: string | null;
+          }> = {};
+          if (prevMachine?.processes) {
+            for (const p of prevMachine.processes) {
+              prevProcessMap[p.id] = {
+                launch_mode: p.launch_mode,
+                schedules: p.schedules,
+                _optimisticLaunchMode: p._optimisticLaunchMode,
+                _optimisticAutolaunch: p._optimisticAutolaunch,
+                _optimisticSchedules: p._optimisticSchedules,
+                _optimisticPresetId: p._optimisticPresetId,
+              };
+            }
+          }
+
+          if (processesData && typeof processesData === 'object') {
+            processes = (Object.entries(processesData) as Array<[string, Partial<Process>]>)
+              .map(([id, processData]) => {
+                const prev = prevProcessMap[id];
+                // Config doc is authoritative for launch_mode/schedules — override status doc values
+                const configOverride = configOverridesRef.current[doc.id]?.[id];
+                const firestoreMode: LaunchMode = (configOverride?.launch_mode as LaunchMode) || processData.launch_mode || prev?.launch_mode || (processData.autolaunch ? 'always' : 'off');
+                const firestoreSchedules = configOverride?.schedules ?? processData.schedules ?? prev?.schedules ?? null;
+                const firestorePresetId = configOverride?.schedulePresetId ?? processData.schedulePresetId ?? null;
+
+                // Preserve optimistic state until Firestore catches up
+                // Clear optimistic flag once Firestore agrees with the optimistic value
+                const optimisticMode = prev?._optimisticLaunchMode;
+                const keepOptimistic = optimisticMode !== undefined && optimisticMode !== firestoreMode;
+
+                return {
+                  id,
+                  name: processData.name || 'Unknown',
+                  status: processData.status || 'UNKNOWN',
+                  pid: processData.pid || null,
+                  autolaunch: processData.autolaunch || false,
+                  launch_mode: firestoreMode,
+                  schedulePresetId: firestorePresetId,
+                  schedules: firestoreSchedules,
+                  exe_path: processData.exe_path || '',
+                  file_path: processData.file_path || '',
+                  cwd: processData.cwd || '',
+                  priority: processData.priority || 'Normal',
+                  visibility: processData.visibility || 'Show',
+                  time_delay: processData.time_delay || '0',
+                  time_to_init: processData.time_to_init || '10',
+                  relaunch_attempts: processData.relaunch_attempts || '3',
+                  responsive: processData.responsive ?? true,
+                  last_updated: processData.last_updated || 0,
+                  index: processData.index ?? 999,
+                  // Carry optimistic state forward until Firestore confirms
+                  ...(keepOptimistic ? {
+                    _optimisticLaunchMode: prev._optimisticLaunchMode,
+                    _optimisticAutolaunch: prev._optimisticAutolaunch,
+                    _optimisticSchedules: prev._optimisticSchedules,
+                    _optimisticPresetId: prev._optimisticPresetId,
+                  } : {}),
+                };
+              })
+              .sort((a, b) => a.index - b.index || a.id.localeCompare(b.id));
+          }
+
+          // Convert Firestore Timestamp to Unix timestamp in seconds.
+          // Handles every shape Firestore can return depending on listener
+          // path / cache / persistence layer:
+          //   - Firebase Timestamp instance ({ seconds, nanoseconds, toMillis() })
+          //   - Plain object { seconds, nanoseconds } (from cache rehydration)
+          //   - Plain object with `_seconds` (legacy admin SDK shape)
+          //   - Number (already in Unix seconds — written by client code)
+          //   - ISO string (defensive — agent shouldn't write this, but parse if it does)
+          //   - JS Date instance
+          const lastHeartbeat = parseFirestoreSeconds(data.lastHeartbeat);
+
+          // Convert reboot/shutdown countdown anchors using the same robust parser.
+          const rebootScheduledAtParsed = parseFirestoreSeconds(data.rebootScheduledAt);
+          const rebootScheduledAt = rebootScheduledAtParsed > 0 ? rebootScheduledAtParsed : undefined;
+          const shutdownScheduledAtParsed = parseFirestoreSeconds(data.shutdownScheduledAt);
+          const shutdownScheduledAt = shutdownScheduledAtParsed > 0 ? shutdownScheduledAtParsed : undefined;
+
+          // Determine online status: use both boolean flag AND heartbeat timestamp
+          // Machine is online if BOTH conditions are true:
+          // 1. online flag is true
+          // 2. Last heartbeat was within 180 seconds
+          //    Agent sends metrics every 30s (active) or 120s (idle), so 180s allows 60s buffer
+          // Exception: on cached snapshots the heartbeat age is unreliable, so trust the flag alone.
+          const now = Math.floor(Date.now() / 1000); // Current time in seconds
+          const heartbeatAge = now - lastHeartbeat; // Age in seconds
+          const isOnline = isFromCache
+            ? (data.online === true)
+            : (data.online === true) && (heartbeatAge < 180);
+
+            // Preserve GPU data if current update has invalid/missing GPU (name is "N/A" or missing)
+            const metrics = data.metrics ? {
+              ...data.metrics,
+              gpu: (data.metrics.gpu?.name && data.metrics.gpu.name !== 'N/A')
+                ? data.metrics.gpu
+                : prevMachine?.metrics?.gpu
+            } : prevMachine?.metrics;
+
+            machineData.push({
+              machineId: doc.id,
+              lastHeartbeat,
+              online: isOnline,
+              agent_version: data.agent_version,  // Agent version for update detection
+              machineTimezone: typeof data.machine_timezone_iana === 'string' ? data.machine_timezone_iana : undefined,
+              rebooting: data.rebooting,
+              shuttingDown: data.shuttingDown,
+              rebootScheduledAt,
+              shutdownScheduledAt,
+              // rebootSchedule lives in the config doc — sourced from rebootScheduleOverridesRef
+              rebootSchedule: rebootScheduleOverridesRef.current[doc.id],
+              // displayBreakerTripped also lives in the config doc — sourced from
+              // the same single collection-wide listener so the dashboard can
+              // render the breaker indicator without per-row subscriptions.
+              displayBreakerTripped: displayBreakerTrippedOverridesRef.current[doc.id] === true,
+              rebootState: data.rebootState,
+              // rebootPending is the agent-published "needs reboot" banner
+              // payload — surfaced on the card view as the amber approve /
+              // dismiss row. Passed through verbatim; the shape is guarded
+              // by the Machine type declaration above.
+              rebootPending: data.rebootPending,
+              metrics,
+              processes,
+            });
+          });
+
+          // Sort machines by ID for stable ordering (prevents flickering)
+          machineData.sort((a, b) => a.machineId.localeCompare(b.machineId));
+
+          return machineData;
+        });
+        setLoadedSiteId(siteId);
+      },
+      (err) => {
+        console.error('Error fetching machines:', err);
+        setError(err.message);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+      // Tear down every capped profile listener opened by this effect instance.
+      // Next effect run (new siteId or remount) will reconcile the cap again.
+      for (const machineId of Object.keys(profileListenersRef.current)) {
+        profileListenersRef.current[machineId]();
+      }
+      profileListenersRef.current = {};
+      setProfiles({});
+    };
   }, [siteId]);
 
   const killProcess = async (machineId: string, processId: string, processName: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const commandPath = `sites/${siteId}/machines/${machineId}/commands/pending`;
-    const commandId = `kill_${Date.now()}`;
-
     logger.debug(`Sending kill command for process "${processName}"`, {
       context: 'killProcess',
-      data: { machineId, processId, commandId },
+      data: { machineId, processId },
     });
 
-    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-    const commandData = {
-      type: 'kill_process',
-      process_name: processName,
-      timestamp: serverTimestamp(),
-      status: 'pending',
-    };
-
     try {
-      await setDoc(commandRef, {
-        [commandId]: commandData
-      }, { merge: true });
+      const result = await sendMachineCommand(machineId, 'kill_process', {
+        process_name: processName,
+        process_id: processId,
+      });
 
-      logger.firestore.write(commandPath, commandId, 'create');
+      logger.firestore.write(`api/sites/${siteId}/machines/${machineId}/commands`, result, 'create');
       logger.debug('Kill command sent successfully', { context: 'killProcess' });
     } catch (error) {
       logger.firestore.error('Failed to send kill command', error);
@@ -618,7 +1324,6 @@ export function useMachines(siteId: string) {
       schedulePresetId: schedulePresetId,
     };
 
-    const configRef = doc(db, 'config', siteId, 'machines', machineId);
     const configPath = `config/${siteId}/machines/${machineId}`;
 
     logger.debug(`Setting launch mode for "${processName}" to ${mode}`, {
@@ -635,47 +1340,22 @@ export function useMachines(siteId: string) {
         return clean;
       });
 
-      // Use a transaction to prevent race conditions from rapid clicks
-      // (non-transactional read-modify-write can clobber concurrent changes)
-      await runTransaction(db, async (transaction) => {
-        const configSnap = await transaction.get(configRef);
-        if (!configSnap.exists()) {
-          throw new Error('Configuration not found');
-        }
-
-        const config = configSnap.data();
-        if (!config.processes || !Array.isArray(config.processes)) {
-          throw new Error('Invalid configuration structure');
-        }
-
-        const updatedProcesses = config.processes.map((proc: any) =>
-          proc.name === processName ? {
-            ...proc,
-            launch_mode: mode,
-            autolaunch: mode !== 'off',
+      await apiJson(
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/processes/${encodeURIComponent(processId)}/launch-mode`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': makeIdempotencyKey(`process-launch-mode-${siteId}-${machineId}-${processId}`),
+          },
+          body: JSON.stringify({
+            mode,
             ...(cleanSchedules !== undefined ? { schedules: cleanSchedules } : {}),
             ...(schedulePresetId !== undefined ? { schedulePresetId: schedulePresetId || null } : {}),
-          } : proc
-        );
-
-        transaction.update(configRef, { processes: updatedProcesses });
-      });
+          }),
+        },
+      );
       logger.firestore.write(configPath, undefined, 'update');
-
-      // Mirror launch_mode + schedules to status doc for immediate UI visibility
-      // configChangeFlag signals the agent to pick up config changes
-      try {
-        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-        await updateDoc(statusRef, {
-          configChangeFlag: true,
-          [`metrics.processes.${processId}.launch_mode`]: mode,
-          [`metrics.processes.${processId}.autolaunch`]: mode !== 'off',
-          ...(cleanSchedules !== undefined ? { [`metrics.processes.${processId}.schedules`]: cleanSchedules } : {}),
-          ...(schedulePresetId !== undefined ? { [`metrics.processes.${processId}.schedulePresetId`]: schedulePresetId || null } : {}),
-        });
-      } catch (flagError) {
-        logger.debug('Status doc mirror write skipped (non-critical)', { context: 'setLaunchMode' });
-      }
 
       logger.debug('Launch mode set via config system', { context: 'setLaunchMode' });
     } catch (error) {
@@ -709,7 +1389,6 @@ export function useMachines(siteId: string) {
   const updateProcess = async (machineId: string, processId: string, updatedData: Partial<Process>) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const configRef = doc(db, 'config', siteId, 'machines', machineId);
     const configPath = `config/${siteId}/machines/${machineId}`;
 
     logger.debug(`Updating process "${processId}"`, {
@@ -722,65 +1401,67 @@ export function useMachines(siteId: string) {
       const cleanedData = { ...updatedData };
       if (cleanedData.schedules) {
         cleanedData.schedules = cleanedData.schedules.map(b => {
-          const clean: any = { days: b.days, ranges: b.ranges };
+          const clean: ScheduleBlock = { days: b.days, ranges: b.ranges };
           if (b.name) clean.name = b.name;
           if (b.colorIndex != null) clean.colorIndex = b.colorIndex;
           return clean;
         });
       }
 
-      await runTransaction(db, async (transaction) => {
-        const configSnap = await transaction.get(configRef);
-        if (!configSnap.exists()) {
-          throw new Error('Configuration not found');
-        }
+      const patchData = { ...cleanedData } as Record<string, unknown>;
+      for (const key of [
+        'id',
+        'processId',
+        'status',
+        'pid',
+        'responsive',
+        'last_updated',
+        'index',
+        '_optimisticAutolaunch',
+        '_optimisticLaunchMode',
+        '_optimisticSchedules',
+        '_optimisticPresetId',
+      ]) {
+        delete patchData[key];
+      }
 
-        const config = configSnap.data();
-        if (!config.processes || !Array.isArray(config.processes)) {
-          throw new Error('Invalid configuration structure');
-        }
+      if (Object.keys(patchData).length === 0) {
+        logger.debug('No persisted process fields to update', { context: 'updateProcess' });
+        return;
+      }
 
-        const targetProcess = config.processes.find((proc: any) => proc.id === processId);
-        if (!targetProcess) {
-          throw new Error('Process not found');
-        }
-
-        const updatedProcesses = config.processes.map((proc: any) =>
-          proc.id === processId ? { ...proc, ...cleanedData } : proc
-        );
-
-        transaction.update(configRef, { processes: updatedProcesses });
-      });
+      await apiJson(
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/processes/${encodeURIComponent(processId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patchData),
+        },
+      );
 
       logger.firestore.write(configPath, undefined, 'update');
       logger.debug('Process updated successfully', { context: 'updateProcess' });
-
-      // Set config change flag to notify agent (non-critical, agent polls anyway)
-      try {
-        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-        await updateDoc(statusRef, { configChangeFlag: true });
-      } catch (flagError) {
-        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'updateProcess' });
-      }
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.firestore.error('Failed to update process', error);
+
+      const e = error as { code?: string; message?: string };
 
       // Enhanced error logging for debugging
       console.error('[Firestore Error] updateProcess failed:', {
         error,
-        code: error?.code,
-        message: error?.message,
+        code: e?.code,
+        message: e?.message,
         siteId,
         machineId,
         processId
       });
 
       // Provide more descriptive error messages for common Firestore errors
-      if (error?.code === 'permission-denied') {
+      if (e?.code === 'permission-denied') {
         throw new Error('Permission denied: Unable to update process configuration. Please check Firestore security rules.');
-      } else if (error?.code === 'not-found') {
+      } else if (e?.code === 'not-found') {
         throw new Error('Machine or config document not found. The machine may have been removed.');
-      } else if (error?.code === 'unavailable') {
+      } else if (e?.code === 'unavailable') {
         throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
       }
 
@@ -791,7 +1472,6 @@ export function useMachines(siteId: string) {
   const deleteProcess = async (machineId: string, processId: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const configRef = doc(db, 'config', siteId, 'machines', machineId);
     const configPath = `config/${siteId}/machines/${machineId}`;
 
     logger.debug(`Deleting process "${processId}"`, {
@@ -800,55 +1480,34 @@ export function useMachines(siteId: string) {
     });
 
     try {
-      await runTransaction(db, async (transaction) => {
-        const configSnap = await transaction.get(configRef);
-        if (!configSnap.exists()) {
-          throw new Error('Configuration not found');
-        }
-
-        const config = configSnap.data();
-        if (!config.processes || !Array.isArray(config.processes)) {
-          throw new Error('Invalid configuration structure');
-        }
-
-        const targetProcess = config.processes.find((proc: any) => proc.id === processId);
-        if (!targetProcess) {
-          throw new Error('Process not found');
-        }
-
-        const updatedProcesses = config.processes.filter((proc: any) => proc.id !== processId);
-        transaction.update(configRef, { processes: updatedProcesses });
-      });
+      await apiJson(
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/processes/${encodeURIComponent(processId)}`,
+        { method: 'DELETE' },
+      );
 
       logger.firestore.write(configPath, undefined, 'delete');
       logger.debug('Process deleted successfully', { context: 'deleteProcess' });
-
-      // Set config change flag to notify agent (non-critical, agent polls anyway)
-      try {
-        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-        await updateDoc(statusRef, { configChangeFlag: true });
-      } catch (flagError) {
-        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'deleteProcess' });
-      }
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.firestore.error('Failed to delete process', error);
+
+      const e = error as { code?: string; message?: string };
 
       // Enhanced error logging for debugging
       console.error('[Firestore Error] deleteProcess failed:', {
         error,
-        code: error?.code,
-        message: error?.message,
+        code: e?.code,
+        message: e?.message,
         siteId,
         machineId,
         processId
       });
 
       // Provide more descriptive error messages for common Firestore errors
-      if (error?.code === 'permission-denied') {
+      if (e?.code === 'permission-denied') {
         throw new Error('Permission denied: Unable to delete process configuration. Please check Firestore security rules.');
-      } else if (error?.code === 'not-found') {
+      } else if (e?.code === 'not-found') {
         throw new Error('Machine or config document not found. The machine may have been removed.');
-      } else if (error?.code === 'unavailable') {
+      } else if (e?.code === 'unavailable') {
         throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
       }
 
@@ -859,7 +1518,6 @@ export function useMachines(siteId: string) {
   const createProcess = async (machineId: string, processData: Partial<Process>) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const configRef = doc(db, 'config', siteId, 'machines', machineId);
     const configPath = `config/${siteId}/machines/${machineId}`;
 
     logger.debug('Creating new process', {
@@ -868,10 +1526,14 @@ export function useMachines(siteId: string) {
     });
 
     try {
-      const newProcessId = crypto.randomUUID();
+      const schedules = processData.schedules?.map(b => {
+        const clean: ScheduleBlock = { days: b.days, ranges: b.ranges };
+        if (b.name) clean.name = b.name;
+        if (b.colorIndex != null) clean.colorIndex = b.colorIndex;
+        return clean;
+      }) ?? null;
 
-      const newProcess = {
-        id: newProcessId,
+      const payload = {
         name: processData.name || 'Untitled Process',
         exe_path: processData.exe_path || '',
         file_path: processData.file_path || '',
@@ -881,57 +1543,48 @@ export function useMachines(siteId: string) {
         time_delay: processData.time_delay || '0',
         time_to_init: processData.time_to_init || '10',
         relaunch_attempts: processData.relaunch_attempts || '3',
-        autolaunch: processData.autolaunch ?? false,
         launch_mode: processData.launch_mode || 'off',
-        schedules: processData.schedules || null
+        schedules,
       };
 
-      await runTransaction(db, async (transaction) => {
-        const configSnap = await transaction.get(configRef);
-        if (!configSnap.exists()) {
-          throw new Error('Configuration not found');
-        }
-
-        const config = configSnap.data();
-        if (!config.processes || !Array.isArray(config.processes)) {
-          throw new Error('Invalid configuration structure');
-        }
-
-        const updatedProcesses = [...config.processes, newProcess];
-        transaction.update(configRef, { processes: updatedProcesses });
-      });
+      const response = await apiJson<{ ok: true; data: { processId: string } }>(
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/processes`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': makeIdempotencyKey(`process-create-${siteId}-${machineId}`),
+          },
+          body: JSON.stringify(payload),
+        },
+      );
+      const newProcessId = response.data.processId;
 
       logger.firestore.write(configPath, undefined, 'create');
       logger.debug('Process created successfully', { context: 'createProcess', data: { newProcessId } });
 
-      // Set config change flag to notify agent (non-critical, agent polls anyway)
-      try {
-        const statusRef = doc(db, 'sites', siteId, 'machines', machineId);
-        await updateDoc(statusRef, { configChangeFlag: true });
-      } catch (flagError) {
-        logger.debug('configChangeFlag write skipped (non-critical)', { context: 'createProcess' });
-      }
-
       return newProcessId;
-    } catch (error: any) {
+    } catch (error: unknown) {
       logger.firestore.error('Failed to create process', error);
+
+      const e = error as { code?: string; message?: string };
 
       // Enhanced error logging for debugging
       console.error('[Firestore Error] createProcess failed:', {
         error,
-        code: error?.code,
-        message: error?.message,
+        code: e?.code,
+        message: e?.message,
         siteId,
         machineId,
         processData
       });
 
       // Provide more descriptive error messages for common Firestore errors
-      if (error?.code === 'permission-denied') {
+      if (e?.code === 'permission-denied') {
         throw new Error('Permission denied: Unable to create process configuration. Please check Firestore security rules.');
-      } else if (error?.code === 'not-found') {
+      } else if (e?.code === 'not-found') {
         throw new Error('Machine or config document not found. The machine may have been removed.');
-      } else if (error?.code === 'unavailable') {
+      } else if (e?.code === 'unavailable') {
         throw new Error('Firestore is temporarily unavailable. Please try again in a moment.');
       }
 
@@ -939,29 +1592,57 @@ export function useMachines(siteId: string) {
     }
   };
 
-  const sendMachineCommand = async (machineId: string, commandType: string, extraData: Record<string, any> = {}) => {
+  const sendMachineCommand = async (machineId: string, commandType: string, extraData: Record<string, unknown> = {}) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const commandId = `${commandType}_${Date.now()}`;
-    const commandRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-    const commandData = {
-      type: commandType,
-      timestamp: serverTimestamp(),
-      status: 'pending',
-      ...extraData,
-    };
+    const response = await apiJson<{ ok: true; data: { commandId: string } }>(
+      `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/commands`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': makeIdempotencyKey(`machine-command-${commandType}-${machineId}`),
+        },
+        body: JSON.stringify({
+          type: commandType,
+          params: extraData,
+        }),
+      },
+    );
 
-    await setDoc(commandRef, {
-      [commandId]: commandData
-    }, { merge: true });
+    return response.data.commandId;
   };
 
   const rebootMachine = async (machineId: string) => {
-    await sendMachineCommand(machineId, 'reboot_machine');
+    if (!db || !siteId) throw new Error('Firebase not configured');
+    // Pre-compute the target reboot time so the dashboard renders the
+    // countdown immediately while the API queues the command.
+    const targetReboot = Math.floor(Date.now() / 1000) + 30;
+    await sendMachineCommand(machineId, 'reboot_machine', { delay_seconds: 30 });
+    setMachines(prevMachines =>
+      prevMachines.map(machine =>
+        machine.machineId === machineId ? {
+          ...machine,
+          rebootScheduledAt: targetReboot,
+        } : machine
+      )
+    );
   };
 
   const shutdownMachine = async (machineId: string) => {
-    await sendMachineCommand(machineId, 'shutdown_machine');
+    if (!db || !siteId) throw new Error('Firebase not configured');
+    // Same pattern as rebootMachine: render the countdown optimistically while
+    // the API queues the command.
+    const targetShutdown = Math.floor(Date.now() / 1000) + 30;
+    await sendMachineCommand(machineId, 'shutdown_machine', { delay_seconds: 30 });
+    setMachines(prevMachines =>
+      prevMachines.map(machine =>
+        machine.machineId === machineId ? {
+          ...machine,
+          shutdownScheduledAt: targetShutdown,
+        } : machine
+      )
+    );
   };
 
   const cancelReboot = async (machineId: string) => {
@@ -984,5 +1665,46 @@ export function useMachines(siteId: string) {
     await sendMachineCommand(machineId, 'stop_live_view');
   };
 
-  return { machines, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView };
+  /**
+   * Save a reboot schedule for a machine.
+   *
+   * Writes to `config/{siteId}/machines/{machineId}.rebootSchedule` with merge.
+   * The agent's existing config listener picks this up and propagates to local
+   * config.json, where the reboot state machine reads it. This means the schedule
+   * survives Firestore disconnections — the agent fires from local cache.
+   *
+   * No `configChangeFlag` is needed because the rule for the config doc allows
+   * any user with site access to write directly. (Contrast: writes to the
+   * machine status doc require configChangeFlag.)
+   */
+  const updateRebootSchedule = async (machineId: string, schedule: RebootSchedule) => {
+    if (!db || !siteId) throw new Error('Firebase not configured');
+    await apiJson(
+      `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/reboot-schedule`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule }),
+      },
+    );
+  };
+
+  // Join each machine with its hardware/profile doc (if any) and produce the
+  // derived `devices` field. Legacy (pre-v2) machines are shimmed first so
+  // downstream code always sees the v2 layout. Memoized on the raw inputs so
+  // we don't re-derive on unrelated re-renders.
+  const joinedMachines = useMemo(() => {
+    return machines.map((m) => {
+      const profile = profiles[m.machineId];
+      const withProfile = profile ? { ...m, profile } : m;
+      const shimmed = shimLegacyMachine(withProfile);
+      return joinMachineDevices(shimmed);
+    });
+  }, [machines, profiles]);
+
+  // Only surface machines that belong to the currently-requested site.
+  const machinesForCurrentSite = loadedSiteId === siteId ? joinedMachines : EMPTY_MACHINES;
+  const loading = !!db && !!siteId && loadedSiteId !== siteId;
+
+  return { machines: machinesForCurrentSite, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView, updateRebootSchedule };
 }

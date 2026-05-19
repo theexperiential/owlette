@@ -1,0 +1,283 @@
+# auto-rollback on deployment.failed webhook
+
+a small node/express webhook receiver that listens for `deployment.failed` events from roost, verifies the `Roost-Signature` hmac, calls `POST /api/roosts/{roostId}/rollback`, and notifies a slack channel. automatic production delivery of `deployment.failed` is still future/launch-blocked; use this receiver with `POST /api/webhooks/probe` to test signature handling and keep real rollback execution operator-gated until event fanout is enabled. deploy it anywhere that can accept https requests - vercel, cloudflare workers, or a plain node server behind nginx. the same code shape runs in all three with minor entrypoint tweaks.
+
+## required env vars
+
+- `OWLETTE_TOKEN` — api key with `roost:<id>:rollback` scope. if you want this receiver to cover every roost in a site, use `site:<id>:write` or a wildcard roost scope.
+- `OWLETTE_API_URL` — `https://owlette.app` or `https://dev.owlette.app`.
+- `WEBHOOK_SIGNING_SECRET` — a 32+ character secret shared with `POST /api/webhooks/probe` while testing. when automatic dispatch is enabled, use the `signingSecret` returned from `POST /api/webhooks`. store it once; never logged.
+- `SLACK_WEBHOOK_URL` — incoming-webhook url from a slack app (`https://hooks.slack.com/services/...`).
+- `AUTO_ROLLBACK_SITE_IDS` — comma-separated allowlist of site ids this receiver is allowed to rollback for. guard against a key scoped too broadly.
+
+## `server.mjs` (node + express)
+
+```js
+#!/usr/bin/env node
+// server.mjs — runs on any https-reachable node host.
+// POST /webhooks/roost  (point /api/webhooks/probe at this url while testing)
+
+import express from 'express';
+import crypto from 'node:crypto';
+
+const {
+  OWLETTE_TOKEN, OWLETTE_API_URL, WEBHOOK_SIGNING_SECRET,
+  SLACK_WEBHOOK_URL, AUTO_ROLLBACK_SITE_IDS,
+  PORT = '8080',
+} = process.env;
+
+for (const k of ['OWLETTE_TOKEN', 'OWLETTE_API_URL', 'WEBHOOK_SIGNING_SECRET', 'SLACK_WEBHOOK_URL', 'AUTO_ROLLBACK_SITE_IDS']) {
+  if (!process.env[k]) { console.error(`fatal: missing env var ${k}`); process.exit(1); }
+}
+
+const ROOST_VERSION = '2026-04-22';
+const ALLOWED_SITES = new Set(AUTO_ROLLBACK_SITE_IDS.split(',').map(s => s.trim()));
+
+const app = express();
+// capture the raw body for signature verification. do NOT use express.json() here —
+// reserialising the payload would change the bytes the hmac was computed over.
+app.use('/webhooks/roost', express.raw({ type: 'application/json', limit: '1mb' }));
+
+function verifySignature(sigHeader, rawBody) {
+  // Roost-Signature: t=<unix>,v1=<hmac>
+  if (!sigHeader) return { ok: false, reason: 'missing signature' };
+  const parts = Object.fromEntries(sigHeader.split(',').map(p => p.split('=', 2)));
+  const t = parseInt(parts.t || '', 10);
+  const v1 = parts.v1 || '';
+  if (!t || !v1) return { ok: false, reason: 'malformed signature' };
+
+  // 5-min replay tolerance
+  const ageSec = Math.abs(Math.floor(Date.now() / 1000) - t);
+  if (ageSec > 300) return { ok: false, reason: `stale timestamp (${ageSec}s old)` };
+
+  const expected = crypto
+    .createHmac('sha256', WEBHOOK_SIGNING_SECRET)
+    .update(`${t}.`)
+    .update(rawBody)
+    .digest('hex');
+  const a = Buffer.from(expected, 'hex');
+  const b = Buffer.from(v1, 'hex');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { ok: false, reason: 'hmac mismatch' };
+  }
+  return { ok: true };
+}
+
+async function postSlack(blocks, fallbackText) {
+  try {
+    await fetch(SLACK_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: fallbackText, blocks }),
+    });
+  } catch (e) {
+    console.error('slack post failed:', e);
+  }
+}
+
+function autoRollbackIdempotencyKey(roostId, deliveryId, eventId) {
+  const stableId = deliveryId || eventId;
+  if (!stableId) return null;
+  return `auto-rollback-${roostId}-${stableId}`;
+}
+
+async function rollbackRoost(roostId, siteId, idempotencyKey) {
+  // no targetVersion → the server rolls back to previousVersionId.
+  // to go further back, pass { targetVersion: 3 } or { targetVersion: "first" }.
+  const res = await fetch(`${OWLETTE_API_URL}/api/roosts/${roostId}/rollback`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${OWLETTE_TOKEN}`,
+      'roost-version': ROOST_VERSION,
+      'content-type': 'application/json',
+      'idempotency-key': idempotencyKey,
+    },
+    body: JSON.stringify({ siteId }),
+  });
+  const body = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, body };
+}
+
+app.post('/webhooks/roost', async (req, res) => {
+  const rawBody = req.body; // Buffer
+  const sig = req.get('roost-signature');
+  const event = req.get('roost-event');
+  const deliveryId = req.get('roost-delivery');
+
+  const check = verifySignature(sig, rawBody);
+  if (!check.ok) {
+    console.warn(`signature verification failed: ${check.reason} (delivery ${deliveryId})`);
+    return res.status(401).json({ error: 'invalid signature' });
+  }
+
+  let payload;
+  try { payload = JSON.parse(rawBody.toString('utf8')); }
+  catch { return res.status(400).json({ error: 'invalid json' }); }
+  const eventId = typeof payload.id === 'string' ? payload.id : null;
+
+  // always 200 fast so probe/manual delivery records success while we do work.
+  res.status(200).json({ received: true });
+
+  if (event !== 'deployment.failed') {
+    console.log(`ignoring event ${event} (delivery ${deliveryId})`);
+    return;
+  }
+
+  const {
+    roostId, siteId, rolloutId, versionNumber,
+    failureCount, failed, failedMachines,
+  } = payload.data || {};
+  if (!roostId || !siteId) {
+    console.warn(`malformed deployment.failed payload (delivery ${deliveryId})`);
+    return;
+  }
+  const idempotencyKey = autoRollbackIdempotencyKey(roostId, deliveryId, eventId);
+  if (!idempotencyKey) {
+    console.warn(`missing delivery/event id for idempotency (roost ${roostId})`);
+    return;
+  }
+  if (!ALLOWED_SITES.has(siteId)) {
+    console.warn(`site ${siteId} not in auto-rollback allowlist — skipping (delivery ${deliveryId})`);
+    return;
+  }
+
+  const failedCount = failureCount ?? failed ?? (Array.isArray(failedMachines) ? failedMachines.length : 'unknown');
+  console.log(`deployment.failed for roost ${roostId} v${versionNumber ?? 'unknown'} (rollout ${rolloutId}, ${failedCount} machines) — rolling back`);
+
+  const rollback = await rollbackRoost(roostId, siteId, idempotencyKey);
+
+  if (rollback.ok) {
+    await postSlack([
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `:rewind: *auto-rollback* — roost \`${roostId}\`\n` +
+                `rollout \`${rolloutId}\` for v${versionNumber ?? 'unknown'} failed on ${failedCount} machine(s); ` +
+                `rolled back to \`${rollback.body.currentVersionId || 'previous'}\`.`,
+        },
+      },
+    ], `auto-rollback: ${roostId}`);
+  } else {
+    const code = rollback.body.code || 'unknown';
+    const detail = rollback.body.detail || '';
+    await postSlack([
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `:warning: *auto-rollback FAILED* — roost \`${roostId}\`\n` +
+                `status \`${rollback.status}\` code \`${code}\`\n` +
+                `${detail}\n` +
+                `manual intervention required.`,
+        },
+      },
+    ], `auto-rollback failed: ${roostId}`);
+  }
+});
+
+app.get('/healthz', (_req, res) => res.status(200).send('ok'));
+
+app.listen(parseInt(PORT, 10), () => {
+  console.log(`auto-rollback receiver listening on :${PORT}`);
+});
+```
+
+the receiver mounts `express.raw()` (not `express.json()`) on the webhook path because reserialising the payload would change the bytes that `Roost-Signature` was computed over. after verifying the hmac and the 5-minute replay window, it acknowledges with a fast `200` so roost doesn't retry the delivery while the rollback is still in flight, then asynchronously calls `POST /api/roosts/{roostId}/rollback` with `siteId` in the body and a stable `Idempotency-Key` derived from `Roost-Delivery` or the event `id`.
+
+the rollback api does not currently expose a caller-supplied compare-and-swap guard. if someone publishes after the failed deploy but before this receiver calls rollback, the default `previous` target can roll back that newer publish. keep this as a launch-blocked automation pattern, or add your own operator approval/current-version check before calling `rollbackRoost()`.
+
+## slack setup
+
+1. in slack: create an app → `incoming webhooks` → activate → add to channel. copy the webhook url.
+2. set it as `SLACK_WEBHOOK_URL` in your deploy environment.
+3. the receiver posts a single-block message; customise `blocks` to add buttons, actor info, or deploy links as needed.
+
+## deploy instructions
+
+### option 1 — vercel
+
+```bash
+npm init -y
+npm install express
+cp server.mjs api/webhook.js     # vercel uses api/ for functions
+```
+
+create `api/webhook.js`:
+
+```js
+// api/webhook.js — vercel serverless wrapper around the express app above
+import app from '../server.mjs';
+export const config = { api: { bodyParser: false } }; // critical for raw body
+export default app;
+```
+
+then in your repo root:
+
+```bash
+vercel env add OWLETTE_TOKEN
+vercel env add WEBHOOK_SIGNING_SECRET
+vercel env add SLACK_WEBHOOK_URL
+vercel env add AUTO_ROLLBACK_SITE_IDS
+vercel env add OWLETTE_API_URL
+vercel --prod
+```
+
+automatic `deployment.failed` delivery is deferred. for now, use `POST /api/webhooks/probe` to send a signed synthetic event to the deployed url (e.g. `https://your-app.vercel.app/api/webhook`) and verify the receiver accepts the signature.
+
+### option 2 — cloudflare worker
+
+workers don't speak express; port the handler:
+
+```js
+// worker.js
+export default {
+  async fetch(request, env) {
+    if (request.method !== 'POST') return new Response('method not allowed', { status: 405 });
+    const rawBody = new Uint8Array(await request.arrayBuffer());
+    const sigHeader = request.headers.get('roost-signature');
+    // reuse verifySignature(), rollbackRoost(), and postSlack() logic, with env.OWLETTE_TOKEN etc.
+    // use `crypto.subtle.importKey` + `crypto.subtle.sign` instead of node:crypto hmac.
+    // return new Response(JSON.stringify({received:true}), {status:200});
+  },
+};
+```
+
+deploy with `wrangler deploy`; set secrets via `wrangler secret put OWLETTE_TOKEN` etc.
+
+### option 3 — plain node server
+
+```bash
+npm install express
+node server.mjs
+```
+
+run behind nginx/caddy with a valid tls cert. for production, put it under a process supervisor (`systemd`, `pm2`) and front it with a load balancer if you expect more than one delivery per second.
+
+## probe-test the receiver
+
+after deploying, fire a signed synthetic event. pass the same `WEBHOOK_SIGNING_SECRET` value that the receiver uses:
+
+```bash
+curl -fsS "$OWLETTE_API_URL/api/webhooks/probe?siteId=kiosk-fleet-01" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN" \
+  -H "Roost-Version: 2026-04-22" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://your-app.example.com/webhooks/roost",
+    "event": "deployment.failed",
+    "signingSecret": "'"$WEBHOOK_SIGNING_SECRET"'"
+  }'
+```
+
+the response includes the exact request body, signature, delivery id, and receiver status. automatic subscription delivery should stay launch-blocked until production event fanout is enabled.
+
+## error handling summary
+
+- signature verification failure → `401` and a warning log. probe reports the status directly. once automatic dispatch is enabled, transient failures are retried until the dispatcher's 10-attempt budget is exhausted; most `4xx` responses are treated as permanent failures.
+- stale timestamp (>5min) → `401`. usually clock drift on the receiver host; sync ntp and re-register if needed.
+- rollback race → a newer publish can land between the failed deploy and this rollback call because the rollback api has no caller-supplied current-version guard. keep automatic execution launch-blocked or add your own approval/current-version check.
+- rollback `400 rollback_no_op` → the target version is already current. nothing changed; slack warning.
+- rollback `404 version_not_found` → the requested previous/target version does not exist. nothing to roll back to; slack warning.
+- rollback `403 scope_insufficient` → receiver's key is missing `roost:<id>:rollback`. slack warning; fix the scope in the dashboard.
+- duplicate webhook deliveries → safe for identical rollback requests because `Idempotency-Key` is derived from `Roost-Delivery` or the payload `id`, so the 24h cache collapses repeated attempts. store `Roost-Delivery` in your own database if you want receiver-side dedupe before calling the api.

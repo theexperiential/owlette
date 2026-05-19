@@ -34,9 +34,9 @@ export function DeleteProcessDialog({
         </DialogHeader>
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={onClose}
-            className="border-border bg-card text-foreground hover:bg-accent hover:text-foreground cursor-pointer"
+            className="bg-secondary border border-border cursor-pointer"
           >
             Cancel
           </Button>

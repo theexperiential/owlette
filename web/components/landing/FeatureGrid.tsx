@@ -1,6 +1,3 @@
-'use client';
-
-import { useState } from 'react';
 import {
   FerrisWheel,
   Monitor,
@@ -9,7 +6,7 @@ import {
   Building2,
   Church,
   Clapperboard,
-  Store,
+  Lightbulb,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -56,15 +53,18 @@ const verticals: Vertical[] = [
     icon: Clapperboard,
   },
   {
-    label: 'experiential retail',
-    tagline: 'manage in-store installations across every flagship',
-    icon: Store,
+    label: 'projector walls',
+    tagline: 'keep multi-projector mappings aligned across long shows',
+    icon: Monitor,
+  },
+  {
+    label: 'LED installations',
+    tagline: 'monitor every LED processor and content node from one place',
+    icon: Lightbulb,
   },
 ];
 
 export function FeatureGrid() {
-  const [activeIndex, setActiveIndex] = useState<number | null>(null);
-
   return (
     <section className="py-16 sm:py-24 px-4 sm:px-6">
       <div className="max-w-4xl mx-auto text-center">
@@ -73,27 +73,10 @@ export function FeatureGrid() {
         </p>
         <div className="flex flex-wrap justify-center gap-x-3 sm:gap-x-4 gap-y-2">
           {verticals.map(({ label, icon: Icon }, i) => (
-            <span
-              key={label}
-              className="flex items-center gap-3 sm:gap-4"
-              onMouseEnter={() => setActiveIndex(i)}
-              onMouseLeave={() => setActiveIndex(null)}
-            >
+            <span key={label} className="flex items-center gap-3 sm:gap-4">
               <span className="flex items-center gap-1.5 sm:gap-2 cursor-default">
-                <Icon
-                  className={`w-4 h-4 sm:w-[18px] sm:h-[18px] transition-colors duration-200 ${
-                    activeIndex === i
-                      ? 'text-accent-warm'
-                      : 'text-muted-foreground/50'
-                  }`}
-                />
-                <span
-                  className={`text-lg sm:text-2xl font-heading font-semibold transition-colors duration-200 ${
-                    activeIndex === i
-                      ? 'text-accent-warm'
-                      : 'text-foreground/80'
-                  }`}
-                >
+                <Icon className="w-4 h-4 sm:w-[18px] sm:h-[18px] text-muted-foreground/50" />
+                <span className="text-lg sm:text-2xl font-heading font-semibold text-foreground/80">
                   {label}
                 </span>
               </span>
@@ -104,17 +87,6 @@ export function FeatureGrid() {
               )}
             </span>
           ))}
-        </div>
-        <div className="h-8 mt-4 flex items-center justify-center">
-          <p
-            className={`text-base sm:text-lg text-muted-foreground transition-all duration-200 ${
-              activeIndex !== null
-                ? 'opacity-100 translate-y-0'
-                : 'opacity-0 translate-y-1'
-            }`}
-          >
-            {activeIndex !== null ? verticals[activeIndex].tagline : ''}
-          </p>
         </div>
       </div>
     </section>

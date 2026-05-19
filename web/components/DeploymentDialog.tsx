@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AlertTriangle, ChevronDown, ChevronRight, Download, Loader2, Pencil, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -14,6 +14,7 @@ import { DeploymentTemplate, Deployment } from '@/hooks/useDeployments';
 import { Badge } from '@/components/ui/badge';
 import { useSystemPresets } from '@/hooks/useSystemPresets';
 import { SelectGroup, SelectLabel } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface DeploymentDialogProps {
   open: boolean;
@@ -71,8 +72,6 @@ export default function DeploymentDialog({
   const filteredCategories = categories.filter(cat =>
     filteredPresets.some(p => p.category === cat)
   );
-
-  const hasItems = filteredPresets.length > 0 || templates.length > 0;
 
   // Get display name for the selected item
   const getSelectedLabel = (): string => {
@@ -175,15 +174,15 @@ export default function DeploymentDialog({
       if (!templateCloseProcesses.includes(name)) templateCloseProcesses.push(name);
     });
 
-    const templateData: any = {
+    const templateData: Omit<DeploymentTemplate, 'id' | 'createdAt'> = {
       name: deploymentName,
       installer_name: installerName,
       installer_url: installerUrl,
       silent_flags: silentFlags,
       parallel_install: parallelInstall,
+      ...(verifyPath?.trim() ? { verify_path: verifyPath.trim() } : {}),
+      ...(templateCloseProcesses.length > 0 ? { close_processes: templateCloseProcesses } : {}),
     };
-    if (verifyPath?.trim()) templateData.verify_path = verifyPath.trim();
-    if (templateCloseProcesses.length > 0) templateData.close_processes = templateCloseProcesses;
 
     try {
       if (isTemplateSelected) {
@@ -196,8 +195,9 @@ export default function DeploymentDialog({
         setSelectedItem(`${TEMPLATE_PREFIX}${newId}`);
         toast.success('Saved as new template');
       }
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to save template');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to save template');
     }
   };
 
@@ -220,8 +220,9 @@ export default function DeploymentDialog({
       setSilentFlags('');
       setVerifyPath('');
       setShowDeleteConfirm(false);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to delete template');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to delete template');
       setShowDeleteConfirm(false);
     }
   };
@@ -264,7 +265,7 @@ export default function DeploymentDialog({
 
     try {
       new URL(installerUrl);
-    } catch (e) {
+    } catch {
       toast.error('Invalid installer URL format');
       return;
     }
@@ -277,18 +278,6 @@ export default function DeploymentDialog({
     setDeploying(true);
 
     try {
-      // Build deployment object
-      const deploymentData: any = {
-        name: effectiveName,
-        installer_name: installerName,
-        installer_url: installerUrl,
-        silent_flags: silentFlags,
-        parallel_install: parallelInstall,
-        targets: [],
-      };
-
-      if (verifyPath?.trim()) deploymentData.verify_path = verifyPath.trim();
-
       // Build close_processes and suppress_projects from UI selections
       const closeProcesses: string[] = [];
       const suppressProjects: string[] = [];
@@ -312,10 +301,20 @@ export default function DeploymentDialog({
         if (!closeProcesses.includes(name)) closeProcesses.push(name);
       });
 
-      if (closeProcesses.length > 0) deploymentData.close_processes = closeProcesses;
-      if (suppressProjects.length > 0) deploymentData.suppress_projects = suppressProjects;
+      // Build deployment object (sparse — only include optional fields when set)
+      const deploymentData: Omit<Deployment, 'id' | 'createdAt' | 'status'> = {
+        name: effectiveName,
+        installer_name: installerName,
+        installer_url: installerUrl,
+        silent_flags: silentFlags,
+        parallel_install: parallelInstall,
+        targets: [],
+        ...(verifyPath?.trim() ? { verify_path: verifyPath.trim() } : {}),
+        ...(closeProcesses.length > 0 ? { close_processes: closeProcesses } : {}),
+        ...(suppressProjects.length > 0 ? { suppress_projects: suppressProjects } : {}),
+      };
 
-      const deploymentId = await onCreateDeployment(
+      await onCreateDeployment(
         deploymentData,
         Array.from(selectedMachines)
       );
@@ -336,9 +335,10 @@ export default function DeploymentDialog({
       setShowCloseProcesses(false);
 
       onOpenChange(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Deployment error:', error);
-      toast.error(error.message || 'Failed to create deployment');
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to create deployment');
     } finally {
       setDeploying(false);
     }
@@ -442,21 +442,26 @@ export default function DeploymentDialog({
                       setEditingName(!editingName);
                     }}
                     className={`border-border bg-background cursor-pointer shrink-0 ${editingName ? 'text-accent-cyan hover:bg-accent-cyan/20 hover:text-accent-cyan' : 'text-white hover:bg-muted hover:text-white'}`}
-                    title={editingName ? 'Back to dropdown' : 'Edit name'}
                   >
                     <Pencil className="h-4 w-4" />
                   </Button>
                   {/* Save template */}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={handleSaveTemplate}
-                    className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer shrink-0"
-                    title={isTemplateSelected ? 'Save changes to template' : 'Save as new template'}
-                  >
-                    <Save className="h-4 w-4" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={handleSaveTemplate}
+                        className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer shrink-0"
+                      >
+                        <Save className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{isTemplateSelected ? 'save changes to template' : 'save as new template'}</p>
+                    </TooltipContent>
+                  </Tooltip>
                   {/* Delete template */}
                   {isTemplateSelected && (
                     <Button
@@ -465,7 +470,6 @@ export default function DeploymentDialog({
                       size="icon"
                       onClick={handleDeleteTemplate}
                       className="border-border bg-background text-red-400 hover:bg-red-900 hover:text-red-300 cursor-pointer shrink-0"
-                      title="Delete template"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -678,7 +682,7 @@ export default function DeploymentDialog({
                   variant="outline"
                   size="sm"
                   onClick={selectOnlyOnlineMachines}
-                  className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
+                  className="border-border bg-background/50 text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
                 >
                   online only ({onlineMachines.length})
                 </Button>
@@ -687,14 +691,14 @@ export default function DeploymentDialog({
                   variant="outline"
                   size="sm"
                   onClick={toggleAllMachines}
-                  className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
+                  className="border-border bg-background/50 text-white hover:bg-muted hover:text-white cursor-pointer text-xs"
                 >
                   {allMachinesSelected ? 'deselect all' : 'select all'}
                 </Button>
               </div>
             </div>
 
-            <div className="border border-border rounded-lg p-3 bg-background max-h-48 overflow-y-auto space-y-2">
+            <div className="border border-border rounded-lg p-3 bg-background/50 max-h-48 overflow-y-auto space-y-2">
               {machines.length === 0 ? (
                 <p className="text-muted-foreground text-sm text-center py-2">no machines available</p>
               ) : (
@@ -725,9 +729,9 @@ export default function DeploymentDialog({
 
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={() => onOpenChange(false)}
-            className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
+            className="bg-secondary border border-border cursor-pointer"
             disabled={deploying}
           >
             cancel
@@ -763,9 +767,9 @@ export default function DeploymentDialog({
           </DialogHeader>
           <DialogFooter className="gap-2">
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setShowDeleteConfirm(false)}
-              className="border-border bg-secondary text-white hover:bg-muted hover:text-white cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>

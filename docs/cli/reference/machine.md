@@ -1,0 +1,177 @@
+---
+hide:
+  - navigation
+---
+
+# machine
+
+manage windows machines from the cli — list + inspect health and per-roost deployment state, and queue remote-control commands (reboot, shutdown, screenshot). every verb is **site-scoped** and requires `--site <siteId>`. six verbs are **tier A — ready** and hit a public api today; one verb (`live-view`) is a **tier C stub** reserving the namespace until the WebRTC-native stream is prioritized.
+
+cross-reference: `owlette machine deployments` shows the per-roost intended-vs-reported state from the **machine's** perspective. `owlette roost get` shows the same data from the **roost's** perspective — same source-of-truth, different lens.
+
+---
+
+## list
+
+list every machine on a site with online + last-heartbeat columns.
+
+**synopsis** — `owlette machine list --site <siteId> [--json]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--site <siteId>` | yes | site id to list machines for |
+
+```bash
+owlette machine list --site site-1
+owlette machine list --site site-1 --json | jq '.machines[] | select(.online == false) | .id'
+```
+
+**backing endpoint**: `GET /api/sites/{siteId}/machines`
+
+---
+
+## get
+
+print the detail record for one machine — host info, metrics snapshot, and the live process list.
+
+**synopsis** — `owlette machine get <machineId> --site <siteId> [--json]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--site <siteId>` | yes | site id that owns the machine |
+
+```bash
+owlette machine get m_abc123 --site site-1
+owlette machine get m_abc123 --site site-1 --json | jq '.metrics.cpu'
+```
+
+**backing endpoint**: `GET /api/sites/{siteId}/machines/{machineId}`
+
+---
+
+## deployments
+
+per-roost deployment state for one machine — shows the intended version (what the manifest says should be running) next to the reported version (what the agent last reported). use this when a roost rollout looks stuck on a specific machine.
+
+**synopsis** — `owlette machine deployments <machineId> --site <siteId> [--json]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--site <siteId>` | yes | site id that owns the machine |
+
+```bash
+owlette machine deployments m_abc123 --site site-1
+owlette machine deployments m_abc123 --site site-1 --json | jq '.deployments[] | select(.currentVersionId != .reportedVersionId)'
+```
+
+**backing endpoint**: `GET /api/sites/{siteId}/machines/{machineId}/deployments`
+
+---
+
+## reboot
+
+queue a `reboot_machine` command on the machine. the command is allowlisted in wave-2A commands and auto-tagged with an `Idempotency-Key` so retrying after a network blip is safe.
+
+**synopsis** — `owlette machine reboot <machineId> --site <siteId> [--delay-seconds <n>]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--site <siteId>` | yes | site id that owns the machine |
+| `--delay-seconds <n>` | no | non-negative integer; agent waits this long before firing (default 0) |
+
+```bash
+owlette machine reboot m_abc123 --site site-1
+owlette machine reboot m_abc123 --site site-1 --delay-seconds 60 --json
+```
+
+**backing endpoint**: `POST /api/sites/{siteId}/machines/{machineId}/commands` with `{ "type": "reboot_machine" }`
+
+---
+
+## shutdown
+
+queue a `shutdown_machine` command on the machine. same idempotency + delay semantics as `reboot`.
+
+**synopsis** — `owlette machine shutdown <machineId> --site <siteId> [--delay-seconds <n>]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--site <siteId>` | yes | site id that owns the machine |
+| `--delay-seconds <n>` | no | non-negative integer; agent waits this long before firing (default 0) |
+
+```bash
+owlette machine shutdown m_abc123 --site site-1
+owlette machine shutdown m_abc123 --site site-1 --delay-seconds 30
+```
+
+**backing endpoint**: `POST /api/sites/{siteId}/machines/{machineId}/commands` with `{ "type": "shutdown_machine" }`
+
+---
+
+## screenshot
+
+capture a screenshot from the machine and download it locally. this is a queue → poll → download flow: the cli posts a `capture_screenshot` command, polls the command-state endpoint every 1.5s for up to 60s, then fetches the bytes from the signed url the agent uploaded to.
+
+**synopsis** — `owlette machine screenshot <machineId> --site <siteId> [--monitor <m>] [--output <path>]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--site <siteId>` | yes | site id that owns the machine |
+| `--monitor <m>` | no | `all`, `primary`, or a non-negative integer index. when omitted, the cli sends no monitor value and the agent defaults to `0` / all monitors. |
+| `--output <path>` | no | path to write the png (default: `screenshot-<machineId>-<timestamp>.png` in cwd) |
+
+```bash
+owlette machine screenshot m_abc123 --site site-1
+owlette machine screenshot m_abc123 --site site-1 --monitor all --output /tmp/wall.png
+owlette machine screenshot m_abc123 --site site-1 --monitor 0 --json
+```
+
+**backing endpoints**:
+- `POST /api/sites/{siteId}/machines/{machineId}/commands` with `{ "type": "capture_screenshot" }`
+- `GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}` (polled until terminal)
+
+---
+
+## live-view
+
+> 🚧 **stub — deferred as `live-view-webrtc` outside the public API MVP**. exits 3 with a json envelope pointing at the dashboard. the namespace is reserved here so scripts can detect "not yet" with a stable exit code (3, not 1).
+
+streaming desktop feed. when shipped, this will open a live thumbnail / video stream from the agent. today, run it in the dashboard instead.
+
+**synopsis** — `owlette machine live-view <machineId> --site <siteId>`
+
+| flag | required | purpose |
+|---|---|---|
+| `--site <siteId>` | yes | site id that owns the machine |
+
+```bash
+owlette machine live-view m_abc123 --site site-1
+# → exit 3, json envelope:
+#   { "ok": false, "stub": true, "noun": "machine",
+#     "reason": "live-view streaming is being reframed as a webrtc-native feature; resume when prioritized",
+#     "dashboard_url": "https://owlette.app/dashboard",
+#     "future_plan": "public-api deferred: live-view-webrtc" }
+```
+
+**backing endpoint**: none yet. future plan: `public-api deferred: live-view-webrtc` (deferred — resume when prioritized).
+
+---
+
+## exit codes
+
+- `0` — success
+- `1` — generic error (network, api 5xx, unexpected response shape, screenshot poll timeout, agent reported failure)
+- `2` — usage error (missing `--site`, bad `--monitor` value, negative `--delay-seconds`, no token configured)
+- `3` — stub (only `machine live-view`)
+
+stable problem+json codes surfaced with a hint: `machine_offline`, `unsupported_command_type`, `scope_insufficient`.
+
+---
+
+## notes
+
+- **scope**: site-scoped. mutations require an api key with `machine=<id>:write` (or `site=<id>:write`).
+- **tier**: A for `list`, `get`, `deployments`, `reboot`, `shutdown`, `screenshot`. C stub for `live-view`.
+- **idempotency**: every mutation auto-generates an `Idempotency-Key`, so retrying a failed `reboot`/`shutdown`/`screenshot` will not double-fire.
+- **screenshot ttl**: the signed url returned by the agent expires shortly after capture — the cli downloads inline so you do not need to handle expiry yourself.
+- see [overview](../overview.md) for global flags (`--profile`, `--json`, `--api-url`) and config precedence.

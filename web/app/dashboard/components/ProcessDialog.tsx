@@ -259,9 +259,9 @@ export function ProcessDialog({
           )}
           <div className="flex gap-2 ml-auto">
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={onClose}
-              className="border-border bg-card text-foreground hover:bg-accent hover:border-foreground/30 hover:text-white cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>

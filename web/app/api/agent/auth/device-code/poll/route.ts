@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { apiError } from '@/lib/apiErrorResponse';
+import { DEVICE_CODE_WRAP_VERSION } from '@/lib/deviceCodeCrypto';
 
 /**
  * POST /api/agent/auth/device-code/poll
@@ -10,12 +12,21 @@ import { withRateLimit } from '@/lib/withRateLimit';
  *
  * Request body (one of):
  * - deviceCode: string - The opaque device code from the generation step
- * - pairPhrase: string - The 3-word phrase (for /ADD= silent install flow)
+ *   (interactive pairing flow; preferred — receives encrypted credentials)
+ * - pairPhrase: string - The 3-word phrase, accepted ONLY for documents
+ *   that were pre-authorised from the dashboard (`/ADD=` silent install).
+ *   Interactive-flow docs reject phrase-based polling so the phrase
+ *   shown on the installer screen cannot be used to redeem credentials.
  *
  * Response (202 - pending):
  * - status: 'pending'
  *
- * Response (200 - authorized):
+ * Response (200 - authorized, v1 / interactive):
+ * - encryptedCredentials: string (base64 iv||tag||ciphertext)
+ * - wrapVersion: 'v1'
+ * - phrase: string (HKDF salt; equal to the doc id)
+ *
+ * Response (200 - authorized, legacy / pre-authorised):
  * - accessToken: string
  * - refreshToken: string
  * - expiresIn: number (3600)
@@ -41,11 +52,18 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     const adminDb = getAdminDb();
 
-    // Resolve the document reference first (outside transaction for query-based lookup)
+    // Resolve the document reference first (outside transaction for query-based lookup).
+    //
+    // Lookup mode matters for security:
+    //   - deviceCode lookup → either flow; v1 docs return encrypted blob,
+    //     legacy docs return plaintext.
+    //   - pairPhrase lookup → only succeeds for pre-authorised docs.
+    //     Interactive-flow docs reject phrase polls inside the
+    //     transaction below.
     let docRef;
+    const lookupMode: 'deviceCode' | 'pairPhrase' = pairPhrase ? 'pairPhrase' : 'deviceCode';
 
-    if (pairPhrase) {
-      // Direct lookup by phrase (for /ADD= silent install flow)
+    if (lookupMode === 'pairPhrase') {
       const normalized = pairPhrase.toLowerCase().trim();
       docRef = adminDb.collection('device_codes').doc(normalized);
       const snapshot = await docRef.get();
@@ -56,7 +74,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         );
       }
     } else {
-      // Lookup by device code hash (standard interactive flow)
       const crypto = await import('crypto');
       const deviceCodeHash = crypto.createHash('sha256').update(deviceCode).digest('hex');
 
@@ -99,20 +116,61 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         return { body: { status: 'pending' }, status: 202 } as const;
       }
 
-      if (data.status === 'authorized' && data.accessToken && data.refreshToken) {
-        // Atomically delete (single-use) within the transaction — tokens are
-        // sensitive and must not persist in Firestore after being consumed.
-        transaction.delete(docRef);
+      if (data.status === 'authorized') {
+        const isV1 =
+          data.wrapVersion === DEVICE_CODE_WRAP_VERSION &&
+          typeof data.encryptedCredentials === 'string' &&
+          data.encryptedCredentials.length > 0;
 
-        return {
-          body: {
-            accessToken: data.accessToken,
-            refreshToken: data.refreshToken,
-            expiresIn: 3600,
-            siteId: data.siteId,
-          },
-          status: 200,
-        } as const;
+        // Phrase-based polling is only valid for pre-authorised docs.
+        // An interactive (v1) doc carrying a wrapped blob requires the
+        // caller to present the matching deviceCode — otherwise the
+        // phrase alone could be used to fetch the ciphertext and (with
+        // a separate firestore read) attempt offline attacks against
+        // the AES-GCM tag.
+        if (lookupMode === 'pairPhrase' && isV1) {
+          return {
+            error:
+              'this pairing phrase requires the matching device code (interactive pairing only)',
+            status: 403,
+          } as const;
+        }
+        // Same defensive check for legacy docs: phrase-based redemption
+        // is only allowed when the doc was explicitly pre-authorised.
+        if (lookupMode === 'pairPhrase' && !isV1 && data.preauthorized !== true) {
+          return {
+            error:
+              'this pairing phrase requires the matching device code (interactive pairing only)',
+            status: 403,
+          } as const;
+        }
+
+        if (isV1) {
+          // Single-use: delete the doc atomically with the read.
+          transaction.delete(docRef);
+          return {
+            body: {
+              wrapVersion: DEVICE_CODE_WRAP_VERSION,
+              encryptedCredentials: data.encryptedCredentials as string,
+              phrase: docRef.id,
+            },
+            status: 200,
+          } as const;
+        }
+
+        if (data.accessToken && data.refreshToken) {
+          // Legacy / pre-authorised plaintext path.
+          transaction.delete(docRef);
+          return {
+            body: {
+              accessToken: data.accessToken,
+              refreshToken: data.refreshToken,
+              expiresIn: 3600,
+              siteId: data.siteId,
+            },
+            status: 200,
+          } as const;
+        }
       }
 
       // Unexpected state
@@ -127,12 +185,8 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     return NextResponse.json(result.body, { status: result.status });
-  } catch (error: any) {
-    console.error('Error polling device code:', error);
-    return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
-    );
+  } catch (error: unknown) {
+    return apiError(error, 'agent/auth/device-code/poll');
   }
 }, {
   strategy: 'api',

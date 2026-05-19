@@ -20,7 +20,7 @@ interface Site {
 }
 
 export default function AddMachinePage() {
-  const { user, loading: authLoading, userSites, isAdmin } = useAuth();
+  const { user, loading: authLoading, isSuperadmin } = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [sites, setSites] = useState<Site[]>([]);
@@ -60,10 +60,10 @@ export default function AddMachinePage() {
         }
 
         const userData = userDoc.data();
-        const siteIds = isAdmin ? [] : (userData.sites || []);
+        const siteIds = isSuperadmin ? [] : (userData.sites || []);
         const fetchedSites: Site[] = [];
 
-        if (isAdmin) {
+        if (isSuperadmin) {
           // Admin: fetch all sites via collection (same as setup page)
           const { collection, getDocs } = await import('firebase/firestore');
           const sitesRef = collection(db, 'sites');
@@ -88,7 +88,7 @@ export default function AddMachinePage() {
         if (fetchedSites.length === 1) {
           setSelectedSiteId(fetchedSites[0].id);
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Error fetching sites:', error);
         toast.error('Failed to load sites');
       } finally {
@@ -97,7 +97,7 @@ export default function AddMachinePage() {
     }
 
     fetchSites();
-  }, [user, isAdmin]);
+  }, [user, isSuperadmin]);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -137,9 +137,10 @@ export default function AddMachinePage() {
       setIsAuthorized(true);
       setMachineId(data.machineId);
       toast.success('Machine authorized!');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error authorizing:', error);
-      toast.error(error.message || 'Failed to authorize machine');
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to authorize machine');
     } finally {
       setIsAuthorizing(false);
     }

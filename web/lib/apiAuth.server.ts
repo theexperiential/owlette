@@ -1,15 +1,97 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getSessionFromRequest } from '@/lib/sessionManager.server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
+import {
+  type ApiKeyEnvironment,
+  type ApiKeyLookup,
+  type ApiKeyPermission,
+  type ApiKeyResource,
+  type ApiKeyScope,
+  scopeMatches,
+} from '@/lib/apiKeyTypes';
+import { emitApiKeyUsed, scopeFingerprint } from '@/lib/auditLogClient';
 
 export class ApiAuthError extends Error {
   status: number;
+  code?: string;
+  details?: Record<string, unknown>;
 
-  constructor(status: number, message: string) {
+  constructor(
+    status: number,
+    message: string,
+    opts?: { code?: string; details?: Record<string, unknown> }
+  ) {
     super(message);
     this.status = status;
+    this.code = opts?.code;
+    this.details = opts?.details;
   }
+}
+
+export interface ApiKeyContext {
+  keyId: string;
+  /** Empty when a temporarily allowlisted legacy key has no explicit scopes. */
+  scopes: ApiKeyScope[] | null;
+  environment: ApiKeyEnvironment | null;
+  expiresAt: number | null;
+  /** Deprecated marker retained for older callers; resolved keys no longer bypass scope checks. */
+  isLegacy: boolean;
+  retiresAt?: number;
+}
+
+export interface ResolvedAuth {
+  userId: string;
+  /** Populated when the request was authed via an `owk_*` API key. Null for session / ID-token auth. */
+  keyContext: ApiKeyContext | null;
+}
+
+export interface ScopeCheckResult {
+  /** True when the caller should receive a legacy-key deprecation advisory. */
+  isLegacy: boolean;
+  /** True when the request omitted Roost-Version. Caller should set X-Roost-Version-Missing. */
+  missingVersion?: boolean;
+}
+
+// Module-level memos to log each deprecated key path only once per process.
+const LEGACY_LOGGED = new Set<string>();
+const QUERY_LOGGED = new Set<string>();
+
+function hashApiKey(rawKey: string): string {
+  return crypto.createHash('sha256').update(rawKey).digest('hex');
+}
+
+function isLegacyKeyAllowed(keyHash: string): boolean {
+  if (process.env.LEGACY_API_KEY_BYPASS_ENABLED !== 'true') return false;
+  const allow = (process.env.LEGACY_API_KEY_ALLOW_HASH_LIST ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return allow.includes(keyHash);
+}
+
+function warnLegacyOnce(keyHash: string): void {
+  if (LEGACY_LOGGED.has(keyHash)) return;
+  LEGACY_LOGGED.add(keyHash);
+  console.warn(
+    `[apiAuth] DEPRECATED: API key ${keyHash.slice(0, 8)}... has empty/missing scopes. ` +
+      'This key bypassed scope enforcement before security wave; backfill scopes or revoke. ' +
+      `Currently ${
+        isLegacyKeyAllowed(keyHash)
+          ? 'permitted via LEGACY_API_KEY_BYPASS_ENABLED'
+          : 'REJECTED'
+      }.`,
+  );
+}
+
+function warnQueryStringKeyOnce(keyHash: string): void {
+  if (QUERY_LOGGED.has(keyHash)) return;
+  QUERY_LOGGED.add(keyHash);
+  console.warn(
+    `[apiAuth] DEPRECATED: API key ${keyHash.slice(0, 8)}... supplied via query string. ` +
+      'Migrate to Authorization: Bearer or x-api-key header. ' +
+      'Query-string keys leak via logs, referrers, browser history.',
+  );
 }
 
 export async function requireSession(request: NextRequest): Promise<string> {
@@ -33,9 +115,8 @@ export async function requireSessionOrIdToken(
   try {
     return await requireSession(request);
   } catch (error) {
-    const authHeader = request.headers.get('authorization') || '';
-    const match = authHeader.match(/^Bearer\s+(.+)$/i);
-    if (!match) {
+    const bearer = extractBearer(request);
+    if (!bearer) {
       if (error instanceof ApiAuthError) {
         throw error;
       }
@@ -44,7 +125,7 @@ export async function requireSessionOrIdToken(
 
     try {
       const adminAuth = getAdminAuth();
-      const decoded = await adminAuth.verifyIdToken(match[1]);
+      const decoded = await adminAuth.verifyIdToken(bearer);
       return decoded.uid;
     } catch {
       throw new ApiAuthError(401, 'Unauthorized: Invalid ID token');
@@ -56,41 +137,135 @@ export async function requireAdmin(request: NextRequest): Promise<string> {
   return requireAdminOrIdToken(request);
 }
 
+function extractBearer(request: NextRequest): string | null {
+  const auth = request.headers.get('authorization') || '';
+  const match = auth.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] : null;
+}
+
+function extractApiKey(request: NextRequest): string | null {
+  const queryKey = request.nextUrl.searchParams.get('api_key');
+  if (queryKey) {
+    if (queryKey.startsWith('owk_')) {
+      warnQueryStringKeyOnce(hashApiKey(queryKey));
+      return queryKey;
+    }
+  } else {
+    const headerKey = request.headers.get('x-api-key');
+    if (headerKey && headerKey.startsWith('owk_')) return headerKey;
+  }
+
+  const bearer = extractBearer(request);
+  if (bearer && bearer.startsWith('owk_')) return bearer;
+
+  return null;
+}
+
 /**
- * Resolve a user ID from an API key (owk_...).
- * Looks up the SHA-256 hash in the top-level api_keys collection (hash as doc ID → userId).
- * Updates lastUsedAt on the user's subcollection entry (fire-and-forget).
+ * Resolve an API key (owk_...) to full context: userId + keyContext.
+ * One Firestore read (top-level api_keys/{keyHash}) + one fire-and-forget
+ * lastUsedAt update on the user subcollection entry.
  */
-async function resolveApiKey(rawKey: string): Promise<string> {
-  const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+async function resolveApiKeyContext(
+  rawKey: string,
+  options: { updateLastUsed?: boolean } = {},
+): Promise<{ userId: string; keyContext: ApiKeyContext }> {
+  const keyHash = hashApiKey(rawKey);
   const db = getAdminDb();
 
-  // Single document read — no collection group query, no index needed
   const lookupDoc = await db.collection('api_keys').doc(keyHash).get();
 
   if (!lookupDoc.exists) {
     throw new ApiAuthError(401, 'Unauthorized: Invalid API key');
   }
 
-  const { userId, keyId } = lookupDoc.data() as { userId: string; keyId: string };
+  const data = lookupDoc.data() as Partial<ApiKeyLookup> & {
+    userId: string;
+    keyId: string;
+    revokedAt?: unknown;
+  };
 
-  // Update lastUsedAt on the user's subcollection entry (fire-and-forget)
-  db.collection('users').doc(userId).collection('api_keys').doc(keyId)
-    .update({ lastUsedAt: Date.now() }).catch(() => {});
+  const now = Date.now();
 
+  if (data.revokedAt) {
+    throw new ApiAuthError(401, 'Unauthorized: Invalid API key');
+  }
+
+  // Rotation grace: the old key's lookup entry carries `retiresAt` after
+  // rotation. After retiresAt, treat as invalid.
+  if (typeof data.retiresAt === 'number' && now >= data.retiresAt) {
+    throw new ApiAuthError(401, 'Unauthorized: Invalid API key');
+  }
+
+  // Expiration: every scoped key has a hard `expiresAt`.
+  if (typeof data.expiresAt === 'number' && now >= data.expiresAt) {
+    throw new ApiAuthError(
+      401,
+      'Unauthorized: API key expired',
+      {
+        code: 'token_expired',
+        details: { expiredAt: data.expiresAt },
+      },
+    );
+  }
+
+  const hasLegacyScopes =
+    !data.scopes || (Array.isArray(data.scopes) && data.scopes.length === 0);
+  if (hasLegacyScopes) {
+    warnLegacyOnce(keyHash);
+    if (!isLegacyKeyAllowed(keyHash)) {
+      throw new ApiAuthError(401, 'Unauthorized: Invalid API key');
+    }
+  }
+
+  const scopes = Array.isArray(data.scopes) ? (data.scopes as ApiKeyScope[]) : [];
+
+  const keyContext: ApiKeyContext = {
+    keyId: data.keyId,
+    scopes,
+    environment: (data.environment as ApiKeyEnvironment) ?? null,
+    expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : null,
+    isLegacy: false,
+    ...(typeof data.retiresAt === 'number' ? { retiresAt: data.retiresAt } : {}),
+  };
+
+  if (options.updateLastUsed !== false) {
+    db.collection('users')
+      .doc(data.userId)
+      .collection('api_keys')
+      .doc(data.keyId)
+      .update({ lastUsedAt: Date.now() })
+      .catch(() => {});
+  }
+
+  return { userId: data.userId, keyContext };
+}
+
+export async function resolveApiKeyRateLimitIdentity(
+  request: NextRequest,
+): Promise<string | null> {
+  const apiKey = extractApiKey(request);
+  if (!apiKey) return null;
+
+  try {
+    const { keyContext } = await resolveApiKeyContext(apiKey, { updateLastUsed: false });
+    return `apiKey:${keyContext.keyId}`;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveApiKey(rawKey: string): Promise<string> {
+  const { userId } = await resolveApiKeyContext(rawKey);
   return userId;
 }
 
 export async function requireAdminOrIdToken(request: NextRequest): Promise<string> {
-  // 1. Check for API key (query param or header)
-  const apiKey =
-    request.nextUrl.searchParams.get('api_key') ||
-    request.headers.get('x-api-key') ||
-    null;
+  const apiKey = extractApiKey(request);
 
   let userId: string;
 
-  if (apiKey && apiKey.startsWith('owk_')) {
+  if (apiKey) {
     userId = await resolveApiKey(apiKey);
   } else {
     userId = await requireSessionOrIdToken(request);
@@ -100,11 +275,102 @@ export async function requireAdminOrIdToken(request: NextRequest): Promise<strin
   const userDoc = await db.collection('users').doc(userId).get();
   const role = userDoc.exists ? userDoc.data()?.role : null;
 
-  if (role !== 'admin') {
-    throw new ApiAuthError(403, 'Forbidden: Admin access required');
+  if (role !== 'superadmin') {
+    throw new ApiAuthError(403, 'Forbidden: Superadmin access required');
   }
 
   return userId;
+}
+
+/**
+ * Resolve request auth into a unified context that carries API-key metadata
+ * when present. Use in public v2 routes that need scope enforcement.
+ */
+export async function resolveAuth(request: NextRequest): Promise<ResolvedAuth> {
+  const apiKey = extractApiKey(request);
+
+  if (apiKey) {
+    const { userId, keyContext } = await resolveApiKeyContext(apiKey);
+    return { userId, keyContext };
+  }
+
+  const userId = await requireSessionOrIdToken(request);
+  return { userId, keyContext: null };
+}
+
+/**
+ * Enforce that the resolved auth has the required scope.
+ *
+ * - Session / ID-token auth (no API key): bypassed. Dashboard users operate
+ *   with full own access; per-resource access is enforced elsewhere.
+ * - Scoped API key: requires a matching (resource, id, permission) entry.
+ *   Wildcard id '*' in the stored scope matches any requested id.
+ *
+ * Throws ApiAuthError(403, code='scope_insufficient') on mismatch.
+ */
+export function requireScope(
+  auth: ResolvedAuth,
+  resource: ApiKeyResource,
+  id: string,
+  permission: ApiKeyPermission
+): ScopeCheckResult {
+  if (!auth.keyContext) {
+    return { isLegacy: false };
+  }
+
+  if (
+    Array.isArray(auth.keyContext.scopes) &&
+    scopeMatches(auth.keyContext.scopes, resource, id, permission)
+  ) {
+    return { isLegacy: false };
+  }
+
+  throw new ApiAuthError(
+    403,
+    `insufficient scope: requires ${permission} on ${resource}:${id}`,
+    {
+      code: 'scope_insufficient',
+      details: { resource, id, permission },
+    }
+  );
+}
+
+/**
+ * Attach the legacy-key deprecation header + version-missing advisory
+ * header to a response based on the scope-check result.
+ */
+export function applyAuthDeprecations(
+  response: NextResponse,
+  check: ScopeCheckResult
+): NextResponse {
+  if (check.isLegacy) {
+    response.headers.append('X-Roost-Deprecation', 'legacy-key-scope-missing');
+  }
+  if (check.missingVersion) {
+    response.headers.set('X-Roost-Version-Missing', 'true');
+  }
+  return response;
+}
+
+/**
+ * Fire-and-forget `api_key_used` audit event. No-op for session/id-token auth.
+ */
+export function auditApiKeyUse(
+  auth: ResolvedAuth,
+  siteId: string,
+  request: NextRequest,
+): void {
+  const kc = auth.keyContext;
+  if (!kc) return;
+  emitApiKeyUsed({
+    siteId,
+    keyId: kc.keyId,
+    scopeFingerprint: scopeFingerprint(kc.scopes),
+    environment: kc.environment ?? 'unknown',
+    endpoint: request.nextUrl.pathname,
+    method: request.method,
+    isLegacy: kc.isLegacy,
+  });
 }
 
 export async function requireSessionUser(
@@ -134,11 +400,11 @@ export async function assertUserHasSiteAccess(
 
   const userDoc = await db.collection('users').doc(userId).get();
   const userData = userDoc.exists ? userDoc.data() : null;
-  const isAdmin = userData?.role === 'admin';
+  const isSuperadmin = userData?.role === 'superadmin';
   const assignedSites = Array.isArray(userData?.sites) ? userData?.sites : [];
   const isAssigned = assignedSites.includes(siteId);
 
-  if (!isAdmin && !isOwner && !isAssigned) {
+  if (!isSuperadmin && !isOwner && !isAssigned) {
     throw new ApiAuthError(403, 'Forbidden: You do not have access to this site');
   }
 

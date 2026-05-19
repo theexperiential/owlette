@@ -1,51 +1,38 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import {
-  collection,
-  query,
-  onSnapshot,
-  doc,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  orderBy,
-  Timestamp,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
-import {
-  uploadInstaller,
-  deleteInstallerVersion,
-  getInstallerDownloadUrl,
-} from '@/lib/storageUtils';
 import { useAuth } from '@/contexts/AuthContext';
+import type { FirestoreTs } from '@/hooks/useFirestore';
 
 export interface InstallerVersion {
-  id: string; // Version number (e.g., "2.0.0")
+  id: string;
   version: string;
   download_url: string;
   file_size: number;
-  release_date: Timestamp;
+  release_date: FirestoreTs;
   checksum_sha256: string;
   release_notes?: string;
   uploaded_by: string;
   is_latest?: boolean;
 }
 
+interface InstallerVersionApi {
+  version?: string;
+  download_url?: string | null;
+  file_size?: number | null;
+  release_date?: FirestoreTs;
+  uploaded_at?: number | null;
+  checksum_sha256?: string | null;
+  release_notes?: string | null;
+  uploaded_by?: string | null;
+}
+
 /**
  * useInstallerManagement Hook
  *
- * Provides functionality for admin users to manage agent installer versions.
- *
- * Features:
- * - Real-time list of all versions
- * - Upload new versions
- * - Set version as latest
- * - Delete versions
- *
- * Usage:
- * const { versions, loading, uploadVersion, setAsLatest, deleteVersion } = useInstallerManagement();
+ * Provides functionality for admin users to manage agent installer versions
+ * through the documented /api/installer public API surface.
  */
 export function useInstallerManagement() {
   const { user } = useAuth();
@@ -54,214 +41,145 @@ export function useInstallerManagement() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch all versions with real-time updates
-  useEffect(() => {
-    if (!db) {
-      setError('Firebase is not configured');
-      setLoading(false);
-      return;
-    }
-
+  const refreshInstallerState = useCallback(async () => {
+    setLoading(true);
     try {
-      const versionsRef = collection(db, 'installer_metadata', 'data', 'versions');
-      const q = query(versionsRef, orderBy('release_date', 'desc'));
+      const versionsResponse = await fetch('/api/installer?page_size=100', {
+        cache: 'no-store',
+      });
+      if (!versionsResponse.ok) {
+        throw new Error(await readApiError(versionsResponse, 'Failed to fetch installer versions'));
+      }
+      const versionsBody = (await versionsResponse.json()) as { versions?: InstallerVersionApi[] };
+      const versionRows: InstallerVersion[] = Array.isArray(versionsBody.versions)
+        ? versionsBody.versions.map(normalizeVersion)
+        : [];
 
-      const unsubscribe = onSnapshot(
-        q,
-        (snapshot) => {
-          const versionsData: InstallerVersion[] = [];
+      const latestResponse = await fetch('/api/installer/latest', {
+        cache: 'no-store',
+      });
+      let latest: InstallerVersion | null = null;
+      if (latestResponse.ok) {
+        latest = normalizeVersion(await latestResponse.json());
+      } else if (latestResponse.status !== 404) {
+        throw new Error(await readApiError(latestResponse, 'Failed to fetch latest installer'));
+      }
 
-          snapshot.forEach((doc) => {
-            versionsData.push({
-              id: doc.id,
-              ...doc.data(),
-            } as InstallerVersion);
-          });
-
-          setVersions(versionsData);
-          setLoading(false);
-          setError(null);
-        },
-        (err) => {
-          console.error('Error fetching versions:', err);
-          const friendlyMessage = handleError(err);
-          setError(friendlyMessage);
-          setLoading(false);
-        }
+      setLatestVersion(latest);
+      setVersions(
+        versionRows.map((version) => ({
+          ...version,
+          is_latest: latest?.version === version.version,
+        })),
       );
-
-      return () => unsubscribe();
+      setError(null);
     } catch (err) {
-      console.error('Error setting up versions listener:', err);
-      const friendlyMessage = handleError(err);
-      setError(friendlyMessage);
+      console.error('Error fetching installer versions:', err);
+      setError(handleError(err));
+    } finally {
       setLoading(false);
     }
   }, []);
 
-  // Fetch latest version metadata
   useEffect(() => {
-    if (!db) return;
+    void refreshInstallerState();
+  }, [refreshInstallerState]);
 
-    try {
-      const latestRef = doc(db, 'installer_metadata', 'latest');
-
-      const unsubscribe = onSnapshot(
-        latestRef,
-        (doc) => {
-          if (doc.exists()) {
-            setLatestVersion({
-              id: 'latest',
-              ...doc.data(),
-            } as InstallerVersion);
-          }
-        },
-        (err) => {
-          console.error('Error fetching latest version:', err);
-        }
-      );
-
-      return () => unsubscribe();
-    } catch (err) {
-      console.error('Error setting up latest version listener:', err);
-    }
-  }, []);
-
-  /**
-   * Upload a new installer version
-   *
-   * @param file - The installer .exe file
-   * @param version - Version number (e.g., "2.0.0")
-   * @param releaseNotes - Optional release notes
-   * @param setAsLatest - Whether to set this as the latest version
-   * @param onProgress - Progress callback (0-100)
-   */
   const uploadVersion = useCallback(
     async (
       file: File,
       version: string,
       releaseNotes: string | undefined,
       setAsLatest: boolean,
-      onProgress?: (progress: number) => void
+      onProgress?: (progress: number) => void,
     ): Promise<void> => {
-      if (!db) {
-        throw new Error('Firebase is not configured');
-      }
-
       if (!user) {
         throw new Error('You must be logged in to upload');
       }
 
       try {
-        // Upload to Firebase Storage
-        const { downloadUrl, checksum, fileSize } = await uploadInstaller(
-          file,
-          version,
-          onProgress
-        );
+        const checksum = await sha256File(file);
+        const idempotencyKey = createIdempotencyKey(`installer-upload-${version}`);
+        const uploadInit = await fetch('/api/installer/upload', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify({
+            version,
+            fileName: file.name,
+            contentType: file.type || 'application/octet-stream',
+            releaseNotes,
+            setAsLatest,
+          }),
+        });
+        if (!uploadInit.ok) throw new Error(await readApiError(uploadInit, 'Failed to start upload'));
+        const uploadBody = await uploadInit.json();
 
-        // Create metadata document
-        const versionData: Partial<Omit<InstallerVersion, 'id'>> = {
-          version,
-          download_url: downloadUrl,
-          file_size: fileSize,
-          release_date: Timestamp.now(),
-          checksum_sha256: checksum,
-          uploaded_by: user.email || user.uid,
-        };
+        await uploadFileToSignedUrl(uploadBody.uploadUrl, file, onProgress);
 
-        // Only add release_notes if it's not undefined
-        if (releaseNotes !== undefined) {
-          versionData.release_notes = releaseNotes;
-        }
-
-        // Save to versions collection
-        const versionRef = doc(db, 'installer_metadata', 'data', 'versions', version);
-        await setDoc(versionRef, versionData);
-
-        // If set as latest, also update the latest document
-        if (setAsLatest) {
-          const latestRef = doc(db, 'installer_metadata', 'latest');
-          await setDoc(latestRef, versionData);
-        }
+        const finalize = await fetch('/api/installer/upload', {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify({
+            uploadId: uploadBody.uploadId,
+            ...(checksum ? { checksum_sha256: checksum } : {}),
+          }),
+        });
+        if (!finalize.ok) throw new Error(await readApiError(finalize, 'Failed to finalize upload'));
+        await refreshInstallerState();
       } catch (err) {
         console.error('Error uploading version:', err);
         throw new Error(handleError(err));
       }
     },
-    [user]
+    [refreshInstallerState, user],
   );
 
-  /**
-   * Set a version as the latest
-   *
-   * @param version - The version to set as latest
-   */
   const setAsLatest = useCallback(
     async (version: string): Promise<void> => {
-      if (!db) {
-        throw new Error('Firebase is not configured');
-      }
-
       try {
-        // Find the version data
-        const versionData = versions.find((v) => v.version === version);
-        if (!versionData) {
-          throw new Error('Version not found');
-        }
-
-        // Update the /latest document
-        const latestRef = doc(db, 'installer_metadata', 'latest');
-        const latestData: any = {
-          version: versionData.version,
-          download_url: versionData.download_url,
-          file_size: versionData.file_size,
-          release_date: versionData.release_date,
-          checksum_sha256: versionData.checksum_sha256,
-          uploaded_by: versionData.uploaded_by,
-        };
-
-        // Only include release_notes if it exists
-        if (versionData.release_notes !== undefined) {
-          latestData.release_notes = versionData.release_notes;
-        }
-
-        await setDoc(latestRef, latestData);
+        const response = await fetch(`/api/installer/${encodeURIComponent(version)}/set-latest`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'Idempotency-Key': createIdempotencyKey(`installer-set-latest-${version}`),
+          },
+          body: JSON.stringify({}),
+        });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to set latest version'));
+        await refreshInstallerState();
       } catch (err) {
         console.error('Error setting latest version:', err);
         throw new Error(handleError(err));
       }
     },
-    [versions]
+    [refreshInstallerState],
   );
 
-  /**
-   * Delete an installer version
-   *
-   * @param version - The version to delete
-   */
-  const deleteVersion = useCallback(async (version: string): Promise<void> => {
-    if (!db) {
-      throw new Error('Firebase is not configured');
-    }
+  const deleteVersion = useCallback(
+    async (version: string): Promise<void> => {
+      try {
+        const response = await fetch(`/api/installer/${encodeURIComponent(version)}`, {
+          method: 'DELETE',
+          headers: {
+            'Idempotency-Key': createIdempotencyKey(`installer-delete-${version}`),
+          },
+        });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete installer version'));
+        await refreshInstallerState();
+      } catch (err) {
+        console.error('Error deleting version:', err);
+        throw new Error(handleError(err));
+      }
+    },
+    [refreshInstallerState],
+  );
 
-    try {
-      // Delete from Firebase Storage
-      await deleteInstallerVersion(version);
-
-      // Delete metadata document
-      const versionRef = doc(db, 'installer_metadata', 'data', 'versions', version);
-      await deleteDoc(versionRef);
-    } catch (err) {
-      console.error('Error deleting version:', err);
-      throw new Error(handleError(err));
-    }
-  }, []);
-
-  /**
-   * Identify versions eligible for cleanup.
-   * Keeps: latest patch per minor series, anything uploaded within retentionDays, and the current latest.
-   */
   const getCleanupCandidates = useCallback(
     (retentionDays: number = 30): InstallerVersion[] => {
       if (!latestVersion) return [];
@@ -269,7 +187,6 @@ export function useInstallerManagement() {
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - retentionDays);
 
-      // Group versions by major.minor
       const groups = new Map<string, InstallerVersion[]>();
       for (const v of versions) {
         const parts = v.version.split('.');
@@ -279,12 +196,13 @@ export function useInstallerManagement() {
         groups.get(key)!.push(v);
       }
 
-      // Find the highest patch per minor group
       const keepVersions = new Set<string>();
       keepVersions.add(latestVersion.version);
 
       for (const [, group] of groups) {
-        let highest = group[0];
+        const first = group[0];
+        if (!first) continue;
+        let highest = first;
         for (const v of group) {
           const patchA = parseInt(v.version.split('.')[2], 10);
           const patchB = parseInt(highest.version.split('.')[2], 10);
@@ -295,20 +213,17 @@ export function useInstallerManagement() {
 
       return versions.filter((v) => {
         if (keepVersions.has(v.version)) return false;
-        // Keep if uploaded within retention window
-        const uploadDate = v.release_date?.toDate
-          ? v.release_date.toDate()
-          : new Date(v.release_date as any);
+        const rd = v.release_date;
+        const uploadDate = rd && typeof (rd as { toDate?: () => Date }).toDate === 'function'
+          ? (rd as { toDate: () => Date }).toDate()
+          : new Date(rd as number | string | Date);
         if (uploadDate > cutoff) return false;
         return true;
       });
     },
-    [versions, latestVersion]
+    [versions, latestVersion],
   );
 
-  /**
-   * Delete all cleanup candidate versions
-   */
   const cleanupVersions = useCallback(
     async (candidates: InstallerVersion[]): Promise<number> => {
       let deleted = 0;
@@ -318,7 +233,7 @@ export function useInstallerManagement() {
       }
       return deleted;
     },
-    [deleteVersion]
+    [deleteVersion],
   );
 
   return {
@@ -332,4 +247,70 @@ export function useInstallerManagement() {
     getCleanupCandidates,
     cleanupVersions,
   };
+}
+
+function normalizeVersion(raw: InstallerVersionApi): InstallerVersion {
+  const version = raw.version ?? '';
+  return {
+    id: version,
+    version,
+    download_url: raw.download_url ?? '',
+    file_size: raw.file_size ?? 0,
+    release_date: raw.release_date ?? raw.uploaded_at ?? null,
+    checksum_sha256: raw.checksum_sha256 ?? '',
+    release_notes: raw.release_notes ?? undefined,
+    uploaded_by: raw.uploaded_by ?? '',
+  };
+}
+
+function uploadFileToSignedUrl(
+  uploadUrl: string,
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('content-type', file.type || 'application/octet-stream');
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        onProgress(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        onProgress?.(100);
+        resolve();
+      } else {
+        reject(new Error(`Upload failed (${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Upload failed'));
+    xhr.send(file);
+  });
+}
+
+async function sha256File(file: File): Promise<string | null> {
+  if (!globalThis.crypto?.subtle) return null;
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? body.error ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
+}
+
+function createIdempotencyKey(prefix: string): string {
+  const random =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${random}`;
 }

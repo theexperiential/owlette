@@ -9,13 +9,22 @@
  *
  * Data flow:
  * 1. Agent writes to: sites/{siteId}/machines/{machineId} (metrics data)
- * 2. This function triggers and writes to: sites/{siteId}/machines/{machineId}/metrics_history/{date}
+ * 2. This function triggers and writes to: sites/{siteId}/machines/{machineId}/metrics_history/{bucket}
  * 3. Evaluates threshold alert rules from sites/{siteId}/settings/alerts
  * 4. If threshold breached + not in cooldown, calls /api/alerts/trigger
  *
  * Rate limiting:
  * - Checks last sample timestamp to avoid duplicate samples within 55 seconds
  * - Uses Firestore FieldValue.arrayUnion for atomic append (no read-modify-write)
+ *
+ * History bucket schema:
+ * - Legacy docs used one daily bucket: metrics_history/{YYYY-MM-DD}
+ * - New writes use hourly UTC buckets: metrics_history/{YYYY-MM-DD-HH}
+ *
+ * The samples/meta shape is unchanged. Splitting the daily array into 24 hourly
+ * docs keeps rich 30-second telemetry well below Firestore's 1MiB document
+ * limit while leaving existing daily docs available for readers that support
+ * both shapes.
  */
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
@@ -52,16 +61,56 @@ interface CachedAlertRules {
 const alertRulesCache = new Map<string, CachedAlertRules>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * Resolve scalar fields from either v2 (schemaVersion 2, per-device maps keyed
+ * by id + metrics.primary) or v1 (singular cpu/disk/gpu objects) metrics docs.
+ * The helpers below pick the primary device for aggregates (sparkline/alerts),
+ * falling back to the first entry when `primary` is absent, and finally to the
+ * legacy v1 fields so in-flight docs during rollout still produce samples.
+ */
+function pickPrimaryEntry<T>(
+  map: Record<string, T> | undefined,
+  primaryId: string | null | undefined,
+): T | undefined {
+  if (!map) return undefined;
+  if (primaryId && map[primaryId]) return map[primaryId];
+  const first = Object.values(map)[0];
+  return first;
+}
+
+function v2CpuPercent(m: Record<string, any>): number | undefined {
+  return pickPrimaryEntry<any>(m.cpus, m.primary?.cpu)?.percent ?? m.cpu?.percent;
+}
+function v2CpuTemp(m: Record<string, any>): number | undefined {
+  return pickPrimaryEntry<any>(m.cpus, m.primary?.cpu)?.temperature ?? m.cpu?.temperature;
+}
+function v2DiskPercent(m: Record<string, any>): number | undefined {
+  return pickPrimaryEntry<any>(m.disks, m.primary?.disk)?.percent ?? m.disk?.percent;
+}
+function v2GpuPercent(m: Record<string, any>): number | undefined {
+  const v2 = pickPrimaryEntry<any>(m.gpus, m.primary?.gpu);
+  return v2?.usagePercent ?? m.gpu?.usage_percent;
+}
+function v2GpuTemp(m: Record<string, any>): number | undefined {
+  return pickPrimaryEntry<any>(m.gpus, m.primary?.gpu)?.temperature ?? m.gpu?.temperature;
+}
+function v2Latency(m: Record<string, any>): number | undefined {
+  return m.network?.latencyMs ?? m.network?.latency_ms;
+}
+function v2PacketLoss(m: Record<string, any>): number | undefined {
+  return m.network?.packetLossPct ?? m.network?.packet_loss_pct;
+}
+
 /** Metric name → path into the metrics object from the machine document */
 const METRIC_PATHS: Record<string, (m: Record<string, any>) => number | undefined> = {
-  cpu_percent:        (m) => m.cpu?.percent,
+  cpu_percent:        v2CpuPercent,
   memory_percent:     (m) => m.memory?.percent,
-  disk_percent:       (m) => m.disk?.percent,
-  gpu_percent:        (m) => m.gpu?.usage_percent,
-  cpu_temp:           (m) => m.cpu?.temperature,
-  gpu_temp:           (m) => m.gpu?.temperature,
-  network_latency:    (m) => m.network?.latency_ms,
-  network_packet_loss:(m) => m.network?.packet_loss_pct,
+  disk_percent:       v2DiskPercent,
+  gpu_percent:        v2GpuPercent,
+  cpu_temp:           v2CpuTemp,
+  gpu_temp:           v2GpuTemp,
+  network_latency:    v2Latency,
+  network_packet_loss:v2PacketLoss,
 };
 
 /**
@@ -75,6 +124,25 @@ interface NicSample {
   ru: number;  // RX utilization % of link speed
 }
 
+interface DiskSample {
+  i: string;   // disk id (e.g. "C:", "L:")
+  p: number;   // usage percent
+}
+
+interface GpuSample {
+  i: string;   // gpu id (e.g. "GPU 0")
+  u: number;   // usage percent
+  t?: number;  // temperature (optional)
+}
+
+interface DiskIOSample {
+  i: string;   // volume id (e.g. "C:", "L:")
+  rb: number;  // read bytes/sec
+  wb: number;  // write bytes/sec
+  bu: number;  // busy %
+  mb: number;  // max bytes/sec — denominator for read/write %-of-bandwidth chart
+}
+
 interface MetricsSample {
   t: number;   // timestamp (unix seconds)
   c: number;   // cpu percent
@@ -84,13 +152,16 @@ interface MetricsSample {
   ct?: number; // cpu temperature (optional)
   gt?: number; // gpu temperature (optional)
   n?: NicSample[]; // per-NIC network metrics (optional)
+  ds?: DiskSample[]; // per-disk usage (optional)
+  gs?: GpuSample[]; // per-GPU usage (optional)
+  dios?: DiskIOSample[]; // per-volume disk IO (optional)
   nl?: number; // network latency ms (gateway ping, optional)
   np?: number; // network packet loss % (gateway ping, optional)
 }
 
 /**
  * Triggered when a machine document is written (created or updated).
- * Extracts metrics and appends to the daily history bucket.
+ * Extracts metrics and appends to the hourly history bucket.
  */
 export const onMetricsWrite = onDocumentWritten(
   'sites/{siteId}/machines/{machineId}',
@@ -114,9 +185,11 @@ export const onMetricsWrite = onDocumentWritten(
     // Get current timestamp
     const now = Math.floor(Date.now() / 1000);
 
-    // Get today's date in UTC for bucket ID
-    const today = new Date();
-    const bucketId = today.toISOString().split('T')[0]; // YYYY-MM-DD
+    // Get current UTC hour for bucket ID
+    const sampleDate = new Date(now * 1000);
+    const bucketId = hourlyBucketId(sampleDate);
+    const previousBucketId = hourlyBucketId(new Date(sampleDate.getTime() - 60 * 60 * 1000));
+    const legacyDayBucketId = dailyBucketId(sampleDate);
 
     // Path to history document
     const historyRef = db
@@ -127,59 +200,87 @@ export const onMetricsWrite = onDocumentWritten(
       .collection('metrics_history')
       .doc(bucketId);
 
-    // Check if we should rate limit (avoid duplicate samples within 55 seconds)
+    // Check if we should rate limit (avoid duplicate samples within 55 seconds).
+    // For the first write into a new hour bucket, also consult the previous hour
+    // and legacy daily bucket metadata so hour-boundary/deploy-boundary writes
+    // don't accidentally bypass the old daily-doc rate limit.
     try {
-      const historyDoc = await historyRef.get();
-      if (historyDoc.exists) {
-        const meta = historyDoc.data()?.meta;
-        if (meta?.lastSampleTime) {
-          const lastSampleTime = meta.lastSampleTime;
-          if (now - lastSampleTime < 55) {
-            // Too soon since last sample, skip
-            console.log(`Rate limiting: last sample was ${now - lastSampleTime}s ago for ${machineId}`);
-            return;
-          }
-        }
+      const lastSampleTime = await readLastSampleTime(
+        historyRef,
+        db
+          .collection('sites')
+          .doc(siteId)
+          .collection('machines')
+          .doc(machineId)
+          .collection('metrics_history')
+          .doc(previousBucketId),
+        db
+          .collection('sites')
+          .doc(siteId)
+          .collection('machines')
+          .doc(machineId)
+          .collection('metrics_history')
+          .doc(legacyDayBucketId),
+      );
+
+      if (lastSampleTime && now - lastSampleTime < 55) {
+        // Too soon since last sample, skip
+        console.log(`Rate limiting: last sample was ${now - lastSampleTime}s ago for ${machineId}`);
+        return;
       }
     } catch (err) {
       // If we can't check, proceed anyway
       console.warn(`Could not check rate limit for ${machineId}:`, err);
     }
 
-    // Build compact sample object
+    // Build compact sample object. Read v2 (per-device maps + primary) with
+    // fallback to v1 singular fields so in-flight docs still produce samples
+    // during the rollout window.
+    const cpuPct = v2CpuPercent(metrics);
+    const memPct = metrics.memory?.percent;
+    const diskPct = v2DiskPercent(metrics);
     const sample: MetricsSample = {
       t: now,
-      c: round(metrics.cpu?.percent ?? 0),
-      m: round(metrics.memory?.percent ?? 0),
-      d: round(metrics.disk?.percent ?? 0),
+      c: round(cpuPct ?? 0),
+      m: round(memPct ?? 0),
+      d: round(diskPct ?? 0),
     };
 
-    // Add optional GPU percent
-    if (metrics.gpu?.usage_percent !== undefined && metrics.gpu.usage_percent !== null) {
-      sample.g = round(metrics.gpu.usage_percent);
-    }
+    const gpuPct = v2GpuPercent(metrics);
+    if (gpuPct !== undefined && gpuPct !== null) sample.g = round(gpuPct);
 
-    // Add optional temperatures
-    if (metrics.cpu?.temperature !== undefined && metrics.cpu.temperature !== null) {
-      sample.ct = round(metrics.cpu.temperature);
-    }
-    if (metrics.gpu?.temperature !== undefined && metrics.gpu.temperature !== null) {
-      sample.gt = round(metrics.gpu.temperature);
-    }
+    const cpuTemp = v2CpuTemp(metrics);
+    if (cpuTemp !== undefined && cpuTemp !== null) sample.ct = round(cpuTemp);
 
-    // Add network quality (gateway ping)
-    if (metrics.network?.latency_ms !== undefined && metrics.network.latency_ms !== null) {
-      sample.nl = round(metrics.network.latency_ms);
-    }
-    if (metrics.network?.packet_loss_pct !== undefined && metrics.network.packet_loss_pct !== null) {
-      sample.np = round(metrics.network.packet_loss_pct);
-    }
+    const gpuTemp = v2GpuTemp(metrics);
+    if (gpuTemp !== undefined && gpuTemp !== null) sample.gt = round(gpuTemp);
 
-    // Add per-NIC network metrics
-    const interfaces = metrics.network?.interfaces;
-    if (interfaces && typeof interfaces === 'object') {
-      const nicEntries: NicSample[] = [];
-      for (const [name, data] of Object.entries(interfaces)) {
+    const latency = v2Latency(metrics);
+    if (latency !== undefined && latency !== null) sample.nl = round(latency);
+
+    const packetLoss = v2PacketLoss(metrics);
+    if (packetLoss !== undefined && packetLoss !== null) sample.np = round(packetLoss);
+
+    // Per-NIC network metrics. v2 doc: metrics.nics[id] = { txBps, rxBps, txUtil, rxUtil }.
+    // v1 fallback: metrics.network.interfaces[id] = { tx_bps, rx_bps, tx_util, rx_util }.
+    const v2Nics = metrics.nics;
+    const v1Nics = metrics.network?.interfaces;
+    const nicEntries: NicSample[] = [];
+    if (v2Nics && typeof v2Nics === 'object') {
+      for (const [name, data] of Object.entries(v2Nics)) {
+        const nic = data as Record<string, number>;
+        if ((nic.txBps ?? 0) > 0 || (nic.rxBps ?? 0) > 0) {
+          nicEntries.push({
+            i: name,
+            tx: Math.round(nic.txBps ?? 0),
+            rx: Math.round(nic.rxBps ?? 0),
+            tu: round(nic.txUtil ?? 0),
+            ru: round(nic.rxUtil ?? 0),
+          });
+        }
+      }
+    } else if (v1Nics && typeof v1Nics === 'object') {
+      for (const [name, data] of Object.entries(v1Nics)) {
         const nic = data as Record<string, number>;
         if ((nic.tx_bps ?? 0) > 0 || (nic.rx_bps ?? 0) > 0) {
           nicEntries.push({
@@ -191,10 +292,56 @@ export const onMetricsWrite = onDocumentWritten(
           });
         }
       }
-      if (nicEntries.length > 0) {
-        sample.n = nicEntries;
+    }
+    if (nicEntries.length > 0) sample.n = nicEntries;
+
+    // Per-disk usage. v2 doc: metrics.disks[id] = { percent, usedGb }.
+    const v2Disks = metrics.disks;
+    const diskEntries: DiskSample[] = [];
+    if (v2Disks && typeof v2Disks === 'object') {
+      for (const [id, data] of Object.entries(v2Disks)) {
+        const disk = data as Record<string, number>;
+        diskEntries.push({
+          i: id,
+          p: round(disk.percent ?? 0),
+        });
       }
     }
+    if (diskEntries.length > 0) sample.ds = diskEntries;
+
+    // Per-GPU usage. v2 doc: metrics.gpus[id] = { name?, usagePercent, temperature?, vramUsedGb }.
+    // Use the human-readable `name` for the sample label, falling back to the UUID key.
+    const v2Gpus = metrics.gpus;
+    const gpuEntries: GpuSample[] = [];
+    if (v2Gpus && typeof v2Gpus === 'object') {
+      for (const [id, data] of Object.entries(v2Gpus)) {
+        const gpu = data as Record<string, any>;
+        const entry: GpuSample = {
+          i: (typeof gpu.name === 'string' && gpu.name) ? gpu.name : id,
+          u: round(gpu.usagePercent ?? 0),
+        };
+        if (gpu.temperature != null) entry.t = round(gpu.temperature);
+        gpuEntries.push(entry);
+      }
+    }
+    if (gpuEntries.length > 0) sample.gs = gpuEntries;
+
+    // Per-volume disk IO. v2 doc: metrics.diskio[id] = { readBps, writeBps, readIops, writeIops, busyPct, maxBps }
+    const v2DiskIO = metrics.diskio;
+    const diskIOEntries: DiskIOSample[] = [];
+    if (v2DiskIO && typeof v2DiskIO === 'object' && !Array.isArray(v2DiskIO)) {
+      for (const [id, data] of Object.entries(v2DiskIO)) {
+        const vol = data as Record<string, number>;
+        const rb = Number.isFinite(vol.readBps) ? Math.round(vol.readBps as number) : 0;
+        const wb = Number.isFinite(vol.writeBps) ? Math.round(vol.writeBps as number) : 0;
+        const bu = Number.isFinite(vol.busyPct) ? round(vol.busyPct as number) : 0;
+        const mb = Number.isFinite(vol.maxBps) ? Math.round(vol.maxBps as number) : 0;
+        if (rb > 0 || wb > 0 || bu > 0) {
+          diskIOEntries.push({ i: id, rb, wb, bu, mb });
+        }
+      }
+    }
+    if (diskIOEntries.length > 0) sample.dios = diskIOEntries;
 
     // Use arrayUnion for atomic append without read-modify-write
     try {
@@ -230,6 +377,37 @@ export const onMetricsWrite = onDocumentWritten(
  */
 function round(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function hourlyBucketId(date: Date): string {
+  return date.toISOString().slice(0, 13).replace('T', '-'); // YYYY-MM-DD-HH
+}
+
+function dailyBucketId(date: Date): string {
+  return date.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+async function readLastSampleTime(
+  currentHourRef: FirebaseFirestore.DocumentReference,
+  previousHourRef: FirebaseFirestore.DocumentReference,
+  legacyDayRef: FirebaseFirestore.DocumentReference,
+): Promise<number | null> {
+  const currentHourDoc = await currentHourRef.get();
+  const currentLastSample = currentHourDoc.data()?.meta?.lastSampleTime;
+  if (typeof currentLastSample === 'number') return currentLastSample;
+
+  const [previousHourDoc, legacyDayDoc] = await Promise.all([
+    previousHourRef.get(),
+    legacyDayRef.get(),
+  ]);
+
+  const previousLastSample = previousHourDoc.data()?.meta?.lastSampleTime;
+  const legacyLastSample = legacyDayDoc.data()?.meta?.lastSampleTime;
+  const candidates = [previousLastSample, legacyLastSample].filter(
+    (value): value is number => typeof value === 'number',
+  );
+
+  return candidates.length > 0 ? Math.max(...candidates) : null;
 }
 
 /* ------------------------------------------------------------------ */

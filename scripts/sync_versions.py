@@ -75,7 +75,7 @@ def sync_versions(new_version: str):
 
     print('\n✨ All versions synced!\n')
     print('⚠️  Remember to:')
-    print('   1. Update CHANGELOG.md with release notes')
+    print('   1. Update docs/changelog.md with release notes')
     print(f'   2. Commit changes: git commit -am "chore: Bump version to {new_version}"')
     print(f'   3. Create tag: git tag v{new_version}')
     print('   4. Push with tags: git push origin main --tags\n')

@@ -8,10 +8,16 @@
  * Usage: npx tsx scripts/validate-openapi.ts
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
-import { execSync } from 'child_process';
 import yaml from 'js-yaml';
+import {
+  getOpenApiOperations,
+  operationHasAuthScopeNote,
+  operationHasExplicitSecurity,
+  operationHasReferenceExample,
+  renderOpenApiReference,
+} from '../lib/openapiReference';
 
 const ROOT = join(__dirname, '..');
 const SPEC_PATH = join(ROOT, 'openapi.yaml');
@@ -31,38 +37,45 @@ const INTERNAL_ROUTES = new Set([
   '/api/passkeys/{credentialId}',
   '/api/agent/auth/exchange',
   '/api/agent/auth/refresh',
+  '/api/agent/auth/device-code',
+  '/api/agent/auth/device-code/authorize',
+  '/api/agent/auth/device-code/poll',
   '/api/agent/alert',
   '/api/agent/screenshot',
   '/api/agent/generate-installer',
+  '/api/alerts/trigger',
+  '/api/bug-report',
   '/api/cortex/autonomous',
+  '/api/cortex/categorize',
   '/api/cortex/escalation',
   '/api/cortex/provision-key',
+  '/api/cron/display-alerts',
+  '/api/cron/status-ping',
   '/api/settings/llm-key',
+  '/api/settings/llm-models',
   '/api/settings/site-llm-key',
   '/api/cron/health-check',
+  '/api/cron/process-alerts',
+  '/api/legal/dmca',
   '/api/setup/generate-token',
   '/api/test-email',
   '/api/unsubscribe',
+  '/api/webhooks/test',
   '/api/webhooks/user-created',
-  '/api/admin/events/simulate',
-  '/api/admin/tokens/list',
-  '/api/admin/tokens/revoke',
-  '/api/admin/installer/upload',
-  '/api/admin/fetch-td-version',
   '/api/openapi',
 ]);
 
-function loadSpec(): Record<string, any> {
+function loadSpec(): Record<string, unknown> {
   if (!existsSync(SPEC_PATH)) {
     console.error('ERROR: openapi.yaml not found at', SPEC_PATH);
     process.exit(1);
   }
-  return yaml.load(readFileSync(SPEC_PATH, 'utf-8')) as Record<string, any>;
+  return yaml.load(readFileSync(SPEC_PATH, 'utf-8')) as Record<string, unknown>;
 }
 
 /**
- * Convert an OpenAPI path like /api/admin/processes/{processId}
- * to a filesystem path like app/api/admin/processes/[processId]/route.ts
+ * Convert an OpenAPI path like /api/sites/{siteId}/deployments/{deploymentId}
+ * to a filesystem path like app/api/sites/[siteId]/deployments/[deploymentId]/route.ts
  */
 function specPathToRoutePath(specPath: string): string {
   const segments = specPath
@@ -76,11 +89,7 @@ function specPathToRoutePath(specPath: string): string {
  * Find all route.ts files under app/api/ and convert them to API paths.
  */
 function discoverRoutes(): string[] {
-  const result = execSync(`find "${API_DIR}" -name "route.ts" -type f`, { encoding: 'utf-8' });
-  return result
-    .trim()
-    .split('\n')
-    .filter(Boolean)
+  return findRouteFiles(API_DIR)
     .map((filePath) => {
       const rel = relative(ROOT, filePath)
         .replace(/\\/g, '/')
@@ -91,42 +100,162 @@ function discoverRoutes(): string[] {
     });
 }
 
+function findRouteFiles(dir: string): string[] {
+  const files: string[] = [];
+
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...findRouteFiles(fullPath));
+      continue;
+    }
+    if (entry.isFile() && entry.name === 'route.ts') {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
+
+/**
+ * Roost (project distribution v2) routes — subject to strict drift gating.
+ * Any route file under these prefixes must be documented in openapi.yaml.
+ */
+function isRoostRoute(routePath: string): boolean {
+  return (
+    routePath.startsWith('/api/chunks/') ||
+    routePath.startsWith('/api/roosts/')
+  );
+}
+
+/**
+ * Any operation on a path object that carries `x-stub: true` marks the
+ * path as documentation-first — the route file is expected NOT to exist
+ * yet (public-api wave 1: openapi ships ahead of implementation).
+ *
+ * If any method on a path is stubbed we treat the whole path as stubbed;
+ * mixed live/stub methods on a single path are not supported because Next
+ * routes collapse methods into a single `route.ts`.
+ */
+function pathIsStub(pathItem: unknown): boolean {
+  if (!pathItem || typeof pathItem !== 'object') return false;
+  const obj = pathItem as Record<string, unknown>;
+  if (obj['x-stub'] === true) return true;
+  for (const method of ['get', 'post', 'put', 'patch', 'delete', 'head', 'options']) {
+    const op = obj[method];
+    if (op && typeof op === 'object' && (op as Record<string, unknown>)['x-stub'] === true) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function routeFileExportsMethod(routeFile: string, method: string): boolean {
+  const source = readFileSync(routeFile, 'utf-8');
+  const upperMethod = method.toUpperCase();
+  return new RegExp(
+    `export\\s+(?:async\\s+)?function\\s+${upperMethod}\\b|export\\s+const\\s+${upperMethod}\\b|export\\s*\\{[^}]*\\b${upperMethod}\\b[^}]*\\}`,
+  ).test(source);
+}
+
 function main() {
   const spec = loadSpec();
-  const specPaths = Object.keys(spec.paths || {});
+  const paths = (spec.paths || {}) as Record<string, unknown>;
+  const specPaths = Object.keys(paths);
   const routePaths = discoverRoutes();
+  const renderedSpec = renderOpenApiReference(spec);
+  const renderedOperations = getOpenApiOperations(renderedSpec);
 
   let errors = 0;
   let warnings = 0;
+  let stubs = 0;
 
   console.log(`\nValidating ${specPaths.length} documented paths against ${routePaths.length} route files...\n`);
 
-  // Check 1: Every documented path should have a route file
+  // Check 1: Every documented path should have a route file, unless the
+  // path (or any operation on it) is marked `x-stub: true` to indicate
+  // docs-before-implementation.
   for (const specPath of specPaths) {
     const routeFile = specPathToRoutePath(specPath);
     if (!existsSync(routeFile)) {
+      if (pathIsStub(paths[specPath])) {
+        stubs++;
+        continue;
+      }
       console.error(`ERROR: Documented path ${specPath} has no route file`);
       console.error(`       Expected: ${relative(ROOT, routeFile)}`);
       errors++;
     }
   }
 
-  // Check 2: Warn about undocumented public routes
+  // Check 2: Warn about undocumented public routes. Roost routes
+  // (/api/chunks/*, /api/roosts/*) are strict — missing docs are an
+  // error, not a warning. This is the wave 1.12 drift gate: the roost
+  // contract is the whole point of the spec, so silent drift there must
+  // break CI.
   const specPathSet = new Set(specPaths);
   for (const routePath of routePaths) {
-    if (!specPathSet.has(routePath) && !INTERNAL_ROUTES.has(routePath)) {
+    if (specPathSet.has(routePath) || INTERNAL_ROUTES.has(routePath)) {
+      continue;
+    }
+    if (isRoostRoute(routePath)) {
+      console.error(
+        `ERROR: Roost route ${routePath} is not documented in openapi.yaml`,
+      );
+      errors++;
+    } else {
       console.warn(`WARN: Route ${routePath} exists but is not documented`);
       warnings++;
     }
   }
 
+  // Check 3: Documented methods should also exist on the matched route
+  // module. Next.js collapses HTTP methods into one route.ts file, so path
+  // presence alone can miss a stale method in the OpenAPI contract.
+  for (const { path, method } of getOpenApiOperations(spec)) {
+    const pathItem = paths[path];
+    const routeFile = specPathToRoutePath(path);
+    if (!existsSync(routeFile) || pathIsStub(pathItem)) continue;
+    if (!routeFileExportsMethod(routeFile, method)) {
+      console.error(`ERROR: ${method.toUpperCase()} ${path} is documented but not exported by ${relative(ROOT, routeFile)}`);
+      errors++;
+    }
+  }
+
+  // Check 4: Every source operation should declare its auth model
+  // explicitly. Scalar renders operation-level security most clearly, so
+  // protected endpoints should not rely on the global security fallback.
+  for (const { path, method, operation } of getOpenApiOperations(spec)) {
+    if (!operationHasExplicitSecurity(operation)) {
+      console.error(`ERROR: ${method.toUpperCase()} ${path} is missing operation-level security`);
+      errors++;
+    }
+  }
+
+  // Check 5: Validate the actual reference input served by /api/openapi.
+  // The renderer enriches the YAML with examples and consistent auth/scope
+  // notes, and this gate prevents the interactive docs from regressing to
+  // a shape-only shell.
+  for (const { path, method, operation } of renderedOperations) {
+    if (!operationHasReferenceExample(operation)) {
+      console.error(`ERROR: ${method.toUpperCase()} ${path} is missing rendered examples`);
+      errors++;
+    }
+    if (!operationHasAuthScopeNote(operation)) {
+      console.error(`ERROR: ${method.toUpperCase()} ${path} is missing rendered auth/scope notes`);
+      errors++;
+    }
+  }
+
   // Summary
   console.log('');
-  if (errors === 0 && warnings === 0) {
+  if (errors === 0 && warnings === 0 && stubs === 0) {
     console.log('All documented paths match route files. No undocumented public routes found.');
+    console.log(`Rendered API reference includes examples and auth/scope notes for ${renderedOperations.length} operations.`);
   } else {
-    if (errors > 0) console.error(`${errors} error(s) — documented paths with no route file`);
+    if (errors > 0) console.error(`${errors} error(s) - OpenAPI route, auth, example, or scope validation`);
     if (warnings > 0) console.warn(`${warnings} warning(s) — undocumented routes`);
+    if (stubs > 0) console.log(`${stubs} stub(s) — docs-first paths awaiting implementation (x-stub: true)`);
   }
 
   process.exit(errors > 0 ? 1 : 0);

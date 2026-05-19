@@ -93,7 +93,7 @@ export function ChatInput({
   );
 
   return (
-    <div className="border-t border-border bg-background px-4 py-3">
+    <div className="border-t border-border px-4 py-3">
       {/* Lightbox overlay */}
       {expandedImage && (
         <div
@@ -142,6 +142,7 @@ export function ChatInput({
                   <button
                     type="button"
                     onClick={() => onRemoveImage(i)}
+                    aria-label="remove image"
                     className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-600 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                   >
                     <X className="h-2.5 w-2.5 text-white" />
@@ -171,23 +172,24 @@ export function ChatInput({
               type="button"
               onClick={onStop}
               size="icon"
-              variant="outline"
-              className="!h-auto w-10 rounded-lg border-border bg-secondary hover:bg-accent flex-shrink-0"
+              aria-label="stop response"
+              className="!h-auto w-10 rounded-lg bg-accent-cyan hover:bg-accent-cyan-hover flex-shrink-0"
             >
-              <Square className="h-4 w-4 text-foreground" />
+              <Square className="h-4 w-4 text-gray-900 fill-gray-900" />
             </Button>
           ) : (
             <Button
               type="submit"
               size="icon"
               disabled={!canSend}
+              aria-label="send message"
               className="!h-auto w-10 rounded-lg bg-accent-cyan hover:bg-accent-cyan-hover disabled:opacity-50 flex-shrink-0"
             >
               <Send className="h-4 w-4 text-gray-900" />
             </Button>
           )}
         </div>
-        <p className="mt-1.5 text-[10px] text-muted-foreground/60 text-center">
+        <p className="mt-1.5 text-[11px] text-muted-foreground text-center">
           responses may be inaccurate. commands run directly on the selected machine.
         </p>
       </form>

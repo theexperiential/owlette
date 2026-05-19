@@ -66,7 +66,7 @@ Owlette-Installer-v2.0.0.exe /VERYSILENT /SERVER=prod
    - Prepares for service installation
 
 3. **File Extraction**
-   - Copies Python runtime, Owlette Agent code, tools, and configurations to `C:\Owlette`
+   - Copies Python runtime, Owlette Agent code, tools, and configurations to `C:\ProgramData\Owlette`
 
 4. **Site Configuration (OAuth)**
    - Opens browser to specified environment (dev/prod)
@@ -132,8 +132,8 @@ sc query OwletteService
 View logs:
 ```bash
 # Service logs
-type C:\Owlette\agent\logs\service_stdout.log
-type C:\Owlette\agent\logs\service_stderr.log
+type C:\ProgramData\Owlette\agent\logs\service_stdout.log
+type C:\ProgramData\Owlette\agent\logs\service_stderr.log
 ```
 
 ## Uninstallation
@@ -142,7 +142,7 @@ Use Windows Settings → Apps → Owlette → Uninstall
 
 Or from Command Prompt:
 ```bash
-C:\Owlette\unins000.exe
+C:\ProgramData\Owlette\unins000.exe
 ```
 
 The uninstaller will:
@@ -169,7 +169,7 @@ If browser doesn't open automatically during setup:
 
 ### Service Won't Start
 
-Check logs at `C:\Owlette\agent\logs\` for error messages.
+Check logs at `C:\ProgramData\Owlette\agent\logs\` for error messages.
 
 Common issues:
 - Missing Firebase credentials (non-fatal, service runs in local-only mode)
@@ -180,7 +180,7 @@ Common issues:
 
 ### Custom Installation Directory
 
-The installer uses `C:\Owlette` by default. To change:
+The installer uses `C:\ProgramData\Owlette` by default. To change:
 ```bash
 Owlette-Installer-v2.0.0.exe /DIR="D:\CustomPath\Owlette"
 ```
@@ -200,7 +200,7 @@ During development, you can test both environments:
 Owlette-Installer-v2.0.0.exe /SERVER=dev
 
 # Uninstall
-C:\Owlette\unins000.exe
+C:\ProgramData\Owlette\unins000.exe
 
 # Test prod environment
 Owlette-Installer-v2.0.0.exe /SERVER=prod

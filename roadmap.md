@@ -42,5 +42,5 @@ Roughly prioritized. Not a commitment — just a living list of what's next.
 
 ## billing
 
-- **Stripe integration** — $10/machine/month post-beta. Metered billing based on active machine count.
-- **Usage dashboard** — show machine count and estimated bill in account settings.
+- **Stripe integration** — two tiers post-beta: core at $10/machine/month (single site, no API), pro at $50/machine/month with a 3-machine minimum (unlimited sites, public API + CLI + SDK + webhooks, roost with 1 TB included storage per site, $0.05/GB overage). Metered billing keyed off active machine count + per-tier flag on each site doc. See `dev/active/billing-system/plan.md` for the implementation track.
+- **Usage dashboard** — show machine count, current tier, projected bill, and roost storage usage vs cap in account settings.

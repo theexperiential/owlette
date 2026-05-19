@@ -10,13 +10,14 @@
  */
 
 import { readFileSync, existsSync } from 'fs'
-import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
+import path, { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { execSync } from 'child_process'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SESSION_FILE = join(__dirname, '..', 'session-edits.json')
 const ENV_FILE = join(__dirname, '..', '.env.local')
+const agentDir = path.resolve(process.env.CLAUDE_PROJECT_DIR || path.resolve(__dirname, '..', '..'), 'agent')
 
 // Read stdin
 let input = ''
@@ -65,7 +66,7 @@ try {
   const message = [
     `Agent files were pushed to ${branch}. Build the installer and upload to ${envLabel}:`,
     '',
-    `1. Build: powershell -Command "Start-Process cmd -ArgumentList '/c cd /D C:\\Users\\admin\\Documents\\Git\\Owlette\\agent && build_installer_full.bat' -Verb RunAs -Wait"`,
+    `1. Build: powershell -Command "Start-Process cmd -ArgumentList '/c cd /D ${agentDir} && build_installer_full.bat' -Verb RunAs -Wait"`,
     `2. Upload via API (3-step process) to ${apiUrl}:`,
     `   - POST /api/admin/installer/upload with version "${version}"`,
     `   - PUT the .exe to the signed URL`,

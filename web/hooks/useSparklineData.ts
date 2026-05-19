@@ -44,15 +44,19 @@ export function useSparklineData(
   machineId: string | null,
   metricType: SparklineMetricType
 ): UseSparklineDataResult {
-  const [data, setData] = useState<SparklineDataPoint[]>([]);
-  const [loading, setLoading] = useState(true);
+  // loadedKey pins data to the (siteId, machineId, metricType) it was loaded
+  // for, so `loading` can be derived at render without a sync setState on key
+  // change. Parents that haven't resolved IDs yet stay in loading naturally
+  // because loadedKey is null until the first snapshot lands.
+  const [state, setState] = useState<{
+    data: SparklineDataPoint[];
+    loadedKey: string | null;
+  }>({ data: [], loadedKey: null });
+
+  const currentKey = db && siteId && machineId ? `${siteId}/${machineId}/${metricType}` : null;
 
   useEffect(() => {
-    if (!db || !siteId || !machineId) {
-      setLoading(false);
-      setData([]);
-      return;
-    }
+    if (!currentKey || !db || !siteId || !machineId) return;
 
     // Get today's bucket ID
     const bucketId = new Date().toISOString().split('T')[0];
@@ -72,8 +76,7 @@ export function useSparklineData(
       docRef,
       (snapshot) => {
         if (!snapshot.exists()) {
-          setData([]);
-          setLoading(false);
+          setState({ data: [], loadedKey: currentKey });
           return;
         }
 
@@ -92,21 +95,27 @@ export function useSparklineData(
           }))
           .filter((s: SparklineDataPoint) => s.v !== undefined && s.v !== null);
 
-        setData(recentSamples);
-        setLoading(false);
+        setState({ data: recentSamples, loadedKey: currentKey });
       },
       (error) => {
         console.error('Error listening to sparkline data:', error);
-        setData([]);
-        setLoading(false);
+        setState({ data: [], loadedKey: currentKey });
       }
     );
 
     return () => unsubscribe();
-  }, [siteId, machineId, metricType]);
+  }, [currentKey, siteId, machineId, metricType]);
 
+  const matched = currentKey !== null && state.loadedKey === currentKey;
+  const data = matched ? state.data : EMPTY_SPARKLINE;
+  // loading=true whenever db is configured but we haven't loaded current key —
+  // includes the "IDs haven't resolved" state so the sparkline doesn't flash.
+  const loading = !!db && !matched;
   return { data, loading };
 }
+
+/** Stable empty array so consumers' memo/effect deps don't churn. */
+const EMPTY_SPARKLINE: SparklineDataPoint[] = [];
 
 /**
  * Hook to get all sparkline data for a machine in one call
@@ -124,29 +133,28 @@ interface AllSparklineState {
   loading: boolean;
 }
 
-const EMPTY_SPARKLINE_STATE: AllSparklineState = {
-  cpu: [], memory: [], disk: [], gpu: [], loading: true,
-};
-
 export function useAllSparklineData(
   siteId: string | null,
   machineId: string | null
 ): AllSparklineState {
   const demo = useDemoContext();
-  const [state, setState] = useState<AllSparklineState>(
-    demo && machineId ? { ...demo.getSparklineData(machineId) } : EMPTY_SPARKLINE_STATE
-  );
+  // Track the (siteId, machineId) the snapshot was loaded for so we can derive
+  // loading at render without a sync setState on key change.
+  const [state, setState] = useState<{
+    cpu: SparklineDataPoint[];
+    memory: SparklineDataPoint[];
+    disk: SparklineDataPoint[];
+    gpu: SparklineDataPoint[];
+    loadedKey: string | null;
+  }>({ cpu: [], memory: [], disk: [], gpu: [], loadedKey: null });
+
+  const currentKey = !demo && db && siteId && machineId ? `${siteId}/${machineId}` : null;
 
   useEffect(() => {
-    if (demo && machineId) {
-      setState({ ...demo.getSparklineData(machineId) });
-      return;
-    }
-
-    if (!db || !siteId || !machineId) {
-      setState(prev => prev.loading ? { ...prev, loading: false } : prev);
-      return;
-    }
+    // Demo mode is handled entirely at render (see below) — the synthesized
+    // topology is pure and cheap to recompute, so we don't stuff it into state.
+    if (demo) return;
+    if (!currentKey || !db || !siteId || !machineId) return;
 
     // Get today's bucket ID
     const bucketId = new Date().toISOString().split('T')[0];
@@ -166,7 +174,7 @@ export function useAllSparklineData(
       docRef,
       (snapshot) => {
         if (!snapshot.exists()) {
-          setState({ cpu: [], memory: [], disk: [], gpu: [], loading: false });
+          setState({ cpu: [], memory: [], disk: [], gpu: [], loadedKey: currentKey });
           return;
         }
 
@@ -189,18 +197,31 @@ export function useAllSparklineData(
         }
 
         // Single setState — one re-render instead of five
-        setState({ cpu, memory, disk, gpu, loading: false });
+        setState({ cpu, memory, disk, gpu, loadedKey: currentKey });
       },
       (error) => {
         console.error('Error listening to sparkline data:', error);
-        setState(prev => prev.loading ? { ...prev, loading: false } : prev);
+        // Mark loaded even on error so the spinner clears.
+        setState({ cpu: [], memory: [], disk: [], gpu: [], loadedKey: currentKey });
       }
     );
 
     return () => unsubscribe();
-  }, [siteId, machineId, demo]);
+  }, [currentKey, siteId, machineId, demo]);
 
-  return state;
+  if (demo && machineId) return { ...demo.getSparklineData(machineId) };
+  // Surface only data that matches the currently-requested key. If db isn't
+  // configured, loading stays false — there's nothing to wait for. When IDs
+  // haven't resolved yet (currentKey is null), stay in loading so the card
+  // doesn't flash a "no data" state before the real subscription attaches.
+  const matched = currentKey !== null && state.loadedKey === currentKey;
+  return {
+    cpu: matched ? state.cpu : EMPTY_SPARKLINE,
+    memory: matched ? state.memory : EMPTY_SPARKLINE,
+    disk: matched ? state.disk : EMPTY_SPARKLINE,
+    gpu: matched ? state.gpu : EMPTY_SPARKLINE,
+    loading: !demo && !!db && !matched,
+  };
 }
 
 /**

@@ -1,15 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import {
-  collection,
-  doc,
-  deleteDoc,
-  getDocs,
-  query,
-  where,
-  writeBatch,
-} from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 export function useMachineOperations(siteId: string) {
@@ -40,49 +31,32 @@ export function useMachineOperations(siteId: string) {
     setError(null);
 
     try {
-      // Use batch for atomic operations where possible
-      const batch = writeBatch(db);
-
-      // 1. Delete main machine document
-      const machineRef = doc(db, 'sites', siteId, 'machines', machineId);
-      batch.delete(machineRef);
-
-      // 2. Delete machine config
-      const configRef = doc(db, 'config', siteId, 'machines', machineId);
-      batch.delete(configRef);
-
-      // Commit the batch (machine and config)
-      await batch.commit();
-
-      // 3. Delete command subcollections (these need to be deleted separately)
-      // Note: Firestore doesn't auto-delete subcollections, we must iterate
-
-      // Delete pending commands
-      try {
-        const pendingCommandsRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-        await deleteDoc(pendingCommandsRef);
-      } catch (err) {
-        // Pending commands doc might not exist, that's okay
-        console.warn('No pending commands to delete:', err);
+      const response = await fetch(
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'Idempotency-Key':
+              'machine-remove-' +
+              siteId +
+              '-' +
+              machineId +
+              '-' +
+              Date.now() +
+              '-' +
+              Math.random().toString(36).slice(2),
+          },
+        },
+      );
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'Failed to remove machine'));
       }
-
-      // Delete completed commands
-      try {
-        const completedCommandsRef = doc(db, 'sites', siteId, 'machines', machineId, 'commands', 'completed');
-        await deleteDoc(completedCommandsRef);
-      } catch (err) {
-        // Completed commands doc might not exist, that's okay
-        console.warn('No completed commands to delete:', err);
-      }
-
-      // 4. Note: We do NOT automatically update deployment targets
-      // This is intentional - deployments should complete or fail for removed machines
-      // The checkMachineHasActiveDeployment function prevents removal if deployments are active
 
       console.log(`Successfully removed machine ${machineId} from site ${siteId}`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('Error removing machine:', err);
-      setError(err.message || 'Failed to remove machine');
+      setError(message || 'Failed to remove machine');
       throw err;
     } finally {
       setRemoving(false);
@@ -94,4 +68,13 @@ export function useMachineOperations(siteId: string) {
     removing,
     error,
   };
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }

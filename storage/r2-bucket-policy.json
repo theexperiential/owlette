@@ -1,0 +1,90 @@
+{
+  "$schema": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucket-policies.html",
+  "_comment": [
+    "Cloudflare R2 bucket policy for roost (project distribution v2).",
+    "R2 uses S3-compatible IAM policy syntax — this file is the source of",
+    "truth, applied via `wrangler r2 bucket cors` or via R2 dashboard.",
+    "",
+    "Per-tenant chunk paths: project-content/{siteId}/{hash[0:2]}/{hash}",
+    "Per-tenant manifest paths: project-manifests/{siteId}/{folderId}/{manifestId}.json",
+    "",
+    "Default-deny posture: anonymous reads return 403, listed buckets are",
+    "not enumerable. All access goes through signed URLs issued by the API",
+    "(/api/chunks/upload-urls, /api/chunks/download-urls). The signed URL",
+    "issuer enforces per-tenant scope based on caller's siteId claim.",
+    "",
+    "Buckets:",
+    "  owlette-prod-content    — production chunks (R2 EU jurisdiction TBD)",
+    "  owlette-prod-manifests  — production manifests",
+    "  owlette-dev-content     — development chunks",
+    "  owlette-dev-manifests   — development manifests",
+    "",
+    "Server-side chunk verification (Cloud Function with FILE_ATTRIBUTE_REPARSE_POINT",
+    "trigger) re-streams uploaded objects, computes SHA-256, and deletes if",
+    "the filename does not match the content hash. See functions/src/chunkVerify.ts."
+  ],
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyAnonymousAccess",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::owlette-prod-content",
+        "arn:aws:s3:::owlette-prod-content/*",
+        "arn:aws:s3:::owlette-prod-manifests",
+        "arn:aws:s3:::owlette-prod-manifests/*",
+        "arn:aws:s3:::owlette-dev-content",
+        "arn:aws:s3:::owlette-dev-content/*",
+        "arn:aws:s3:::owlette-dev-manifests",
+        "arn:aws:s3:::owlette-dev-manifests/*"
+      ],
+      "Condition": {
+        "StringNotEquals": {
+          "aws:PrincipalType": "Service"
+        },
+        "Null": {
+          "aws:SignedRequest": "true"
+        }
+      }
+    },
+    {
+      "Sid": "AllowSignedUrlReadsAndWrites",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:HeadObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::owlette-prod-content/project-content/*",
+        "arn:aws:s3:::owlette-prod-manifests/project-manifests/*",
+        "arn:aws:s3:::owlette-dev-content/project-content/*",
+        "arn:aws:s3:::owlette-dev-manifests/project-manifests/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:SignedRequest": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DenyBucketEnumeration",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": [
+        "s3:ListBucket",
+        "s3:ListAllMyBuckets",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": [
+        "arn:aws:s3:::owlette-prod-content",
+        "arn:aws:s3:::owlette-prod-manifests",
+        "arn:aws:s3:::owlette-dev-content",
+        "arn:aws:s3:::owlette-dev-manifests"
+      ]
+    }
+  ]
+}

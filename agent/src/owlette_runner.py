@@ -57,6 +57,16 @@ def signal_handler(signum, frame):
             logging.error(f"[SIGNAL HANDLER] Failed to log agent_stopped: {e}")
             print(f"[SIGNAL HANDLER] Failed to log agent_stopped: {e}", file=sys.stderr, flush=True)
 
+        # Mark the session as cleanly stopped — but only if no Owlette intent
+        # was already set (e.g. by _handle_reboot_machine moments earlier).
+        # set_intent_if_none is compare-and-set: it will not overwrite an
+        # existing owlette_reboot/owlette_shutdown intent.
+        try:
+            import session_state
+            session_state.set_intent_if_none("external_clean")
+        except Exception as e:
+            logging.debug(f"[SIGNAL HANDLER] session_state.set_intent_if_none failed: {e}")
+
         # Stop Firebase client now
         try:
             _service_instance.firebase_client.stop()
@@ -153,12 +163,51 @@ if __name__ == '__main__':
             self.install_locks = {}
             self.manual_overrides = {}
             self._skip_launch_delay = set()
+            self._last_seen_launch_modes = {}
+            self._last_seen_launch_schedules = {}
             self._cached_site_timezone = None
             self._last_scheduled_reboot_time = None
             self._reboot_schedule_counter = 0
+            self._reboot_attempt_started_monotonic = None
+            self._display_check_counter = 0
+            self._cached_display_hash = None
+            self._cached_display_profile = None
+            # Auto-restore drift-persistence gate (mirror OwletteService.__init__).
+            self._drift_pending_tick_count = 0
+            self._shutting_down = False
             self._live_view_active = False
             self._live_view_stop_time = 0
             self.cortex_pid = None
+            # roost periodic scrub state (mirror OwletteService.__init__).
+            # without these the main-loop scrub hook crashes with AttributeError.
+            self._roost_scrub_check_counter = 0
+            self._roost_scrub_thread = None
+
+            # CommandRouter for roost v2 handlers (mirror OwletteService.__init__).
+            # MUST be set up here too — handle_firebase_command checks
+            # self._command_router.has_handler() before falling through.
+            from command_router import CommandRouter
+            self._command_router = CommandRouter()
+            try:
+                from sync_commands import register_handlers as _register_roost_handlers
+                _register_roost_handlers(self._command_router)
+            except Exception as e:
+                logging.warning(f"Failed to register roost handlers: {e}")
+            try:
+                from machine_commands import register_handlers as _register_machine_handlers
+                _register_machine_handlers(self._command_router)
+            except Exception as e:
+                logging.warning(f"Failed to register machine-api handlers: {e}")
+            try:
+                from process_commands import register_handlers as _register_process_handlers
+                _register_process_handlers(self._command_router)
+            except Exception as e:
+                logging.warning(f"Failed to register process-control handlers: {e}")
+            # Throttle state for _write_service_status() — OwletteService has
+            # a hasattr() guard, but mirror here so the safety net never has
+            # to fire under NSSM.
+            self._last_status_signature = None
+            self._last_status_write_time = 0.0
 
             # Initialize Firebase client
             self.firebase_client = None

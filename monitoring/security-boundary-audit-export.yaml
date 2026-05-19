@@ -1,0 +1,82 @@
+version: 1
+owner: security-boundary
+purpose: scheduled-firestore-managed-export
+
+retention:
+  hot_firestore_days: 90
+  gcs_minimum_days: 2555
+  rationale: "GCS retention is longer than the Firestore hot audit window for incident reconstruction."
+
+collections:
+  # Managed Firestore export selects collection group ids, not arbitrary paths.
+  # This captures sites/{siteId}/audit_log/{entryId}.
+  - id: audit_log
+    source: "sites/*/audit_log"
+  # This captures global/audit_log/entries/{entryId}. Verify there are no
+  # unrelated high-volume collection groups named `entries` before enabling.
+  - id: entries
+    source: "global/audit_log/entries"
+
+environments:
+  dev:
+    project_id: owlette-dev-3838a
+    database: "(default)"
+    location: us-central1
+    schedule: "30 6 * * *"
+    timezone: UTC
+    bucket: "gs://owlette-dev-security-boundary-audit-exports"
+    output_prefix: "firestore/security-boundary-audit/dev/scheduled/{timestamp}"
+    scheduler_job: "firebase-schedule-exportSecurityBoundaryAuditDevDaily-us-central1"
+    function: exportSecurityBoundaryAuditDevDaily
+    service_account: "security-boundary-audit-export@owlette-dev-3838a.iam.gserviceaccount.com"
+  prod:
+    project_id: "<prod-project-id>"
+    database: "(default)"
+    location: us-central1
+    schedule: "30 6 * * *"
+    timezone: UTC
+    bucket: "gs://<prod-security-boundary-audit-export-bucket>"
+    output_prefix: "firestore/security-boundary-audit/prod/scheduled/{timestamp}"
+    scheduler_job: "<prod-firebase-schedule-job>"
+    function: "<prod-scheduled-export-function>"
+    service_account: "security-boundary-audit-export@<prod-project-id>.iam.gserviceaccount.com"
+    required_env:
+      SECURITY_BOUNDARY_AUDIT_EXPORT_BUCKET: "gs://<prod-security-boundary-audit-export-bucket>"
+      SECURITY_BOUNDARY_AUDIT_EXPORT_ENV: prod
+
+firestore_export_request:
+  method: POST
+  url_template: "https://firestore.googleapis.com/v1/projects/{project_id}/databases/{database}:exportDocuments"
+  auth: oauth_service_account
+  body:
+    outputUriPrefix: "{bucket}/{output_prefix}"
+    collectionIds:
+      - audit_log
+      - entries
+
+required_iam_roles:
+  scheduler_service_account:
+    - roles/datastore.importExportAdmin
+    - roles/storage.objectAdmin
+  operator:
+    - roles/cloudscheduler.admin
+    - roles/iam.serviceAccountAdmin
+    - roles/resourcemanager.projectIamAdmin
+    - roles/storage.admin
+
+provisioning_commands:
+  create_bucket: "gcloud storage buckets create {bucket} --project={project_id} --location={location} --uniform-bucket-level-access"
+  set_lifecycle: "gcloud storage buckets update {bucket} --lifecycle-file=monitoring/security-boundary-audit-export-lifecycle.json"
+  create_service_account: "gcloud iam service-accounts create security-boundary-audit-export --project={project_id} --display-name='Security boundary audit export'"
+  grant_firestore_export: "gcloud projects add-iam-policy-binding {project_id} --member=serviceAccount:{service_account} --role=roles/datastore.importExportAdmin"
+  grant_bucket_write: "gcloud storage buckets add-iam-policy-binding {bucket} --member=serviceAccount:{service_account} --role=roles/storage.objectAdmin"
+  deploy_scheduler_wrapper: "firebase deploy --only functions:{function} --project {project_id}"
+
+verification:
+  one_time_export: "gcloud firestore export {bucket}/{output_prefix}/manual-{yyyy}{mm}{dd}-{hh}{min} --project={project_id} --collection-ids=audit_log,entries"
+  list_exports: "gcloud storage ls {bucket}/{output_prefix}/"
+  restore_drill_target: "disposable Firebase project only; never prod"
+
+notes:
+  - "Cloud Scheduler does not expand date tokens in HTTP bodies. The Firebase scheduled function wrapper generates {timestamp} at runtime."
+  - "The one-time export command intentionally uses a dated manual prefix for verification."

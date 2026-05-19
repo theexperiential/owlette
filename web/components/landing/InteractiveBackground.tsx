@@ -11,19 +11,19 @@ export function InteractiveBackground() {
   const containerRef = useRef<HTMLDivElement>(null);
   const primaryRef = useRef<HTMLDivElement>(null);
   const secondaryRef = useRef<HTMLDivElement>(null);
-  const [isTouchDevice, setIsTouchDevice] = useState(false);
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  // Detect touch device + reduced-motion preference in lazy useState
+  // initializers. These only run on the client (component is 'use client') and
+  // are SSR-guarded with `typeof window` — no post-mount setState needed,
+  // which avoids react-hooks/set-state-in-effect.
+  const [isTouchDevice] = useState(
+    () => typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0),
+  );
+  const [prefersReducedMotion] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
   const animationRef = useRef<number | null>(null);
   const targetPos = useRef<MousePosition>({ x: 0.5, y: 0.5 });
   const currentPos = useRef<MousePosition>({ x: 0.5, y: 0.5 });
-
-  // Detect touch device and reduced motion preference
-  useEffect(() => {
-    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    setIsTouchDevice(isTouch);
-    setPrefersReducedMotion(reducedMotion);
-  }, []);
 
   useEffect(() => {
     // Skip animation for touch devices or reduced motion

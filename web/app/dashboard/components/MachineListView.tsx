@@ -7,7 +7,7 @@
  * Features:
  * - Tabular layout with sortable columns
  * - Expandable rows for process details
- * - Process controls (autolaunch, edit, kill)
+ * - Process controls (autolaunch, edit, restart, kill)
  * - Create add process button
  * - Memoized table header for performance
  * - Sparkline charts behind metric cells
@@ -17,15 +17,17 @@
 
 'use client';
 
-import React, { memo } from 'react';
+import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { useMinuteTick } from '@/hooks/useMinuteTick';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
+import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff, RotateCw } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,14 +44,92 @@ import { BLOCK_COLORS } from '@/lib/scheduleDefaults';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { formatStorageRange } from '@/lib/storageUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
-import { formatHeartbeatTime } from '@/lib/timeUtils';
-import { formatThroughput, getPrimaryNic } from '@/lib/networkUtils';
+import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
+import { formatThroughput } from '@/lib/networkUtils';
+import { DISK_IO_COLORS, formatDiskIO } from '@/lib/diskIOUtils';
+import { resolveDevice, unionIds } from '@/lib/deviceResolvers';
+import { useDevicePrefs, type DeviceKind, type DeviceSelection } from '@/hooks/useDevicePrefs';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
 
-// Memoized table header to prevent flickering on data updates
-export const MemoizedTableHeader = memo(() => {
+/**
+ * Per-kind device id union across all visible machines. Used to populate
+ * the shared column-header dropdowns in the list view.
+ */
+export interface DeviceUnion {
+  cpus: string[];
+  disks: string[];
+  gpus: string[];
+  nics: string[];
+}
+
+/** Which column headers should render a device dropdown (vs. plain label). */
+export interface ShowDropdownFlags {
+  cpu: boolean;
+  disk: boolean;
+  gpu: boolean;
+  nic: boolean;
+}
+
+interface DeviceColumnHeaderProps {
+  label: string;
+  kind: DeviceKind;
+  showDropdown: boolean;
+  ids: string[];
+  selectedId: string | undefined;
+  onSelect: (kind: DeviceKind, id: string | null) => void;
+}
+
+function DeviceColumnHeader({
+  label,
+  kind,
+  showDropdown,
+  ids,
+  selectedId,
+  onSelect,
+}: DeviceColumnHeaderProps) {
+  if (!showDropdown) {
+    return <>{label}</>;
+  }
+  const displayLabel = selectedId ? `${label}: ${selectedId}` : label;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 text-foreground hover:text-white cursor-pointer"
+        >
+          <span>{displayLabel}</span>
+          <ChevronDown className="h-3 w-3 opacity-70" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="border-border bg-secondary">
+        <DropdownMenuRadioGroup
+          value={selectedId ?? ''}
+          onValueChange={(value) => onSelect(kind, value === '' ? null : value)}
+        >
+          <DropdownMenuRadioItem value="" className="cursor-pointer">
+            auto (most active)
+          </DropdownMenuRadioItem>
+          {ids.map((id) => (
+            <DropdownMenuRadioItem key={id} value={id} className="cursor-pointer">
+              {id}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * Legacy no-dropdown header, kept for callers (demo page, dashboard page)
+ * that render the list-view table directly and don't need column-header
+ * device selectors. Renders plain column labels identical to the pre-v2
+ * layout so existing pages keep working without wiring deviceUnion through.
+ */
+export const MemoizedTableHeader = memo(function MemoizedTableHeader() {
   return (
     <TableHeader className="sticky top-0 z-10 bg-background">
       <TableRow className="border-border hover:bg-transparent">
@@ -57,8 +137,8 @@ export const MemoizedTableHeader = memo(() => {
         <TableHead className="text-foreground w-[140px]">hostname</TableHead>
         <TableHead className="text-foreground w-[72px]">status</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[160px] sm:overflow-visible sm:!px-2">cpu</TableHead>
-        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">memory</TableHead>
-        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[100px] lg:overflow-visible lg:!px-2">disk</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">ram</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[160px] lg:overflow-visible lg:!px-2">disk</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[200px] lg:overflow-visible lg:!px-2">gpu</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 xl:w-[130px] xl:overflow-visible xl:!px-2">network</TableHead>
         <TableHead className="text-foreground w-0 overflow-hidden !px-0 md:w-[110px] md:overflow-visible md:!px-2">last heartbeat</TableHead>
@@ -68,7 +148,76 @@ export const MemoizedTableHeader = memo(() => {
   );
 });
 
-MemoizedTableHeader.displayName = 'MemoizedTableHeader';
+interface MachineTableHeaderProps {
+  deviceUnion: DeviceUnion;
+  showDropdown: ShowDropdownFlags;
+  listPref: DeviceSelection;
+  setListPref: (kind: DeviceKind, id: string | null) => void;
+}
+
+// Memoized table header to prevent flickering on data updates. Memo compares
+// the prop bag by reference; callers pass stable refs for listPref/setListPref
+// and a memoized deviceUnion/showDropdown so the header only re-renders when
+// the device set or user selection actually changes — not on every metrics tick.
+export const MachineTableHeader = memo(function MachineTableHeader({
+  deviceUnion,
+  showDropdown,
+  listPref,
+  setListPref,
+}: MachineTableHeaderProps) {
+  return (
+    <TableHeader className="sticky top-0 z-10 bg-background">
+      <TableRow className="border-border hover:bg-transparent">
+        <TableHead className="text-foreground w-8"></TableHead>
+        <TableHead className="text-foreground w-[140px]">hostname</TableHead>
+        <TableHead className="text-foreground w-[72px]">status</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[160px] sm:overflow-visible sm:!px-2">
+          <DeviceColumnHeader
+            label="cpu"
+            kind="cpu"
+            showDropdown={showDropdown.cpu}
+            ids={deviceUnion.cpus}
+            selectedId={listPref.cpu}
+            onSelect={setListPref}
+          />
+        </TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 sm:w-[120px] sm:overflow-visible sm:!px-2">ram</TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[160px] lg:overflow-visible lg:!px-2">
+          <DeviceColumnHeader
+            label="disk"
+            kind="disk"
+            showDropdown={showDropdown.disk}
+            ids={deviceUnion.disks}
+            selectedId={listPref.disk}
+            onSelect={setListPref}
+          />
+        </TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 lg:w-[200px] lg:overflow-visible lg:!px-2">
+          <DeviceColumnHeader
+            label="gpu"
+            kind="gpu"
+            showDropdown={showDropdown.gpu}
+            ids={deviceUnion.gpus}
+            selectedId={listPref.gpu}
+            onSelect={setListPref}
+          />
+        </TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 xl:w-[130px] xl:overflow-visible xl:!px-2">
+          <DeviceColumnHeader
+            label="network"
+            kind="nic"
+            showDropdown={showDropdown.nic}
+            ids={deviceUnion.nics}
+            selectedId={listPref.nic}
+            onSelect={setListPref}
+          />
+        </TableHead>
+        <TableHead className="text-foreground w-0 overflow-hidden !px-0 md:w-[110px] md:overflow-visible md:!px-2">last heartbeat</TableHead>
+        <TableHead className="text-foreground w-10"></TableHead>
+      </TableRow>
+    </TableHeader>
+  );
+});
 
 interface MachineListViewProps {
   machines: Machine[];
@@ -80,6 +229,7 @@ interface MachineListViewProps {
   onEditProcess: (machineId: string, process: Process) => void;
   onCreateProcess: (machineId: string) => void;
   onKillProcess: (machineId: string, processId: string, processName: string) => void;
+  onRestartProcess: (machineId: string, processId: string, processName: string) => void;
   onSetLaunchMode: (machineId: string, processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
   onConfigureSchedule?: (machineId: string, process: Process) => void;
   onRemoveMachine: (machineId: string, machineName: string, isOnline: boolean) => void;
@@ -96,19 +246,29 @@ interface MachineRowProps {
   siteTimezone: string;
   siteTimeFormat: '12h' | '24h';
   userPreferences: { temperatureUnit: 'C' | 'F' };
-  isAdmin?: boolean;
+  isSiteAdmin?: boolean;
   onToggleExpanded: () => void;
   onEditProcess: (process: Process) => void;
   onCreateProcess: () => void;
   onKillProcess: (processId: string, processName: string) => void;
+  onRestartProcess: (processId: string, processName: string) => void;
   onSetLaunchMode: (processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
   onConfigureSchedule?: (process: Process) => void;
   onRemoveMachine: () => void;
   onMetricClick?: (metricType: MetricType) => void;
   onReboot?: () => Promise<void>;
   onShutdown?: () => Promise<void>;
+  onCancelReboot?: () => Promise<void>;
   onScreenshot?: () => void;
   onLiveView?: () => void;
+  showLocalClock?: boolean;
+  /**
+   * User's column-dropdown selection for this view (cpu/disk/gpu/nic). When
+   * omitted (legacy callers) or a kind is unset, the row falls back to the
+   * machine's reported primary device — which also matches "auto (most
+   * active)" in the column-header selector.
+   */
+  listPref?: DeviceSelection;
 }
 
 export function MachineRow({
@@ -118,29 +278,107 @@ export function MachineRow({
   siteTimezone,
   siteTimeFormat,
   userPreferences,
-  isAdmin,
+  isSiteAdmin,
   onToggleExpanded,
   onEditProcess,
   onCreateProcess,
   onKillProcess,
+  onRestartProcess,
   onSetLaunchMode,
   onConfigureSchedule,
   onRemoveMachine,
   onMetricClick,
   onReboot,
   onShutdown,
+  onCancelReboot,
   onScreenshot,
   onLiveView,
+  showLocalClock,
+  listPref,
 }: MachineRowProps) {
+  // Keep the expanded row mounted through the close animation. The grid-rows
+  // transition on the inner wrapper animates in/out; the held flag prevents
+  // unmounting before the close animation completes.
+  //
+  // `animOpen` lags `isExpanded` by one animation frame on open so the row
+  // mounts at `grid-rows-[0fr]` and CSS sees a transition to `grid-rows-[1fr]`
+  // (without the lag, both initial renders see `1fr` and no transition fires).
+  const [heldExpanded, setHeldExpanded] = useState(isExpanded);
+  // Seeded false so a freshly-mounted-as-expanded row still gets a real
+  // 0fr → 1fr transition. The raf in the effect below flips it true on the
+  // next frame.
+  const [animOpen, setAnimOpen] = useState(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  if (isExpanded && !heldExpanded) {
+    setHeldExpanded(true);
+  }
+  useEffect(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    // Defer the open/close flip to the next frame so the previous (mount)
+    // frame's grid-rows class commits first — the CSS transition then has a
+    // from-state to interpolate against.
+    const raf = requestAnimationFrame(() => setAnimOpen(isExpanded));
+    if (!isExpanded && heldExpanded) {
+      closeTimerRef.current = setTimeout(() => setHeldExpanded(false), 220);
+    }
+    return () => {
+      cancelAnimationFrame(raf);
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+    };
+  }, [isExpanded, heldExpanded]);
+  const pref = listPref ?? {};
+  const primary = machine.metrics?.primary;
+  const cpuDevice = resolveDevice(machine.devices?.cpus, pref.cpu, primary?.cpu);
+  const diskDevice = resolveDevice(machine.devices?.disks, pref.disk, primary?.disk);
+  const gpuDevice = resolveDevice(machine.devices?.gpus, pref.gpu, primary?.gpu);
+  const nicDevice = resolveDevice(machine.devices?.nics, pref.nic, primary?.nic);
+
+  // Memory has no per-device fan-out; `totalGb` isn't reported on the v2
+  // MemoryMetric, so derive it from (usedGb / percent) when both are present.
+  // When percent is 0/missing, we can't derive total reliably — fall back to
+  // showing the used value alone.
+  const memoryPercent = machine.metrics?.memory?.percent ?? 0;
+  const memoryUsedGb = machine.metrics?.memory?.usedGb;
+  const memoryTotalGb =
+    memoryUsedGb !== undefined && memoryPercent > 0
+      ? Math.round((memoryUsedGb / memoryPercent) * 100 * 10) / 10
+      : null;
   const isDemo = !!useDemoContext();
   const { userPreferences: fullPrefs } = useAuth();
   const isMuted = fullPrefs.mutedMachines.includes(machine.machineId);
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
-  // Format heartbeat time with timezone and time format support
-  const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, siteTimezone, siteTimeFormat);
+  // Display drift indicator (amber dot next to the monitor icon). The agent
+  // computes this every heartbeat and writes it under `metrics.displayDriftCount`
+  // — reading from the machine doc avoids spinning up per-row subscriptions to
+  // the displayProfiles + displayAssignments docs just to render the dot.
+  const displayDriftCount = machine.metrics?.displayDriftCount ?? 0;
+
+  // Format heartbeat time. The display tz is resolved per-machine according
+  // to the user's chosen `timeDisplayMode` (preferences) — see getDisplayTimezone.
+  const displayTz = getDisplayTimezone(
+    fullPrefs.timeDisplayMode || 'machine',
+    fullPrefs.timezone,
+    machine.machineTimezone,
+    siteTimezone
+  );
+  const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, displayTz, siteTimeFormat);
   const isStale = !machine.online || !!machine.rebooting;
   const staleClass = isStale ? ' opacity-40' : '';
+
+  // Live-updating local clock for this machine's own timezone (under hostname).
+  // Subscribing to the shared wall-clock minute tick re-renders this row
+  // once per minute (in lockstep with every other machine row) so the
+  // formatted clock string below stays current. One interval, app-wide.
+  useMinuteTick();
+  const localClock = formatMachineLocalClock(machine.machineTimezone, siteTimeFormat);
+  const localTzShort = formatTimezoneShortName(machine.machineTimezone);
 
   const handleRowClick = () => {
     const selection = window.getSelection();
@@ -151,6 +389,7 @@ export function MachineRow({
   return (
     <>
       <TableRow
+        data-testid="machine-row"
         className="border-border hover:bg-secondary/30 cursor-pointer"
         onClick={handleRowClick}
       >
@@ -164,23 +403,75 @@ export function MachineRow({
           </div>
         </TableCell>
         <TableCell className="w-[100px] font-medium text-white select-text overflow-hidden">
-          <div className="flex items-center gap-2">
-            <Monitor className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-            <span className="truncate">{machine.machineId}</span>
-            {isMuted && <span title="alerts muted"><BellOff className="h-3 w-3 text-muted-foreground flex-shrink-0" /></span>}
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-shrink-0">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onMetricClick?.('display');
+                      }}
+                      data-testid="open-display-panel"
+                      className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0"
+                      aria-label="view displays"
+                    >
+                      <Monitor className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>view displays</p>
+                  </TooltipContent>
+                </Tooltip>
+                {displayDriftCount > 0 && (
+                  <span
+                    className="absolute -top-0.5 -right-0.5 inline-block w-2 h-2 rounded-full bg-amber-500 pointer-events-none"
+                    role="img"
+                    aria-label={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
+                    title={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
+                  />
+                )}
+                {machine.displayBreakerTripped && (
+                  <span
+                    className={`absolute inline-block w-2 h-2 rounded-full bg-destructive pointer-events-none ${
+                      displayDriftCount > 0 ? '-bottom-0.5 -right-0.5' : '-top-0.5 -right-0.5'
+                    }`}
+                    role="img"
+                    aria-label="auto-restore disabled — circuit breaker tripped"
+                    title="auto-restore disabled — circuit breaker tripped"
+                  />
+                )}
+              </div>
+              <span className="truncate">{machine.machineId}</span>
+              {isMuted && <span title="alerts muted"><BellOff className="h-3 w-3 text-muted-foreground flex-shrink-0" /></span>}
+            </div>
+            {showLocalClock && machine.machineTimezone && localClock && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-[10px] text-muted-foreground/80 select-none cursor-help truncate ml-5">
+                    {localTzShort}, {localClock}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="max-w-xs">this machine&apos;s local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
         </TableCell>
         <TableCell className="w-[72px] p-2">
-          <Badge className={`text-xs select-none ${
-            machine.rebooting ? 'bg-amber-600' :
-            machine.shuttingDown ? 'bg-amber-600' :
-            machine.online ? 'bg-green-600' :
-            'bg-red-600'
-          }`}>
-            {machine.rebooting ? 'rebooting...' :
-             machine.shuttingDown ? 'shutting down...' :
-             machine.online ? 'online' : 'offline'}
-          </Badge>
+          <MachineStatusPill
+            online={machine.online}
+            rebooting={machine.rebooting}
+            shuttingDown={machine.shuttingDown}
+            rebootScheduledAt={machine.rebootScheduledAt}
+            shutdownScheduledAt={machine.shutdownScheduledAt}
+            isSiteAdmin={isSiteAdmin}
+            onCancel={onCancelReboot}
+          />
         </TableCell>
         {/* CPU with Sparkline */}
         <TableCell
@@ -191,18 +482,18 @@ export function MachineRow({
             <div className="opacity-80">
               <SparklineChart data={sparklineData.cpu} color="cpu" height={52} loading={sparklineData.loading} />
             </div>
-            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.cpu?.percent ?? 0)}`} />
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(cpuDevice?.percent ?? 0)}`} />
             <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
-              {machine.metrics?.cpu ? (
+              {cpuDevice && typeof cpuDevice.percent === 'number' ? (
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs text-muted-foreground truncate" title={machine.metrics.cpu.name || 'Unknown CPU'}>
-                    {machine.metrics.cpu.name || 'Unknown CPU'}
+                  <div className="text-xs text-muted-foreground truncate" title={cpuDevice.model || 'Unknown CPU'}>
+                    {cpuDevice.model || 'Unknown CPU'}
                   </div>
                   <div className="text-sm font-semibold whitespace-nowrap">
-                    {machine.metrics.cpu.percent}%
-                    {machine.metrics.cpu.temperature !== undefined && (
-                      <span className={`ml-1 text-xs font-medium ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
-                        {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                    {cpuDevice.percent}%
+                    {typeof cpuDevice.temperature === 'number' && (
+                      <span className={`ml-1 text-xs font-medium ${getTemperatureColorClass(cpuDevice.temperature)}`}>
+                        {formatTemperature(cpuDevice.temperature, userPreferences.temperatureUnit)}
                       </span>
                     )}
                   </div>
@@ -220,13 +511,15 @@ export function MachineRow({
             <div className="opacity-80">
               <SparklineChart data={sparklineData.memory} color="memory" height={52} loading={sparklineData.loading} />
             </div>
-            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.memory?.percent ?? 0)}`} />
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(memoryPercent)}`} />
             <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
-              {machine.metrics?.memory ? (
+              {machine.metrics?.memory && memoryUsedGb !== undefined ? (
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold">{machine.metrics.memory.percent}%</div>
+                  <div className="text-sm font-semibold">{memoryPercent}%</div>
                   <div className="text-muted-foreground text-xs truncate">
-                    {formatStorageRange(machine.metrics.memory.used_gb, machine.metrics.memory.total_gb)}
+                    {memoryTotalGb !== null
+                      ? formatStorageRange(memoryUsedGb, memoryTotalGb)
+                      : `${memoryUsedGb.toFixed(1)} GB`}
                   </div>
                 </div>
               ) : '-'}
@@ -235,22 +528,42 @@ export function MachineRow({
         </TableCell>
         {/* Disk with Sparkline */}
         <TableCell
-          className="text-white p-0 w-0 lg:w-[100px] overflow-hidden"
+          className="text-white p-0 w-0 lg:w-[160px] overflow-hidden"
           onClick={(e) => { e.stopPropagation(); onMetricClick?.('disk'); }}
         >
           <div className={`relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden${staleClass}`}>
             <div className="opacity-80">
               <SparklineChart data={sparklineData.disk} color="disk" height={52} loading={sparklineData.loading} />
             </div>
-            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.disk?.percent ?? 0)}`} />
-            <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
-              {machine.metrics?.disk ? (
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold">{machine.metrics.disk.percent}%</div>
-                  <div className="text-muted-foreground text-xs truncate">
-                    {formatStorageRange(machine.metrics.disk.used_gb, machine.metrics.disk.total_gb)}
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(diskDevice?.percent ?? 0)}`} />
+            <div className="absolute inset-0 flex items-end gap-3 p-2 pl-2.5 overflow-hidden">
+              {diskDevice && typeof diskDevice.percent === 'number' && typeof diskDevice.usedGb === 'number' ? (
+                <>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold">{diskDevice.percent}%</div>
+                    <div className="text-muted-foreground text-xs truncate" title={diskDevice.id}>
+                      {typeof diskDevice.totalGb === 'number'
+                        ? formatStorageRange(diskDevice.usedGb, diskDevice.totalGb)
+                        : `${diskDevice.usedGb.toFixed(1)} GB`}
+                    </div>
                   </div>
-                </div>
+                  {(() => {
+                    const io = machine.metrics?.diskio?.[diskDevice.id];
+                    if (!io || (io.readBps === 0 && io.writeBps === 0)) return null;
+                    return (
+                      <div className="flex-shrink-0 flex gap-1 text-xs font-medium">
+                        <div className="flex flex-col text-right">
+                          <span style={{ color: DISK_IO_COLORS.read }}>r</span>
+                          <span style={{ color: DISK_IO_COLORS.write }}>w</span>
+                        </div>
+                        <div className="flex flex-col text-left tabular-nums">
+                          <span style={{ color: DISK_IO_COLORS.read }}>{formatDiskIO(io.readBps)}</span>
+                          <span style={{ color: DISK_IO_COLORS.write }}>{formatDiskIO(io.writeBps)}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </>
               ) : '-'}
             </div>
           </div>
@@ -264,23 +577,23 @@ export function MachineRow({
             <div className="opacity-80">
               <SparklineChart data={sparklineData.gpu.length > 0 ? sparklineData.gpu : []} color="gpu" height={52} loading={sparklineData.loading} />
             </div>
-            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(machine.metrics?.gpu?.usage_percent ?? 0)}`} />
+            <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(gpuDevice?.usagePercent ?? 0)}`} />
             <div className="absolute inset-0 flex items-center p-2 pl-2.5 overflow-hidden">
-              {machine.metrics?.gpu && machine.metrics.gpu.name && machine.metrics.gpu.name !== 'N/A' ? (
+              {gpuDevice && gpuDevice.name && gpuDevice.name !== 'N/A' && typeof gpuDevice.usagePercent === 'number' ? (
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs text-muted-foreground truncate" title={machine.metrics.gpu.name}>
-                    {machine.metrics.gpu.name}
+                  <div className="text-xs text-muted-foreground truncate" title={gpuDevice.name}>
+                    {gpuDevice.name}
                   </div>
                   <div className="text-sm font-semibold whitespace-nowrap">
-                    {machine.metrics.gpu.usage_percent}%
-                    {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
+                    {gpuDevice.usagePercent}%
+                    {typeof gpuDevice.vramUsedGb === 'number' && typeof gpuDevice.vramTotalGb === 'number' && (
                       <span className="text-muted-foreground text-xs ml-1 font-normal">
-                        ({formatStorageRange(machine.metrics.gpu.vram_used_gb, machine.metrics.gpu.vram_total_gb)})
+                        ({formatStorageRange(gpuDevice.vramUsedGb, gpuDevice.vramTotalGb)})
                       </span>
                     )}
-                    {machine.metrics.gpu.temperature !== undefined && (
-                      <span className={`ml-1 text-xs font-medium ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
-                        {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
+                    {typeof gpuDevice.temperature === 'number' && (
+                      <span className={`ml-1 text-xs font-medium ${getTemperatureColorClass(gpuDevice.temperature)}`}>
+                        {formatTemperature(gpuDevice.temperature, userPreferences.temperatureUnit)}
                       </span>
                     )}
                   </div>
@@ -296,30 +609,36 @@ export function MachineRow({
           className="text-white p-0 w-0 xl:w-[130px] overflow-hidden"
           onClick={(e) => {
             e.stopPropagation();
-            const primary = machine.metrics?.network?.interfaces
-              ? getPrimaryNic(machine.metrics.network.interfaces)
-              : null;
-            if (primary) onMetricClick?.(`${primary.name}_tx_util` as MetricType);
+            if (nicDevice) onMetricClick?.(`${nicDevice.id}_tx_util` as MetricType);
           }}
         >
           {(() => {
-            const interfaces = machine.metrics?.network?.interfaces;
-            if (!interfaces) return <span className="text-muted-foreground text-xs p-2">-</span>;
-            const primary = getPrimaryNic(interfaces);
-            if (!primary) return <span className="text-muted-foreground text-xs p-2">-</span>;
-            const maxUtil = Math.max(primary.data.tx_util, primary.data.rx_util);
+            if (
+              !nicDevice ||
+              typeof nicDevice.txBps !== 'number' ||
+              typeof nicDevice.rxBps !== 'number'
+            ) {
+              return <span className="text-muted-foreground text-xs p-2">-</span>;
+            }
+            const txUtil = nicDevice.txUtil ?? 0;
+            const rxUtil = nicDevice.rxUtil ?? 0;
+            const maxUtil = Math.max(txUtil, rxUtil);
+            const linkSpeed = nicDevice.linkSpeedMbps;
+            const titleText = typeof linkSpeed === 'number'
+              ? `${nicDevice.id} (${linkSpeed} Mbps)`
+              : nicDevice.id;
             return (
               <div className={`relative cursor-pointer hover:bg-muted/50 transition-colors overflow-hidden${staleClass}`}>
-                <div className={`absolute left-0 top-0 bottom-0 w-0.5 ${getUsageColorClass(maxUtil)}`} />
+                <div className={`absolute left-0 top-1/2 -translate-y-1/2 h-[52px] w-0.5 ${getUsageColorClass(maxUtil)}`} />
                 <div className="p-2 pl-2.5">
-                  <div className="text-xs text-muted-foreground truncate" title={`${primary.name} (${primary.data.link_speed} Mbps)`}>
-                    {primary.name}
+                  <div className="text-xs text-muted-foreground truncate" title={titleText}>
+                    {nicDevice.id}
                   </div>
                   <div className="text-xs font-medium">
-                    <span className="text-orange-400">TX {formatThroughput(primary.data.tx_bps)}</span>
+                    <span className="text-orange-400">{'\u2191 '}{formatThroughput(nicDevice.txBps)}</span>
                   </div>
                   <div className="text-xs font-medium">
-                    <span className="text-green-400">RX {formatThroughput(primary.data.rx_bps)}</span>
+                    <span className="text-green-400">{'\u2193 '}{formatThroughput(nicDevice.rxBps)}</span>
                   </div>
                 </div>
               </div>
@@ -327,37 +646,56 @@ export function MachineRow({
           })()}
         </TableCell>
         <TableCell className="w-0 md:w-[150px] overflow-hidden p-0 md:p-2">
-          <span
-            className={`text-xs flex items-center gap-1 cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
-            title={heartbeat.tooltip}
-          >
-            <Clock className="h-3 w-3" />
-            {heartbeat.display}
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={`text-xs flex items-center gap-1 cursor-help ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
+              >
+                <Clock className="h-3 w-3" />
+                {heartbeat.display}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{heartbeat.tooltip}</p>
+            </TooltipContent>
+          </Tooltip>
         </TableCell>
         <TableCell className="w-10 p-2" onClick={(e) => e.stopPropagation()}>
           {!isDemo && (
             <MachineContextMenu
               machineId={machine.machineId}
               machineName={machine.machineId}
+              machineTimezone={machine.machineTimezone}
               siteId={currentSiteId}
               isOnline={machine.online}
-              isAdmin={isAdmin}
+              rebooting={machine.rebooting}
+              shuttingDown={machine.shuttingDown}
+              isSiteAdmin={isSiteAdmin}
               onRemoveMachine={onRemoveMachine}
               onReboot={onReboot}
               onShutdown={onShutdown}
+              onCancelReboot={onCancelReboot}
               onScreenshot={onScreenshot}
               onLiveView={onLiveView}
+              onViewDisplays={onMetricClick ? () => onMetricClick('display') : undefined}
               rebootSchedule={machine.rebootSchedule}
             />
           )}
         </TableCell>
       </TableRow>
 
-      {/* Expanded Process Details Row */}
-      {isExpanded && (
+      {/* Expanded Process Details Row — kept mounted while heldExpanded so
+          the close animation can play; the grid-template-rows transition on
+          the inner wrapper animates the height in/out. */}
+      {heldExpanded && (
         <TableRow key={`${machine.machineId}-processes`} className="border-border">
           <TableCell colSpan={10} className="p-0 overflow-hidden">
+            <div
+              className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+                animOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+              }`}
+            >
+            <div className="overflow-hidden min-h-0">
             <div className="pr-4 relative" style={{ paddingLeft: '12px', paddingTop: '8px', paddingBottom: '8px' }}>
               {machine.processes && machine.processes.length > 0 ? (
                 <>
@@ -422,7 +760,6 @@ export function MachineRow({
                           </div>
                           {(() => {
                             const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
-                            const isScheduled = currentMode === 'scheduled';
                             return (
                               <>
                                 {/* Desktop controls (lg+) */}
@@ -442,18 +779,24 @@ export function MachineRow({
                                           <span key={mode} className={`flex items-stretch ${isActive ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground'}`}>
                                             <button
                                               onClick={() => !isActive && onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
-                                              className={`px-3 text-xs font-medium ${isActive ? 'cursor-default' : 'hover:bg-muted/50 cursor-pointer'} transition-colors`}
+                                              className={`px-3 text-sm font-medium ${isActive ? 'cursor-default' : 'hover:bg-accent/50 cursor-pointer'} transition-colors`}
                                             >
                                               {labels[mode]}
                                             </button>
                                             <span className={`w-px ${isActive ? 'bg-blue-400/50' : 'bg-border'}`} />
-                                            <button
-                                              onClick={() => onConfigureSchedule?.(process)}
-                                              className={`px-1.5 transition-colors cursor-pointer flex items-center ${isActive ? 'hover:bg-blue-500' : 'hover:bg-muted/50'}`}
-                                              title="Configure schedule"
-                                            >
-                                              <Settings2 className="h-3.5 w-3.5" />
-                                            </button>
+                                            <Tooltip>
+                                              <TooltipTrigger asChild>
+                                                <button
+                                                  onClick={() => onConfigureSchedule?.(process)}
+                                                  className={`px-1.5 transition-colors cursor-pointer flex items-center ${isActive ? 'hover:bg-blue-500' : 'hover:bg-accent/50'}`}
+                                                >
+                                                  <Settings2 className="h-3.5 w-3.5" />
+                                                </button>
+                                              </TooltipTrigger>
+                                              <TooltipContent>
+                                                <p>configure schedule</p>
+                                              </TooltipContent>
+                                            </Tooltip>
                                           </span>
                                         );
                                       }
@@ -462,7 +805,7 @@ export function MachineRow({
                                         <button
                                           key={mode}
                                           onClick={() => onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
-                                          className={`px-3 text-xs font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-muted/50'}`}
+                                          className={`px-3 text-sm font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-accent/50'}`}
                                         >
                                           {labels[mode]}
                                         </button>
@@ -470,19 +813,29 @@ export function MachineRow({
                                     })}
                                   </div>
                                   <Button
-                                    variant="outline"
+                                    variant="ghost"
                                     size="sm"
                                     onClick={() => onEditProcess(process)}
-                                    className="bg-card border-border text-foreground hover:bg-muted hover:border-foreground/40 cursor-pointer"
+                                    className="bg-card border border-border text-foreground"
                                   >
                                     <Pencil className="h-3 w-3 mr-1" />
                                     edit
                                   </Button>
                                   <Button
-                                    variant="outline"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => onRestartProcess(process.id, process.name)}
+                                    className="bg-card border border-border text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                  >
+                                    <RotateCw className="h-3 w-3 mr-1" />
+                                    restart
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
                                     size="sm"
                                     onClick={() => onKillProcess(process.id, process.name)}
-                                    className="bg-card border-border text-red-400 hover:bg-red-950 hover:border-red-700 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
+                                    className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
                                     disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
                                   >
                                     <Square className="h-3 w-3 mr-1" />
@@ -492,15 +845,22 @@ export function MachineRow({
                                 {/* Compact controls (<lg) */}
                                 <div className="flex lg:hidden items-center gap-2 ml-2 flex-shrink-0">
                                   <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="bg-card border-border text-muted-foreground hover:bg-muted hover:text-white cursor-pointer h-8 w-8 p-0"
-                                      >
-                                        <MoreVertical className="h-4 w-4" />
-                                      </Button>
-                                    </DropdownMenuTrigger>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <DropdownMenuTrigger asChild>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0"
+                                          >
+                                            <MoreVertical className="h-4 w-4" />
+                                          </Button>
+                                        </DropdownMenuTrigger>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>more options</p>
+                                      </TooltipContent>
+                                    </Tooltip>
                                     <DropdownMenuContent align="end" className="border-border bg-secondary w-52">
                                       <DropdownMenuLabel className="text-muted-foreground text-xs">
                                         launch mode
@@ -540,16 +900,40 @@ export function MachineRow({
                                       </DropdownMenuItem>
                                     </DropdownMenuContent>
                                   </DropdownMenu>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => onKillProcess(process.id, process.name)}
-                                    className="bg-card border-border text-red-400 hover:bg-red-950 hover:border-red-700 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
-                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
-                                    title="kill"
-                                  >
-                                    <Square className="h-3 w-3" />
-                                  </Button>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => onRestartProcess(process.id, process.name)}
+                                        aria-label={`restart ${process.name}`}
+                                        className="bg-card border border-border text-foreground disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
+                                        disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                      >
+                                        <RotateCw className="h-3 w-3" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>restart process</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => onKillProcess(process.id, process.name)}
+                                        aria-label={`kill ${process.name}`}
+                                        className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
+                                        disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                      >
+                                        <Square className="h-3 w-3" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>kill process</p>
+                                    </TooltipContent>
+                                  </Tooltip>
                                 </div>
                               </>
                             );
@@ -559,12 +943,12 @@ export function MachineRow({
                     ))}
                   </div>
                   {/* add process Button */}
-                  <div className="flex justify-center pt-3 ml-4">
+                  <div className="flex justify-center pt-3">
                     <Button
-                      variant="outline"
+                      variant="ghost"
                       size="sm"
                       onClick={onCreateProcess}
-                      className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
+                      className="bg-card border border-border text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
                     >
                       <Plus className="h-3 w-3 mr-1" />
                       add process
@@ -575,16 +959,18 @@ export function MachineRow({
                 <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
                   <p className="mb-4 text-sm">No processes configured for this machine</p>
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
                     onClick={onCreateProcess}
-                    className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
+                    className="bg-card border border-border text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
                   >
                     <Plus className="h-3 w-3 mr-1" />
                     add process
                   </Button>
                 </div>
               )}
+            </div>
+            </div>
             </div>
           </TableCell>
         </TableRow>
@@ -603,17 +989,48 @@ export function MachineListView({
   onEditProcess,
   onCreateProcess,
   onKillProcess,
+  onRestartProcess,
   onSetLaunchMode,
   onConfigureSchedule,
   onRemoveMachine,
   onMetricClick,
 }: MachineListViewProps) {
   const { userPreferences } = useAuth();
+  const { prefs, setListPref } = useDevicePrefs();
+  const listPref = prefs.listView;
+  const uniqueTimezones = new Set(machines.map(m => m.machineTimezone).filter(Boolean));
+  const showLocalClock = uniqueTimezones.size > 1;
+
+  // Union of device ids across visible machines — drives the column-header
+  // dropdown menus. Memoized so the memoized table header doesn't re-render
+  // on every metrics tick (only when the device set actually changes).
+  const deviceUnion = useMemo<DeviceUnion>(() => ({
+    cpus:  unionIds(machines.map(m => m.devices?.cpus?.map(c => c.id) ?? [])),
+    disks: unionIds(machines.map(m => m.devices?.disks?.map(d => d.id) ?? [])),
+    gpus:  unionIds(machines.map(m => m.devices?.gpus?.map(g => g.id) ?? [])),
+    nics:  unionIds(machines.map(m => m.devices?.nics?.map(n => n.id) ?? [])),
+  }), [machines]);
+
+  // A dropdown is worth showing only when at least one visible machine has
+  // more than one device of that kind — otherwise the selector would offer
+  // nothing meaningful beyond "auto".
+  const showDropdown = useMemo<ShowDropdownFlags>(() => ({
+    cpu:  machines.some(m => (m.devices?.cpus?.length  ?? 0) > 1),
+    disk: machines.some(m => (m.devices?.disks?.length ?? 0) > 1),
+    gpu:  machines.some(m => (m.devices?.gpus?.length  ?? 0) > 1),
+    nic:  machines.some(m => (m.devices?.nics?.length  ?? 0) > 1),
+  }), [machines]);
+
 
   return (
     <div className="rounded-lg border border-border bg-background overflow-hidden">
       <Table className="table-fixed" style={{ contain: 'layout' }}>
-        <MemoizedTableHeader />
+        <MachineTableHeader
+          deviceUnion={deviceUnion}
+          showDropdown={showDropdown}
+          listPref={listPref}
+          setListPref={setListPref}
+        />
         <TableBody>
           {machines.map((machine) => (
             <MachineRow
@@ -628,12 +1045,15 @@ export function MachineListView({
               onEditProcess={(process) => onEditProcess(machine.machineId, process)}
               onCreateProcess={() => onCreateProcess(machine.machineId)}
               onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}
+              onRestartProcess={(processId, processName) => onRestartProcess(machine.machineId, processId, processName)}
               onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
                 onSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
               }
               onConfigureSchedule={onConfigureSchedule ? (process) => onConfigureSchedule(machine.machineId, process) : undefined}
               onRemoveMachine={() => onRemoveMachine(machine.machineId, machine.machineId, machine.online)}
               onMetricClick={onMetricClick ? (metricType) => onMetricClick(machine.machineId, metricType) : undefined}
+              showLocalClock={showLocalClock}
+              listPref={listPref}
             />
           ))}
         </TableBody>

@@ -19,14 +19,16 @@ export function createMockRequest(
 ): NextRequest {
   const { method = 'GET', body, headers = {} } = options || {};
 
-  const init: Record<string, unknown> = { method, headers };
+  const init: RequestInit = { method, headers };
 
   if (body && method !== 'GET' && method !== 'HEAD') {
     init.body = JSON.stringify(body);
     headers['content-type'] = 'application/json';
   }
 
-  return new NextRequest(new URL(url, 'http://localhost'), init as any);
+  // NextRequest's constructor wants its own RequestInit type (stricter subset
+  // of the DOM one) — cast via unknown to bridge the nominal mismatch.
+  return new NextRequest(new URL(url, 'http://localhost'), init as unknown as ConstructorParameters<typeof NextRequest>[1]);
 }
 
 /**

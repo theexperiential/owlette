@@ -7,7 +7,552 @@ hide:
 
 All notable changes to owlette are documented here. The format is based on [Keep a Changelog](https://keepachangelog.com/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
-For the full version management workflow, see [Version Management](internal/version-management.md).
+---
+
+## [2.12.2] - 2026-05-19
+
+### fixed
+
+- **Agent screenshot capture restored.** Two regressions from the api-sprint refactor (`3027713`, 2026-04-26) silently broke capture for ~3 weeks:
+  1. `/api/sites/{siteId}/machines/{machineId}/screenshots/upload-url` 404'd every agent call with `"site not found or no access"`. The new `requireMachineAuthAndScope` helper had no agent-token short-circuit, so agent IDs fell through to a `users/{uid}.sites[]` lookup — a doc agents don't have. Fixed by mirroring the agent-token branch from the sibling `requireAgentOrSiteAuthAndScope` (with a defense-in-depth check that the token's `machine_id` matches the URL path).
+  2. The new `screenshot_capture.capture_and_upload` flow ran `mss` directly in the service process. The agent service runs as LocalSystem in Session 0, so mss captured a blank ~2 KB LocalSystem display instead of the actual user desktop. The pre-refactor path ran capture inside the active user's session via `CreateProcessAsUser` and uploaded via `/api/agent/screenshot` (which also writes the `lastScreenshot` Firestore field the dashboard listens on); the new path skipped both. `machine_commands._handle_capture_screenshot` now delegates back to that working method.
+
+- **Audit-export Cloud Function deploys cleanly to prod.** `exportSecurityBoundaryAuditDevDaily` referenced a dedicated service account that only exists in the dev project (`security-boundary-audit-export@owlette-dev-3838a`). Cloud Functions Gen 2 validated the SA at deploy time and would reject the prod deploy of all 24 functions in `firebase deploy --only functions`. The serviceAccount config is now conditionally attached only for the dev project, and the function body early-returns with a log message outside dev. (Provisioning the prod SA + bucket + IAM is a follow-up; this lets the rest of the release ship.)
+
+- **TimezoneChip shows abbreviation, not city name.** `tz.split('/').pop()` rendered "Los Angeles" / "New York" / "Berlin" — which read more like a city than a timezone. `Intl.DateTimeFormat({ timeZoneName: 'short' })` is observance-aware and returns `PDT` / `PST` / `EDT` automatically. Zones without a stable abbreviation fall back to `GMT±N`. Chip font also reduced one step (the screenshot-dialog history sidebar where this is most visible was too prominent).
+
+- **Login page no longer fails to hydrate under the 2.12.0 CSP.** The hardening pass set `style-src` and `style-src-elem` to `'self' 'nonce-...'`, but Next 16 emits inline `<style>` blocks during client-side hydration/navigation that the request-header nonce only covers for scripts. The browser blocked those styles, the page hit a React #418 hydration mismatch, and the login form became inert (Playwright E2E suite caught the regression on every push). Both directives now use `'self' 'unsafe-inline'` — modern browsers ignore `'unsafe-inline'` when a nonce is present, so the style nonce was dropped intentionally. Script injection remains nonce + strict-dynamic locked; style injection is materially lower risk.
+
+### infrastructure
+
+- **`functions/.gitignore` tightened.** Now blocks all `.env*` overlays (e.g. `.env.owlette-prod-90a12`) except the committed `.env.example` template, preventing prod secrets from being accidentally tracked.
+
+## [2.12.1] - 2026-05-18
+
+### fixed
+
+- **Display layout no longer flags healthy monitors as "not connected" after RDP / virtual-display events.** Two changes:
+  1. The `edidHash` payload no longer includes the Windows-reported monitor friendly name. Windows reports that string inconsistently across driver state transitions (RDP attach/detach, monitor sleep, EDID re-read fallback), so the same physical panel was receiving different hashes between snapshots — which surfaced as every stored monitor showing "⚠ not connected" after a remote session, along with spurious `display_drift` / `display_monitor_added` / `display_monitor_removed` events. The hash is now identity-only: `manufacturer | productCode | device-path serial`.
+  2. Indirect display drivers (Miracast, IddCx-based indirect displays, the RDP `RdpIdd_IndirectDisplay` / "Microsoft Remote Display Adapter", dummy-plug EDIDs like `HDP-V104`) are now skipped at CCD enumeration. These appear and disappear with remote sessions and previously polluted the topology signature, the drift counter, and the events feed every time someone attached. Only physical output technologies (DVI, HDMI, DP, USB-C tunnel, internal, etc.) are enumerated.
+
+  Existing assigned layouts stored under the old hashing scheme are re-derived on read on both the agent and web sides — no manual migration required, no need to re-press "store" after upgrading.
+
+## [2.12.0] - 2026-05-17
+
+### security
+
+- **Five unauthenticated Cloud Functions hardened**: `emitWebhook`, `recordAuditEvent`, `verifyAuditChain`, `preUploadCheck`, `recordUsageEvent` all now require an `x-internal-secret` header matching `CORTEX_INTERNAL_SECRET`. Previously these `onRequest` functions defaulted to `invoker: 'public'` and could be called by anyone with the project ID, allowing webhook forgery (signed events to customer subscribers), audit-log injection, quota DoS, and billing-data poisoning. Shared helper `functions/src/lib/requireInternalSecret.ts` uses `crypto.timingSafeEqual` for constant-time comparison.
+- **MFA is now server-enforced.** Previously MFA enforcement lived in browser sessionStorage + a client-side `router.push('/verify-2fa')` that could be bypassed by navigating directly to `/dashboard`. Iron-session `SessionData` now carries `mfaRequired` + `mfaVerified` flags baked at session-create time from `users/{uid}.mfaEnrolled`. The proxy gates protected paths when `mfaRequired && !mfaVerified` and redirects to `/verify-2fa`. Successful TOTP / backup-code / MFA-setup flips `mfaVerified` server-side. Pre-deploy sessions are upgraded lazily on first protected-page hit. New `/api/mfa/disable` route is the only way to disable MFA — requires current TOTP or backup code, writes audit log, re-mints the session.
+- **Firestore rules tightened to block client-side privilege escalation.** User-doc create rule now constrains `sites[]` to `[]`, `email` to the auth token email, `mfaEnrolled`/`passkeyEnrolled` to `false`, `requiresMfaSetup` to `true`. User-doc update switched from value-equality checks to a `diff().affectedKeys().hasOnly([allowlist])` policy — sensitive fields (role/email/sites/MFA state) must go through trusted server routes. `canAccessSite()` and `isSiteOwner()` now check `users/{uid}.deletedAt` so admin-soft-deleted users immediately lose dashboard access. Rules version bumped to 2.5.0.
+- **Three new rule blocks plug agent silent-failure paths**: `sites/{s}/machines/{m}/cortex/{docId}` (local Cortex active-chat state), `sites/{s}/machines/{m}/logs/{logId}` (per-machine log shipping), and `sites/{s}/cortex-events/{eventId}` (autonomous-event log) now have explicit rules matching `agentCanAccessMachine()` / `isAgent() && site_id`. Previously these writes fell to the deny-all fallback and the entire local-Cortex feature was silently broken end-to-end.
+- **API key revocation now actually revokes.** `apiAuth.server.ts` now checks `revokedAt` before retiresAt/expiresAt. Previously the admin "revoke key" button and the user-delete cascade's revocation were no-ops.
+- **Legacy unscoped API keys rejected by default.** Pre-scope-system keys with empty/missing `scopes` arrays now fail authentication unless explicitly opted in via `LEGACY_API_KEY_BYPASS_ENABLED=true` + `LEGACY_API_KEY_ALLOW_HASH_LIST`, and even allowlisted legacy keys can't pass `requireScope()` (they resolve to `scopes: []`).
+- **Cross-machine token isolation** on `/api/agent/screenshot` and `/api/agent/alert`. Routes now verify `decodedToken.machine_id === machineId` (not just `site_id`), preventing a compromised agent token for machine A from spoofing reports for machine B in the same site.
+- **Webhook delivery pipeline reconciled.** Cloud Functions dispatcher was reading `collectionGroup('webhook_subscriptions')` while the web API was writing `sites/{siteId}/webhooks/{id}` — async roost-event webhook delivery emitted zero deliveries. Now both ends use the `webhooks` collection.
+- **Passkey login now requires user verification** (`userVerification: 'required'`, previously `'preferred'`). Single-touch FIDO keys without PIN/biometric no longer suffice for full account access.
+- **Backup code single-use guaranteed.** Backup-code verification in `/api/mfa/verify-login` now runs inside a Firestore transaction that re-reads the array before removing the matching code, preventing two concurrent same-code requests from both passing.
+- **Agent refresh tokens rotate on every refresh.** `/api/agent/auth/refresh` now generates a new refresh token, marks the old one superseded with a 5-minute grace window, and returns the new token to the agent. Captured tokens no longer grant indefinite access. Agents receive the new `refreshToken` in the response and must persist it on every refresh.
+- **Roost kill switch is now wired into web API routes** (17 `/api/roosts/*` + `/api/chunks/*` handlers). Flipping `sites/{siteId}.roostEnabled=false` now actually halts uploads, not just agent sync work.
+- **Account self-deletion no longer wipes shared sites.** Previously the cascade hard-deleted every site in the user's `sites[]` array including sites where the user was just a member — wiping out the entire site for the owner. Now classified per-site: sole-owner sites are hard-deleted (existing behavior); shared owned sites refuse with `409 needs_successor`; member sites have only `arrayRemove(uid)`. Cascade also drains previously-missed subcollections (`passkeys`, `api_keys`, top-level `api_keys/{hash}` lookups, `mfa_pending`, `agent_refresh_tokens`, `chats`, Firebase Storage avatar) and revokes + deletes the Firebase Auth user server-side rather than relying on the client.
+- **Admin soft-delete also revokes Firebase Auth tokens.** Previously `deletedAt` was written on the user doc but Firebase Auth was untouched; the user could keep using their session until the ID token expired. Now the admin cascade calls `revokeRefreshTokens` + `updateUser({disabled: true})` immediately.
+- **`x-owlette-security-version` header bumped to 2** so dashboard tabs open at deploy time will surface a reload nudge.
+- **LLM cost endpoints rate-limited.** `/api/cortex/categorize` and `/api/cortex/provision-key` are now wrapped in `withRateLimit({strategy: 'user'})` so a captured session cookie can't burn through LLM credits.
+- **Unsafe role fallback removed.** `cortex-utils.server.ts` previously defaulted unknown roles to `'admin'` (site-scoped privileged); now defaults to `'member'` (least-privileged).
+- **`/api/agent/alert` localhost fallback fixed.** When `NEXT_PUBLIC_BASE_URL` is unset, autonomous-Cortex callbacks now fall back to `https://owlette.app` (matching the email-templates pattern) instead of `http://localhost:${PORT}`.
+
+### changed
+
+- **Cloud Functions reconcilers now exported.** `reconcileDeploymentStatus` and `reconcileDistributionStatus` were defined but missing from `functions/src/index.ts`. With the rules lockdown live, deployment/distribution status writes would have been silently dropped. Both are now exported and deploy.
+- **Scheduled-function batch sizes capped at 400.** `chunkGc.tombstoneStore.create` and `aggregateTelemetry.trimOlderThan` previously committed all matched docs in a single batch, which fails past Firestore's 500-op limit. Now chunked.
+- **`apiKeyExpire` query bounded.** Added `.where('expiredMarkedAt', '==', null)` filter so the daily scan doesn't grow linearly with historical expired-key count.
+- **Rate limiter `setInterval` no longer leaks Jest workers.** `web/lib/rateLimit.ts` cleanup timer now calls `.unref()` so test processes exit cleanly.
+
+### added
+
+- New composite Firestore index `webhook_deliveries(state, nextAttemptAt)` for the retry-queue pump.
+- New composite Firestore index `api_keys(expiresAt, expiredMarkedAt)` for the bounded `apiKeyExpire` query.
+- One-shot deprecation warnings for legacy API keys with empty scopes and for API keys passed via query string. Both log a keyHash prefix once per process so operators can identify which integrations need to migrate.
+
+### required env vars (new)
+
+- `CORTEX_INTERNAL_SECRET` — must be set on Cloud Functions (in `functions/.env`) for the 5 internal-only HTTPS functions to operate. Without it, all 5 return 503.
+- Optional `LEGACY_API_KEY_BYPASS_ENABLED` + `LEGACY_API_KEY_ALLOW_HASH_LIST` — emergency-only allowlist for legacy unscoped keys during the migration window.
+
+### migration notes
+
+- **Agents on 2.11.x and earlier**: still compatible. Refresh tokens are issued under the new rotation scheme on next `/api/agent/auth/refresh` call; older tokens stay valid until first refresh.
+- **CLI clients on 1.0.0-rc and earlier**: still compatible. No CLI behavior changes in 2.12.0.
+- **Pre-deploy iron-session cookies**: lazily upgraded on first protected-page hit (one Firestore read per cookie). After the upgrade the cookie carries the new MFA flags. Cookies expire naturally within 7 days.
+
+## [2.11.3] - 2026-05-08
+
+### added
+
+- New Cortex Tier 2 tools `update_process`, `add_process`, and `delete_process` bring the chat to feature parity with the GUI/web for process management. The tools accept the full set of process config fields (name, exe_path, file_path, cwd, priority, visibility, time_delay, time_to_init, relaunch_attempts, launch_mode, schedules, schedulePresetId) and execute server-side via the existing validated action functions — no agent relay, no command-queue latency.
+- Agent now surfaces missing-executable failures as dashboard toast notifications with up to two suggested alternative paths (sibling versions discovered by walking up from the missing path). The toast offers a one-click "use path" action that opens the process edit dialog with the suggested path pre-filled.
+- New canonical `firebase_client.send_alert(event_type, data)` method with retry-on-failure queueing (drains on reconnect, capped at 100 pending alerts). The previous `send_process_alert` and `send_display_alert` are now thin wrappers that delegate to it.
+
+### changed
+
+- `/api/agent/alert` route now accepts both the new generic `{eventType, data}` shape and the legacy flat process-alert shape, so older agent callers keep working unchanged while new event types (`exe_missing`, etc.) flow through cleanly.
+
+### fixed
+
+- Missing-executable failures (e.g. when a process's configured `exe_path` no longer exists after an app upgrade) are now surfaced to the operator instead of silently failing every tick. Previously the agent only logged the error to its local log file, leaving operators with no signal that a managed process couldn't launch. Rate-limited so it fires once per failed-state transition, not every 5-second main-loop tick.
+
+## [2.11.2] - 2026-05-06
+
+### fixed
+
+- Agent GUI process-details panel now stays in sync with external `launch_mode` changes. The dropdown and schedule label refresh immediately even while a text entry is focused; entry-field updates are deferred and retried after focus leaves so Firestore changes are no longer permanently dropped.
+- GUI `launch_mode` changes no longer trigger a brief command-prompt flash. `GPUtil.getGPUs()` (called transitively from the GUI's post-toggle metrics push) now spawns `nvidia-smi` with `CREATE_NO_WINDOW` via a Windows-only monkey-patch in `shared_utils._get_gputil()`.
+- `launch_mode` transitions originating from the GUI now run the same runtime cleanup as web-originated changes. The service maintains an in-memory snapshot of last-applied modes and diffs it on every main-loop tick, applying transitions through a single `_apply_launch_mode_transition` helper. Previously the GUI flow bypassed the smart-transition path because it wrote disk before uploading to Firestore, leaving stuck `killed`/cooldown markers that prevented relaunch.
+- `off → scheduled` transitions outside the schedule window now clear stale runtime markers on the transition itself, so a previously-killed process will launch when the schedule window next opens (was stuck before).
+- Cortex `set_launch_mode` IPC handler called `shared_utils.write_config(config)` with the wrong signature, so launch-mode changes from Cortex were silently not persisted. Now uses `save_config(config)`.
+- Cortex chat tool calls for `set_launch_mode` (and other Tier 2 tools dispatched through `executeExistingCommand`) now forward all LLM-supplied parameters — `mode`, `schedules`, `schedulePresetId`, etc. — to the agent. Previously only `process_name` was forwarded, so the agent's command handler defaulted `mode` to `off` regardless of what the user asked for.
+
+### changed
+
+- Firebase `set_launch_mode` / `toggle_autolaunch` command handler now matches by `process_id` first with a `process_name` fallback, making it robust to processes with duplicate names.
+
+### added - post-2.11 updates
+
+- Site-tier billing now gates beta sites as `core` or `pro`, defaulting beta sites to `pro`.
+- Process control now includes `restart_process` end to end across the public API, CLI, and agent control surfaces.
+- Agent GUI `kill_process` actions now require a confirmation dialog before dispatch.
+
+### changed - post-2.11 updates
+
+- Landing and pricing pages were refreshed across the redesign, use-case, developer, proof, pricing, and GPU-label sections.
+- roost and webhooks UI surfaces are now labeled as developer preview.
+
+### fixed - post-2.11 updates
+
+- Metrics charts refresh their time window when a dashboard tab regains focus.
+- Streaming API responses no longer enter the idempotency cache.
+- Status page readiness checks are hardened against partial service readiness.
+
+### security - post-2.11 updates
+
+- Remote installer requests now require a SHA-256 checksum before an agent accepts the installer.
+- `getUsageSummaryHttp` now requires site-scoped auth before returning usage data.
+- Site-member and project-distribution routes now enforce their capability gates before mutations.
+- Chat routes now enforce conversation ownership before returning or mutating conversations.
+
+### added - security-boundary migration prep
+
+Adds the production-readiness material for the security-boundary migration: W8.2 observability, W9.0 operator runbooks, customer communication draft, and scheduled audit-export plan.
+
+**admin impact**: expected to be no user-visible change for admins and superadmins. Control-plane writes now stay server-mediated through scoped REST routes, capability checks, rate limits, and blocking audit writes; existing dashboard workflows should keep the same behavior.
+
+**member impact**: milestone A intentionally keeps direct member control-plane command capability denied after rules lockdown. Members may continue read-only and explicitly allowed flows, but machine commands and other privileged control-plane writes remain admin/superadmin-only until the configurable policy work lands in milestone B.
+
+**operations**: both enforcement switches are documented (`capability_enforcement`, `rate_limit_enforcement`), including when to flip them, the 4-hour incident window, audit implications, alert wiring, and re-enable checklist. The incident playbook covers capability denial spikes, Cortex system-bucket 429s, and account-deletion cascade recovery.
+
+**audit retention**: security-boundary audit rows under `sites/*/audit_log` and platform rows under `global/audit_log/entries` now have a GCS managed-export schedule plan with retention longer than the Firestore hot-store window and a restore drill.
+
+### added — api-sprint: 30+ scoped REST endpoints across 6 capability tracks
+
+Promotes the internal admin-gated capabilities (machine commands, processes, classic-installer deploys, agent-installer mgmt, cortex chat, user/member admin) to public, scoped, api-key-friendly REST endpoints. Closes 35 cli stubs in `owlette-cli`. New: full Node + Python SDK coverage. The roost data-plane (chunks/versions/deployments/keys/webhooks) was already public from the prior cycle; this release fills out the rest of the platform surface.
+
+**Versioning**: this is **additive** — no breaking changes to existing callers, no removals. Sits in `[Unreleased]` until cut. The 3.0.0 major-bump moment is deferred to `roost-public-api` W8 (public launch) which will combine this surface + the v1-agent compat cutover noted in `project_roost.md`.
+
+**new public endpoints (~30)** — every endpoint accepts `Authorization: Bearer owk_*` (api key) or session/ID-token; mutations require `Idempotency-Key` (24h replay window, body-hash mismatch → 422 `idempotency_key_mismatch`); errors are RFC 7807 problem+json with stable `code` strings; collections are cursor-paginated per AIP-158; every mutation emits a fire-and-forget audit-log event under one of seven `MutationKind` taxonomies.
+
+- **`/api/sites/{siteId}/deployments/*`** — classic installer deploy CRUD + retry/cancel/uninstall/delete (7 verbs). Quota-enforced (max-targets-per-deploy=100, configurable via `sites/{id}.deployQuota`; 413 `over_quota`). Cancel actively purges queued commands so a stale entry can't be picked up. Uninstall requires `site=<id>:admin`.
+- **`/api/installer/*`** — agent-installer binary management (list, latest, 3-step upload, set-latest, delete). Superadmin-only (gated by new `requirePlatformAuthAndScope` helper that composes Wave-0 primitives + a defense-in-depth role check). Soft-delete protects the current latest version and enforces min-active-versions ≥ 2.
+- **`/api/sites/{siteId}/machines/{machineId}/commands/*`** — dispatch + status-poll for `reboot_machine` / `shutdown_machine` / `capture_screenshot`. Live-view streaming explicitly out of scope (deferred Wave-4 spike). Offline machine returns 409 `machine_offline` (not queued). Screenshot uses a 3-step CLI flow: dispatch → poll → download from 1-hour signed URL.
+- **`/api/sites/{siteId}/machines/{machineId}/processes/*`** — full process CRUD + control verbs (kill / restart / start / stop / schedule). 10 verbs total. Race-safe via the new `withProcessLock()` helper — Firestore transaction enforces duplicate-name rejection (409 `duplicate_process_name`) inside the txn boundary; lazy backfill of `processId` UUIDs on legacy rows. Schedule verb writes through the lock (no command queue); the other four control verbs queue commands.
+- **`/api/cortex/conversations/*`** — canonical Cortex conversation API (5 verbs: create, list, send+stream, soft-delete, rename). Reuses Cortex's dual-path streaming engine (local agent vs server-side LLM) via the extracted `cortexStream.server.ts` helper. Older `/api/chat/*` routes remain compatibility aliases. Conversations are stored at `chat_conversations/{id}` with embedded messages capped at 200; overflow splits into `chat_messages/{conversationId}/{messageId}` subcollection.
+- **`/api/users/*`** — platform user administration (7 verbs: list/get/promote/demote/assign-sites/remove-sites/delete). Superadmin-gated. Last-superadmin guard runs inside the demote transaction (409 `last_superadmin`). DELETE cascade with explicit failure modes: orphan-sites guard (409 `orphan_sites` if user owns sites and `successorUid` not provided); successor validation; api-key revocation across both subcollection + top-level lookup; background `setImmediate` command-cancel sweep.
+- **`/api/sites/{siteId}/members/*`** — site membership (3 verbs: list/add/remove). Site-admin-gated. Add with `role: 'admin'` against a member-tier user returns `roleHonored: false` rather than silently promoting globally — explicit promotion goes through `/api/users/{uid}/promote`.
+
+**owlette CLI** — `@owlette/cli` (binary `owlette`) prepared as v1.0.0-rc.0 with 6 promoted command groups: `chat` (5 verbs), `user` (7), `deploy` (classic installer; 7), `installer` (4), `process` (10), `machine` mutations (3 — reboot/shutdown/screenshot; live-view stays as the only C-tier stub). Plus `whoami`, `version`, `site`, `quota`, `audit-log`, `machine` reads from the prior cli wave. Every mutation auto-generates `Idempotency-Key: cli-<noun>-<verb>-<uuid>`; stable error codes (`machine_offline`, `duplicate_process_name`, `over_quota`, `min_versions_violated`, `last_superadmin`, `orphan_sites`, `scope_insufficient`) get human-readable hints; destructive verbs honor `--yes`.
+
+**Node + Python SDKs** — extended to the 1.0.0 RC package line: `@owlette/sdk@1.0.0-rc.1` and `owlette-sdk==1.0.0rc0` (PEP 440 spelling). Both add 6 new resource modules (`installerDeployments`/`installer_deployments`, `installer`, `processes`, `chat`, `users`, `members`) plus extension of `machines` with command-dispatch + screenshot orchestration (queue → poll → download). Both auto-generate `Idempotency-Key: sdk-<resource>-<verb>-<uuid>` if not supplied. Streaming `chat.send()` parses the AI-SDK v3 line protocol (`0:` deltas, `d:` end markers, `3:` errors) — Node exposes `{ deltas: AsyncIterable, complete: Promise }`; Python yields `async for delta in chat.send(...)`.
+
+**scope grammar extended** — `ApiKeyResource` enum extended from 3 → 8 types: added `chat`, `deploy`, `process`, `user`, `installer`. New constants `ALL_RESOURCES` + `SUPERADMIN_ONLY_RESOURCES` exported from `web/lib/apiKeyTypes.ts` so route validators + the dashboard scope picker can't drift.
+
+**shared infrastructure** — three new helpers landed in Wave 0 of the sprint and are now used everywhere:
+- `withIdempotency(request, ctx, rawBody, handler)` in [`web/lib/idempotency.ts`](../web/lib/idempotency.ts) — collapses the 12-line check→handler→save pattern into 4 lines for every mutating route. The existing `web/lib/idempotency.ts` was extended in-place; no parallel helper file was created.
+- `emitMutation({kind, siteId, actor, targetId, attributes})` in [`web/lib/auditLogClient.ts`](../web/lib/auditLogClient.ts) — single parameterized helper covering all 7 mutation kinds (`deployment_mutated`, `process_mutated`, `machine_command_dispatched`, `user_mutated`, `site_member_mutated`, `installer_mutated`, `chat_mutated`). Fire-and-forget; never awaited.
+- `requireMachineAuthAndScope` + `requirePlatformAuthAndScope` in [`web/app/api/_shared.ts`](../web/app/api/_shared.ts) — joined the existing `requireSiteAuthAndScope` / `requireRoostAuthAndScope` family. Single-line scope check at every route; no per-route boilerplate.
+
+**cortex auth** — `web/app/api/cortex/route.ts` swapped from session-only `requireSession()` to `resolveAuth()` + `requireScope('chat', siteId, 'write')`. Dashboard callers (session/ID-token) bypass scope and continue to work unchanged; CLI / 3rd-party api-key callers must hold `chat=<siteId>:write`. SSE streaming context preserved.
+
+**site membership canonical** — audited and locked: site membership lives **only** at `users/{uid}.sites[]`. The hypothesized inverse `sites/{siteId}.members[]` does not exist anywhere in the codebase; firestore.rules pins to the canonical model. New `getUserSiteIds(uid)` helper in [`web/lib/apiHelpers.server.ts`](../web/lib/apiHelpers.server.ts) so future callers don't reinvent the read pattern. Decision memo at `dev/completed/api-sprint/reference/membership-decision.md`.
+
+**OpenAPI spec** — every new endpoint shipped with its spec entry alongside the route. Total: ~50 public scoped endpoints documented in `web/openapi.yaml`. Interactive reference at `/docs/api` (Scalar) and raw JSON at `/api/openapi`. Three pre-existing `Problem` → `ProblemDetails` ref typos fixed during the sprint-close verify.
+
+**testing** — 1447/1447 web tests passing across 75 jest suites (was 1142 before the sprint, +305 new). 237/237 CLI tests passing across 29 suites (was 108, +129 new). 55 Node SDK tests + 57 Python SDK tests. 47 new Playwright e2e specs across 7 files in `web/e2e/specs/api-sprint/`. 6 new k6 scripts in `load-tests/k6/` covering the highest-traffic new endpoints with smoke/sustained/spike scenarios and per-VU per-iteration unique idempotency keys.
+
+### deprecated
+
+- Historical `/api/admin/*` docs are no longer the public contract. Use the scoped public equivalents (`/api/sites/{s}/deployments/*`, `/api/installer/*`, etc.); individual admin aliases may be internal, removed, or dashboard-only depending on the domain.
+
+### removed
+
+Nothing. The api-sprint is purely additive — internal callers and existing public roost endpoints are unaffected.
+
+## [2.11.1] - 2026-05-05
+
+### fixed — display-helper IPC permission denied on non-admin console users
+
+`apply_display_topology`, `enumerate_display_modes`, and the related revert / self-test paths failed with `[Errno 13] Permission denied: 'C:\WINDOWS\TEMP\owlette_display_apply_*.req.json'` on any machine where the active console user wasn't a local admin. After 3 retries the auto-restore breaker latched and stopped attempting drift correction.
+
+**root cause**: the agent service (running as `LocalSystem` in Session 0) wrote helper request JSON via `tempfile.gettempdir()` — which resolves to `C:\Windows\Temp` for `LocalSystem` — then spawned the helper as the console user via `CreateProcessAsUser`. Default ACLs on `C:\Windows\Temp` deny standard-user reads of SYSTEM-owned files, so the helper couldn't open the request file the service had just written. Worked fine when the console user happened to be a local admin, which is why it didn't surface universally.
+
+**fix**: every cross-session display-helper IPC file (request, response, stderr) now lives under `%PROGRAMDATA%\Owlette\ipc\display\` via a new `_ipc_tempdir()` helper. The directory's DACL is set explicitly at first use — `SYSTEM:Full + Administrators:Full + console-user-SID:Modify`, with `PROTECTED_DACL` inheritance disabled so the installer's `users-modify` ACE on `ProgramData\Owlette` doesn't propagate down and let any interactive user tamper with IPC payloads between SYSTEM-write and helper-read.
+
+Also covers the two enumeration paths (`--enumerate-json`, `--enumerate-modes-json`) that had the same bug, sweeps stale `owlette_display_*.{req,out}.json` and `*.tmp` files >1h old at first use, and adds a distinct `DisplayErrorCode.IPC_FAILURE` so request-read / response-write / stderr-redirect failures stop getting bucketed as generic `bad_request` (which was the reason this took 3 retries to surface as something operators could diagnose).
+
+## [2.11.0] - 2026-04-25
+
+### added — display alert routing (Feature B)
+
+owlette now emits structured display events when monitor topology changes — drift, monitor added/removed/swapped, mosaic disabled, sync lost, apply succeeded/failed, auto-revert fired, apply-refused-mosaic. The new alert pipeline routes these through the existing email + webhook infrastructure with severity-aware delivery.
+
+**routing table** — single source of truth at `web/lib/alerts/displayEventRouting.ts`. Severity decisions:
+- **email + webhook (critical)**: `display_monitor_removed`, `display_apply_failed`, `display_auto_revert_fired`, `display_sync_lost`
+- **webhook only (warning)**: `display_drift`, `display_monitor_swapped`, `display_mosaic_disabled`, `display_apply_refused_mosaic`
+- **dashboard only (info)**: `display_monitor_added`, `display_apply_succeeded`
+
+**critical-path bypass** — `display_monitor_removed` and `display_auto_revert_fired` skip the 3-min digest cron and email inline so operators see them in seconds. Everything else queues to `pending_display_alerts` and ships via the new `/api/cron/display-alerts` cron (3 min interval, 2 min accumulation window — same cadence as `pending_process_alerts`).
+
+**operator-caused-drift suppression** — agent stamps `suppressAlert: true` + `correlatedApplyId` on display events that fire within 90s of a successful apply. The `/api/agent/alert` route honors the flag: skips email, still fires webhook. Closes the recall-then-N-drift-emails avalanche.
+
+**rate limiting** — 1 per `(machineId, eventType)` per hour for most events; `display_drift` gets a tighter 1 per 4h window because cable-flap drift can fire repeatedly on rack-mount installations.
+
+**preferences** — new `displayAlerts: boolean` toggle in account settings (opt-out, defaults to true). 30-day migration banner on `/admin/alerts` directs existing operators to the new control. Webhook config UI exposes all 10 new event ids as opt-in subscriptions (existing webhooks NOT auto-subscribed).
+
+**dashboard surface** — new `events` tab on the display panel renders the last 50 display events for the selected machine, severity-color-badged, with relative timestamps. Subscription opens only when the tab is visible.
+
+### added — auto-restore (Feature C)
+
+opt-in per-machine toggle: when enabled, the agent automatically reapplies the stored layout on detected drift instead of waiting for a human to click recall.
+
+**state machine** — drift detected → 30s topology-check tick → drift persists across 2 ticks (~60s) → fixability check (every drifted edidHash present in assigned) → cooldown clear → spawn worker thread → `apply_topology(..., auto_restore=True)` → emit `display_auto_restore_fired` audit. No watchdog (no operator to ack), no sentinel (next topology check re-fires from clean state if anything goes wrong).
+
+**circuit breaker** — 3 consecutive auto-restore failures trip the breaker (`circuitBreaker.tripped: true` in the config doc). While tripped, `_maybe_auto_restore` short-circuits at gate 3 — no thread spawned, no further failures counted. Operator resets via the panel's banner (single click → `circuitBreaker.tripped: false, failures: 0`). Rate-limited responses (`AUTO_RESTORE_RATE_LIMITED`) and unfixable skips (`AUTO_RESTORE_SKIPPED_UNFIXABLE`) do NOT count toward the failure counter.
+
+**fixability model** — only `display_drift` triggers auto-restore. `_monitor_added` (new monitor in live, not in assigned) and `_monitor_removed` (assigned monitor unplugged) are unfixable by re-applying assigned and would loop infinitely if attempted. The unfixable-skip emits `display_auto_restore_skipped_unfixable` (info severity) so operators see why the auto-fix didn't fire.
+
+**dashboard surface** — `<Switch>` toggle in the panel header (any site member with write access; not admin-gated). When armed, a small "auto" micro-label + green dot renders next to the recall button. When tripped, a red banner appears at the top of the panel body with the last error and a single-click reset. Fleet-view: small red dot next to existing drift indicator on both `MachineCardView` + `MachineListView` so operators can spot tripped machines without expanding any panel.
+
+**permissions** — `displays.autoRestore.enabled` writable by any site member (matches existing config-doc write rule). Admin role is reserved for cross-site administration, not per-site feature toggles. `circuitBreaker.tripped: false` reset uses the same gate. Agent retains exclusive write on `circuitBreaker.{failures, lastError, lastFailureAt, lastSuccessAt, trippedAt}`.
+
+### added — remote-apply master kill switch + helper self-test (Wave 6)
+
+Defence-in-depth gate over the apply path so a fresh agent doesn't auto-trust remote layout writes until an operator explicitly opts in.
+
+**kill switch** — `apply_topology` now also reads `displays.remoteApplyEnabled` from the agent's local config. Anything other than literal `True` rejects the apply with `remote apply disabled by config` *before* any locks, audit events, or CCD calls. Distinct from `displays.enabled` (which gates the entire feature including drift detection); this flag scopes only the write path. Defaults `False` on fresh installs (`generate_config_file`); existing installs without the field also read as off.
+
+**self-test** — `test_display_apply` command runs the apply helper in read-only mode (`QueryDisplayConfig` + `SetDisplayConfig(SDC_VALIDATE)` against the live config — never `SDC_APPLY`) so operators can verify the helper IPC plumbing (CreateProcessAsUser, env block, atomic response file) works end-to-end on a given machine *before* flipping the kill switch on. New `_self_test_via_user_session` service-side wrapper + `_helper_self_test_to_json` helper-mode entry. Surfaced in the dashboard panel only while `remoteApplyEnabled` is off.
+
+### migration
+
+- New Firestore subcollection: `pending_display_alerts/*` (digest queue). Created on first display event. No backfill needed.
+- New machine config field: `displays.autoRestore.{enabled, enabledBy, enabledAt, circuitBreaker}`. Default-absent = disabled, breaker reads as not-tripped via the typed default sentinel in `useDisplayState`.
+- New machine config field: `displays.remoteApplyEnabled: boolean`. **Default false on fresh installs and on existing installs with the field missing — operators must explicitly enable per machine via Firestore (or the upcoming dashboard toggle) before remote apply / auto-restore writes will land.** Existing operators relying on the v2.10 apply button must flip this to `true` after upgrading the agent.
+- New user preference: `displayAlerts: boolean`. Missing field treated as `true` (opt-out semantics — existing users continue to receive display events until they explicitly disable).
+- New cron required: `/api/cron/display-alerts` every 3 minutes via Railway cron (same cadence as `/api/cron/process-alerts`). Set the `X-Cron-Secret` header to the existing `CRON_SECRET` env var.
+- No agent-side migration. v2.10+ agents emit display events through the existing log_event path; pre-2.10 agents simply don't emit them and the dashboard's events tab stays empty for those machines.
+
+## [2.10.0] - 2026-04-24
+
+### breaking — roost: `manifest` → `version` rename + per-roost version numbering
+
+The release-engineering noun renamed end-to-end. What was a `manifest` (OCI/Docker borrow that confused TD-artist + signage operators) is now a `version` everywhere: API routes, SDK types, CLI commands, dashboard labels, Firestore sub-collection name, mediaType string, webhook events, error codes. Clean break — no backcompat shim, no redirect layer. **v2.10.0 is the cutover release.** Pre-2.10 agents cannot speak to a 2.10 web/api (wire protocol changed: `manifest_id`/`manifest_url`/`folder_id` in `sync_pull` payloads → `version_id`/`version_url`/`roost_id`); upgrade agents in lockstep with web.
+
+**rename surface (mechanical)**
+- API routes: `/api/roosts/{id}/manifests/*` → `/api/roosts/{id}/versions/*`. `/manifest-url` → `/version-url`. Old paths 404.
+- Path param grammar: `{manifestId}` → `{versionRef}`. The `versionRef` resolver accepts six forms — see *new capabilities* below.
+- Field names (camelCase): `manifestId` → `versionId`, `currentManifestId` → `currentVersionId`, `previousManifestId` → `previousVersionId`, `targetManifestId` → `targetVersion` (now `string | number`), `manifestUrl` → `versionUrl`, `manifestMetadata` → `versionMetadata`. Same renames in snake_case across Python SDK + agent (`manifest_id` → `version_id`, etc.).
+- TypeScript types: `Manifest*` → `Version*` (`ManifestSummary` → `VersionSummary`, `ManifestDetail` → `VersionDetail`, etc.).
+- SDK accessor: `client.manifests` → `client.versions` (Node + Python).
+- CLI flags: `--manifest <id>` → `--version <ref>`; `--against <manifestId>` → `--against <versionRef>`; `--to <manifestId>` → `--to <versionRef>`.
+- Webhook events: `manifest.published` → `version.published`. `Roost-Event` header values follow.
+- Error codes: `manifest_stale` → `version_stale`, `manifest_not_found` → `version_not_found`, plus new `version_ref_malformed` (400) + `version_content_immutable` (400).
+- mediaType: `application/vnd.owlette.manifest.v1+json` → `application/vnd.owlette.version.v1+json`.
+- Firestore sub-collection: `sites/{s}/roosts/{r}/manifests/{id}` → `sites/{s}/roosts/{r}/versions/{id}`. Migration script at `scripts/migrate-manifest-to-version.mjs` (idempotent, supports `--dry-run` + `--rollback`, handles roost-doc field rename + `versionNumber` backfill).
+- Agent wire protocol: `sync_pull` command payloads now use `version_id`/`version_url`/`roost_id` (was `manifest_id`/`manifest_url`/`folder_id`). Agent code at `agent/src/sync_version.py` (was `sync_manifest.py`).
+- Firestore security rule: `match /manifests/{manifestId}` → `match /versions/{versionId}` under the roost sub-collection.
+
+**new capabilities introduced alongside the rename**
+- **Auto-incrementing per-roost `versionNumber`**: every push to a roost gets a 1-indexed integer (#1, #2, #3...) minted inside a Firestore transaction. Monotonic + gap-free even under concurrent publishes. Surfaced in API responses, dashboard list rows (`v3` badge), and CLI output.
+- **Optional `description` field per version** (≤500 chars, plaintext): commit-message-style "what changed?" annotation. Set on push via SDK options or CLI `-m / --description <text>`. Editable after publish via `PATCH /api/roosts/{id}/versions/{ref}` — version *content* (files, chunks) stays immutable; only description can change. Denormalized to roost doc as `currentVersionDescription` so the dashboard list renders without N+1 reads.
+- **Version-addressing resolver** (`web/lib/resolveVersion.ts`): every `{versionRef}` path param + CLI `--to`/`--against` accepts six forms — plain integer (`3`), `#3`, `v3`/`V3`, stable id (`vrs_*`), or alias (`current` / `previous` / `first`). Server resolves; SDKs/CLIs forward raw input verbatim.
+- **New `roost roost versions <roostId>` CLI subcommand**: lists all versions for a roost with `#`, id, description, createdAt columns. Cursor-paginated, honors `--json`.
+- **Dashboard UI**: roost rows show current `v{N}` badge + description preview + relative timestamp. Expanding a row reveals chronological version history with per-row three-dot menu (rollback to this version, copy version id, view files, diff against current). New "+ new version" button inside each expanded panel opens the push modal with name/extract-path/targets locked + pre-populated, so adding a version to an existing roost is one flow distinct from creating a new project. New-roost modal now requires a non-empty name.
+
+**migration tooling**
+- Firestore migration: `node scripts/migrate-manifest-to-version.mjs --project dev --dry-run` first, then run for real. Idempotent — skips already-migrated roosts. Backfills `versionNumber` (1, 2, 3...) sorted by `createdAt`. Renames roost-doc pointer fields. `--rollback` reverses via the per-run log file.
+- Local agent state: SQLite columns renamed in `sync-state.db` schema. `SCHEMA_VERSION` was not bumped — existing dev installs need the file deleted before the new agent boots, or upgrade will throw `OperationalError` on first INSERT. Acceptable per the 2.10.0 clean-cutover semantics; flagged for installer-side cleanup follow-up.
+
+**deferred follow-ups (post-rename)**
+- R2 physical bucket migration: object keys still live under `project-manifests/{roostId}/{versionId}` in R2. Code references the prefix string with a marker comment (`web/lib/r2Client.server.ts`) until a dedicated migration script copies+deletes from `project-manifests/` → `project-versions/`. No wire impact — just a storage-layer rename.
+- Browser-app `manifest.json` (PWA) is intentionally untouched — that's a Next.js metadata convention, not a roost concept.
+
+**verification**
+- 200 functions tests + 1,017 web tests + 28 node SDK tests + 101 CLI tests + 376 agent unit tests all green. Final repo-wide grep returns 17 hits, all in `dev/active/roost-version-rename/reference/rename-sweep-allowlist.txt` (R2 deferral, PWA reference, verb forms, intentional compat note, defensive test fixtures).
+- Migration guide for any dev tester or early SDK user: `dev/active/roost-version-rename/MIGRATION.md`.
+
+### added — roost (project distribution v2)
+
+A content-addressed sync layer replacing v1's single-URL ZIP model. Turns roost into the release-engineering layer: deploy via drag-drop or URL, atomic rollback via pointer flip, dedup at chunk granularity, real retry + resume across tab close.
+
+**storage + manifest model**
+- 4 MiB fixed-chunk content addressing with per-tenant prefix `project-content/{siteId}/{hash[0:2]}/{hash}` on Cloudflare R2 — picked over S3/GCS for free egress, the only economic axis that matters at fleet fan-out.
+- OCI Image Manifest v1.1 derivation (`application/vnd.owlette.manifest.v1+json`), immutable once written. A firestore pointer at `sites/{siteId}/roosts/{roostId}.currentManifestId` is the only mutable head.
+- Schema spec + threat model + v1-to-v2 migration design at `docs/internal/{manifest-format,threat-model,v1-v2-migration}.md`.
+
+**browser upload pipeline (dashboard)**
+- `ProjectDistributionDialog` rebuilt as a two-mode dialog: `new deploy` (configure a new deployment — source is a sub-choice within: url vs upload files) + `history` (past manifests + rollback). Shared fields (distribution name, extract path, verify files, target machines, preset bar) apply across both sources. Dialog is mobile-responsive at 375px.
+- Off-main-thread chunker + SHA-256 hasher in a web worker (`web/lib/chunking.ts`); AbortSignal-aware between chunks, streamed-slice memory (O(1) per chunk regardless of file size).
+- IndexedDB-backed upload queue (`web/lib/uploadQueue.ts`) with parallelism (default 4), exponential backoff + jitter, 10-attempt cap. Crashed tabs leave `in_flight` tasks that get demoted to `pending` on re-open — close-and-re-drop resumes from wherever it stopped.
+- Pre-upload confirmation (`PreUploadSummary`) showing file count, total size + dedup preview, est. upload time, per-target disk-free check (warns on unknown, blocks on insufficient + 20% margin), quota check (80% warning, exceed-cap error). Start button gated on blocking checks.
+- Rollback confirmation dialog (`RollbackConfirmDialog`) with file-level diff (added/removed/changed), net byte delta, canary-vs-all-at-once strategy picker (canary default), problem+json error parsing.
+- Filename sanitization (`web/lib/sanitize.ts`) — NFC normalisation, strips C0/C1 control chars + zero-width/RTL-override invisibles (ZWSP, LRM/RLM, LRO/RLO, BOM, etc.), windows-canonical trailing-dot/space trim, codepoint-safe 255-char truncation, rejects NUL bytes, path separators, `.`/`..`/empty-after-clean.
+
+**server-side — web API surface (roost routes)**
+- New routes at clean paths (no `/v2/` prefix — deliberate decision): `POST /api/chunks/{check,upload-urls,download-urls}`, `GET/POST /api/roosts/{roostId}/manifests`, `POST /api/roosts/{roostId}/rollback`. All 6 currently return 501 `notImplementedYet` stubs pending R2 wiring.
+- RFC 7807 `application/problem+json` error envelope (`web/lib/apiErrors.ts`) — stable problem-type URIs, per-occurrence requestId for trace correlation, field-level error detail for 400/422. Replaces the legacy `{error: string}` shape for roost routes.
+- OpenAPI 3.1 spec extended (`web/openapi.yaml`) with roost tag, all 6 paths, `ProblemDetails` + `OciManifest` + `ManifestSummary` schemas, reusable `Problem4xx` + `Problem501` responses, bearer-token scheme for firebase ID tokens. Live docs at `/docs/api` (Scalar renderer).
+- Strict CI drift gate: `.github/workflows/openapi-validate.yml` runs on PR + push; any undocumented route under `/api/chunks/*` or `/api/roosts/*` hard-errors.
+
+**server-side — cloud functions**
+- `onRoostWritten` + `onTargetStateWritten` (`functions/src/distributionFanout.ts`) — canary-first fan-out. 10%/floor-1/cap-50 canary cohort via stable FNV-1a hash of `machineId + manifestId` (deterministic across retries). Abort threshold evaluates against total-not-settled, so a rollout already past 25% failure aborts without waiting for stragglers. Cloudflare 2025-11-18 all-at-once lesson explicitly honored.
+- `verifyChunk` (`functions/src/chunkVerify.ts`) — SHA-256 verify on every R2 PUT via Cloudflare Worker webhook; planted-bytes get deleted + alerted.
+- `chunkGcNightly` (`functions/src/chunkGc.ts`) — two-phase mark-and-sweep with 30-day tombstone TTL. Resurrection guard: a chunk referenced again before TTL elapses has its tombstone cleared (never deleted). `CHUNK_GC_MODE=dry-run` default for the first production month.
+- `preUploadCheck` + `reconcileQuota` (`functions/src/quotaEnforce.ts`) — per-tenant storage quota. Admit reserves pending-bytes atomically (concurrent uploads can't both fit when sum > cap). Daily reconcile fires only newly-crossed 50%/80%/100% alarms (no refire at steady state). Pricing tiers: free 5 GB / starter $8 25 GB / pro $15 100 GB / enterprise BYO.
+- Telemetry + cost attribution (`functions/src/telemetry.ts`) — R2 pricing model ($0.015/GB-month storage, $4.50/M class-A, $0.36/M class-B, $0 egress), GB-day averaging on storage snapshots (not latest), OTLP-shaped structured logs for downstream collector.
+- Append-only audit log (`functions/src/auditLog.ts`) — SHA-256 hash-chained records; deletion + mutation both detectable. 7-year retention, BigQuery cold-storage sink.
+- Webhook dispatcher (`functions/src/webhookDispatch.ts`) — 7 event types (`distribution.{queued,started,succeeded,failed}`, `chunk.uploaded`, `manifest.published`, `rollback.executed`), HMAC-SHA256 signed (`sha256=<hex>`), retry queue with exponential backoff (5 s × 3 × 1 h cap × ±20% jitter, 10-attempt cap). `classifyResponse` maps 2xx=success, 408/425/429/5xx=retry, other-4xx=permanent.
+
+**agent sync pipeline (windows service)**
+- `sync_commands` / `sync_manifest` / `sync_downloader` / `sync_state` / `sync_assembler` / `sync_scrub` modules (`agent/src/`) implementing the end-to-end v2 pipeline. ~350 new unit tests covering fetch + diff + cache, range resume (`Range: bytes=N-`), verify failure, URL refresh, atomic assembly, drift detection.
+- Destination allowlist (`agent/src/destination_allowlist.py`) — fail-closed: empty/missing rejects all writes. Realpath-based; rejects symlinks/junctions (via `FILE_ATTRIBUTE_REPARSE_POINT` check — catches cve-2022-21658 / cve-2025-4330 class), windows reserved device names (NUL/CON/PRN/COM1-9/LPT1-9, any case, with or without extension), alternate data streams, path traversal.
+- Path-traversal + TOCTOU hardening (`sync_assembler.py`) — post-rename realpath check catches parent-dir symlink-swap between allowlist validation and the rename landing; suspect files get quarantine-deleted. Sibling-prefix regression (`/foo/bar-extra` must NOT satisfy root `/foo/bar`) covered via separator-suffixed prefix match.
+- Explicit ACL on extracted files — `SYSTEM` + `Administrators` only, inheritance stripped. Fixed a 0x80000000 overflow on python 3.9 + pywin32 that was silently no-op'ing the ACL hardening in prior builds.
+- Long-path support (`\\?\` prefix for >260-char paths), throttled progress reporting (every 5% or 30 s, not every chunk), real cancellation (flag checked between chunks, atomic rename completes if in flight, no corrupted files), locale + accented filename support (French/Spanish/German/Nordic accents, CJK, Arabic/Hebrew RTL, emoji with surrogate pairs, NFC/NFD).
+
+**security / ops / observability**
+- Per-site kill switch (`sites/{siteId}.roostEnabled`) — agent checks before every `sync_pull`; web routes gate via `gateOrProceed()` returning 503 problem+json. Fail-open on read error (a transient firestore blip must not silently disable a customer). 30 s TTL on both sides → flip propagates within 60 s. Matching python + ts implementations, field-name-pinned on both sides.
+- No-token-logs lint gate (`scripts/check-no-token-logs.mjs`) — scans TS/JS/TSX/MJS + Python for log calls that interpolate auth-token identifiers, handles f-strings and template literals, 6 must-flag + 5 must-pass self-test fixtures. Runs via `.github/workflows/no-token-logs.yml` on PR + push. Plus an ESLint `no-restricted-syntax` rule for dev-time IDE feedback.
+- SLSA Build Level 3 pipeline (`.github/workflows/build-installer.yml`, doc at `docs/internal/slsa-build-l3.md`) — hermetic windows build with pinned Inno Setup 6.2.2 + Python 3.11, keyless sigstore signing via github OIDC, reusable workflow pinned to `slsa-framework/slsa-github-generator@v2.0.0` (not `@main`, prevents silent chain-of-trust degradation). Verify job runs `slsa-verifier v2.6.0` against artifact + provenance before the release ships.
+- k6 load-test suite (`load-tests/k6/`) with SLO targets enforced as thresholds — chunks/check p99 < 200 ms, upload-urls < 500 ms, download-urls < 400 ms, finalize-manifest < 800 ms, rollback < 400 ms. Base reliability gate: `http_req_failed < 0.01`. Includes a **race scenario** on finalize-manifest (20 VUs × same `expectedCurrentManifestId` → P0 CAS regression guard: exactly one 201, rest 412).
+- Architecture doc (`docs/architecture.md`) extended with the roost section: storage layout, manifest format, browser upload pipeline mermaid, agent sync pipeline with per-module links, canary-first rollout algorithm, security floor, explicit restatement of the clean-cutover decision.
+
+### added — playwright e2e suite
+
+A Playwright end-to-end test suite running the full web dashboard against Firebase emulators (Auth :9099, Firestore :8080, Storage :9199). Covers 50+ specs across six phases:
+
+- **Phase A** — emulator wiring + smoke (4 specs): Admin SDK branch routing, sentinel canary for `firebase-admin.ts`
+- **Phase B** — auth flows (4 specs): login, logout, signup, HttpOnly session cookie round-trip via `page.evaluate(fetch)` pattern
+- **Phase C** — account + settings (8 specs): profile update, passkey enrol/delete, preferences, password change with fixture-isolation (dedicated `password-test-user` prevents Firebase token revocation from poisoning other specs)
+- **Phase D** — dispatch flows (22 specs): reboot, shutdown, kill-process, recall/store/clear display layouts, deployment create/progress/cancel/retry, roost create, rollback auth + validation
+- **Phase E** — time-travel flows (10 specs): `page.clock`-driven specs for reboot countdown, cancel-lockout threshold, display-apply deadline auto-revert, heartbeat staleness → offline flip, heartbeat recovery via onSnapshot overwrite
+- **Phase F** — CI + hardening: `.github/workflows/e2e.yml` with Temurin JDK 21, Playwright browser caching keyed on `@playwright/test` version, `firebase emulators:exec` wrapper, artifact upload on failure (14-day retention)
+
+Infrastructure highlights: `roleState()` helper for pre-authenticated specs, `stubCommand` / `completeCommand` agent-stub helpers, `seedMachine` + `seedBaseline` deterministic seeding, per-spec `page.clock.install({ time: Date.now() })` pattern (must precede `page.goto` for React's setInterval to bind to the fake clock). Full guide at `web/e2e/README.md`.
+
+### decisions locked (roost)
+
+- **No `/api/v2/` URL prefix** — the new routes ARE the API.
+- **No backwards compatibility with v1 agents** — clean cutover, the v2.10.0 agent is a hard requirement. No dual-write window, no shadow-read, no `project_url` fallback. Operators re-roost on v2; existing v1 distributions end at cutover.
+- **No header-based versioning** (no `Accept: application/vnd.owlette.v2+json`).
+- **v3-deferred** (do NOT rebuild in v2): bidirectional sync, LAN swarm, Ed25519 manifest signing, public CLI + GitHub Action, FastCDC, chaos rack.
+
+### changed
+- **Three-role permission model** — `member` / `admin` / `superadmin` replaces the two-tier `user` / `admin` scheme. Superadmins retain platform-wide god-mode (user management, installer uploads, access to every site regardless of assignment). The new `admin` tier is site-scoped: site admins get elevated rights only on the sites in their `sites[]` — they can edit site config, delete machines, and manage display layouts without holding any platform-level powers. Members keep standard site-scoped access.
+- **User-management page redesigned** for the new model: role selector is now a three-option dropdown (with icons, colour, and inline descriptions of each role's capabilities); stats cards show per-role counts; admin rows display the specific sites each admin is responsible for (small pills, easy to scan). Self-demotion guard narrowed — superadmins are still blocked from self-demotion (platform-lockout risk), but admins can demote themselves since no cross-site powers are in play.
+- **Superadmin visual indicator** — small red "superadmin" Crown pill appears next to the user avatar on every authenticated page when signed in as a superadmin. Signals god-mode so routine site ops don't accidentally use elevated access.
+
+### migration
+- **Deploy order is load-bearing**: run `node scripts/migrate-roles.mjs --env=<dev|prod>` first, then `firebase deploy --only firestore:rules`, then the web deploy. The migration flips existing `role: 'user'` → `'member'` and `role: 'admin'` → `'superadmin'` idempotently; supports `--dry-run`. Existing admins become superadmins automatically (semantics preserved). The new site-scoped `admin` tier starts empty — superadmins promote members via the user-management page. Reversed deploy order would transiently lock current admins out of their sites until the migration runs.
+- **`scripts/migrate-profiles.mjs`** — one-shot bootstrap script for the multi-device metrics schema (shipped at 2.8.1). Iterates every `sites/*/machines/*` doc and writes a best-effort `hardware/profile` subdoc from legacy singular `metrics.cpu/disk/gpu/network.interfaces` fields. Skips machines that already have a profile or are on schemaVersion 2. Idempotent; supports `--env=<dev|prod>`, `--site=<id|all>`, `--dry-run`, `--force`. Useful for offline/stale fleets that haven't upgraded to the 2.8.1+ agent yet — gives the dashboard something renderable until the agent overwrites the bootstrap on its next startup.
+
+---
+
+## [2.9.0] - 2026-04-18
+
+### added
+- **Per-logical-volume disk IO monitoring** — agent now collects per-drive read/write throughput, IOPS, and busy% via WMI's `Win32_PerfFormattedData_PerfDisk_LogicalDisk`. Each drive (`C:`, `L:`, etc.) reports its own rates instead of one system-wide aggregate; selecting a different drive in the dashboard shows that drive's specific IO. New Firestore field `metrics.diskio` is keyed by volume id (mirrors `metrics.disks` shape). History samples carry per-volume entries under `sample.dios = [{i, rb, wb, bu}]`.
+- **Disk IO surfaces on machine cards and list rows** — selected drive's read/write rates shown as stacked `r <rate>` (green) / `w <rate>` (orange) lines, hidden when idle. Auto-scales between B/s, KB/s, MB/s, GB/s. List-view disk cell widened to 160px with a 2-column layout (usage stats left, IO right).
+- **Disk IO chart series in the metrics detail panel** — per-volume sub-toggles for read/write/busy% with volume-qualified labels (`C: read`, `L: busy`). Read/write render on the hidden axis (throughput); busy% shares the default 0-100% axis. Tooltip and stats grid both volume-qualified.
+- **Friendly GPU names in the detail panel** — UUID stays as the chart-data key (stable, unique) while toggle labels, chart legend, stats grid, and tooltip all show "NVIDIA GeForce RTX 2080 Ti" via a lookup against the static profile.
+
+### changed
+- **Network cards now use arrow notation** (`↑ <rate>` / `↓ <rate>`) instead of `TX` / `RX` text on both card and list views — language-independent, more compact, and a cleaner visual rhythm with the new disk r/w letters.
+- **Metric cell clicks SWAP the detail panel** instead of merging — clicking disk then GPU shows only GPU lines, not both. Click expansion still adds every per-device id (all disks, all GPUs, all NICs) so the panel shows all devices of the clicked type.
+- **Toggles can deselect everything** — the "must keep at least one selected" guard is gone. Empty chart is a valid state; the stats grid hides cleanly.
+- **Stats grid headers lowercased** (`avg` / `max` / `min`) for consistency with the rest of the panel's UI copy.
+
+### fixed
+- **MetricsDetailPanel chart now re-measures when the tab becomes visible** — Recharts' ResponsiveContainer would occasionally hold a stale width while the tab was backgrounded (rAF + ResizeObserver throttling), then render the plot area offset to the right with blank space on the left. A synthetic `window.resize` event on `visibilitychange → visible` forces all charts to re-measure.
+- **Watchdog timeouts actually unblock the metrics loop** — both `_wmi_logical_disk_with_timeout` (disk IO) and `_disk_usage_with_timeout` (disk partitions) used `with ThreadPoolExecutor` whose `__exit__` calls `shutdown(wait=True)`, blocking forever on a hung WMI/network-mount worker. Switched both to manual lifecycle with `shutdown(wait=False, cancel_futures=True)` so a hung worker leaks instead of stalling.
+- **NSSM runner crash on first metrics tick** — `MockService` in `owlette_runner.py` was missing four attributes that `OwletteService.__init__` defines (`_display_check_counter`, `_cached_display_hash`, `_shutting_down`, `_reboot_attempt_started_monotonic`). The display topology check at the top of every loop iteration crashed with `AttributeError`, causing NSSM to thrash-restart. Added the missing initializations plus two more (`_last_status_signature`, `_last_status_write_time`) for the status-throttle path.
+- **NaN-guarded disk IO history extraction** — cloud function now uses `Number.isFinite()` checks before pushing IO entries to a sample. Prevents a poisoned NaN field (rare but possible from upstream perf-counter glitches) from causing Firestore to reject the entire history write.
+- **Disk IO detail-panel UX rebuild** — toggle list collapsed from a wall of `C: read` / `C: write` / `C: busy%` / `HarddiskVolumeN ...` labels (12+ buttons on a typical machine) to two camps with icons: `<HardDrive> C:` (storage / disk usage %) and `<ArrowDownUp> C:` (activity — when on, plots both read% and write% lines). `HarddiskVolumeN` raw partitions are filtered out at the agent so they never enter Firestore in the first place; existing entries fall out of the live doc on the next metrics upload (Firestore dot-notation replaces the field). Read/write rates are now plotted as % of max bandwidth on the same 0-100 axis as everything else — agent ships a hardware-class `maxBps` per volume (NVMe ≈ 3.5 GB/s, SATA SSD ≈ 550 MB/s, HDD ≈ 150 MB/s, etc., detected via `MSFT_PhysicalDisk` at first call) that ratchets up on observed peaks.
+- **Disk IO watchdog timeout 2s → 10s** — the old 2s budget skipped the perflib LogicalDisk stalls that occur when the BITS service flips state during Windows Update / Delivery Optimization polling, causing ~12% of metrics ticks to report empty disk IO. Empirical: 2s and 5s both still skipped (3.6-3.7 timeouts/hr, perfectly spaced ~16 min apart matching SCM 7040 BITS demand↔auto cycles); the perflib provider lock during a BITS state change consistently exceeds 5s. 10s captures them — verified at zero timeouts over 23 min observation post-fix. The metrics loop runs in its own thread (not the main service loop) so a 10s WMI call doesn't stall anything else. (A persistent-worker variant of the WMI call was tried first but reproducibly triggered RPC_E_WRONG_THREAD on every call after the first — the python `wmi` package binds proxies to the apartment that created them, and reusing a cached proxy from a long-lived thread is incompatible with how the package hands off to the COM runtime. The per-call pattern stays.)
+
+---
+
+## [2.8.1] - 2026-04-14
+
+### added
+- **Per-device metrics schema (v2)** — metrics now key cpus/disks/gpus/nics by stable device id instead of the old singular `cpu`/`disk`/`gpu` fields. Each machine publishes a `hardware/profile` subcollection document (schemaVersion 1) describing its physical devices; heartbeats reference those ids and include a `primary` pick per kind (selected by busyness with 5% hysteresis so the display doesn't flicker). Multi-GPU rigs, multi-disk setups, and multi-NIC hosts now render every device instead of collapsing to the first one.
+- **Per-user device selection preferences** — dashboard list and card views remember which device each user wants to see per machine, persisted to `users/{uid}/devicePrefs/global` in Firestore (no localStorage). The list view shows a column-header dropdown when any visible machine has >1 of a kind; each row falls back to its own `primary` when the selection isn't present locally.
+- **`deviceResolvers` utility** — `resolveDevice`, `shouldShowDeviceDropdown`, and `unionIds` helpers with unit tests; shared by list view, card view, and the metrics detail panel.
+- **Metrics detail panel persistence** — selected metric tabs (and selected NIC, when relevant) now persist per machine via `userPreferences.graphTabs`, so refreshing or switching sites no longer resets your view.
+
+### changed
+- **Agent hardware profile is built on-device** (`hardware_profile.py`) with signature-hash change detection and a 5-minute rate-limit gate; only re-uploads when hardware actually changes. Gate stamps its timestamp *before* `build_profile()` so a persistent WMI/disk failure doesn't storm the heartbeat loop.
+- **`shared_utils.get_system_metrics_with_config` retained its legacy snake_case shape** (`cpu`/`memory`/`disk`/`gpu`/`network`) for in-process consumers (`mcp_tools`, `report_issue`, tray GUI) while also carrying the camelCase keys the v2 uploader needs; `skip_gpu` is honored again to keep the tray GUI free of `nvidia-smi` console-window flashes.
+- **WMI calls from the metrics thread now initialize COM** via `pythoncom.CoInitialize()` so per-socket CPU detection works on dual-socket workstations instead of silently falling through to the psutil fallback.
+- **Legacy singular metrics fields are deleted on v2 upload** (`metrics.cpu`/`metrics.disk`/`metrics.gpu` → `DELETE_FIELD`) so doc size doesn't grow with both schemas side by side.
+
+### fixed
+- **Cloud `metricsHistory` function reads v2 per-device maps** (via `primary` + first-entry) with v1 fallback, so sparklines and threshold alerts keep working across the rollout window instead of flatlining the moment a v2 agent reports.
+- **`shimLegacyMachine` no longer clobbers a real profile** during the mixed-version window when a v2 agent has uploaded its profile doc but its next metrics write is still legacy-shaped.
+- **`hardware_profile._mac_for` return type** tightened to `Optional[str]`.
+
+---
+
+## [2.8.0] - 2026-04-12
+
+### added
+- **Per-machine Cortex kill switch** — operators can toggle Cortex off on a specific machine from the Cortex header (`CortexPowerToggle`). The agent reads the `cortexEnabled` flag before every poll and, when disabled, rejects pending messages with a clear error back to the web UI instead of executing tool calls. Firestore security rules were extended to allow dashboard writes to `cortexEnabled` without granting write access to agent-only fields (`online`, `lastHeartbeat`).
+- **Profile photo upload/remove** — users can upload an avatar from account settings (`AccountSettingsDialog`). Photos are stored in Firebase Storage at `users/{uid}/avatar.jpg` and surfaced throughout the UI via the new `UserAvatar` component (Cortex chat bubbles, page header). New `storage.rules` grant each user read/write access to their own avatar path only.
+- **Copy-message button in Cortex chat** — hover-revealed `CopyButton` on each chat bubble copies the full message text (cortex or user) to the clipboard.
+- **Cortex suggested-question additions** and new `docs/dashboard/timezones.md` reference page.
+
+### changed
+- **Relicensed from AGPL-3.0 to FSL-1.1-Apache-2.0** (Functional Source License, Version 1.1, Apache 2.0 Future License). Self-hosting, internal use, non-commercial use, and professional services remain freely permitted; only competing commercial products or services are restricted. Each release automatically converts to Apache License 2.0 two years after it is made available. Copyright holder is The Experiential Company.
+- Updated license references across web dashboard footers, landing page, terms page, OpenAPI spec, docs site footer, agent GUI, and repository README to reflect the new license.
+- **`run_powershell` allow-list removed** — the first-token regex was security theater (a semicolon-prefixed `Get-Date; Remove-Item` bypassed it trivially) and caused constant false rejections on legitimate multi-statement scripts (`foreach`, `if`, `try`, `$var = ...`). Accountability now comes from the Firestore audit trail (`cortex-events` + site logs) and the `[MCP-AUDIT]` local log, which captures a 500-char preview of every script. `run_command` retains its binary allow-list.
+- **Tier 3 audit previews expanded from 100 → 500 chars for script-bearing tools** (`run_powershell`, `execute_script`). One-line commands still truncate at 100. Multi-line PowerShell/Python bodies are now actually readable in the site log instead of showing only the first line.
+- **`mcp_tool_call` exempted from the per-type command rate limit.** Cortex fires tool calls in parallel by design and is already authenticated + audit-logged per call; a 5-second throttle broke parallel queries. Other command types remain rate-limited.
+- **`get_event_logs_filtered` wrapped in `try`/`catch`** — "no matching events" now returns `[]` cleanly instead of surfacing as a non-zero exit with empty stderr.
+- **`sync-versions.js`** now updates the shields.io README version badge, the "Current" lines in `docs/internal/version-management.md`, and "Last Updated" date stamps automatically.
+
+### fixed
+- **`_get_agent_health` MCP tool** was calling a `HealthProbe()` API that no longer existed; rewired to the current `HealthProbe(config_path, api_base).run()` shape and now returns `status`, `error_code`, `error_message`, `checked_at`, and `checks` alongside version/hostname/uptime.
+
+## [2.7.0] - 2026-04-11
+
+### added
+- **14 new MCP tools for Cortex** — purpose-built Tier 2 admin tools with validated parameters. Eliminates most fallbacks to `execute_script` for common sysadmin scenarios and produces cleaner chat UX (one green tool call instead of 2-4 red-then-green retries).
+    - **`manage_process`** — kill / suspend / resume any OS process by name or glob pattern. Refuses to touch critical system processes (lsass, winlogon, csrss, etc.).
+    - **`manage_windows_service`** — full services.msc parity: start / stop / restart / pause / continue / set_startup / set_recovery / get_details. `set_recovery` configures the auto-restart-on-crash safety net (first/second/subsequent failure actions, restart delay, reset counter). `get_details` returns status, startup type, binary path, dependencies, and recovery config in one call.
+    - **`configure_gpu_tdr`** — set Windows GPU TDR (Timeout Detection and Recovery) registry values (TdrDelay, TdrDdiDelay). Critical for TouchDesigner/Unreal workloads with heavy shaders.
+    - **`manage_windows_update`** — pause/resume + full scheduling: set_active_hours, set_scheduled_install, set_restart_deadline, set_feature_deferral, set_quality_deferral.
+    - **`manage_notifications`** — suppress Windows toast notifications, enable Focus Assist (priority_only/alarms_only), disable notifications per-app. Essential for kiosks so Windows/Teams/Defender toasts don't appear on exhibit displays.
+    - **`configure_power_plan`** — set power plan + disable sleep/hibernate/screen blanking. Required for every 24/7 unattended installation.
+    - **`check_pending_reboot`** (Tier 1) — detect whether a reboot is pending and why (Windows Update, CBS, pending file renames, SCCM).
+    - **`manage_scheduled_task`** — full taskschd.msc parity: list / enable / disable / delete / run_now / stop / create / get_details / get_history. `create` supports full trigger schema (boot/logon/once/daily/weekly/on_event/on_idle), run-as principals (SYSTEM/LOCAL_SERVICE/NETWORK_SERVICE), and settings (start_when_available, restart_count, execution_time_limit, multiple_instances, etc.).
+    - **`network_reset`** — flush_dns / renew_ip / restart_adapter / reset_winsock.
+    - **`registry_operation`** — allowlisted registry read / write / delete. Explicit allowlist of safe prefixes (Winlogon, GraphicsDrivers, WindowsUpdate, Notifications, Power, Services); SAM / SECURITY / Cryptography hives blocked.
+    - **`clean_disk_space`** — clean temp / windows_temp / prefetch / recycle_bin / owlette_logs with age filter and dry-run mode.
+    - **`get_event_logs_filtered`** — fast event log queries via `Get-WinEvent -FilterHashtable`. Orders of magnitude faster than the older `get_event_logs` when filtering by process, event ID, or time window.
+    - **`manage_windows_feature`** — add / remove / list Windows Optional Features, Capabilities, or AppX packages. Removes OneDrive / Xbox Game Bar / Cortana / Teams consumer bloat during kiosk provisioning. Critical Windows features are blocklisted.
+    - **`show_notification`** — display an on-screen toast or modal message (opposite of manage_notifications). Useful when a tech is physically nearby.
+- **Background reboot-pending auto-alert** — agent checks for pending reboot every 15 min and emits a site event via the existing `/api/agent/alert` pipeline. Dashboard admins see "Reboot pending on [machine]" alerts; configured email/webhook alerts fire automatically. Idempotent — alerts once per pending-state transition.
+
+### changed
+- **Cortex CLAUDE.md** — new "Prefer Tier 2 tools over Tier 3" section with a mapping table. Cortex will now reach for purpose-built tools first and fall back to `execute_script` only for novel tasks.
+- All new Tier 2 tools emit structured `[MCP-AUDIT]` log entries for security monitoring.
+- `mcp_tools.py` gained `_CRITICAL_PROCESSES` blocklist and `_SAFE_REGISTRY_PREFIXES` allowlist as hardcoded safety helpers.
+
+### security
+- `manage_process` refuses to kill critical Windows processes (lsass, winlogon, csrss, services, etc.) and Owlette's own service — can't be bypassed via tool parameters.
+- `registry_operation` has explicit allowlist + blocklist; hives like SAM and SECURITY are unreachable regardless of params.
+- `manage_windows_feature` has a hardcoded blocklist of features Owlette itself depends on (NetFx4, WMI-*, PowerShell*, core networking).
+- Scheduled task creation uses argument-list subprocess calls and PowerShell string escaping to prevent command injection via task names, programs, or arguments.
+
+---
+
+## [2.6.6] - 2026-04-11
+
+### fixed
+- **Screenshot capture restored** — the v2.6.5 `run_python` sandbox blocked internal screenshot callers (`mss`, `PIL`, `os` imports denied), breaking the dashboard screenshot panel, Cortex `capture_screenshot` tool, crash screenshots, and live view. `execute_in_user_session` now accepts a `trusted=True` flag for first-party callers that bypasses the sandbox; the LLM-facing `run_python` MCP tool remains sandboxed (`trusted=False` default).
+
+---
+
+## [2.6.5] - 2026-04-11
+
+### security
+- **MCP tool hardening** — `run_command` now uses `shell=False` with `shlex.split(posix=False)` to prevent shell injection via metacharacters (`&&`, `|`, `;`). Allowlist still validates the first token.
+- **Python sandbox** — `run_python` restricts `__builtins__` (no `eval`, `exec`, `compile`, `os`, `subprocess`). Imports gated to safe stdlib modules only (math, json, re, datetime, etc.). `open()` and `getattr` are allowed for file I/O and introspection.
+- **File I/O path validation** — `read_file` and `write_file` MCP tools validate paths against allowed directories (Owlette data, user profile, temp, configured process dirs). Blocks system directory access and path traversal.
+- **PowerShell audit logging** — `execute_script`, `run_command`, `run_python`, `read_file`, `write_file` now emit `[MCP-AUDIT]` log entries for security monitoring.
+- **Token exchange race fix** — registration code exchange uses two-phase pattern: validate → generate tokens → atomically mark used. Prevents burning codes on transient Firebase Auth failures.
+- **Token refresh race fix** — refresh endpoint wrapped in Firestore transaction to prevent concurrent requests from creating inconsistent token state.
+- **Command field allowlist** — `commands/send` API filters data fields per command type before writing to Firestore. Prevents field injection (e.g., overriding `timestamp` or `status`).
+- **Error sanitization** — 60 API routes now use centralized `apiError()` helper that returns generic messages in production, hiding Firebase internals and stack traces.
+- **Firestore rules hardened** — site creation requires `owner == auth.uid`, agent logs require `machineId == token.machine_id`, chat creation requires `userId == auth.uid` (with autonomous exception).
+- **HSTS header** — `Strict-Transport-Security: max-age=31536000; includeSubDomains` added.
+- **Redirect validation** — login and MFA pages validate redirect/return URLs (must be relative paths, blocks protocol-relative `//` redirects).
+- **Cortex nonce dedup** — autonomous endpoint accepts optional `nonce` field to prevent replay attacks.
+- **Deployment checksum validation** — API validates SHA-256 format when provided; agent already enforces verification.
+
+### changed
+- Updated `next` 16.2.1 → 16.2.3 (Server Component DoS fix)
+- Updated `iron-session` 8.0.3 → 8.0.4 (cookie out-of-bounds char fix)
+- Updated `cryptography` 41.0.7 → ≥44.0.0 (hygiene; CVE-2023-50782 not exploitable in Fernet-only usage)
+- `-ExecutionPolicy Bypass` retained on `execute_script` (required for Group Policy–hardened kiosks)
+
+---
+
+## [2.6.4] - 2026-04-10
+
+### added
+- **Session state classifier** — new `session_state.py` module persists shutdown intent and last-alive timestamps across reboots. On startup, the agent classifies how the previous session ended and emits a warning event to the dashboard for anomalous shutdowns:
+    - `external_reboot` — operator or Windows Update restarted the machine outside Owlette
+    - `unexpected_reboot` — no shutdown signal detected (BSOD, power loss, hard reset)
+    - `unexpected_service_restart` — agent process crashed or was killed (NSSM auto-restart)
+    - Silent for Owlette-initiated reboots/shutdowns, version upgrades, and first runs
+- Tooltips on event log action and detail text — truncated entries now show full text on hover (shadcn Tooltip, matching dashboard style)
+
+### changed
+- Reboot event log details cleaned up — human-readable info leads, entry UUID shortened to 8-char prefix for correlation (was full 36-char UUID)
+
+---
+
+## [2.6.3] - 2026-04-09
+
+### fixed
+- **CRITICAL**: scheduled reboot scheduler no longer fires entries that are more than 5 minutes late. A 5-minute "missed-fire grace window" silently skips any entry observed past its scheduled instant + 5 min, marks it as fired-for-the-day, and logs a `scheduled_reboot_missed` event to the dashboard. Previously, if the agent restarted (or a schedule entry was edited) AFTER the scheduled time, the agent would catastrophically fire the missed reboot the next time it observed the entry — hours late, with no warning, with no chance for the operator to cancel. This was the cause of an unintended reboot that destroyed days of in-progress rendering work on a dev machine
+- Scheduled reboot scheduler no longer retries failed reboots. The previous 3-attempts-with-7-min-timeout retry loop is gone — a failed reboot is logged and dropped, never re-fired automatically
+- Scheduled reboot scheduler now resolves entry times against the **machine's local timezone**, not the site timezone. A `14:00` entry on a Tokyo installation and a `14:00` entry on a New York installation in the same Owlette site now reboot at their respective local 14:00s, not synchronized to one shared timezone. The dashboard reboot-schedule editor was always timezone-agnostic — the agent was incorrectly applying the site timezone
+- Tray icon "Exit" now actually stops the Owlette service. Previously it wrote a `tmp/shutdown.flag` file that the service detected and exited from, but NSSM's `AppExit Default Restart` immediately re-started the service, so Exit was a no-op the user couldn't see. Exit now triggers a UAC-elevated `net stop OwletteService` via the Service Control Manager, which is the only stop NSSM respects
+- Latent `firestore_rest_client.set_document(merge=True)` bug fixed. When called without any `SERVER_TIMESTAMP` fields (e.g. every `set_machine_flag()` call), the function silently sent a PATCH without `updateMask.fieldPaths`, which the Firestore REST API treats as a full document REPLACEMENT — every field not in the request body was DELETED. This wiped `lastHeartbeat`, `online`, and `metrics` from the machine doc on every flag write, then the next `_upload_metrics` call (within ~1s) silently restored them. The bug had been latent in the codebase for an unknown length of time — only became visible when the new atomic startup flag-clear in this same release made the wipe gap large enough for the dashboard pill to flicker offline. Now correctly sends `updateMask` when `merge=True`
+- Dashboard `MachineStatusPill` heartbeat parser hardened to handle every shape Firebase JS SDK v12 can return for a Timestamp field — `Timestamp` instance via `.toMillis()`, plain `{seconds, nanoseconds}` from cache rehydration, legacy `{_seconds, _nanoseconds}`, JS `Date`, plain number, ISO string. Previously, only the strict `Timestamp` instance shape was recognised; cache rehydrations dropped silently to `0`, which the staleness check then treated as "infinitely stale", flipping the dashboard pill offline
+- Dashboard `rebootMachine()` and `shutdownMachine()` now write `configChangeFlag: true` alongside the optimistic countdown anchor. Without it, the firestore.rules `allow update` predicate rejected the write, so the optimistic countdown never appeared on the dashboard until the agent's own write came through (~5-10s later) — the perceived "the cancel button only appears right before the restart" bug
+
+### changed
+- Reboot countdown anchors `rebootScheduledAt` and `shutdownScheduledAt` are now Unix-seconds NUMBERS representing the TARGET reboot time (when the OS will actually restart). Previously they were Firestore server timestamps representing the START of a fixed 30-second countdown. The new semantic supports the new agent-side announce → 5-second pre-roll → 60-second OS countdown sequence, and the dashboard pill renders the countdown the moment the listener fires (no second round trip required)
+- Agent reboot scheduler state file moved from `C:\ProgramData\Owlette\state\reboot_state.json` to `C:\ProgramData\Owlette\tmp\reboot_state.json`, alongside the existing `app_states.json` and `service_status.json`. The unused `state\` directory is removed entirely
+- Tray Exit no longer writes `tmp/shutdown.flag`. The flag handler in the service main loop is also removed (it was dead code — see "fixed" above)
+
+### added
+- New `firebase_client.set_machine_flags(dict)` helper for atomic multi-field writes to the machine doc. Used by the new reboot announce path so the dashboard sees `rebootScheduledAt + rebooting + rebootSource + rebootCancellable + rebootEntryId` in a single listener tick instead of multiple intermediate states. Raises on failure (unlike the silent-log `set_machine_flag`) so callers can react
+
+---
+
+## [2.6.2] - 2026-04-08
+
+### added
+- Live cancel-reboot countdown on the dashboard — the status pill becomes a red pulsing `MM:SS` timer the moment a reboot or shutdown starts, anchored to a server-side `rebootScheduledAt` / `shutdownScheduledAt` timestamp so all viewers stay in sync and the countdown survives page refreshes
+- Hover the countdown pill to reveal a "cancel" affordance; clicking it sends `cancel_reboot` and the pill returns to "online" once the agent confirms
+- Context menu adapts during a pending reboot/shutdown — the reboot/shutdown items are replaced with a single red "cancel reboot" / "cancel shutdown" item, keeping the discoverable cancel path intact for users who don't notice the pill
+- Final-5-seconds safety: pill becomes non-clickable and shows "rebooting…" because Windows `shutdown /a` is unreliable in the final phase
+- Scheduled (cron) reboots now write the same countdown anchor, so they get the same live timer + cancel UX as manual reboots
+- New shared `MachineStatusPill` component used by both list and card views — eliminates the duplicated status badge JSX and the now-redundant standalone cancel button in card view
+
+### fixed
+- Reboot/shutdown confirmation dialogs no longer claim "you can cancel during the countdown" without exposing any cancel UI — copy now reads "you'll have 30 seconds to cancel from the dashboard"
+- `rebooting` and `shuttingDown` flags written by the agent are now actually read by the dashboard's Firestore listener — they were declared on the `Machine` interface but never propagated, so the existing "rebooting…" amber pill never displayed in production
 
 ---
 

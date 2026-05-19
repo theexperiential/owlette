@@ -16,6 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -49,8 +50,25 @@ export function LiveViewModal({
   const [screenshot, setScreenshot] = useState<{ url: string; timestamp: number } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Refs mirror isStarting/isStopping so the snapshot listener (set up once per
+  // open) can read the current pending state without re-subscribing on every change.
+  const isStartingRef = useRef(false);
+  const isStoppingRef = useRef(false);
 
-  // Listen for real-time machine doc updates (lastScreenshot + liveView state)
+  const clearPendingTimeout = () => {
+    if (pendingTimeoutRef.current) {
+      clearTimeout(pendingTimeoutRef.current);
+      pendingTimeoutRef.current = null;
+    }
+  };
+
+  // Listen for real-time machine doc updates (lastScreenshot + liveView state).
+  // Also clears pending start/stop spinners once the agent's response lands —
+  // the commands are enqueued via sendMachineCommand and the API call returns in
+  // ~100ms, long before the agent picks up and processes the command. Resetting
+  // the spinner in the call's finally block would cause the button to flicker
+  // back to its idle state during that gap.
   useEffect(() => {
     if (!open || !db || !siteId || !machineId) return;
 
@@ -60,20 +78,41 @@ export function LiveViewModal({
       if (!data) return;
 
       if (data.lastScreenshot?.url) {
+        // Firestore serverTimestamp arrives as a Timestamp object — convert to ms
+        const ts = data.lastScreenshot.timestamp;
+        const timestampMs =
+          ts && typeof ts.toMillis === 'function'
+            ? ts.toMillis()
+            : typeof ts === 'number'
+              ? ts
+              : ts && typeof ts.seconds === 'number'
+                ? ts.seconds * 1000
+                : Date.now();
         setScreenshot({
           url: data.lastScreenshot.url,
-          timestamp: data.lastScreenshot.timestamp,
+          timestamp: timestampMs,
         });
       }
 
       const lv = data.liveView;
+      const newActive = lv ? !!lv.active : false;
+      setLiveViewActive(newActive);
       if (lv) {
-        setLiveViewActive(!!lv.active);
         setExpiresAt(lv.expiresAt ? lv.expiresAt * 1000 : null); // convert seconds to ms
         if (lv.interval) setInterval_(lv.interval);
       } else {
-        setLiveViewActive(false);
         setExpiresAt(null);
+      }
+
+      // Clear pending spinners once the agent confirms the requested state change
+      if (newActive && isStartingRef.current) {
+        isStartingRef.current = false;
+        setIsStarting(false);
+        clearPendingTimeout();
+      } else if (!newActive && isStoppingRef.current) {
+        isStoppingRef.current = false;
+        setIsStopping(false);
+        clearPendingTimeout();
       }
     });
 
@@ -88,6 +127,8 @@ export function LiveViewModal({
     }
 
     if (!liveViewActive || !expiresAt) {
+      // Reset displayed countdown when there's nothing to count down to
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTimeRemaining('');
       return;
     }
@@ -113,34 +154,74 @@ export function LiveViewModal({
     };
   }, [liveViewActive, expiresAt]);
 
-  // Reset state when modal closes
+  // Reset transient UI state when the modal closes so a re-open starts fresh
   useEffect(() => {
     if (!open) {
+      isStartingRef.current = false;
+      isStoppingRef.current = false;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional UI reset
       setIsStarting(false);
       setIsStopping(false);
       setFullscreen(false);
+      if (pendingTimeoutRef.current) {
+        clearTimeout(pendingTimeoutRef.current);
+        pendingTimeoutRef.current = null;
+      }
     }
   }, [open]);
 
+  // Cleanup any pending timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (pendingTimeoutRef.current) clearTimeout(pendingTimeoutRef.current);
+    };
+  }, []);
+
+  // Safety timeout — if the agent never confirms the state change, clear the spinner
+  // after 30s so the user isn't stuck staring at "starting..." forever.
+  const PENDING_TIMEOUT_MS = 30000;
+
   const handleStart = useCallback(async () => {
+    isStartingRef.current = true;
     setIsStarting(true);
+    clearPendingTimeout();
+    pendingTimeoutRef.current = setTimeout(() => {
+      isStartingRef.current = false;
+      setIsStarting(false);
+      pendingTimeoutRef.current = null;
+    }, PENDING_TIMEOUT_MS);
+
     try {
       await onStartLiveView(machineId, interval, 600);
+      // Don't clear isStarting here — wait for the Firestore snapshot to confirm
+      // liveView.active=true (handled by the snapshot listener above).
     } catch (err) {
       console.error('Failed to start live view:', err);
-    } finally {
+      isStartingRef.current = false;
       setIsStarting(false);
+      clearPendingTimeout();
     }
   }, [machineId, interval, onStartLiveView]);
 
   const handleStop = useCallback(async () => {
+    isStoppingRef.current = true;
     setIsStopping(true);
+    clearPendingTimeout();
+    pendingTimeoutRef.current = setTimeout(() => {
+      isStoppingRef.current = false;
+      setIsStopping(false);
+      pendingTimeoutRef.current = null;
+    }, PENDING_TIMEOUT_MS);
+
     try {
       await onStopLiveView(machineId);
+      // Don't clear isStopping here — wait for the Firestore snapshot to confirm
+      // liveView.active=false (handled by the snapshot listener above).
     } catch (err) {
       console.error('Failed to stop live view:', err);
-    } finally {
+      isStoppingRef.current = false;
       setIsStopping(false);
+      clearPendingTimeout();
     }
   }, [machineId, onStopLiveView]);
 
@@ -231,9 +312,12 @@ export function LiveViewModal({
             {/* Screenshot display */}
             <div className="flex-1 relative bg-black/30 flex items-center justify-center overflow-hidden min-h-0">
               {!screenshot && !liveViewActive && (
-                <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground">
+                <div className="flex flex-col items-center gap-3 py-12 text-muted-foreground text-center px-6">
                   <Eye className="h-8 w-8" />
-                  <p>start live view to see the remote desktop</p>
+                  <p>press <span className="text-foreground font-medium">start</span> to begin a live preview of this machine</p>
+                  <p className="text-xs text-muted-foreground/70">
+                    captures a screenshot every {interval}s · auto-stops after 10 minutes
+                  </p>
                 </div>
               )}
 
@@ -288,24 +372,36 @@ export function LiveViewModal({
               <div className="flex items-center gap-2">
                 {screenshot && (
                   <>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={handleDownload}
-                      title="Download screenshot"
-                    >
-                      <Download className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8"
-                      onClick={() => setFullscreen(true)}
-                      title="Fullscreen"
-                    >
-                      <Maximize2 className="h-4 w-4" />
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={handleDownload}
+                        >
+                          <Download className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>download screenshot</p>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => setFullscreen(true)}
+                        >
+                          <Maximize2 className="h-4 w-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>fullscreen</p>
+                      </TooltipContent>
+                    </Tooltip>
                   </>
                 )}
 
@@ -326,11 +422,11 @@ export function LiveViewModal({
                   </Button>
                 ) : (
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
                     onClick={handleStart}
                     disabled={isStarting}
-                    className="bg-secondary border-border hover:bg-accent"
+                    className="bg-secondary border border-border"
                   >
                     {isStarting ? (
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />

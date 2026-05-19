@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, Brain, ChevronDown, ChevronLeft, ChevronRight, Power, Rocket, X, type LucideIcon } from 'lucide-react';
+import { Activity, Brain, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Monitor, Power, Rocket, X, type LucideIcon } from 'lucide-react';
 import Image from 'next/image';
 
 const capabilities: { label: string; detail: string; expanded: string; preview: string; icon: LucideIcon }[] = [
@@ -9,29 +9,43 @@ const capabilities: { label: string; detail: string; expanded: string; preview: 
     label: 'monitor',
     detail: 'real-time metrics and email/webhook notifications',
     expanded: 'live cpu, memory, gpu, and disk usage for every machine. inline sparkline charts track trends over time. know instantly when something drifts.',
-    preview: '/monitor.png',
+    preview: '/landing-screens/monitor.png',
     icon: Activity,
   },
   {
     label: 'control',
     detail: 'start, stop, or restart any process — with a full API',
     expanded: 'full remote process control across your entire fleet. configure startup sequences, manage dependencies, and auto-restart crashed processes before anyone notices.',
-    preview: '/control.png',
+    preview: '/landing-screens/control.png',
     icon: Power,
   },
   {
     label: 'deploy',
     detail: 'push software updates to all machines at once',
     expanded: 'deploy software, configurations, and content to any machine, anywhere. fleet-wide rollouts or targeted single-machine updates — your call.',
-    preview: '/preview-deploy.png',
+    preview: '/landing-screens/preview-deploy.png',
     icon: Rocket,
   },
   {
-    label: 'converse',
-    detail: 'talk to your machines like a human with cortex',
-    expanded: 'cortex lets you talk to your machines in natural language. ask questions, run diagnostics, and execute commands across your fleet through a conversational interface.',
-    preview: '/preview-converse.png',
+    label: 'diagnose',
+    detail: 'ask cortex why a process crashed, what driver is installed, or which machine just dropped offline.',
+    expanded: 'cortex turns plain-english questions into real diagnostic actions across your fleet. bring your own openai or anthropic key.',
+    preview: '/landing-screens/preview-diagnose.png',
     icon: Brain,
+  },
+  {
+    label: 'display',
+    detail: 'displays that stay put — drift-detected and auto-restored after reboots, driver updates, or accidental changes.',
+    expanded: 'owlette captures the windows display topology you want and watches for drift. when a reboot, a driver update, or an accidental change moves a monitor, owlette restores the known-good layout automatically. mosaic-aware.',
+    preview: '/landing-screens/preview-displays.png',
+    icon: Monitor,
+  },
+  {
+    label: 'automate',
+    detail: 'scheduled reboots, startup sequences, dependency-aware restarts. set the rules once and stop babysitting.',
+    expanded: 'define when machines reboot, the order processes start in, and the dependencies between them. owlette runs the playbook so you don\'t have to.',
+    preview: '/landing-screens/preview-automate.png',
+    icon: CalendarClock,
   },
 ];
 
@@ -40,6 +54,10 @@ export function UseCaseSection() {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  // Mirror dragRef.current.dragging as state for the transition toggle in
+  // render — React 19 forbids reading ref.current during render. The state
+  // only flips on drag start/end (not per-mousemove) so it's cheap.
+  const [isDragging, setIsDragging] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ dragging: boolean; didDrag: boolean; startX: number; startY: number; startPanX: number; startPanY: number }>({
@@ -52,8 +70,21 @@ export function UseCaseSection() {
   const lightboxOpen = lightboxIndex !== null;
   const lightboxSrc = lightboxOpen ? capabilities[lightboxIndex].preview : null;
 
-  const toggle = (i: number) => {
-    setOpenIndex(openIndex === i ? null : i);
+  // Matches the expanded-panel collapse transition (duration-500) + a small buffer.
+  const COLLAPSE_MS = 520;
+
+  const toggle = (i: number, el: HTMLElement | null) => {
+    if (openIndex === i) {
+      setOpenIndex(null);
+      return;
+    }
+    // If a card above this one is open, its panel must finish collapsing before
+    // the layout above settles — wait for that, otherwise anchor immediately.
+    // (block: 'start' honours the global scroll-padding-top, so it clears the header.)
+    const delay = openIndex !== null && openIndex < i ? COLLAPSE_MS : 0;
+    setOpenIndex(i);
+    if (!el) return;
+    setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), delay);
   };
 
   const closeLightbox = useCallback(() => {
@@ -168,7 +199,7 @@ export function UseCaseSection() {
   const activePreview = openIndex !== null ? capabilities[openIndex].preview : undefined;
 
   return (
-    <section className="pt-24 sm:pt-32 pb-20 sm:pb-32 px-4 sm:px-6 relative">
+    <section id="capabilities" className="pt-24 sm:pt-32 pb-20 sm:pb-32 px-4 sm:px-6 relative -scroll-mt-16 sm:-scroll-mt-24">
       <div className="max-w-5xl mx-auto relative">
 
         {/* Mobile: single-column accordion — each card owns its expanded content */}
@@ -176,7 +207,7 @@ export function UseCaseSection() {
           {capabilities.map((cap, i) => (
             <div key={cap.label}>
               <button
-                onClick={() => toggle(i)}
+                onClick={(e) => toggle(i, e.currentTarget)}
                 className={`w-full text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 border ${openIndex === i ? 'bg-card/60 border-border' : 'border-transparent hover:bg-card/50'}`}
               >
                 <cap.icon className={`w-8 h-8 mx-auto mb-3 transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-muted-foreground group-hover:text-accent-cyan'}`} />
@@ -195,7 +226,7 @@ export function UseCaseSection() {
 
               {/* Expanded content inline below the card */}
               <div className={`overflow-hidden transition-all duration-500 ease-out ${openIndex === i ? 'max-h-[800px] opacity-100' : 'max-h-0 opacity-0'}`}>
-                <p className="text-sm text-muted-foreground/80 leading-relaxed text-center px-6 pb-4 animate-in fade-in duration-300">
+                <p className="text-base text-foreground/80 leading-loose text-center px-6 pb-4 animate-in fade-in duration-300">
                   {cap.expanded}
                 </p>
                 <div className="px-2 pb-4">
@@ -210,10 +241,11 @@ export function UseCaseSection() {
                     <Image
                       src={cap.preview}
                       alt={`${cap.label} preview`}
-                      width={2300}
-                      height={1050}
+                      width={1280}
+                      height={720}
                       className="w-full h-auto"
                       priority
+                      unoptimized
                     />
                   </div>
                 </div>
@@ -222,87 +254,106 @@ export function UseCaseSection() {
           ))}
         </div>
 
-        {/* Desktop: 4-column grid with shared preview area below */}
+        {/* Desktop: two 3-column rows; the preview slides in below whichever
+            row contains the active card so users don't have to look past
+            unrelated cards to see the screenshot. */}
         <div className="hidden lg:block">
-          <div className="grid grid-cols-4 gap-6 items-start">
-            {capabilities.map((cap, i) => (
-              <button
-                key={cap.label}
-                onClick={() => toggle(i)}
-                className={`text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 border ${openIndex === i ? 'bg-card/60 border-border' : 'border-transparent hover:bg-card/50'}`}
-              >
-                <cap.icon className={`w-8 h-8 mx-auto mb-3 transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-muted-foreground group-hover:text-accent-cyan'}`} />
-                <div className="flex items-center justify-center gap-1.5 mb-2">
-                  <h3 className={`text-2xl font-bold font-heading transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-foreground group-hover:text-accent-cyan'}`}>
-                    {cap.label}
-                  </h3>
-                  <ChevronDown
-                    className={`w-4 h-4 text-muted-foreground transition-transform duration-300 ${openIndex === i ? 'rotate-180' : ''}`}
-                  />
+          {[0, 1].map((rowIdx) => {
+            const rowStart = rowIdx * 3;
+            const rowCaps = capabilities.slice(rowStart, rowStart + 3);
+            const rowHasActive = openIndex !== null && openIndex >= rowStart && openIndex < rowStart + 3;
+            const rowSpacing = rowIdx === 0 ? '' : 'mt-6';
+            return (
+              <div key={rowIdx} className={rowSpacing}>
+                <div className="grid grid-cols-3 gap-6 items-start">
+                  {rowCaps.map((cap, sliceIdx) => {
+                    const i = rowStart + sliceIdx;
+                    return (
+                      <button
+                        key={cap.label}
+                        onClick={(e) => toggle(i, e.currentTarget)}
+                        className={`text-center group cursor-pointer rounded-lg p-4 transition-all duration-300 border ${openIndex === i ? 'bg-card/60 border-border' : 'border-transparent hover:bg-card/50'}`}
+                      >
+                        <cap.icon className={`w-8 h-8 mx-auto mb-3 transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-muted-foreground group-hover:text-accent-cyan'}`} />
+                        <div className="flex items-center justify-center gap-1.5 mb-2">
+                          <h3 className={`text-2xl font-bold font-heading transition-colors ${openIndex === i ? 'text-accent-cyan' : 'text-foreground group-hover:text-accent-cyan'}`}>
+                            {cap.label}
+                          </h3>
+                          <ChevronDown
+                            className={`w-4 h-4 text-muted-foreground transition-transform duration-300 ${openIndex === i ? 'rotate-180' : ''}`}
+                          />
+                        </div>
+                        <p className="text-base text-muted-foreground">
+                          {cap.detail}
+                        </p>
+                      </button>
+                    );
+                  })}
                 </div>
-                <p className="text-base text-muted-foreground">
-                  {cap.detail}
-                </p>
-              </button>
-            ))}
-          </div>
 
-          {/* Expanded text — mirrored grid so text appears below its card */}
-          {openIndex !== null && (
-            <div className="grid grid-cols-4 gap-6 mt-2">
-              {capabilities.map((cap, i) => (
-                <div key={cap.label} className={i === openIndex ? 'animate-in fade-in duration-300' : ''}>
-                  {i === openIndex && (
-                    <p className="text-sm text-muted-foreground/80 leading-relaxed text-center px-2">
-                      {cap.expanded}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Preview image — below the grid so cards never shift */}
-          <div
-            className={`overflow-hidden transition-all duration-500 ease-out ${activePreview ? 'max-h-[800px] opacity-100 mt-8' : 'max-h-0 opacity-0 mt-0'}`}
-          >
-            <div
-              className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in"
-              style={{
-                maskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
-                maskComposite: 'intersect',
-                WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
-                WebkitMaskComposite: 'source-in',
-              }}
-              onClick={() => openIndex !== null && setLightboxIndex(openIndex)}
-            >
-              <div className="relative">
-                {capabilities.map((cap) => (
-                  <div
-                    key={cap.preview}
-                    className="transition-all duration-500 ease-out"
-                    style={{
-                      opacity: activePreview === cap.preview ? 1 : 0,
-                      position: activePreview === cap.preview ? 'relative' : 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      transform: activePreview === cap.preview ? 'translateY(0)' : 'translateY(12px)',
-                    }}
-                  >
-                    <Image
-                      src={cap.preview}
-                      alt={`${cap.label} preview`}
-                      width={2300}
-                      height={1050}
-                      className="w-full h-auto"
-                      priority
-                    />
+                {/* Expanded text — mirrors this row's column for the active card */}
+                {rowHasActive && (
+                  <div className="grid grid-cols-3 gap-6 mt-2">
+                    {rowCaps.map((cap, sliceIdx) => {
+                      const i = rowStart + sliceIdx;
+                      return (
+                        <div key={cap.label} className={i === openIndex ? 'animate-in fade-in duration-300' : ''}>
+                          {i === openIndex && (
+                            <p className="text-base text-foreground/80 leading-loose text-center px-2">
+                              {cap.expanded}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
-                ))}
+                )}
+
+                {/* Preview image — slides down below this row when its card is active */}
+                <div
+                  className={`overflow-hidden transition-all duration-500 ease-out ${rowHasActive ? 'max-h-[800px] opacity-100 mt-8' : 'max-h-0 opacity-0 mt-0'}`}
+                >
+                  <div
+                    className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in"
+                    style={{
+                      maskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
+                      maskComposite: 'intersect',
+                      WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
+                      WebkitMaskComposite: 'source-in',
+                    }}
+                    onClick={() => openIndex !== null && setLightboxIndex(openIndex)}
+                  >
+                    <div className="relative">
+                      {rowCaps.map((cap) => (
+                        <div
+                          key={cap.preview}
+                          className="transition-all duration-500 ease-out"
+                          style={{
+                            opacity: rowHasActive && activePreview === cap.preview ? 1 : 0,
+                            position: rowHasActive && activePreview === cap.preview ? 'relative' : 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            transform: rowHasActive && activePreview === cap.preview ? 'translateY(0)' : 'translateY(12px)',
+                          }}
+                        >
+                          <Image
+                            src={cap.preview}
+                            alt={`${cap.label} preview`}
+                            width={1280}
+                            height={720}
+                            className="w-full h-auto"
+                            priority
+                            unoptimized
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+            );
+          })}
         </div>
 
       </div>
@@ -319,6 +370,7 @@ export function UseCaseSection() {
             if (!isZoomed) return;
             e.preventDefault();
             dragRef.current = { dragging: true, didDrag: false, startX: e.clientX, startY: e.clientY, startPanX: pan.x, startPanY: pan.y };
+            setIsDragging(true);
           }}
           onMouseMove={(e) => {
             if (!dragRef.current.dragging) return;
@@ -327,8 +379,8 @@ export function UseCaseSection() {
             if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragRef.current.didDrag = true;
             setPan({ x: dragRef.current.startPanX + dx, y: dragRef.current.startPanY + dy });
           }}
-          onMouseUp={() => { dragRef.current.dragging = false; }}
-          onMouseLeave={() => { dragRef.current.dragging = false; }}
+          onMouseUp={() => { dragRef.current.dragging = false; setIsDragging(false); }}
+          onMouseLeave={() => { dragRef.current.dragging = false; setIsDragging(false); }}
         >
           <button
             onClick={closeLightbox}
@@ -364,7 +416,7 @@ export function UseCaseSection() {
             }`}
             style={{
               transformOrigin: 'center center',
-              transition: dragRef.current.dragging ? 'none' : 'transform 0.2s ease-out',
+              transition: isDragging ? 'none' : 'transform 0.2s ease-out',
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
             }}
             onClick={(e) => {
@@ -381,7 +433,7 @@ export function UseCaseSection() {
           />
 
           {/* Caption under image */}
-          <p className="absolute bottom-14 left-1/2 -translate-x-1/2 z-10 text-lg text-white/70 text-center whitespace-nowrap">
+          <p className="absolute bottom-14 left-1/2 -translate-x-1/2 z-10 text-lg text-white/70 text-center text-balance max-w-2xl mx-auto px-4">
             {capabilities[lightboxIndex].detail}
           </p>
 

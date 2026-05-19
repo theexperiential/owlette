@@ -144,6 +144,50 @@ export const processAlertRateLimit = redis
   : null;
 
 /**
+ * Display alert rate limiter — 1 per hour per (machineId, eventType).
+ * Mirrors the process-alert convention so the agent's alert dispatch path
+ * has a uniform back-pressure model regardless of category. The drift event
+ * gets a tighter window via `displayDriftRateLimit` below; everything else
+ * uses this default.
+ */
+export const displayAlertRateLimit = redis
+  ? new Ratelimit({
+      redis,
+      limiter: Ratelimit.fixedWindow(1, '1 h'),
+      prefix: 'display-alert',
+      analytics: true,
+    })
+  : null;
+
+/**
+ * Drift-specific limiter at 1 per 4h. Drift events flap the most under
+ * real-world conditions (rack vibration, EDID handshake retries, intermittent
+ * cable issues) — a 1h window would still let an unstable cable email the
+ * operator six times a day. The 4h window keeps drift signal alive without
+ * burying the operator's inbox in noise from a single bad piece of hardware.
+ */
+export const displayDriftRateLimit = redis
+  ? new Ratelimit({
+      redis,
+      limiter: Ratelimit.fixedWindow(1, '4 h'),
+      prefix: 'display-drift',
+      analytics: true,
+    })
+  : null;
+
+/**
+ * Pick the right display-event rate limiter for a given event type. Drift
+ * gets the tighter 4h window; every other display event uses the default
+ * 1h limiter. Returns `null` when Redis isn't configured (mirrors the
+ * existing limiters' nullability so callers can short-circuit).
+ */
+export function getDisplayAlertRateLimit(eventType: string) {
+  return eventType === 'display_drift'
+    ? displayDriftRateLimit
+    : displayAlertRateLimit;
+}
+
+/**
  * Extract client IP from NextRequest
  * Handles proxies (Railway, Cloudflare, etc.)
  */
@@ -179,24 +223,48 @@ const inMemoryStore = new Map<string, { count: number; resetAt: number }>();
 const IN_MEMORY_WINDOW_MS = 60_000; // 1 minute
 const IN_MEMORY_MAX_REQUESTS = 15; // per window per identifier
 
-function checkInMemoryRateLimit(identifier: string): { success: boolean } {
+function checkInMemoryRateLimit(identifier: string): {
+  success: boolean;
+  limit: number;
+  remaining: number;
+  reset: number;
+  retryAfter?: number;
+} {
   const now = Date.now();
   const entry = inMemoryStore.get(identifier);
 
   if (!entry || now >= entry.resetAt) {
-    inMemoryStore.set(identifier, { count: 1, resetAt: now + IN_MEMORY_WINDOW_MS });
-    return { success: true };
+    const resetAt = now + IN_MEMORY_WINDOW_MS;
+    inMemoryStore.set(identifier, { count: 1, resetAt });
+    return {
+      success: true,
+      limit: IN_MEMORY_MAX_REQUESTS,
+      remaining: IN_MEMORY_MAX_REQUESTS - 1,
+      reset: resetAt,
+    };
   }
 
   entry.count++;
+  const remaining = Math.max(0, IN_MEMORY_MAX_REQUESTS - entry.count);
   if (entry.count > IN_MEMORY_MAX_REQUESTS) {
-    return { success: false };
+    return {
+      success: false,
+      limit: IN_MEMORY_MAX_REQUESTS,
+      remaining: 0,
+      reset: entry.resetAt,
+      retryAfter: Math.max(1, Math.ceil((entry.resetAt - now) / 1000)),
+    };
   }
-  return { success: true };
+  return {
+    success: true,
+    limit: IN_MEMORY_MAX_REQUESTS,
+    remaining,
+    reset: entry.resetAt,
+  };
 }
 
 // Periodically clean up expired entries to prevent memory leaks
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of inMemoryStore) {
     if (now >= entry.resetAt) {
@@ -204,6 +272,9 @@ setInterval(() => {
     }
   }
 }, 60_000);
+if (typeof cleanupTimer.unref === 'function') {
+  cleanupTimer.unref();
+}
 
 /**
  * Check rate limit and return result
@@ -221,6 +292,14 @@ export async function checkRateLimit(
   reset?: number;
   retryAfter?: number;
 }> {
+  // E2E escape hatch: Playwright runs many back-to-back admin API calls
+  // across specs, which trips the 15/min in-memory bucket and causes
+  // flaky 429s. Only honored when explicitly set in the webServer env
+  // (playwright.config.ts) — production ignores this var entirely.
+  if (process.env.E2E_DISABLE_RATE_LIMIT === 'true') {
+    return { success: true };
+  }
+
   // If rate limiting is disabled (no Redis configured), use in-memory fallback
   if (!ratelimiter) {
     return checkInMemoryRateLimit(identifier);
@@ -244,30 +323,54 @@ export async function checkRateLimit(
 }
 
 /**
- * Format rate limit headers for HTTP response
+ * Reason taxonomy for 429 responses. Emitted as the
+ * `Roost-Rate-Limited-Reason` header so clients can decide whether a
+ * retry is worthwhile and over what horizon.
+ */
+export type RateLimitedReason =
+  | 'global-rate'
+  | 'endpoint-rate'
+  | 'key-rate'
+  | 'site-concurrency';
+
+/**
+ * Format rate limit headers for HTTP response.
+ *
+ * Emits BOTH the IETF draft-standard names (`RateLimit-*` — no `X-`
+ * prefix) and the legacy `X-RateLimit-*` names so existing clients keep
+ * working through the transition.
  */
 export function getRateLimitHeaders(result: {
   limit?: number;
   remaining?: number;
   reset?: number;
   retryAfter?: number;
+  reason?: RateLimitedReason;
 }): Record<string, string> {
   const headers: Record<string, string> = {};
 
   if (result.limit !== undefined) {
+    headers['RateLimit-Limit'] = result.limit.toString();
     headers['X-RateLimit-Limit'] = result.limit.toString();
   }
 
   if (result.remaining !== undefined) {
+    headers['RateLimit-Remaining'] = result.remaining.toString();
     headers['X-RateLimit-Remaining'] = result.remaining.toString();
   }
 
   if (result.reset !== undefined) {
+    const deltaSeconds = Math.max(0, Math.ceil((result.reset - Date.now()) / 1000));
+    headers['RateLimit-Reset'] = deltaSeconds.toString();
     headers['X-RateLimit-Reset'] = result.reset.toString();
   }
 
   if (result.retryAfter !== undefined) {
     headers['Retry-After'] = result.retryAfter.toString();
+  }
+
+  if (result.reason) {
+    headers['Roost-Rate-Limited-Reason'] = result.reason;
   }
 
   return headers;

@@ -53,7 +53,11 @@ export default function UninstallDialog({
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
 
-  // Auto-select all online machines when dialog opens and reset filter when it closes
+  // Auto-select all online machines when dialog opens and reset filter when it closes.
+  // Intentionally omits `onlineMachines` (array identity changes on every render) and
+  // `selectedMachines` (would retrigger the auto-select after user manually deselects).
+  // Gating on `onlineMachines.length` instead gives us "fire when set of online machines
+  // changes size" without the identity churn.
   useEffect(() => {
     if (open && onlineMachines.length > 0 && selectedMachines.size === 0) {
       setSelectedMachines(new Set(onlineMachines.map(m => m.machineId)));
@@ -62,7 +66,8 @@ export default function UninstallDialog({
     if (!open) {
       setFilterText('');
     }
-  }, [open, onlineMachines.length]); // Only run when dialog opens or online machines change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, onlineMachines.length]);
 
   // Fetch installed software from selected machines
   useEffect(() => {
@@ -106,7 +111,7 @@ export default function UninstallDialog({
         const softwareList = Array.from(softwareMap.values());
         softwareList.sort((a, b) => a.name.localeCompare(b.name));
         setAvailableSoftware(softwareList);
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Failed to fetch software:', error);
         toast.error('Failed to fetch installed software');
       } finally {
@@ -115,7 +120,11 @@ export default function UninstallDialog({
     };
 
     fetchSoftware();
-  }, [open, selectedMachines, siteId]); // Removed 'machines' to prevent infinite loop
+    // `machines` intentionally omitted: it's a Firestore-snapshot array whose identity
+    // changes on every heartbeat (~10s), which would refetch the software list
+    // continuously. We only need to refetch when the selected set changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, selectedMachines, siteId]);
 
   // Auto-select software and set filter if initialSoftwareName matches
   useEffect(() => {
@@ -233,9 +242,10 @@ export default function UninstallDialog({
       setFilterText('');
       setAvailableSoftware([]);
       setPendingUninstall(null);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Uninstall error:', error);
-      toast.error(error.message || 'Failed to create uninstall task');
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to create uninstall task');
       setConfirmDialogOpen(true); // Reopen confirm dialog so user can try again
     } finally {
       setUninstalling(false);
@@ -362,7 +372,7 @@ export default function UninstallDialog({
                         return (
                           <div className="p-8 text-center text-muted-foreground">
                             <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">No software matches "{filterText}"</p>
+                            <p className="text-sm">No software matches &quot;{filterText}&quot;</p>
                           </div>
                         );
                       }
@@ -401,7 +411,6 @@ export default function UninstallDialog({
                                         setSelectedSoftware('');
                                       }}
                                       className="shrink-0 ml-2 p-1 rounded-sm hover:bg-primary/20 transition-colors cursor-pointer"
-                                      title="Deselect"
                                     >
                                       <X className="h-4 w-4 text-primary" />
                                     </button>
@@ -449,7 +458,7 @@ export default function UninstallDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={uninstalling}>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={uninstalling} className="bg-secondary border border-border cursor-pointer">
             cancel
           </Button>
           <Button

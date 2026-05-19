@@ -23,7 +23,7 @@ export const mockLimit = jest.fn();
 export const mockSignInWithEmailAndPassword = jest.fn();
 export const mockCreateUserWithEmailAndPassword = jest.fn();
 export const mockSignOut = jest.fn();
-export const mockOnAuthStateChanged = jest.fn((auth, callback) => {
+export const mockOnAuthStateChanged = jest.fn((_auth, _callback) => {
   // Return unsubscribe function
   return jest.fn();
 });
@@ -63,7 +63,7 @@ export const resetAllMocks = () => {
 };
 
 // Helper to create a mock Firestore document snapshot
-export const createMockDocSnapshot = (data: any, exists = true) => ({
+export const createMockDocSnapshot = (data: unknown, exists = true) => ({
   exists: () => exists,
   data: () => data,
   id: 'mock-doc-id',
@@ -71,7 +71,7 @@ export const createMockDocSnapshot = (data: any, exists = true) => ({
 });
 
 // Helper to create a mock Firestore query snapshot
-export const createMockQuerySnapshot = (docs: any[]) => ({
+export const createMockQuerySnapshot = (docs: unknown[]) => ({
   docs: docs.map((data, index) => ({
     exists: () => true,
     data: () => data,
@@ -80,7 +80,7 @@ export const createMockQuerySnapshot = (docs: any[]) => ({
   })),
   empty: docs.length === 0,
   size: docs.length,
-  forEach: (callback: (doc: any) => void) => {
+  forEach: (callback: (doc: unknown) => void) => {
     docs.forEach((data, index) => {
       callback({
         exists: () => true,

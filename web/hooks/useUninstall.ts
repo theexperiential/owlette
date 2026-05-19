@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { collection, doc, setDoc, getDoc, getDocs, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 
 interface Software {
@@ -15,15 +15,16 @@ interface Software {
 }
 
 /**
- * Hook for managing software uninstallation
+ * Hook for managing software uninstallation.
+ *
+ * Reads stay on Firestore for real-time inventory data. Mutations go through
+ * the server-mediated uninstall API so the security boundary owns command
+ * writes and audit correlation.
  */
 export function useUninstall() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Fetch installed software from a specific machine
-   */
   const fetchMachineSoftware = async (siteId: string, machineId: string): Promise<Software[]> => {
     if (!db || !siteId || !machineId) {
       throw new Error('Invalid parameters');
@@ -39,15 +40,13 @@ export function useUninstall() {
       });
 
       return software.sort((a, b) => a.name.localeCompare(b.name));
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('Failed to fetch software:', err);
-      throw new Error(err.message || 'Failed to fetch installed software');
+      throw new Error(message || 'Failed to fetch installed software');
     }
   };
 
-  /**
-   * Fetch software from multiple machines and return unique list
-   */
   const fetchSoftwareFromMachines = async (siteId: string, machineIds: string[]): Promise<Software[]> => {
     if (!db || !siteId || machineIds.length === 0) {
       throw new Error('Invalid parameters');
@@ -73,10 +72,10 @@ export function useUninstall() {
         }
       }
 
-      const uniqueSoftware = Array.from(softwareMap.values());
-      return uniqueSoftware.sort((a, b) => a.name.localeCompare(b.name));
-    } catch (err: any) {
-      const errorMsg = err.message || 'Failed to fetch software';
+      return Array.from(softwareMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const errorMsg = message || 'Failed to fetch software';
       setError(errorMsg);
       throw new Error(errorMsg);
     } finally {
@@ -84,9 +83,6 @@ export function useUninstall() {
     }
   };
 
-  /**
-   * Create uninstall commands for selected machines
-   */
   const createUninstall = async (
     siteId: string,
     softwareName: string,
@@ -103,77 +99,41 @@ export function useUninstall() {
     try {
       console.log('[useUninstall] Creating uninstall:', { siteId, softwareName, machineIds, deploymentId });
 
-      // First, fetch software details from one of the machines to get uninstall command
-      let softwareDetails: Software | null = null;
-
-      console.log('[useUninstall] Fetching software details from machines...');
       for (const machineId of machineIds) {
-        const softwareList = await fetchMachineSoftware(siteId, machineId);
-        const found = softwareList.find(s => s.name === softwareName);
-        if (found) {
-          softwareDetails = found;
-          console.log('[useUninstall] Found software details:', softwareDetails);
-          break;
-        }
-      }
-
-      if (!softwareDetails) {
-        throw new Error(`Software "${softwareName}" not found on selected machines`);
-      }
-
-      // Create uninstall command for each machine
-      const commandId = `uninstall-${Date.now()}`;
-
-      console.log('[useUninstall] Creating commands for machines with ID:', commandId);
-
-      for (const machineId of machineIds) {
-        console.log(`[useUninstall] Creating command for machine: ${machineId}`);
-
-        // Send uninstall_software command to each machine
-        const commandRef = doc(
-          db,
-          'sites',
-          siteId,
-          'machines',
-          machineId,
-          'commands',
-          'pending'
+        const response = await fetch(
+          `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/uninstall`,
+          {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'Idempotency-Key':
+                'machine-uninstall-' +
+                siteId +
+                '-' +
+                machineId +
+                '-' +
+                encodeURIComponent(softwareName) +
+                '-' +
+                Date.now() +
+                '-' +
+                Math.random().toString(36).slice(2),
+            },
+            body: JSON.stringify({
+              software_name: softwareName,
+              ...(deploymentId ? { deployment_id: deploymentId } : {}),
+            }),
+          },
         );
-
-        // Get existing commands
-        const commandDoc = await getDoc(commandRef);
-        const existingCommands = commandDoc.exists() ? commandDoc.data() : {};
-
-        // Add new uninstall command
-        const newCommand: any = {
-          type: 'uninstall_software',
-          software_name: softwareDetails.name,
-          uninstall_command: softwareDetails.uninstall_command,
-          installer_type: softwareDetails.installer_type,
-          verify_paths: softwareDetails.install_location ? [softwareDetails.install_location] : [],
-          timestamp: serverTimestamp(),
-        };
-
-        // Only include deployment_id if provided (when uninstalling from deployment view)
-        if (deploymentId) {
-          newCommand.deployment_id = deploymentId;
+        if (!response.ok) {
+          throw new Error(await readApiError(response, `Failed to create uninstall command for ${machineId}`));
         }
-
-        console.log(`[useUninstall] Writing command to Firestore:`, newCommand);
-
-        // Merge with existing commands
-        await setDoc(commandRef, {
-          ...existingCommands,
-          [commandId]: newCommand,
-        });
-
-        console.log(`[useUninstall] Command written successfully for ${machineId}`);
       }
 
       console.log(`[useUninstall] All uninstall commands created for ${machineIds.length} machines`);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       console.error('[useUninstall] Error:', err);
-      const errorMsg = err.message || 'Failed to create uninstall commands';
+      const errorMsg = message || 'Failed to create uninstall commands';
       setError(errorMsg);
       throw new Error(errorMsg);
     } finally {
@@ -181,9 +141,6 @@ export function useUninstall() {
     }
   };
 
-  /**
-   * Cancel an active uninstallation on a machine
-   */
   const cancelUninstall = async (
     siteId: string,
     machineId: string,
@@ -197,34 +154,33 @@ export function useUninstall() {
     setError(null);
 
     try {
-      const commandRef = doc(
-        db,
-        'sites',
-        siteId,
-        'machines',
-        machineId,
-        'commands',
-        'pending'
-      );
-
-      // Get existing commands
-      const commandDoc = await getDoc(commandRef);
-      const existingCommands = commandDoc.exists() ? commandDoc.data() : {};
-
-      // Add cancel command
-      const cancelCommandId = `cancel-uninstall-${Date.now()}`;
-      await setDoc(commandRef, {
-        ...existingCommands,
-        [cancelCommandId]: {
-          type: 'cancel_uninstall',
-          software_name: softwareName,
-          timestamp: serverTimestamp(),
+      const response = await fetch(
+        `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/uninstall?software_name=${encodeURIComponent(softwareName)}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'Idempotency-Key':
+              'machine-cancel-uninstall-' +
+              siteId +
+              '-' +
+              machineId +
+              '-' +
+              encodeURIComponent(softwareName) +
+              '-' +
+              Date.now() +
+              '-' +
+              Math.random().toString(36).slice(2),
+          },
         },
-      });
+      );
+      if (!response.ok) {
+        throw new Error(await readApiError(response, 'Failed to cancel uninstall'));
+      }
 
       console.log(`Cancel uninstall command sent for ${softwareName} on ${machineId}`);
-    } catch (err: any) {
-      const errorMsg = err.message || 'Failed to cancel uninstall';
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      const errorMsg = message || 'Failed to cancel uninstall';
       setError(errorMsg);
       throw new Error(errorMsg);
     } finally {
@@ -240,4 +196,13 @@ export function useUninstall() {
     createUninstall,
     cancelUninstall,
   };
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }

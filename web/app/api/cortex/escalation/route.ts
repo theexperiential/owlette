@@ -100,7 +100,14 @@ export async function GET(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
   const headerSecret = request.headers.get('authorization')?.replace('Bearer ', '');
 
-  if (cronSecret && headerSecret !== cronSecret) {
+  if (!cronSecret) {
+    return NextResponse.json(
+      { error: 'Escalation endpoint not configured' },
+      { status: 503 },
+    );
+  }
+
+  if (headerSecret !== cronSecret) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

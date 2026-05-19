@@ -118,6 +118,26 @@ def reset_environment(monkeypatch):
     pass
 
 
+@pytest.fixture(autouse=True)
+def _invalidate_shared_utils_caches():
+    """Reset shared_utils caches before each test.
+
+    shared_utils has an mtime-based config cache and a TTL cache for
+    is_script_running(). These can cause cross-test pollution where a
+    mocked file-read in one test contaminates a "file missing" test
+    in another. Clear both before each test runs.
+    """
+    try:
+        import shared_utils
+        if hasattr(shared_utils, '_invalidate_config_cache'):
+            shared_utils._invalidate_config_cache()
+        if hasattr(shared_utils, '_script_running_cache'):
+            shared_utils._script_running_cache.clear()
+    except ImportError:
+        pass
+    yield
+
+
 # Platform-specific markers
 def pytest_configure(config):
     """Configure custom markers"""

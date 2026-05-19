@@ -13,6 +13,13 @@ import shared_utils
 import installer_utils
 import project_utils
 import registry_utils
+import reboot_state
+import session_state
+import watchdog_state
+import display_manager
+import nvapi_display
+from command_router import CommandRouter
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import win32serviceutil
 import win32service
 import win32event
@@ -85,6 +92,80 @@ MAX_RELAUNCH_ATTEMPTS = 3
 SLEEP_INTERVAL = 5
 TIME_TO_INIT = 60
 
+# Throttle for _write_service_status(). Main loop calls it every SLEEP_INTERVAL;
+# the GUI treats the file as stale after 120s, so a 30s refresh floor is safe
+# and cuts ~83% of writes when content is unchanged.
+MIN_STATUS_WRITE_INTERVAL = 30
+
+
+def _init_status_writer_logger():
+    """Build a dedicated rotating logger for status-write decisions.
+
+    Writes to tmp/status_writer.log (100KB x 2 backups = 300KB max). Kept
+    separate from the main service log so signal-to-noise stays high and any
+    future regression in the throttle is diagnosable from one file.
+    """
+    import logging.handlers
+    log_path = shared_utils.get_data_path('tmp/status_writer.log')
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    logger = logging.getLogger('owlette.status_writer')
+    if getattr(logger, '_owlette_initialized', False):
+        return logger
+    logger.setLevel(logging.INFO)
+    logger.propagate = False  # don't spam main service log
+    handler = logging.handlers.RotatingFileHandler(
+        log_path, maxBytes=100 * 1024, backupCount=2
+    )
+    handler.setFormatter(logging.Formatter('%(asctime)s %(message)s'))
+    logger.addHandler(handler)
+    logger._owlette_initialized = True
+    return logger
+
+
+_status_writer_logger = None
+
+# Reboot scheduler — derived from SLEEP_INTERVAL so changes to the main loop
+# automatically adjust the check cadence. Target: ~30s between checks.
+REBOOT_CHECK_INTERVAL_SECONDS = 30
+REBOOT_CHECK_ITERATIONS = max(1, REBOOT_CHECK_INTERVAL_SECONDS // SLEEP_INTERVAL)
+# Display topology check — derived from SLEEP_INTERVAL so changes to the main
+# loop automatically adjust the check cadence. Target: ~30s between checks.
+# Signature-hash change detection is cheap; the actual Firestore upload is
+# driven by firebase_client's own metrics loop.
+DISPLAY_CHECK_INTERVAL_SECONDS = 30
+DISPLAY_CHECK_ITERATIONS = max(1, DISPLAY_CHECK_INTERVAL_SECONDS // SLEEP_INTERVAL)
+# roost periodic on-disk scrub (wave 4b.7). The check itself is a cheap SQL
+# query against SyncState; the actual re-hash only fires per-distribution if
+# last_scrub_at is older than the scrub max-age (30 days). Hourly cadence
+# means ~720 cheap checks/month per agent — most are no-ops. Scrub work
+# runs on a daemon thread so it never stalls the main 5-second loop.
+ROOST_SCRUB_CHECK_INTERVAL_SECONDS = 3600
+ROOST_SCRUB_CHECK_ITERATIONS = max(1, ROOST_SCRUB_CHECK_INTERVAL_SECONDS // SLEEP_INTERVAL)
+# Manual-reboot grace: a manual reboot within this many seconds before a
+# scheduled instant counts as fulfilling that entry for the day
+REBOOT_MANUAL_GRACE_SECONDS = 30 * 60
+# Missed-fire grace: if a scheduled instant is more than this many seconds in
+# the past at the moment the scheduler observes it, the entry is treated as
+# MISSED and silently skipped (marked as fired-for-the-day so it never retries).
+# This is the safety guarantee that prevents catastrophic late fires after a
+# service restart, deploy, or schedule edit. Five minutes is the standard
+# missfire window in cron-like schedulers.
+REBOOT_MISSED_FIRE_GRACE_SECONDS = 5 * 60
+# Pre-roll: time we wait between announcing the reboot to Firestore and
+# issuing the OS shutdown command. Gives the dashboard listener time to
+# propagate the announcement and render the countdown BEFORE the Windows
+# toast appears, so the user always sees the cancel button first.
+REBOOT_ANNOUNCE_PREROLL_SECONDS = 5
+# OS-level shutdown countdown (passed to `shutdown /r /t`). The user has this
+# many seconds after the Windows toast appears to cancel via dashboard or CLI
+# (`shutdown /a`). The agent main loop stays alive during this window and
+# processes cancel commands in real time.
+REBOOT_OS_COUNTDOWN_SECONDS = 60
+# Window for retroactively stamping lastFiredByEntry on a successful reboot.
+# If a reboot was scheduled for X and the agent finds itself booted within
+# this window after X, it counts the reboot as fulfilling that entry.
+REBOOT_SUCCESS_DETECTION_WINDOW_SECONDS = 60 * 60
+
 # Utility functions
 class Util:
 
@@ -148,12 +229,22 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self._auth_manager = None
         self._api_base = api_base
 
+        # Throttle state for _write_service_status(). See MIN_STATUS_WRITE_INTERVAL
+        # above. Initialised here so first real call always hits the refresh-due
+        # branch; _write_service_status also has a hasattr() safety net for any
+        # call path that might somehow pre-empt this.
+        self._last_status_signature = None
+        self._last_status_write_time = 0.0
+
         # Write early status so tray can show health alerts before Firebase init
         self._write_service_status_early()
 
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
         self.is_alive = True
         self._restart_exit_code = 0
+        # Self-restart watchdog: set to True at top of SvcStop so an in-flight
+        # hard-exit timer yields to operator-initiated stop (tray Exit / net stop)
+        self._scm_stop_requested = False
         self.tray_icon_pid = None
         self.cortex_pid = None
         self.relaunch_attempts = {} # Restart attempts for each process
@@ -164,13 +255,78 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self.active_installations = {} # Track active installer processes for cancellation
         self.install_locks = {}  # {process_config_id: deployment_id} - suppress relaunch during install
         self.manual_overrides = {} # Processes manually started outside their schedule window
+        self._last_seen_launch_modes = {} # Service-owned launch_mode snapshot for transition diffs
+        self._last_seen_launch_schedules = {} # Schedule signatures for scheduled-mode edit logging
         self._skip_launch_delay = set()  # Process IDs that should skip time_delay on next launch
         self._cached_site_timezone = None  # Cached from firebase_client
-        self._last_scheduled_reboot_time = None  # Tracks when we last triggered a scheduled reboot
-        self._reboot_schedule_counter = 0  # Check reboot schedule every ~60s (6 iterations)
+        # Reboot scheduler state — see reboot_state.py for the persisted source of truth.
+        # _reboot_attempt_started_monotonic uses time.monotonic() so DST/NTP corrections
+        # don't trigger false retries.
+        self._reboot_attempt_started_monotonic = None
+        self._reboot_schedule_counter = 0  # Check reboot schedule every REBOOT_CHECK_ITERATIONS
+        # Display topology tracking — counter-gated signature check, cached hash
+        # lets us log only real topology changes (hot-plug, resolution edit, etc.)
+        # _cached_display_profile holds the previous profile dict so we can diff
+        # monitors by edidHash and emit categorized log events (add / remove /
+        # swap / drift / mosaic_disabled / sync_lost) on each real change.
+        self._display_check_counter = 0
+        self._cached_display_hash = None
+        self._cached_display_profile = None
+        # Auto-restore drift-persistence gate (Wave C2.4). Increments every
+        # topology tick that emits a display_drift event; resets to 0 on a
+        # tick where no drift fires. _maybe_auto_restore requires >= 2 to
+        # fire so a single-tick flap (cable wiggle for one heartbeat) doesn't
+        # trigger an unattended re-apply.
+        self._drift_pending_tick_count = 0
+        self._drift_pending_key = None
+        self._last_auto_restore_success_key = None
+        # roost periodic on-disk scrub (wave 4b.7). Counter increments every
+        # main-loop iteration; when it reaches ROOST_SCRUB_CHECK_ITERATIONS
+        # the dispatcher considers running scrub_all_due() on a daemon thread.
+        # _roost_scrub_thread tracks the in-flight worker so we never start
+        # two scrubs concurrently (single-flight).
+        self._roost_scrub_check_counter = 0
+        self._roost_scrub_thread = None
         self._shutting_down = False  # Suppresses crash alerts during reboot/shutdown
         self._live_view_active = False
         self._live_view_stop_time = 0
+
+        # Command router for new-style handlers (roost v2 onwards). Existing
+        # v1 handlers in handle_firebase_command's if/elif chain remain in
+        # place; the router is checked first and falls through if the
+        # command type isn't registered. New handlers should register here
+        # via @self._command_router.register('cmd_type'). See command_router.py.
+        self._command_router = CommandRouter()
+        # Register roost v2 handlers (sync_pull, cancel_sync, rollback_to_version).
+        # Handlers execute on whatever thread invokes handle_firebase_command;
+        # long-running sync work inside them spawns its own daemon threads via
+        # sync_downloader / sync_assembler so the dispatch path stays quick.
+        try:
+            from sync_commands import register_handlers as _register_roost_handlers
+            _register_roost_handlers(self._command_router)
+        except Exception as e:
+            # Non-fatal — agent still runs v1 commands; v2 commands will return
+            # "Unknown command type" until the handlers are loadable.
+            logging.warning(f"Failed to register roost handlers: {e}")
+
+        # Register machine-api public handlers (api-sprint wave 2 track 2A).
+        # capture_screenshot now routes through the public signed-URL flow;
+        # legacy if/elif handler is bypassed because the router takes
+        # precedence in handle_firebase_command's dispatch chain.
+        try:
+            from machine_commands import register_handlers as _register_machine_handlers
+            _register_machine_handlers(self._command_router)
+        except Exception as e:
+            logging.warning(f"Failed to register machine-api handlers: {e}")
+
+        # Register process-control public handlers (landing-redesign wave R.2).
+        # restart_process supersedes the legacy if/elif branch in
+        # _execute_command — the router takes precedence in dispatch.
+        try:
+            from process_commands import register_handlers as _register_process_handlers
+            _register_process_handlers(self._command_router)
+        except Exception as e:
+            logging.warning(f"Failed to register process-control handlers: {e}")
 
         # Initialize Firebase client
         self.firebase_client = None
@@ -300,6 +456,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 lambda code, msg: self._update_health_state('connection_failure', code, msg)
             )
 
+            # Wire self-restart watchdog callback BEFORE start() so the watchdog
+            # thread (spawned by start) always has a callback registered.
+            self.firebase_client.connection_manager.set_restart_callback(
+                self._handle_watchdog_restart
+            )
+
             # Start Firebase client background threads
             self.firebase_client.start()
             logging.info(f"[OK] Firebase client initialized and started for site: {site_id}")
@@ -374,9 +536,28 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         This provides real-time IPC from service → tray icon without log parsing.
 
+        Writes are throttled: skipped if content-relevant fields are unchanged
+        AND the refresh floor (MIN_STATUS_WRITE_INTERVAL) hasn't elapsed.
+        Every decision is logged to tmp/status_writer.log for diagnosability.
+
         Args:
             running: Whether service is currently running (False when stopping)
         """
+        # Defensive init — guard against any call path that might hit this
+        # method before __init__ finishes setting throttle state (e.g. a
+        # Firebase listener callback firing during connection_manager wiring).
+        if not hasattr(self, '_last_status_signature'):
+            self._last_status_signature = None
+        if not hasattr(self, '_last_status_write_time'):
+            self._last_status_write_time = 0.0
+
+        global _status_writer_logger
+        if _status_writer_logger is None:
+            try:
+                _status_writer_logger = _init_status_writer_logger()
+            except Exception:
+                _status_writer_logger = logging.getLogger('owlette.status_writer.fallback')
+
         try:
             status_path = shared_utils.get_data_path('tmp/service_status.json')
 
@@ -399,6 +580,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 except Exception:
                     pass  # Ignore errors getting Firebase state
 
+            health_section = self._health_section()
+
             status = {
                 'service': {
                     'running': running,
@@ -411,8 +594,34 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'site_id': site_id,
                     'last_heartbeat': last_heartbeat
                 },
-                'health': self._health_section()
+                'health': health_section
             }
+
+            # Signature excludes timestamp-like fields (last_update,
+            # last_heartbeat, checked_at) and free-form strings (error_message,
+            # probe_results dict) so it only flips on meaningful state changes.
+            signature = (
+                bool(running),
+                bool(firebase_enabled),
+                bool(firebase_connected),
+                site_id,
+                health_section.get('status'),
+                health_section.get('error_code'),
+            )
+
+            now_mono = time.monotonic()
+            content_changed = signature != self._last_status_signature
+            refresh_due = (now_mono - self._last_status_write_time) >= MIN_STATUS_WRITE_INTERVAL
+            should_write = (not running) or content_changed or refresh_due
+
+            if not should_write:
+                try:
+                    _status_writer_logger.info(
+                        f"skip throttled sig={hash(signature) & 0xffffffff:08x}"
+                    )
+                except Exception:
+                    pass
+                return
 
             # Write atomically (write to temp file, then replace)
             temp_path = status_path + '.tmp'
@@ -422,8 +631,27 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # os.replace() is atomic on Windows (no gap where file is missing)
             os.replace(temp_path, status_path)
 
+            reason = (
+                'shutdown' if not running
+                else 'content_changed' if content_changed
+                else 'refresh_floor'
+            )
+            self._last_status_signature = signature
+            self._last_status_write_time = now_mono
+            try:
+                _status_writer_logger.info(
+                    f"write {reason} sig={hash(signature) & 0xffffffff:08x} "
+                    f"connected={firebase_connected} health={health_section.get('status')}"
+                )
+            except Exception:
+                pass
+
         except Exception as e:
             logging.debug(f"Failed to write service status: {e}")
+            try:
+                _status_writer_logger.info(f"error {type(e).__name__}: {e}")
+            except Exception:
+                pass
 
     def _update_health_state(self, status: str, error_code: str, message: str):
         """
@@ -488,8 +716,190 @@ class OwletteService(win32serviceutil.ServiceFramework):
             t = threading.Thread(target=_send_alert, daemon=True)
             t.start()
 
+    def _check_and_alert_reboot_pending(self):
+        """Background check: detect Windows reboot-pending state and emit a
+        site event once per pending-state transition.
+
+        Runs every ~15 min from the main loop. Uses a flag file to avoid
+        re-alerting every 15 min for the same pending state; clears the flag
+        once the system is no longer pending.
+        """
+        if not self._auth_manager:
+            return
+
+        try:
+            import mcp_tools
+            status = mcp_tools.check_pending_reboot({}, None)
+        except Exception as e:
+            logging.debug(f"reboot-pending detection failed: {e}")
+            return
+
+        if not isinstance(status, dict):
+            return
+
+        pending = bool(status.get('pending'))
+        flag_path = shared_utils.get_data_path('tmp/reboot_pending_alerted.flag')
+
+        if not pending:
+            # Clear the flag once pending state resolves
+            try:
+                if os.path.exists(flag_path):
+                    os.remove(flag_path)
+                    logging.info("[REBOOT-PENDING] State cleared — flag removed")
+            except Exception:
+                pass
+            return
+
+        # Pending is true — only alert if we haven't already for this state
+        if os.path.exists(flag_path):
+            return
+
+        reasons = status.get('reasons', [])
+        next_scheduled = status.get('next_scheduled_update') or {}
+        logging.warning(f"[REBOOT-PENDING] Detected: reasons={reasons}, emitting alert")
+
+        def _emit_alert():
+            try:
+                token = self._auth_manager.get_valid_token()
+                site_id = self._auth_manager.get_site_id() or ''
+                machine_id = socket.gethostname()
+                api_base = self._api_base or shared_utils.get_api_base_url()
+                message = (
+                    f"Reboot pending on {machine_id} "
+                    f"(reasons: {', '.join(reasons) or 'unknown'})"
+                )
+                if next_scheduled.get('next_run'):
+                    message += f" — next scheduled run: {next_scheduled['next_run']}"
+                requests.post(
+                    f"{api_base}/agent/alert",
+                    json={
+                        'siteId': site_id,
+                        'machineId': machine_id,
+                        'errorCode': 'reboot_pending',
+                        'errorMessage': message,
+                        'agentVersion': shared_utils.APP_VERSION,
+                    },
+                    headers={'Authorization': f'Bearer {token}'},
+                    timeout=10,
+                )
+                # Write flag after successful send
+                try:
+                    os.makedirs(os.path.dirname(flag_path), exist_ok=True)
+                    with open(flag_path, 'w') as f:
+                        f.write(','.join(reasons))
+                except Exception as e:
+                    logging.debug(f"Could not write reboot-pending flag: {e}")
+                logging.info(f"[REBOOT-PENDING] Alert sent: {message}")
+            except Exception as e:
+                logging.debug(f"[REBOOT-PENDING] Alert send failed (non-critical): {e}")
+
+        t = threading.Thread(target=_emit_alert, daemon=True)
+        t.start()
+
     # On service stop
+    def _flush_pending_watchdog_events(self):
+        """Submit any watchdog-restart history entries that haven't reached
+        Firestore yet. Idempotent — safe to call every iteration while
+        Firebase is connected; already-submitted entries are skipped.
+        """
+        if not self.firebase_client or not self.firebase_client.is_connected():
+            return
+        try:
+            pending = watchdog_state.read_pending_history()
+        except Exception as e:
+            logging.debug(f"Watchdog pending-history read failed (non-fatal): {e}")
+            return
+        for entry in pending:
+            restart_id = entry.get('restart_id')
+            if not restart_id:
+                continue  # malformed entry; skip rather than risk duplicate Firestore rows
+            event_kind = entry.get('event_kind', 'watchdog_restart')
+            # Top-level queryable fields; full snapshot stays nested in `diagnostics`
+            extra = {
+                'reason_code': entry.get('reason_code'),
+                'seconds_since_success': entry.get('seconds_since_last_success'),
+                'consecutive_failures': entry.get('consecutive_failures'),
+                'last_error': entry.get('last_error'),
+                'restart_id': restart_id,
+                'diagnostics': entry,
+            }
+            extra = {k: v for k, v in extra.items() if v is not None}
+            try:
+                log_id = self.firebase_client.log_event(
+                    action=event_kind,
+                    level='warning',
+                    details=(
+                        f"{event_kind}: {entry.get('reason_code', 'unknown')} "
+                        f"({entry.get('seconds_since_last_success', '?')}s since last success)"
+                    ),
+                    extra_fields=extra,
+                    doc_id=restart_id,  # idempotent dedup key
+                )
+                if log_id:
+                    watchdog_state.mark_submitted(restart_id, log_id)
+                    logging.info(f"Watchdog restart event submitted: {event_kind} ({restart_id})")
+            except Exception as e:
+                logging.warning(f"Failed to submit watchdog restart event {restart_id}: {e}")
+
+    def _handle_watchdog_restart(self, exit_code: int, snapshot: dict):
+        """Self-restart watchdog callback.
+
+        Called from ConnectionManager._watchdog_loop when a stuck-connection
+        restart is authorized. Arms a hard-exit timer first (so nothing below
+        can wedge the exit), logs a visible banner, sets the session intent
+        so the startup classifier treats the next boot as planned, then
+        signals the main loop to exit cleanly with the provided code (43).
+
+        The hard-exit timer yields if the operator issues `net stop` / tray
+        Exit during the 30s window — see `_scm_stop_requested`.
+        """
+        # 1. Arm hard-exit FIRST. If anything below wedges (e.g. set_intent
+        #    blocks on a corrupt state file, main loop takes >30s to unwind),
+        #    the timer guarantees the process dies so NSSM restarts us.
+        def _hard_exit():
+            try:
+                if getattr(self, '_scm_stop_requested', False):
+                    logging.info("[WATCHDOG] Hard-exit aborted — SCM stop in progress, yielding to operator")
+                    return
+                # Flush offline presence before dying so dashboards don't show
+                # ~heartbeat-timeout of stale "online" after a watchdog exit.
+                try:
+                    if self.firebase_client and self.firebase_client.connected:
+                        self.firebase_client._update_presence(False)
+                except Exception as e:
+                    logging.debug(f"[WATCHDOG] offline presence flush failed: {e}")
+                logging.error(f"[WATCHDOG] Hard-exit timer firing with code {exit_code}")
+            finally:
+                os._exit(exit_code)
+
+        try:
+            threading.Timer(30.0, _hard_exit).start()
+        except Exception as e:
+            logging.error(f"[WATCHDOG] Failed to arm hard-exit timer: {e}")
+
+        # 2. Log the banner (primary debug surface)
+        try:
+            shared_utils.log_watchdog_restart_block(snapshot)
+        except Exception as e:
+            logging.error(f"[WATCHDOG] banner log failed: {e}")
+
+        # 3. Set session intent so startup classifier doesn't treat the next
+        #    boot as unexpected_service_restart
+        try:
+            session_state.set_intent("watchdog_restart")
+        except Exception as e:
+            logging.debug(f"[WATCHDOG] set_intent failed: {e}")
+
+        # 4. Signal main loop to exit cleanly via existing exit-code mechanism
+        self._restart_exit_code = exit_code
+        self.is_alive = False
+
     def SvcStop(self):
+        # Signal self-restart watchdog to yield — if an exit-43 hard-exit timer
+        # is in flight, it will abort so this clean exit-0 path wins and NSSM
+        # respects the operator's stop intent.
+        self._scm_stop_requested = True
+
         # Try to report service status (may fail when running under NSSM)
         try:
             self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
@@ -937,7 +1347,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 proc['launch_mode'] = mode
                 if mode == 'scheduled' and schedules:
                     proc['schedules'] = schedules
-                shared_utils.write_config(config)
+                shared_utils.save_config(config)
                 return {'status': 'completed', 'result': f'Launch mode set to {mode} for {process_name}'}
 
         return {'error': f'Process not found: {process_name}'}
@@ -1323,7 +1733,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.error(f"Failed to start process: {e}")
             return False
 
-    def execute_in_user_session(self, job_type, code, timeout=30):
+    def execute_in_user_session(self, job_type, code, timeout=30, trusted=False):
         """Execute code in the interactive user's desktop session.
 
         Launches session_exec.py via CreateProcessAsUser, which runs
@@ -1357,6 +1767,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             'code': code,
             'timeout': min(timeout, 120),
             'outputDir': output_dir,
+            'trusted': bool(trusted),
         }
         with open(job_path, 'w') as f:
             _json.dump(job, f)
@@ -1736,20 +2147,73 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self._write_cortex_event(process_name, f'Failed to kill and restart PID {pid}: {str(e)}', 'process_crash')
                 return None
 
+    @staticmethod
+    def _find_sibling_executables(exe_path, max_depth=4, max_results=5):
+        """Find likely replacement executables near a missing configured path."""
+        exe_name = os.path.basename(exe_path)
+        if not exe_name:
+            return []
+
+        search_root = os.path.dirname(os.path.abspath(exe_path))
+        while search_root and not os.path.isdir(search_root):
+            parent = os.path.dirname(search_root)
+            if parent == search_root:
+                return []
+            search_root = parent
+
+        if not search_root or not os.path.isdir(search_root):
+            return []
+
+        candidates = []
+
+        def _scan(directory, depth_remaining):
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        try:
+                            if entry.is_file(follow_symlinks=False) and entry.name == exe_name:
+                                candidates.append((entry.stat(follow_symlinks=False).st_mtime, entry.path))
+                            elif depth_remaining > 0 and entry.is_dir(follow_symlinks=False):
+                                _scan(entry.path, depth_remaining - 1)
+                        except (OSError, PermissionError):
+                            continue
+            except (OSError, PermissionError):
+                return
+
+        _scan(search_root, max_depth)
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return [path for _, path in candidates[:max_results]]
+
     # Attempt to launch the process if not running
     def handle_process_launch(self, process):
         # Validate executable path before attempting launch
+        process_id = process.get('id', '')
         exe_path = process.get('exe_path', '').strip()
         if not exe_path:
             process_name = Util.get_process_name(process)
             logging.error(f"Cannot launch '{process_name}': Executable path is not set. Please configure a valid exe_path and set launch mode to Always On or Scheduled.")
-            self.last_started[process.get('id', '')] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
+            self.last_started[process_id] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
             return None
 
         if not os.path.isfile(exe_path):
             process_name = Util.get_process_name(process)
             logging.error(f"Cannot launch '{process_name}': Executable path does not exist: {exe_path}")
-            self.last_started[process.get('id', '')] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
+            last_info = self.last_started.get(process_id, {})
+            if not last_info.get('failed') and self.firebase_client:
+                suggested_paths = self._find_sibling_executables(exe_path)
+                self.firebase_client.send_alert('exe_missing', {
+                    'process_name': process_name,
+                    'process_id': process_id,
+                    'exe_path': exe_path,
+                    'suggested_paths': suggested_paths,
+                })
+                self.firebase_client.log_event(
+                    'process_launch_failed',
+                    'error',
+                    process_name=process_name,
+                    details=f'executable not found: {exe_path}'
+                )
+            self.last_started[process_id] = {'time': datetime.datetime.now(), 'pid': None, 'failed': True}
             return None
 
         # Ensure process has not exceeded maximum relaunch attempts
@@ -1767,7 +2231,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             if last_time is None or (last_time is not None and (self.current_time - last_time).total_seconds() >= (time_to_init or TIME_TO_INIT)):
                 # Skip delay on first launch (delay is for crash recovery spacing,
                 # not fresh starts) and on manual mode changes
-                if last_time is None or process_list_id in self._skip_launch_delay:
+                if last_time is None or last_info.get('failed') or process_list_id in self._skip_launch_delay:
                     self._skip_launch_delay.discard(process_list_id)
                 elif delay:
                     time.sleep(delay)
@@ -2032,10 +2496,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         logging.info(f"[OK] Adopted already-running '{Util.get_process_name(process)}' (PID {existing_pid})")
                         new_pid = None
                     else:
-                        # Clear stale tracking so handle_process_launch sees
-                        # last_time=None and skips time_delay (delay is for
-                        # crash recovery spacing, handled by time_to_init)
-                        self.last_started.pop(process_list_id, None)
+                        # Preserve failed markers so missing-exe alerts fire
+                        # only on transition. For non-failed stale entries,
+                        # clear tracking so handle_process_launch treats the
+                        # relaunch as fresh and skips time_delay.
+                        if last_info.get('failed'):
+                            self._skip_launch_delay.add(process_list_id)
+                        else:
+                            self.last_started.pop(process_list_id, None)
                         # Launch the process again if it isn't running
                         new_pid = self.handle_process_launch(process)
         
@@ -2113,6 +2581,98 @@ class OwletteService(win32serviceutil.ServiceFramework):
         except Exception as e:
             logging.error(f"Error cleaning up stale tracking data: {e}")
 
+    def _get_process_launch_mode(self, process):
+        return process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+
+    def _get_schedule_signature(self, process):
+        return json.dumps(process.get('schedules'), sort_keys=True, default=str)
+
+    def _apply_launch_mode_transition(self, process_id, old_mode, new_mode, new_proc):
+        name = new_proc.get('name')
+
+        if old_mode == new_mode:
+            logging.info(f"Launch schedule changed for {name} - will re-evaluate on next tick")
+            return
+
+        old_active = old_mode in ('always', 'scheduled')
+        new_active = new_mode in ('always', 'scheduled')
+
+        if new_mode == 'off' and old_active:
+            logging.info(f"Launch mode set to off for {name} - stopping monitoring (process stays running)")
+            self.manual_overrides.pop(process_id, None)
+            return
+
+        if old_mode == 'off' and new_mode == 'always':
+            logging.info(f"Launch mode set to always for {name} - launching now")
+            self.last_started.pop(process_id, None)
+            self._skip_launch_delay.add(process_id)
+            self.relaunch_attempts.pop(name, None)
+            try:
+                self.handle_process(new_proc)
+            except Exception as e:
+                logging.error(f"Failed to immediately launch {name}: {e}")
+            return
+
+        if old_mode == 'off' and new_mode == 'scheduled':
+            self.last_started.pop(process_id, None)
+            self.relaunch_attempts.pop(name, None)
+            should_launch = shared_utils.is_within_schedule(new_proc.get('schedules'), self._cached_site_timezone)
+            if should_launch:
+                logging.info(f"Launch mode set to scheduled for {name} - launching now")
+                self._skip_launch_delay.add(process_id)
+                try:
+                    self.handle_process(new_proc)
+                except Exception as e:
+                    logging.error(f"Failed to immediately launch {name}: {e}")
+            else:
+                logging.info(f"Launch mode set to scheduled for {name} - outside schedule, will launch when window opens")
+            return
+
+        if old_active and new_active:
+            logging.info(f"Launch mode changed for {name}: {old_mode} -> {new_mode}")
+            return
+
+        logging.info(f"Launch mode changed for {name}: {old_mode} -> {new_mode}")
+
+    def _diff_and_apply_launch_modes(self, processes):
+        current_process_ids = set()
+
+        for process in processes or []:
+            process_id = process.get('id')
+            if not process_id:
+                continue
+
+            current_process_ids.add(process_id)
+            old_mode = self._last_seen_launch_modes.get(process_id)
+            new_mode = self._get_process_launch_mode(process)
+            new_schedule_signature = self._get_schedule_signature(process)
+
+            if old_mode is None:
+                self._last_seen_launch_modes[process_id] = new_mode
+                self._last_seen_launch_schedules[process_id] = new_schedule_signature
+                continue
+
+            old_schedule_signature = self._last_seen_launch_schedules.get(process_id)
+            schedules_changed = (
+                old_mode == new_mode == 'scheduled'
+                and old_schedule_signature != new_schedule_signature
+            )
+
+            if old_mode == new_mode:
+                if schedules_changed:
+                    self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
+                self._last_seen_launch_schedules[process_id] = new_schedule_signature
+                continue
+
+            self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
+            self._last_seen_launch_modes[process_id] = new_mode
+            self._last_seen_launch_schedules[process_id] = new_schedule_signature
+
+        stale_process_ids = set(self._last_seen_launch_modes.keys()) - current_process_ids
+        for process_id in stale_process_ids:
+            self._last_seen_launch_modes.pop(process_id, None)
+            self._last_seen_launch_schedules.pop(process_id, None)
+
     # Handle config updates from Firebase
     def handle_config_update(self, new_config):
         """
@@ -2160,6 +2720,28 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # Always derive autolaunch from launch_mode for consistency
                     if 'launch_mode' in process:
                         process['autolaunch'] = process['launch_mode'] != 'off'
+
+            # Detect rebootSchedule change → cancel any in-flight attempt.
+            # User intent (a schedule edit) supersedes a stale pending attempt.
+            old_reboot_schedule = (old_config or {}).get('rebootSchedule')
+            new_reboot_schedule = new_config.get('rebootSchedule')
+            if json.dumps(old_reboot_schedule, sort_keys=True) != json.dumps(new_reboot_schedule, sort_keys=True):
+                try:
+                    state = reboot_state.read_state()
+                    if state.get('attempt') and state['attempt'].get('status') == 'pending':
+                        logging.info("Reboot schedule changed mid-attempt — clearing pending attempt")
+                        state = reboot_state.clear_attempt(state)
+                        reboot_state.write_state(state)
+                        if self.firebase_client:
+                            self.firebase_client.mirror_reboot_state(state)
+                            self.firebase_client.log_event(
+                                action='scheduled_reboot_cancelled',
+                                level='info',
+                                details='schedule changed during pending attempt'
+                            )
+                        self._reboot_attempt_started_monotonic = None
+                except Exception as e:
+                    logging.warning(f"Failed to handle reboot schedule change: {e}")
 
             # Write the updated config to local config.json
             shared_utils.write_json_to_file(new_config, shared_utils.CONFIG_PATH)
@@ -2246,39 +2828,47 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                         # Clean up tracking
                         del self.last_started[removed_id]
+                    self._last_seen_launch_modes.pop(removed_id, None)
+                    self._last_seen_launch_schedules.pop(removed_id, None)
 
                 # Check for launch_mode changes
                 for process_id, new_proc in new_process_map.items():
                     if process_id in old_process_map:
                         old_proc = old_process_map[process_id]
-                        old_mode = old_proc.get('launch_mode', 'always' if old_proc.get('autolaunch', False) else 'off')
-                        new_mode = new_proc.get('launch_mode', 'always' if new_proc.get('autolaunch', False) else 'off')
+                        old_mode = self._get_process_launch_mode(old_proc)
+                        new_mode = self._get_process_launch_mode(new_proc)
+                        schedules_changed = (
+                            old_mode == new_mode == 'scheduled'
+                            and self._get_schedule_signature(old_proc) != self._get_schedule_signature(new_proc)
+                        )
 
-                        if old_mode != new_mode:
-                            logging.info(f"Launch mode changed for {new_proc.get('name')}: {old_mode} -> {new_mode}")
-
-                        if new_mode == 'off' and old_mode != 'off':
-                            # Mode set to off - stop monitoring but keep process running
-                            logging.info(f"Launch mode set to off for {new_proc.get('name')} - stopping monitoring (process stays running)")
-                            self.manual_overrides.pop(process_id, None)
-                        elif new_mode in ('always', 'scheduled') and old_mode == 'off':
-                            # Mode enabled - clear any cooldown, launch immediately if appropriate
-                            should_launch = new_mode == 'always' or shared_utils.is_within_schedule(new_proc.get('schedules'), self._cached_site_timezone)
-                            if should_launch:
-                                logging.info(f"Launch mode set to {new_mode} for {new_proc.get('name')} - launching now")
-                                self._skip_launch_delay.add(new_proc.get('id'))
-                                self.last_started.pop(new_proc.get('id'), None)
-                                self.relaunch_attempts.pop(new_proc.get('name'), None)
-                                try:
-                                    self.handle_process(new_proc)
-                                except Exception as e:
-                                    logging.error(f"Failed to immediately launch {new_proc.get('name')}: {e}")
-                            else:
-                                logging.info(f"Launch mode set to {new_mode} for {new_proc.get('name')} - outside schedule, will launch when window opens")
+                        if old_mode != new_mode or schedules_changed:
+                            self._apply_launch_mode_transition(process_id, old_mode, new_mode, new_proc)
+                            self._last_seen_launch_modes[process_id] = new_mode
+                            self._last_seen_launch_schedules[process_id] = self._get_schedule_signature(new_proc)
 
                 # Log summary
                 logging.info(f"Config update complete - Processes: {len(old_processes)} -> {len(new_processes)}, Removed: {len(removed_process_ids)}")
 
+            # Detect displays-key changes so operators can see topology-config
+            # edits reach the agent. `displays` is a top-level key and flows
+            # through normal merge logic — we do NOT add it to LOCAL_ONLY_KEYS.
+            # Real apply work happens via the apply_display_topology command;
+            # this block is purely observational.
+            try:
+                old_displays = (old_config or {}).get('displays')
+                new_displays = new_config.get('displays')
+                if json.dumps(old_displays, sort_keys=True) != json.dumps(new_displays, sort_keys=True):
+                    old_enabled = bool((old_displays or {}).get('enabled'))
+                    new_enabled = bool((new_displays or {}).get('enabled'))
+                    old_layout_count = len(((old_displays or {}).get('savedLayouts') or []))
+                    new_layout_count = len(((new_displays or {}).get('savedLayouts') or []))
+                    logging.info(
+                        f"Displays config changed: enabled {old_enabled}->{new_enabled}, "
+                        f"savedLayouts {old_layout_count}->{new_layout_count}"
+                    )
+            except Exception as e:
+                logging.debug(f"Displays config diff failed (non-critical): {e}")
 
             # Upload metrics immediately so web dashboard sees config changes quickly
             # This is different from GUI-initiated changes (which already upload immediately)
@@ -2383,20 +2973,40 @@ class OwletteService(win32serviceutil.ServiceFramework):
             cmd_type = cmd_data.get('type')
             logging.info(f"Received Firebase command: {cmd_type} (ID: {cmd_id})")
 
-            # Rate limit: prevent rapid-fire commands of the same type
-            now = time.time()
-            last_time = self._command_rate_limits.get(cmd_type, 0)
-            if now - last_time < self.COMMAND_RATE_LIMIT_SECONDS:
-                logging.warning(f"Command rate-limited: {cmd_type} (last executed {now - last_time:.1f}s ago)")
-                return f"Rate limited: {cmd_type} executed too recently, try again in a few seconds"
-            self._command_rate_limits[cmd_type] = now
+            # Rate limit: prevent rapid-fire commands of the same type.
+            # Exempt mcp_tool_call — Cortex fires parallel tool calls by design,
+            # is already authenticated + audit-logged per-tool, and has its own
+            # server-side gating. A 5s per-type throttle breaks parallel queries.
+            # Exempt ack_display_topology — acks legitimately follow an apply
+            # within a few seconds and must never be dropped (dropping an ack
+            # forces auto-revert, defeating the confirmation flow).
+            if cmd_type not in ('mcp_tool_call', 'ack_display_topology'):
+                now = time.time()
+                last_time = self._command_rate_limits.get(cmd_type, 0)
+                if now - last_time < self.COMMAND_RATE_LIMIT_SECONDS:
+                    logging.warning(f"Command rate-limited: {cmd_type} (last executed {now - last_time:.1f}s ago)")
+                    return f"Rate limited: {cmd_type} executed too recently, try again in a few seconds"
+                self._command_rate_limits[cmd_type] = now
 
-            if cmd_type == 'restart_process':
-                # Restart a specific process by name
+            # CommandRouter dispatch (new-style handlers, roost v2 onwards).
+            # Falls through to legacy if/elif chain if no handler is registered
+            # for this cmd_type. Existing v1 handlers stay in place; new v2
+            # handlers (sync_pull, cancel_sync, rollback_to_version) register
+            # via self._command_router and are dispatched here.
+            if self._command_router.has_handler(cmd_type):
+                return self._command_router.dispatch(cmd_type, cmd_data, cmd_id, self)
+
+            if cmd_type in ('restart_process', 'start_process'):
+                # Restart or start a specific process by public id or name.
                 process_name = cmd_data.get('process_name')
+                process_id = cmd_data.get('process_id') or cmd_data.get('processId')
                 processes = shared_utils.read_config(['processes'])
                 for process in processes:
-                    if process.get('name') == process_name:
+                    if (
+                        (process_id and process.get('id') == process_id)
+                        or (process_name and process.get('name') == process_name)
+                    ):
+                        process_name = process.get('name') or process_name
                         process_list_id = process['id']
                         # Track manual override for scheduled processes started outside window
                         mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
@@ -2405,6 +3015,20 @@ class OwletteService(win32serviceutil.ServiceFramework):
                             logging.info(f"Manual override set for '{process_name}' (started outside schedule window)")
                         last_info = self.last_started.get(process_list_id, {})
                         last_pid = last_info.get('pid')
+                        if cmd_type == 'start_process':
+                            self.last_started.pop(process_list_id, None)
+                            if last_pid and Util.is_pid_running(last_pid):
+                                return f"Process {process_name} is already running with PID {last_pid}"
+                            new_pid = self.handle_process_launch(process)
+                            # Log command execution
+                            if self.firebase_client and self.firebase_client.is_connected():
+                                self.firebase_client.log_event(
+                                    action='command_executed',
+                                    level='info',
+                                    process_name=process_name,
+                                    details=f'Start process command - PID: {new_pid}'
+                                )
+                            return f"Process {process_name} started with PID {new_pid}"
                         if last_pid and Util.is_pid_running(last_pid):
                             new_pid = self.kill_and_relaunch_process(last_pid, process)
                             # Log command execution
@@ -2427,77 +3051,100 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                     details=f'Start process command - PID: {new_pid}'
                                 )
                             return f"Process {process_name} started with PID {new_pid}"
-                return f"Process {process_name} not found in configuration"
+                target = process_id or process_name
+                return f"Process {target} not found in configuration"
 
-            elif cmd_type == 'kill_process':
-                # Kill a specific process by name
+            elif cmd_type in ('kill_process', 'stop_process'):
+                # Kill or gracefully stop a specific process by public id or name.
                 process_name = cmd_data.get('process_name')
+                process_id = cmd_data.get('process_id') or cmd_data.get('processId')
                 processes = shared_utils.read_config(['processes'])
                 for process in processes:
-                    if process.get('name') == process_name:
+                    if (
+                        (process_id and process.get('id') == process_id)
+                        or (process_name and process.get('name') == process_name)
+                    ):
+                        process_name = process.get('name') or process_name
                         process_list_id = process['id']
                         last_info = self.last_started.get(process_list_id, {})
                         last_pid = last_info.get('pid')
                         if last_pid and Util.is_pid_running(last_pid):
                             shared_utils.graceful_terminate(last_pid)
+                            status = 'STOPPED' if cmd_type == 'stop_process' else 'KILLED'
+                            action = 'process_stopped' if cmd_type == 'stop_process' else 'process_killed'
+                            details = (
+                                f'Manual stop via dashboard - PID: {last_pid}'
+                                if cmd_type == 'stop_process'
+                                else f'Manual kill via dashboard - PID: {last_pid}'
+                            )
                             # Update status and sync to Firebase immediately
-                            shared_utils.update_process_status_in_json(last_pid, 'KILLED', self.firebase_client, process_id=process_list_id)
+                            shared_utils.update_process_status_in_json(last_pid, status, self.firebase_client, process_id=process_list_id)
                             # Mark as killed (not deleted!) so handle_process() won't
                             # treat an empty last_started as "untracked → needs launch".
-                            # This prevents the race where kill runs before the mode=off
+                            # This prevents the race where control runs before the mode=off
                             # config change has synced to local config.json.
                             self.last_started[process_list_id] = {'killed': True, 'time': datetime.datetime.now()}
-                            # Log process kill event (manual kill from dashboard)
+                            # Log process control event (manual kill/stop from dashboard)
                             if self.firebase_client and self.firebase_client.is_connected():
                                 self.firebase_client.log_event(
-                                    action='process_killed',
+                                    action=action,
                                     level='warning',
                                     process_name=process_name,
-                                    details=f'Manual kill via dashboard - PID: {last_pid}'
+                                    details=details
                                 )
                             return f"Process {process_name} (PID {last_pid}) terminated"
                         else:
                             return f"Process {process_name} is not running"
-                return f"Process {process_name} not found in configuration"
+                target = process_id or process_name
+                return f"Process {target} not found in configuration"
 
             elif cmd_type in ('toggle_autolaunch', 'set_launch_mode'):
                 # Set launch mode for a specific process (also handles legacy toggle_autolaunch)
                 process_name = cmd_data.get('process_name')
+                process_id = cmd_data.get('process_id') or cmd_data.get('processId')
                 config = shared_utils.read_config()
                 processes = config.get('processes', [])
-                for process in processes:
-                    if process.get('name') == process_name:
-                        if cmd_type == 'set_launch_mode':
-                            new_mode = cmd_data.get('mode', 'off')
-                            new_schedules = cmd_data.get('schedules', None)
-                            process['launch_mode'] = new_mode
-                            if new_schedules is not None:
-                                process['schedules'] = new_schedules
-                        else:
-                            # Legacy toggle_autolaunch support
-                            new_autolaunch_value = cmd_data.get('autolaunch', False)
-                            process['launch_mode'] = 'always' if new_autolaunch_value else 'off'
-                        # Always derive autolaunch for backward compat
-                        process['autolaunch'] = process.get('launch_mode', 'off') != 'off'
-                        shared_utils.save_config(config)
-                        new_mode = process['launch_mode']
-                        logging.info(f"Launch mode for {process_name} set to {new_mode}")
+                process = None
+                if process_id:
+                    process = next((p for p in processes if p.get('id') == process_id), None)
+                if process is None and process_name:
+                    process = next((p for p in processes if p.get('name') == process_name), None)
 
-                        # Immediate launch when mode switches to always/scheduled
-                        if new_mode in ('always', 'scheduled'):
-                            process_id = process.get('id')
-                            should_launch = new_mode == 'always' or shared_utils.is_within_schedule(process.get('schedules'), self._cached_site_timezone)
-                            if should_launch and process_id:
-                                self._skip_launch_delay.add(process_id)
-                                self.last_started.pop(process_id, None)
-                                self.relaunch_attempts.pop(process_name, None)
-                                try:
-                                    self.handle_process(process)
-                                except Exception as e:
-                                    logging.error(f"Failed to immediately launch {process_name}: {e}")
+                if process:
+                    process_name = process.get('name') or process_name
+                    process_id = process.get('id')
+                    old_mode = self._get_process_launch_mode(process)
+                    old_schedule_signature = self._get_schedule_signature(process)
 
-                        return f"Launch mode for {process_name} set to {new_mode}"
-                return f"Process {process_name} not found in configuration"
+                    if cmd_type == 'set_launch_mode':
+                        new_mode = cmd_data.get('mode', 'off')
+                        new_schedules = cmd_data.get('schedules', None)
+                        process['launch_mode'] = new_mode
+                        if new_schedules is not None:
+                            process['schedules'] = new_schedules
+                    else:
+                        # Legacy toggle_autolaunch support
+                        new_autolaunch_value = cmd_data.get('autolaunch', False)
+                        process['launch_mode'] = 'always' if new_autolaunch_value else 'off'
+                    # Always derive autolaunch for backward compat
+                    process['autolaunch'] = process.get('launch_mode', 'off') != 'off'
+                    shared_utils.save_config(config)
+                    new_mode = process['launch_mode']
+                    new_schedule_signature = self._get_schedule_signature(process)
+                    logging.info(f"Launch mode for {process_name} set to {new_mode}")
+
+                    schedules_changed = (
+                        old_mode == new_mode == 'scheduled'
+                        and old_schedule_signature != new_schedule_signature
+                    )
+                    if old_mode != new_mode or schedules_changed:
+                        self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
+                        self._last_seen_launch_modes[process_id] = new_mode
+                        self._last_seen_launch_schedules[process_id] = new_schedule_signature
+
+                    return f"Launch mode for {process_name} set to {new_mode}"
+                target = process_id or process_name
+                return f"Process {target} not found in configuration"
 
             elif cmd_type == 'update_config':
                 # Update configuration from Firebase
@@ -2575,16 +3222,24 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # Use the actual path where the file was saved (may differ if file was in use)
                     temp_installer_path = actual_installer_path
 
-                    # Verify checksum if provided (SECURITY: recommended for remote installations)
-                    if expected_sha256:
-                        logging.info("Verifying installer checksum...")
-                        checksum_valid = installer_utils.verify_checksum(temp_installer_path, expected_sha256)
-                        if not checksum_valid:
-                            installer_utils.cleanup_installer(temp_installer_path, force=True)
-                            return f"Error: Checksum verification failed for {installer_name}. Installation aborted for security."
-                        logging.info("[OK] Checksum verification passed")
-                    else:
-                        logging.warning("[WARNING] No checksum provided - skipping verification (security risk)")
+                    # SECURITY: checksum is mandatory for remote installations.
+                    # Without it, a compromised CDN, hijacked signed URL, or any actor with
+                    # write access to the command doc could ship arbitrary code that runs
+                    # elevated. The self-update path enforces this; the third-party install
+                    # path used to skip it — fixed here.
+                    if not expected_sha256:
+                        installer_utils.cleanup_installer(temp_installer_path, force=True)
+                        return (
+                            f"Error: Refusing to install {installer_name} without "
+                            f"sha256_checksum. Re-issue the command with a checksum."
+                        )
+
+                    logging.info("Verifying installer checksum...")
+                    checksum_valid = installer_utils.verify_checksum(temp_installer_path, expected_sha256)
+                    if not checksum_valid:
+                        installer_utils.cleanup_installer(temp_installer_path, force=True)
+                        return f"Error: Checksum verification failed for {installer_name}. Installation aborted for security."
+                    logging.info("[OK] Checksum verification passed")
 
                     # Update status: installing
                     if self.firebase_client:
@@ -2698,10 +3353,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         with open(update_marker_path, 'r') as f:
                             existing_marker = json.load(f)
                         started_at = existing_marker.get('started_at', '')
-                        # Parse the timestamp and check if update is still recent (< 10 minutes)
-                        from datetime import datetime
-                        marker_time = datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
-                        age_minutes = (datetime.now() - marker_time).total_seconds() / 60
+                        # Parse the timestamp and check if update is still recent (< 10 minutes).
+                        # Uses module-level `import datetime` (line 32) — do NOT add a local
+                        # `from datetime import datetime` here; it shadows the module name for
+                        # the entire function scope and breaks the kill_process branch above.
+                        marker_time = datetime.datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
+                        age_minutes = (datetime.datetime.now() - marker_time).total_seconds() / 60
                         if age_minutes < 10:
                             logging.warning(f"Update already in progress (started {age_minutes:.1f}m ago) - rejecting duplicate command")
                             return f"Update already in progress (started {age_minutes:.1f}m ago)"
@@ -3243,6 +3900,135 @@ class OwletteService(win32serviceutil.ServiceFramework):
             elif cmd_type == 'stop_live_view':
                 return self._handle_stop_live_view(cmd_data)
 
+            elif cmd_type == 'apply_display_topology':
+                # Dispatch the display topology apply via display_manager. The
+                # call performs validate → snapshot → apply synchronously and
+                # arms a revert watchdog thread before returning; the dashboard
+                # is expected to follow up with ack_display_topology within the
+                # revert deadline or the config auto-reverts. `applyId` comes
+                # from the dashboard (UUID) and threads through to the ack so
+                # a stale ack for a prior apply can't cancel this one.
+                layout = cmd_data.get('layout')
+                apply_id = cmd_data.get('applyId') or cmd_data.get('apply_id')
+                try:
+                    result = display_manager.apply_topology(
+                        layout,
+                        firebase_client=self.firebase_client,
+                        apply_id=apply_id,
+                    )
+                    if isinstance(result, dict) and result.get('success'):
+                        change_count = len(result.get('changes', []) or [])
+                        revert_s = result.get('revertDeadlineSeconds', 0)
+                        return (
+                            f"Display topology applied — {change_count} changes, "
+                            f"revert in {revert_s}s"
+                        )
+                    err = (
+                        result.get('error', 'unknown')
+                        if isinstance(result, dict) else str(result)
+                    )
+                    # Prefix the response with the specific failure code when
+                    # available so the dashboard can pattern-match (e.g.
+                    # `unsupported_mode`) and show a targeted toast instead of
+                    # a generic "recall failed".
+                    code = (
+                        result.get('code') if isinstance(result, dict) else None
+                    )
+                    if code:
+                        return f"Error: {code}: {err}"
+                    return f"Error: {err}"
+                except Exception as e:
+                    return f"Error: {e}"
+
+            elif cmd_type == 'enumerate_display_modes':
+                # Build the supported-display-modes catalogue for every active
+                # monitor and upload it to
+                # sites/{siteId}/machines/{machineId}/hardware/displayModes.
+                # Upload is skipped when the topology's signatureHash matches
+                # the last successful upload (hardware unchanged) — the
+                # dashboard's editor-open dispatch is then a cheap no-op on
+                # repeat visits. `force` defaults to False; a future command
+                # param could expose it for operator-driven cache busts.
+                try:
+                    result = self.firebase_client._ensure_display_modes_catalogue()
+                    if isinstance(result, dict) and result.get('ok'):
+                        mc = result.get('monitorCount', 0)
+                        mk = result.get('modeCount', 0)
+                        if result.get('uploaded'):
+                            return (
+                                f"Uploaded catalogue — {mk} modes "
+                                f"across {mc} monitors"
+                            )
+                        reason = result.get('reason') or 'unknown'
+                        return (
+                            f"Enumerated {mk} modes across {mc} monitors "
+                            f"(skipped upload: {reason})"
+                        )
+                    code = (
+                        result.get('code', 'unknown')
+                        if isinstance(result, dict) else 'unknown'
+                    )
+                    err = (
+                        result.get('error', 'unknown')
+                        if isinstance(result, dict) else str(result)
+                    )
+                    return f"Error: {code} {err}"
+                except Exception as e:
+                    return f"Error: {e}"
+
+            elif cmd_type == 'ack_display_topology':
+                # Acknowledge an in-flight apply; cancels the auto-revert
+                # watchdog. Must arrive within the revert deadline set by the
+                # corresponding apply_display_topology (default 30s) or it's a
+                # no-op against an already-reverted config. `applyId` is the
+                # generation token returned by the apply; agent rejects acks
+                # whose id doesn't match the in-flight apply.
+                apply_id = cmd_data.get('applyId') or cmd_data.get('apply_id')
+                try:
+                    result = display_manager.ack_apply(
+                        apply_id=apply_id, firebase_client=self.firebase_client,
+                    )
+                    if isinstance(result, dict) and result.get('success'):
+                        return result.get('message', 'apply acknowledged')
+                    err = (
+                        result.get('error', 'unknown')
+                        if isinstance(result, dict) else str(result)
+                    )
+                    return f"Error: {err}"
+                except Exception as e:
+                    return f"Error: {e}"
+
+            elif cmd_type == 'test_display_apply':
+                # Wave 6.3 — read-only smoke test for the apply helper IPC.
+                # Spawns the helper in the active console session and runs
+                # query + SDC_VALIDATE against the live layout (a true no-op
+                # — never calls SDC_APPLY). The dashboard surfaces the
+                # response so operators can verify the plumbing works on a
+                # given machine before flipping `displays.remoteApplyEnabled`
+                # on. Bypasses the apply kill switch (read-only).
+                try:
+                    result = display_manager._self_test_via_user_session()
+                    if isinstance(result, dict) and result.get('ok'):
+                        seen = result.get('monitors_seen', 0)
+                        q = result.get('query_ms', 0)
+                        v = result.get('validate_ms', 0)
+                        return (
+                            f"Self-test ok — {seen} monitors, "
+                            f"query {q}ms, validate {v}ms"
+                        )
+                    err = (
+                        result.get('error', 'unknown')
+                        if isinstance(result, dict) else str(result)
+                    )
+                    code = (
+                        result.get('code') if isinstance(result, dict) else None
+                    )
+                    if code:
+                        return f"Error: {code}: {err}"
+                    return f"Error: {err}"
+                except Exception as e:
+                    return f"Error: {e}"
+
             else:
                 logging.warning(f"Unknown command type: {cmd_type}")
                 return f"Unknown command type: {cmd_type}"
@@ -3252,69 +4038,1260 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.error(error_msg)
             return error_msg
 
-    def _check_scheduled_reboot(self):
-        """Check if a scheduled reboot should be triggered.
+    def _check_display_topology(self):
+        """Snapshot the current display topology and log changes.
 
-        Conditions:
-        1. Firebase is connected
-        2. rebootSchedule.enabled is True
-        3. Current time is within a schedule window
-        4. Machine uptime > 30 minutes (avoid reboot loops after fresh boot)
-        5. Haven't already triggered a reboot in this schedule window
+        Gated by the ``displays.enabled`` config kill switch. Runs the CCD
+        enumeration under a 5s watchdog (defence-in-depth — display_manager
+        already wraps its own query with a shorter timeout). Merges Mosaic /
+        GSync data from NVAPI into the profile dict and compares the resulting
+        signature hash to the cached value. Firestore upload of the profile
+        happens in firebase_client's metrics loop (Task 2.2), so nothing is
+        dispatched from here.
+
+        Also drives the Wave 5 deferred-revert retry: if startup found a
+        sentinel but no console user was logged in, this tick re-checks for
+        a console session and re-runs ``apply_revert_from_sentinel`` once one
+        appears. Runs before the kill switch so a pending recovery hook
+        finishes even if the operator toggled ``displays.enabled`` off after
+        the original apply.
         """
-        if not self.firebase_client or not self.firebase_client.is_connected():
+        try:
+            # Wave 5.2: retry deferred startup revert when a console session
+            # appears. Cheap probes — module flag check + a single Win32 call.
+            if getattr(display_manager, '_deferred_revert_pending', False):
+                try:
+                    console_session = win32ts.WTSGetActiveConsoleSessionId()
+                except Exception as e:
+                    logging.debug(f"WTSGetActiveConsoleSessionId failed during deferred-revert probe: {e}")
+                    console_session = 0xFFFFFFFF
+                if console_session != 0xFFFFFFFF:
+                    logging.info(
+                        f"Console session {console_session} now available — "
+                        "retrying deferred display revert"
+                    )
+                    try:
+                        result = display_manager.apply_revert_from_sentinel(
+                            firebase_client=self.firebase_client,
+                        )
+                        logging.info(f"Deferred display revert retry: {result}")
+                    except Exception as revert_err:
+                        logging.error(f"Deferred display revert retry failed: {revert_err}")
+
+            # Kill switch: only short-circuit when explicitly disabled.
+            # Missing key (None) or any other value defaults to enabled so
+            # existing installs without the `displays` config block still
+            # collect topology data.
+            if shared_utils.read_config(['displays', 'enabled']) is False:
+                return
+
+            try:
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(display_manager.build_display_profile)
+                    profile = future.result(timeout=5)
+            except FuturesTimeoutError:
+                logging.warning("Display topology enumeration timed out after 5s")
+                return
+            except Exception as e:
+                logging.warning(f"Display topology enumeration failed: {e}")
+                return
+
+            if not isinstance(profile, dict):
+                logging.debug("Display topology returned non-dict payload, skipping")
+                return
+
+            # Merge NVAPI Mosaic / GSync data (best-effort — None on non-NVIDIA).
+            try:
+                mosaic = nvapi_display.detect_mosaic()
+            except Exception as e:
+                logging.debug(f"detect_mosaic raised: {e}")
+                mosaic = None
+            if mosaic is not None:
+                profile['mosaicActive'] = True
+                profile['mosaicGrids'] = mosaic.get('grids', [])
+
+            try:
+                sync = nvapi_display.detect_sync()
+            except Exception as e:
+                logging.debug(f"detect_sync raised: {e}")
+                sync = None
+            if sync is not None:
+                profile['syncDevices'] = sync.get('devices', [])
+
+            # Re-hash after merging so the signature reflects Mosaic state.
+            try:
+                profile['signatureHash'] = display_manager.display_signature(profile)
+            except Exception as e:
+                logging.debug(f"display_signature rehash failed: {e}")
+
+            new_hash = profile.get('signatureHash') or ''
+            if new_hash and new_hash != self._cached_display_hash:
+                prev_profile = self._cached_display_profile
+                if self._cached_display_hash is None:
+                    logging.info(f"Display topology baseline: {new_hash} ({len(profile.get('monitors') or [])} monitor(s))")
+                else:
+                    logging.info(
+                        f"Display topology changed: {self._cached_display_hash} -> {new_hash} "
+                        f"({len(profile.get('monitors') or [])} monitor(s))"
+                    )
+                self._cached_display_hash = new_hash
+                self._cached_display_profile = profile
+                # Push the new profile to Firestore immediately rather than
+                # waiting up to 5 minutes for the next idle metrics tick.
+                # The rate-limit gate exists to throttle no-op rebuilds; a
+                # confirmed signature change is exactly what we want to ship.
+                if self.firebase_client:
+                    try:
+                        self.firebase_client._ensure_display_profile(force=True)
+                    except Exception as e:
+                        logging.debug(f"Forced display profile upload failed: {e}")
+                # Categorize the change and emit one log event per distinct
+                # symptom. Skip on first run (no previous profile to diff
+                # against). Wrapped in its own try/except — a logging failure
+                # must never break the topology-check / upload path above.
+                if prev_profile is not None and self.firebase_client:
+                    try:
+                        self._emit_display_change_events(prev_profile, profile)
+                    except Exception as e:
+                        logging.debug(f"Display change event emission failed: {e}")
+
+            # Auto-restore is a live-vs-assigned concern, not only a
+            # previous-live-vs-current-live event. Run this every display check
+            # so stable drift is corrected even when the topology signature
+            # stops changing after the first drifted sample.
+            try:
+                self._maybe_auto_restore_assigned_drift(profile)
+            except Exception as e:
+                logging.debug(f"Assigned-drift auto-restore check failed: {e}")
+        except Exception as e:
+            logging.warning(f"Display topology check failed: {e}")
+
+    # Fields compared for display_drift events. Labels match computeDisplayDrift
+    # in web/hooks/useDisplayState.ts so dashboard and agent speak the same
+    # vocabulary when describing per-monitor drift.
+    _DISPLAY_DRIFT_FIELDS = (
+        ('position.x',        lambda m: (m.get('position') or {}).get('x')),
+        ('position.y',        lambda m: (m.get('position') or {}).get('y')),
+        ('resolution.width',  lambda m: (m.get('resolution') or {}).get('width')),
+        ('resolution.height', lambda m: (m.get('resolution') or {}).get('height')),
+        ('refreshHz',         lambda m: m.get('refreshHz')),
+        ('rotation',          lambda m: m.get('rotation')),
+        ('scalePct',          lambda m: m.get('scalePct')),
+        ('primary',           lambda m: m.get('primary')),
+    )
+
+    # Auto-restore should only react to fields the CCD apply path can enforce.
+    # `scalePct` remains a dashboard/audit drift signal, but apply_topology()
+    # does not change DPI scale; repeatedly applying for scale-only drift
+    # causes visible display flashes without ever converging.
+    _AUTO_RESTORE_DRIFT_FIELDS = (
+        ('position.x',        lambda m: (m.get('position') or {}).get('x')),
+        ('position.y',        lambda m: (m.get('position') or {}).get('y')),
+        ('resolution.width',  lambda m: (m.get('resolution') or {}).get('width')),
+        ('resolution.height', lambda m: (m.get('resolution') or {}).get('height')),
+        ('refreshHz',         lambda m: m.get('refreshHz')),
+        ('rotation',          lambda m: m.get('rotation')),
+        ('primary',           lambda m: m.get('primary')),
+    )
+    _AUTO_RESTORE_REFRESH_TOLERANCE_HZ = 0.01
+
+    @staticmethod
+    def _display_monitor_summary(monitor: dict) -> dict:
+        """Compact monitor descriptor embedded in each display_* event payload."""
+        return {
+            'edidHash': monitor.get('edidHash') or '',
+            'friendlyName': monitor.get('friendlyName') or '',
+            'port': monitor.get('connectionType') or '',
+        }
+
+    def _emit_display_event(self, event_type: str, severity: str, payload: dict):
+        """Emit a single categorized display event via the firebase_client
+        log_event helper. ``payload`` is JSON-serialized into ``details`` so
+        structured fields (monitor, changes) survive the flat log schema.
+
+        log_event already stamps machineId + timestamp (SERVER_TIMESTAMP), so
+        we don't duplicate those here.
+        """
+        try:
+            details = json.dumps(payload, separators=(',', ':'), sort_keys=True)
+        except (TypeError, ValueError) as e:
+            logging.debug(f"Failed to serialize {event_type} payload: {e}")
+            return
+        self.firebase_client.log_event(
+            action=event_type,
+            level=severity,
+            details=details,
+        )
+
+    @staticmethod
+    def _auto_restore_values_equal(label: str, live_value, assigned_value) -> bool:
+        if label == 'refreshHz':
+            try:
+                return (
+                    abs(float(live_value) - float(assigned_value))
+                    <= OwletteService._AUTO_RESTORE_REFRESH_TOLERANCE_HZ
+                )
+            except (TypeError, ValueError):
+                return live_value == assigned_value
+        return live_value == assigned_value
+
+    @staticmethod
+    def _auto_restore_field_is_enforceable(label: str, assigned_monitor: dict) -> bool:
+        if not isinstance(assigned_monitor, dict):
+            return False
+        if label.startswith('position.'):
+            position = assigned_monitor.get('position')
+            axis = label.split('.', 1)[1]
+            return (
+                isinstance(position, dict)
+                and isinstance(position.get(axis), (int, float))
+            )
+        if label.startswith('resolution.'):
+            resolution = assigned_monitor.get('resolution')
+            axis = label.split('.', 1)[1]
+            return (
+                isinstance(resolution, dict)
+                and isinstance(resolution.get(axis), (int, float))
+                and resolution.get(axis) > 0
+            )
+        if label == 'refreshHz':
+            refresh = assigned_monitor.get('refreshHz')
+            return isinstance(refresh, (int, float)) and refresh > 0
+        if label == 'rotation':
+            return assigned_monitor.get('rotation') is not None
+        if label == 'primary':
+            return isinstance(assigned_monitor.get('primary'), bool)
+        return False
+
+    @staticmethod
+    def _auto_restore_key_value(label: str, value):
+        try:
+            if label == 'refreshHz':
+                return round(float(value), 2)
+            if label in (
+                'position.x', 'position.y',
+                'resolution.width', 'resolution.height',
+                'rotation',
+            ):
+                return int(value)
+        except (TypeError, ValueError):
+            return value
+        return value
+
+    def _assigned_drift_details(self, profile: dict, assigned_layout: dict) -> list:
+        """Return restorable live-vs-assigned drift details keyed by edidHash.
+
+        This mirrors the dashboard/heartbeat drift model: match physical
+        monitors by edidHash and ignore added/removed monitors because
+        re-applying the stored layout cannot safely fix topology membership
+        changes. Unlike the dashboard, this intentionally ignores fields the
+        apply path cannot enforce.
+        """
+        live_monitors = (
+            profile.get('monitors') if isinstance(profile, dict) else None
+        ) or []
+        assigned_monitors = (
+            assigned_layout.get('monitors')
+            if isinstance(assigned_layout, dict) else None
+        ) or []
+        # Re-derive the assigned-side hashes from raw identity fields so a
+        # layout stored under the previous (friendly-name inclusive) hashing
+        # scheme still matches canonical live hashes by physical identity.
+        assigned_monitors = display_manager.canonicalize_monitor_hashes(
+            assigned_monitors,
+        )
+        assigned_by_hash = {
+            m.get('edidHash'): m for m in assigned_monitors
+            if m.get('edidHash')
+        }
+        if not assigned_by_hash:
+            return []
+
+        drifted = []
+        for live_monitor in live_monitors:
+            if not isinstance(live_monitor, dict):
+                continue
+            edid_hash = live_monitor.get('edidHash')
+            assigned_monitor = assigned_by_hash.get(edid_hash)
+            if not edid_hash or assigned_monitor is None:
+                continue
+            changes = []
+            for label, extract in self._AUTO_RESTORE_DRIFT_FIELDS:
+                if not self._auto_restore_field_is_enforceable(
+                    label, assigned_monitor,
+                ):
+                    continue
+                live_value = extract(live_monitor)
+                assigned_value = extract(assigned_monitor)
+                if not self._auto_restore_values_equal(
+                    label, live_value, assigned_value
+                ):
+                    changes.append({
+                        'field': label,
+                        'live': self._auto_restore_key_value(label, live_value),
+                        'assigned': self._auto_restore_key_value(
+                            label, assigned_value,
+                        ),
+                    })
+            if changes:
+                drifted.append({'edidHash': edid_hash, 'changes': changes})
+        return drifted
+
+    def _assigned_drift_hashes(self, profile: dict, assigned_layout: dict) -> list:
+        """Return edidHashes whose live monitor state has restorable drift."""
+        return [
+            item.get('edidHash') for item in self._assigned_drift_details(
+                profile, assigned_layout,
+            )
+            if item.get('edidHash')
+        ]
+
+    @staticmethod
+    def _assigned_drift_key(drift_details: list) -> str:
+        """Stable key for a specific live-vs-assigned drift shape."""
+        normalized = []
+        for item in drift_details:
+            if not isinstance(item, dict) or not item.get('edidHash'):
+                continue
+            changes = item.get('changes') or []
+            normalized.append({
+                'edidHash': item.get('edidHash'),
+                'changes': sorted(
+                    [
+                        {
+                            'field': c.get('field'),
+                            'live': c.get('live'),
+                            'assigned': c.get('assigned'),
+                        }
+                        for c in changes if isinstance(c, dict)
+                    ],
+                    key=lambda c: str(c.get('field') or ''),
+                ),
+            })
+        normalized.sort(key=lambda item: str(item.get('edidHash') or ''))
+        return json.dumps(normalized, separators=(',', ':'), sort_keys=True)
+
+    def _maybe_auto_restore_assigned_drift(self, profile: dict):
+        """Evaluate live-vs-assigned drift every display-check tick.
+
+        Display change events only fire when the live topology signature
+        changes. Auto-restore must also catch stable drift, so this method
+        maintains the persistence counter from the current live profile
+        against the stored layout and then enters the normal gate chain.
+        """
+        if isinstance(profile, dict) and profile.get('enumerationFailed') is True:
+            self._drift_pending_tick_count = 0
+            self._drift_pending_key = None
             return
 
         try:
-            reboot_schedule = self.firebase_client.get_reboot_schedule()
-            if not reboot_schedule or not reboot_schedule.get('enabled'):
+            assigned_layout = shared_utils.read_config(['displays', 'assigned'])
+        except Exception as e:
+            logging.debug(f"auto-restore: read assigned layout failed: {e}")
+            self._drift_pending_tick_count = 0
+            self._drift_pending_key = None
+            return
+
+        drift_details = self._assigned_drift_details(profile, assigned_layout)
+        if not drift_details:
+            self._drift_pending_tick_count = 0
+            self._drift_pending_key = None
+            self._last_auto_restore_success_key = None
+            return
+
+        drift_key = self._assigned_drift_key(drift_details)
+        if drift_key != getattr(self, '_drift_pending_key', None):
+            self._drift_pending_key = drift_key
+            self._drift_pending_tick_count = 1
+        else:
+            self._drift_pending_tick_count += 1
+
+        if drift_key == getattr(self, '_last_auto_restore_success_key', None):
+            return
+
+        drifted_hashes = [
+            item.get('edidHash') for item in drift_details
+            if item.get('edidHash')
+        ]
+        self._maybe_auto_restore(
+            profile, drifted_hashes, drift_key, assigned_layout,
+        )
+
+    def _emit_display_change_events(self, prev_profile: dict, new_profile: dict):
+        """Diff two display profiles and emit one log event per distinct
+        change category. Called only when the topology signature actually
+        changed, so at least one event is expected (modulo edge cases where
+        only unhashed fields flipped, which is fine — no events emitted).
+        """
+        prev_monitors = prev_profile.get('monitors') or []
+        new_monitors = new_profile.get('monitors') or []
+
+        # [B2.2] Base enrichment merged into every per-event payload below.
+        # `signatureHash` lets receivers dedupe across the same topology
+        # change. `monitorCount` gives the dashboard a quick "how many
+        # monitors does this machine have right now" surface without
+        # walking the profile. `assignedLayoutId` is reserved for a future
+        # iteration where the agent receives the layout id alongside
+        # apply_topology — empty-string for now keeps the field present and
+        # JSON-stable.
+        base_payload = {
+            'signatureHash': new_profile.get('signatureHash') or '',
+            'monitorCount': len(new_monitors),
+            'assignedLayoutId': '',
+        }
+
+        # If we're inside the post-apply suppression window, stamp the
+        # `suppressAlert` flag + the apply that caused the suppression so
+        # the routing endpoint can correlate. Window threshold + the
+        # `_last_apply_finished_at == 0` guard live in
+        # `display_manager.is_within_apply_suppression_window` (B2.4) —
+        # extracting the predicate keeps it testable without driving this
+        # whole event-emission method.
+        try:
+            if display_manager.is_within_apply_suppression_window():
+                base_payload['suppressAlert'] = True
+                base_payload['correlatedApplyId'] = (
+                    display_manager._current_apply_id or ''
+                )
+        except Exception as e:  # pragma: no cover — defensive
+            logging.debug(f"display suppression check raised: {e}")
+
+        # Index by edidHash for identity-based diffing. Monitors without an
+        # edidHash (rare — broken EDID, generic driver) are skipped here; they
+        # can't be categorized reliably, and the signature hash already caught
+        # the transition at the topology level.
+        prev_by_hash = {m.get('edidHash'): m for m in prev_monitors if m.get('edidHash')}
+        new_by_hash = {m.get('edidHash'): m for m in new_monitors if m.get('edidHash')}
+
+        # 1. Added monitors — new edidHash not present previously.
+        for edid_hash, monitor in new_by_hash.items():
+            if edid_hash not in prev_by_hash:
+                self._emit_display_event('display_monitor_added', 'info', {
+                    **base_payload,
+                    'monitor': self._display_monitor_summary(monitor),
+                })
+
+        # 2. Removed monitors — previously present edidHash now gone.
+        for edid_hash, monitor in prev_by_hash.items():
+            if edid_hash not in new_by_hash:
+                self._emit_display_event('display_monitor_removed', 'critical', {
+                    **base_payload,
+                    'monitor': self._display_monitor_summary(monitor),
+                })
+
+        # 3. Swapped monitors — same Windows targetId but a different EDID.
+        # Indicates a physical cable-swap on the same output. Keyed on
+        # targetId because edidHash identifies the panel, not the port.
+        prev_by_target = {
+            m.get('targetId'): m for m in prev_monitors
+            if m.get('targetId') is not None and m.get('edidHash')
+        }
+        for new_monitor in new_monitors:
+            target_id = new_monitor.get('targetId')
+            new_hash = new_monitor.get('edidHash')
+            if target_id is None or not new_hash:
+                continue
+            prev_monitor = prev_by_target.get(target_id)
+            if prev_monitor and prev_monitor.get('edidHash') != new_hash:
+                self._emit_display_event('display_monitor_swapped', 'warning', {
+                    **base_payload,
+                    'monitor': self._display_monitor_summary(new_monitor),
+                    'previousEdidHash': prev_monitor.get('edidHash') or '',
+                })
+
+        # 4. Drift — same edidHash, but one or more tracked fields changed.
+        # One event per drifted monitor (not bundled) per the task spec.
+        # Collect drifted edidHashes so the auto-restore orchestrator below
+        # can decide whether the assigned layout can actually fix this drift
+        # (gate 5 — every drifted monitor must be present in assigned).
+        drifted_hashes: list = []
+        for edid_hash, new_monitor in new_by_hash.items():
+            prev_monitor = prev_by_hash.get(edid_hash)
+            if prev_monitor is None:
+                continue
+            changes = [
+                label for label, extract in self._DISPLAY_DRIFT_FIELDS
+                if extract(prev_monitor) != extract(new_monitor)
+            ]
+            if changes:
+                self._emit_display_event('display_drift', 'warning', {
+                    **base_payload,
+                    'monitor': self._display_monitor_summary(new_monitor),
+                    'changes': changes,
+                })
+                drifted_hashes.append(edid_hash)
+
+        # 5. Mosaic disabled — grid active previously, not active now.
+        prev_mosaic = bool(prev_profile.get('mosaicActive'))
+        new_mosaic = bool(new_profile.get('mosaicActive'))
+        if prev_mosaic and not new_mosaic:
+            self._emit_display_event('display_mosaic_disabled', 'warning', {
+                **base_payload,
+            })
+
+        # 6. Sync lost — any device that was locked is no longer locked.
+        # Match devices by deviceId when available so reordering inside the
+        # syncDevices list doesn't trigger a false positive.
+        prev_sync = prev_profile.get('syncDevices') or []
+        new_sync = new_profile.get('syncDevices') or []
+        new_sync_by_id = {d.get('deviceId'): d for d in new_sync if d.get('deviceId')}
+        new_sync_fallback = new_sync  # used when deviceId is missing
+        for idx, prev_device in enumerate(prev_sync):
+            if not prev_device.get('locked'):
+                continue
+            device_id = prev_device.get('deviceId')
+            if device_id and device_id in new_sync_by_id:
+                new_device = new_sync_by_id[device_id]
+            elif not device_id and idx < len(new_sync_fallback):
+                new_device = new_sync_fallback[idx]
+            else:
+                new_device = None
+            if new_device is None or not new_device.get('locked'):
+                self._emit_display_event('display_sync_lost', 'warning', {
+                    **base_payload,
+                    'deviceId': device_id or '',
+                })
+
+    def _maybe_auto_restore(
+        self, new_profile: dict, drifted_hashes: list, drift_key: str = None,
+        assigned_layout: dict = None,
+    ):
+        """Gate chain + dispatch for unattended drift-correction apply (C2.1).
+
+        Called from the assigned-drift checker after restorable drift has
+        persisted. Walks 7 gates in order; on first failure, returns without
+        spawning the worker. On all-pass, spawns ``_run_auto_restore`` on a
+        daemon thread (off-loop so the apply call never stalls process
+        monitoring).
+        """
+        # Gate 1: kill switch — displays feature must not be explicitly disabled.
+        try:
+            if shared_utils.read_config(['displays', 'enabled']) is False:
+                return
+        except Exception as e:
+            logging.debug(f"auto-restore gate 1 (displays.enabled) read failed: {e}")
+            return
+
+        # Gate 2: opt-in — autoRestore must be explicitly enabled per machine.
+        try:
+            if shared_utils.read_config(['displays', 'autoRestore', 'enabled']) is not True:
+                return
+        except Exception as e:
+            logging.debug(f"auto-restore gate 2 (autoRestore.enabled) read failed: {e}")
+            return
+
+        # Gate 3: circuit breaker — operator-resettable via dashboard, which
+        # writes Firestore -> local config sync brings new value in on next tick.
+        try:
+            if shared_utils.read_config(
+                ['displays', 'autoRestore', 'circuitBreaker', 'tripped']
+            ) is True:
+                return
+        except Exception as e:
+            logging.debug(f"auto-restore gate 3 (breaker.tripped) read failed: {e}")
+            return
+
+        # Gate 4: no manual apply in flight — never race against an operator.
+        if display_manager._apply_in_flight:
+            return
+
+        # Gate 5: drift must be fixable by re-applying the assigned layout.
+        # If a drifted monitor isn't in assigned (probably a new monitor was
+        # added), re-apply can't help — emit unfixable audit and return.
+        if assigned_layout is None:
+            try:
+                assigned_layout = shared_utils.read_config(['displays', 'assigned'])
+            except Exception as e:
+                logging.debug(f"auto-restore: read assigned layout failed: {e}")
+                return
+        if not isinstance(assigned_layout, dict):
+            return
+        assigned_monitors = display_manager.canonicalize_monitor_hashes(
+            assigned_layout.get('monitors') or [],
+        )
+        assigned_hashes = {
+            m.get('edidHash') for m in assigned_monitors if m.get('edidHash')
+        }
+        missing = [h for h in drifted_hashes if h not in assigned_hashes]
+        if missing:
+            self._emit_display_event('display_auto_restore_skipped_unfixable', 'info', {
+                'eventType': 'display_auto_restore_skipped_unfixable',
+                'severity': 'info',
+                'reason': 'unfixable',
+                'missingFromAssigned': missing,
+            })
+            return
+
+        # Gate 6: drift-persistence — require >= 2 consecutive ticks of drift
+        # so a single-tick flap (cable wiggle for one heartbeat) doesn't fire.
+        if self._drift_pending_tick_count < 2:
+            return
+
+        # Gate 7: cooldown — never fire inside the apply_topology rate-limit window.
+        if (time.time() - display_manager._last_apply_time
+                < display_manager._APPLY_COOLDOWN_SECONDS):
+            return
+
+        t = threading.Thread(
+            target=self._run_auto_restore,
+            args=(assigned_layout, drift_key),
+            daemon=True,
+            name='display-auto-restore',
+        )
+        t.start()
+
+    @staticmethod
+    def _auto_restore_apply_was_skip(result: dict) -> bool:
+        code = result.get('code') if isinstance(result, dict) else None
+        if code in (
+            display_manager.DisplayErrorCode.AUTO_RESTORE_RATE_LIMITED,
+            display_manager.DisplayErrorCode.AUTO_RESTORE_SKIPPED_UNFIXABLE,
+        ):
+            return True
+        error_text = str((result or {}).get('error') or '').strip().lower()
+        return (
+            error_text == 'apply already in progress'
+            or error_text.startswith('rate limited')
+        )
+
+    def _run_auto_restore(self, assigned_layout: dict, drift_key: str = None):
+        """Daemon worker: invoke apply_topology(auto_restore=True) and update
+        circuit-breaker state in Firestore based on the result. Never raises
+        — always logs + swallows so a stray exception can't kill the thread
+        without trace.
+        """
+        try:
+            import uuid
+            apply_id = uuid.uuid4().hex
+            result = display_manager.apply_topology(
+                assigned_layout,
+                firebase_client=self.firebase_client,
+                auto_restore=True,
+                apply_id=apply_id,
+            )
+
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+            if result.get('success'):
+                # Reset breaker on every success so an isolated failure earlier
+                # doesn't leave a stale `failures` counter that could trip on
+                # a single future failure.
+                self.firebase_client.update_display_autorestore_state({
+                    'failures': 0,
+                    'tripped': False,
+                    'lastSuccessAt': now_iso,
+                })
+                if drift_key:
+                    self._last_auto_restore_success_key = drift_key
                 return
 
-            schedules = reboot_schedule.get('schedules')
-            if not schedules:
+            # Cooldown / unfixable returned by apply_topology itself — these
+            # are pre-apply skips, not real failures, so don't increment.
+            # AUTO_RESTORE_SKIPPED_UNFIXABLE is gated above and shouldn't
+            # reach here, but defensive matching keeps the contract clear.
+            if self._auto_restore_apply_was_skip(result):
                 return
 
-            # Check if current time is within the schedule window
-            if not shared_utils.is_within_schedule(schedules, self._cached_site_timezone):
+            # Real failure — increment breaker. Read current value from local
+            # config (Firestore-synced) and write incremented value back.
+            try:
+                current_failures = shared_utils.read_config(
+                    ['displays', 'autoRestore', 'circuitBreaker', 'failures']
+                )
+            except Exception:
+                current_failures = 0
+            if not isinstance(current_failures, int) or current_failures < 0:
+                current_failures = 0
+            new_failures = current_failures + 1
+
+            error_str = str(result.get('error') or 'unknown error')[:500]
+            patch = {
+                'failures': new_failures,
+                'lastFailureAt': now_iso,
+                'lastError': error_str,
+            }
+            if new_failures >= 3:
+                patch['tripped'] = True
+                patch['trippedAt'] = now_iso
+            self.firebase_client.update_display_autorestore_state(patch)
+
+            if new_failures >= 3:
+                self._emit_display_event(
+                    'display_auto_restore_circuit_breaker_tripped',
+                    'error',
+                    {
+                        'eventType': 'display_auto_restore_circuit_breaker_tripped',
+                        'severity': 'error',
+                        'failures': new_failures,
+                        'lastError': error_str,
+                    },
+                )
+        except Exception as e:
+            logging.warning(f"_run_auto_restore failed: {e}")
+
+    def _maybe_dispatch_roost_scrub(self):
+        """Run roost scrub_all_due() on a daemon thread if not already in-flight.
+
+        Called from the main loop every ROOST_SCRUB_CHECK_ITERATIONS. Single-flight:
+        if a previous scrub thread is still alive, this iteration is a no-op.
+        Scrub runs off-loop so a long re-hash never stalls process monitoring.
+        """
+        if self._roost_scrub_thread is not None and self._roost_scrub_thread.is_alive():
+            return
+
+        def _run_scrub():
+            try:
+                from sync_commands import _state_for
+                from sync_scrub import scrub_all_due
+                state = _state_for(self)
+                report_dir = os.path.join(
+                    os.environ.get('PROGRAMDATA', r'C:\ProgramData'),
+                    'Owlette', 'logs', 'roost_scrub_reports'
+                )
+                reports = scrub_all_due(state, report_dir=report_dir)
+                if reports:
+                    drifted = sum(1 for r in reports if not r.healthy)
+                    logging.info(
+                        f"roost scrub: {len(reports)} distribution(s) scrubbed, "
+                        f"{drifted} with drift"
+                    )
+            except Exception as e:
+                logging.warning(f"roost scrub failed: {e}")
+
+        t = threading.Thread(target=_run_scrub, daemon=True, name='roost-scrub')
+        t.start()
+        self._roost_scrub_thread = t
+
+    def _check_scheduled_reboot(self):
+        """State-machine driven scheduled reboot check.
+
+        Reads schedule from local config.json (synced by the Firestore listener),
+        and reads/writes state to local reboot_state.json. Mirrors state to
+        Firestore best-effort for dashboard visibility, but never blocks on it.
+
+        Runs every REBOOT_CHECK_INTERVAL_SECONDS seconds via the main loop.
+        """
+        try:
+            # Read schedule from local config (offline-safe)
+            schedule = shared_utils.read_config(['rebootSchedule'])
+            if not schedule or not schedule.get('enabled'):
+                return
+            entries = schedule.get('entries') or []
+            if not entries:
                 return
 
-            # Check machine uptime > 30 minutes to avoid reboot loops
+            state = reboot_state.read_state()
+
+            # Branch 1: handle in-progress attempt (retry/escalate)
+            if state.get('attempt') and state['attempt'].get('status') == 'pending':
+                self._handle_pending_reboot_attempt(state)
+                return
+
+            # Branch 2: schedule check — should we fire any entry now?
             uptime_seconds = time.time() - psutil.boot_time()
             if uptime_seconds < 1800:  # 30 minutes
                 logging.debug("Scheduled reboot skipped: machine uptime < 30 minutes")
                 return
 
-            # Check if we already triggered a reboot in this schedule window
-            now = datetime.datetime.now()
-            if self._last_scheduled_reboot_time:
-                # If the last reboot trigger was less than 2 hours ago, skip
-                # This prevents re-triggering within the same schedule window
-                elapsed = (now - self._last_scheduled_reboot_time).total_seconds()
-                if elapsed < 7200:  # 2 hours
-                    return
+            # Prune orphaned entries from lastFiredByEntry
+            current_ids = {e.get('id') for e in entries if e.get('id')}
+            state = reboot_state.prune_orphaned_entries(state, current_ids)
 
-            # All conditions met — trigger the reboot
-            self._last_scheduled_reboot_time = now
-            logging.info("Scheduled reboot triggered — all conditions met")
+            # Compute today/now in the MACHINE'S LOCAL timezone — a "14:00"
+            # entry must fire at the machine's local 14:00, not at 14:00 in
+            # whatever timezone the site is set to. See _now_in_local_tz().
+            today_date_iso = self._today_iso_in_local_tz()
+            now_tz = self._now_in_local_tz()
+            current_dayname = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][now_tz.weekday()]
+            boot_dt_tz = self._boot_time_in_local_tz()
 
-            self.firebase_client.log_event(
-                action='scheduled_reboot',
-                level='warning',
-                details='Scheduled reboot initiated by reboot schedule'
-            )
+            for entry in entries:
+                entry_id = entry.get('id')
+                if not entry_id:
+                    continue
+                if current_dayname not in (entry.get('days') or []):
+                    continue
+                time_str = entry.get('time')
+                if not time_str:
+                    continue
 
-            self._shutting_down = True
-            self.firebase_client.set_machine_flag('rebooting', True)
+                # Pass timezone_str=None so compute_scheduled_instant resolves
+                # the entry against the machine's local timezone.
+                scheduled_instant = shared_utils.compute_scheduled_instant(
+                    now_tz.date(), time_str, None
+                )
+                if scheduled_instant is None:
+                    continue
+                age_seconds = (now_tz - scheduled_instant).total_seconds()
+                if age_seconds < 0:
+                    continue  # not yet due
+                if state.get('lastFiredByEntry', {}).get(entry_id) == today_date_iso:
+                    continue  # already fired today
 
-            import subprocess
-            subprocess.run(
-                ['shutdown', '/r', '/t', '30', '/c', 'owlette scheduled reboot'],
-                check=True, timeout=15
-            )
-            logging.info("Scheduled reboot command issued (30-second delay)")
+                # MISSED-FIRE GRACE — the safety guarantee. If we are observing
+                # this entry more than REBOOT_MISSED_FIRE_GRACE_SECONDS after
+                # its scheduled instant, do NOT fire. Mark it as fired-for-the
+                # -day so it cannot retry, and surface a 'missed' event to
+                # the dashboard. This protects against late fires caused by:
+                #   - service restart / deploy after the scheduled time
+                #   - schedule entry created/edited after the scheduled time
+                #   - agent offline at the scheduled time, online again later
+                #   - lastFiredByEntry cleared by any future bug
+                if age_seconds > REBOOT_MISSED_FIRE_GRACE_SECONDS:
+                    logging.warning(
+                        f"Scheduled reboot MISSED for entry {entry_id} "
+                        f"(scheduled {scheduled_instant.isoformat()}, "
+                        f"observed {int(age_seconds)}s late) — skipping, will not refire today"
+                    )
+                    state.setdefault('lastFiredByEntry', {})[entry_id] = today_date_iso
+                    reboot_state.write_state(state)
+                    if self.firebase_client:
+                        try:
+                            self.firebase_client.mirror_reboot_state(state)
+                            self.firebase_client.log_event(
+                                action='scheduled_reboot_missed',
+                                level='warning',
+                                details=(
+                                    f'missed by {int(age_seconds)}s — scheduled '
+                                    f'{scheduled_instant.isoformat()} (entry {entry_id[:8]})'
+                                )
+                            )
+                        except Exception as e:
+                            logging.debug(f"Failed to mirror missed reboot (non-critical): {e}")
+                    continue
+
+                # Manual-reboot grace: did the machine boot within the grace
+                # window before the scheduled instant? If so, count it as fulfilled.
+                if boot_dt_tz is not None:
+                    delta = (scheduled_instant - boot_dt_tz).total_seconds()
+                    if 0 <= delta <= REBOOT_MANUAL_GRACE_SECONDS:
+                        logging.info(
+                            f"Manual reboot satisfies entry {entry_id} (boot was {int(delta)}s before scheduled)"
+                        )
+                        state.setdefault('lastFiredByEntry', {})[entry_id] = today_date_iso
+                        reboot_state.write_state(state)
+                        if self.firebase_client:
+                            self.firebase_client.mirror_reboot_state(state)
+                        continue
+
+                # FIRE
+                self._fire_scheduled_reboot(state, entry_id, scheduled_instant)
+                return  # only one fire per check cycle
 
         except Exception as e:
-            logging.error(f"Scheduled reboot check failed: {e}")
+            logging.error(f"Scheduled reboot check failed: {e}", exc_info=True)
+
+    def _fire_scheduled_reboot(self, state, entry_id, scheduled_instant):
+        """Fire a scheduled reboot using the announce-then-execute pattern.
+
+        Sequence:
+          1. Persist a 'pending' attempt to local reboot_state.json (durable).
+          2. ANNOUNCE to Firestore — best-effort with retry. Writes a single
+             atomic merge of (rebootScheduledAt, rebooting, rebootSource,
+             rebootCancellable, rebootEntryId) so the dashboard sees a
+             consistent state in one listener tick. rebootScheduledAt is a
+             client-computed UTC wall-clock instant — NOT a server timestamp —
+             so the dashboard can render the countdown the moment it sees the
+             doc, with no second round trip required.
+          3. PRE-ROLL: short fixed sleep so the dashboard listener has time
+             to receive the announce and render the countdown BEFORE the
+             Windows toast appears. Tunable via REBOOT_ANNOUNCE_PREROLL_SECONDS.
+          4. Issue `shutdown /r /t REBOOT_OS_COUNTDOWN_SECONDS`. The agent
+             main loop stays alive during the OS countdown and processes
+             cancel commands in real time.
+          5. If the OS shutdown command itself fails: clear all state and
+             flags, log the failure. NEVER retry.
+
+        OFFLINE BEHAVIOUR (CRITICAL): if Firestore is unreachable or the
+        announce fails after retries, the reboot STILL FIRES. The whole
+        point of local reboot_state.json + lastFiredByEntry + the 5-min
+        missed-fire window is to make scheduled reboots resilient to
+        internet outages. The local state machine is the source of truth.
+        Firestore is a visibility channel for the dashboard — not an
+        authorization gate. Without this property a kiosk in a museum with
+        flaky wifi would silently stop rebooting on schedule.
+
+        NO RETRIES on the OS shutdown itself anywhere in this code path.
+        """
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        target_reboot_at = now_utc + datetime.timedelta(
+            seconds=REBOOT_ANNOUNCE_PREROLL_SECONDS + REBOOT_OS_COUNTDOWN_SECONDS
+        )
+        target_reboot_at_iso = target_reboot_at.isoformat()
+        # Unix seconds — what the dashboard hook expects (matches lastHeartbeat
+        # convention). Plain number, not a server-resolved timestamp, so the
+        # dashboard listener can render the countdown the moment it sees the doc.
+        target_reboot_at_unix = int(target_reboot_at.timestamp())
+        today_date_iso = self._today_iso_in_local_tz()
+
+        logging.info(
+            f"Scheduled reboot firing for entry {entry_id} "
+            f"(scheduled for {scheduled_instant.isoformat()}, "
+            f"target reboot at {target_reboot_at_iso})"
+        )
+
+        # 1. Persist local attempt FIRST — durable record before any network I/O.
+        state['attempt'] = {
+            'entryId': entry_id,
+            'scheduledFor': scheduled_instant.isoformat(),
+            'targetRebootAt': target_reboot_at_iso,
+            'lastAttemptAt': now_utc.isoformat(),
+            'status': 'pending',
+        }
+        reboot_state.write_state(state)
+        self._reboot_attempt_started_monotonic = time.monotonic()
+
+        # Mark this reboot as Owlette-initiated so the next startup classifier
+        # treats it as planned and stays silent.
+        try:
+            session_state.set_intent("owlette_reboot")
+        except Exception as e:
+            logging.debug(f"session_state.set_intent failed in scheduled reboot: {e}")
+
+        # 2. ANNOUNCE to Firestore — best-effort with retry. Single atomic write.
+        # Failure does NOT abort the fire — local state is the source of truth.
+        announced = False
+        if self.firebase_client:
+            announce_payload = {
+                'rebootScheduledAt': target_reboot_at_unix,
+                'rebooting': True,
+                'rebootSource': 'scheduled',
+                'rebootCancellable': True,
+                'rebootEntryId': entry_id,
+            }
+            for announce_attempt in range(1, 4):
+                try:
+                    self.firebase_client.set_machine_flags(announce_payload)
+                    self.firebase_client.mirror_reboot_state(state)
+                    self.firebase_client.log_event(
+                        action='scheduled_reboot_announced',
+                        level='warning',
+                        details=f'target {target_reboot_at_iso} (entry {entry_id[:8]})'
+                    )
+                    announced = True
+                    logging.info(f"Reboot announce succeeded on attempt {announce_attempt}/3")
+                    break
+                except Exception as e:
+                    logging.warning(
+                        f"Reboot announce attempt {announce_attempt}/3 failed: {e}"
+                    )
+                    time.sleep(0.3)
+
+            if not announced:
+                logging.warning(
+                    f"Reboot announce to Firestore FAILED after 3 attempts for entry "
+                    f"{entry_id} — proceeding with reboot anyway (local state is source "
+                    f"of truth; dashboard will not show countdown until next reconnect)"
+                )
+
+        # 3. PRE-ROLL — give the dashboard time to render the countdown.
+        # Skipped when offline since there's nothing to propagate.
+        if announced:
+            logging.info(
+                f"Reboot pre-roll: sleeping {REBOOT_ANNOUNCE_PREROLL_SECONDS}s "
+                f"for dashboard propagation before issuing OS shutdown"
+            )
+            time.sleep(REBOOT_ANNOUNCE_PREROLL_SECONDS)
+
+        # 5. Issue OS shutdown.
+        self._shutting_down = True
+        try:
+            subprocess.run(
+                [
+                    'shutdown', '/r',
+                    '/t', str(REBOOT_OS_COUNTDOWN_SECONDS),
+                    '/c', 'Owlette scheduled reboot — cancellable from dashboard'
+                ],
+                check=True, timeout=15
+            )
+            logging.info(
+                f"Scheduled reboot command issued ({REBOOT_OS_COUNTDOWN_SECONDS}s OS countdown)"
+            )
+        except Exception as e:
+            # 6. OS shutdown failed. Clear state, clear flags, never retry.
+            logging.error(f"Failed to issue shutdown command: {e}")
+            self._shutting_down = False
+            self._reboot_attempt_started_monotonic = None
+            state['attempt'] = None
+            state.setdefault('lastFiredByEntry', {})[entry_id] = today_date_iso
+            reboot_state.write_state(state)
+            if self.firebase_client:
+                try:
+                    self.firebase_client.set_machine_flags({
+                        'rebooting': False,
+                        'rebootScheduledAt': None,
+                        'rebootCancellable': False,
+                    })
+                    self.firebase_client.mirror_reboot_state(state)
+                    self.firebase_client.log_event(
+                        action='scheduled_reboot_failed',
+                        level='error',
+                        details=f'shutdown command failed: {e} (entry {entry_id[:8]})'
+                    )
+                except Exception as inner:
+                    logging.debug(f"Failed to clear flags after shutdown failure: {inner}")
+
+    def _handle_pending_reboot_attempt(self, state):
+        """Called when state.attempt.status == 'pending'.
+
+        NO RETRIES. There are exactly two cases:
+
+        1. We fired this session and the OS shutdown is in progress —
+           _reboot_attempt_started_monotonic is set. Do nothing; wait for
+           the OS to actually shut down. The next service start will run
+           _detect_reboot_success_on_startup and clear the attempt.
+
+        2. The attempt is stale: we found a 'pending' record that was NOT
+           started by this process (service restarted, agent crashed mid-fire,
+           cancel didn't clean up, etc). Treat as FAILED. Clear the attempt,
+           stamp lastFiredByEntry so it cannot retry today, log a failure
+           event. Never re-issue a shutdown.
+
+        This is the "no retries" safety guarantee. A failed reboot is logged
+        and dropped — it does not silently re-fire hours later.
+        """
+        # Case 1: in-flight in this process — let the OS finish what we started.
+        if self._reboot_attempt_started_monotonic is not None:
+            return
+
+        # Case 2: stale attempt from a previous process. Treat as failed.
+        attempt = state.get('attempt') or {}
+        entry_id = attempt.get('entryId')
+        scheduled_for = attempt.get('scheduledFor')
+
+        today_date_iso = self._today_iso_in_local_tz()
+        if entry_id:
+            state.setdefault('lastFiredByEntry', {})[entry_id] = today_date_iso
+        state['attempt'] = None
+        reboot_state.write_state(state)
+
+        logging.error(
+            f"Stale reboot attempt found for entry {entry_id} (scheduled {scheduled_for}) — "
+            f"treating as FAILED, will not retry today"
+        )
+        if self.firebase_client:
+            try:
+                self.firebase_client.mirror_reboot_state(state)
+                self.firebase_client.set_machine_flags({
+                    'rebooting': False,
+                    'rebootScheduledAt': None,
+                    'rebootCancellable': False,
+                })
+                self.firebase_client.log_event(
+                    action='scheduled_reboot_failed',
+                    level='error',
+                    details=(
+                        f'stale attempt cleared on service start — no retry, '
+                        f'scheduled {scheduled_for} (entry {entry_id[:8]})'
+                    )
+                )
+            except Exception as e:
+                logging.debug(f"Failed to mirror failed reboot (non-critical): {e}")
+
+    # NOTE: these helpers used to use the site timezone (`_cached_site_timezone`)
+    # which is wrong for the reboot scheduler — a "14:00" entry should fire at
+    # 14:00 LOCAL WALL-CLOCK on the machine, regardless of where in the world the
+    # site admin happens to be. A kiosk in Tokyo and a kiosk in NYC, both in the
+    # same Owlette site, with a "14:00" reboot, must reboot at their respective
+    # local 14:00 — not synchronized to one shared site timezone. The dashboard
+    # UI for reboot schedules (RebootScheduleDialog) is timezone-agnostic for
+    # exactly this reason: it just collects "HH:MM" and trusts each agent to
+    # interpret it locally.
+    #
+    # Process schedules (is_within_schedule) still use site timezone via
+    # _cached_site_timezone — that's a separate question with different intent
+    # (e.g. office-hours schedules where an admin may want all machines in a
+    # site to start/stop at the same shared time). Don't change those without
+    # an explicit decision.
+
+    def _now_in_local_tz(self):
+        """Return now() in the MACHINE's local timezone (not the site timezone).
+
+        Uses datetime.now().astimezone() which picks up the OS's configured
+        timezone — the same one Windows shows in the system tray clock.
+        """
+        return datetime.datetime.now().astimezone()
+
+    def _today_iso_in_local_tz(self):
+        """Return today's date in the machine's local timezone as 'YYYY-MM-DD'."""
+        return self._now_in_local_tz().date().isoformat()
+
+    def _boot_time_in_local_tz(self):
+        """Return psutil.boot_time() as a tz-aware datetime in the machine's local timezone."""
+        boot_utc = datetime.datetime.fromtimestamp(psutil.boot_time(), tz=datetime.timezone.utc)
+        return boot_utc.astimezone()
+
+    def _classify_startup_session(self):
+        """Detect anomalous prior shutdowns and queue a warning event if needed.
+
+        Compares the persisted session state from the previous run against
+        the current psutil.boot_time(). Result is stored in
+        self._pending_anomaly_event for emission once Firebase is connected
+        (mirrors the _pending_update_event pattern).
+
+        Silent on first run, schema mismatch, version change (upgrades), and
+        Owlette-initiated stops. Emits warning events for external operator
+        reboots, no-signal crashes/BSODs, and unexplained service restarts.
+
+        After classification, writes a fresh session_state.json for this boot
+        with shutdown_intent=None — subsequent reboot/shutdown handlers will
+        set the intent before issuing OS commands.
+        """
+        self._pending_anomaly_event = None
+
+        try:
+            prev = session_state.read_state()
+            current_boot = int(psutil.boot_time())
+            current_version = shared_utils.APP_VERSION
+
+            # Always write fresh state for this session, even if we return
+            # silently below — the new boot needs a baseline so future
+            # set_intent / update_alive calls have a file to mutate.
+            try:
+                session_state.init_session(version=current_version, boot_time=current_boot)
+            except Exception as e:
+                logging.warning(f"Failed to init session_state.json: {e}")
+
+            # Silent guards (in priority order)
+            if prev is None:
+                logging.info("Session classifier: no prior state (first run) — silent")
+                return
+            if prev.get('schema') != session_state.SCHEMA_VERSION:
+                logging.info(
+                    f"Session classifier: schema mismatch (prev={prev.get('schema')}) — silent"
+                )
+                return
+            if prev.get('version') != current_version:
+                logging.info(
+                    f"Session classifier: version changed "
+                    f"({prev.get('version')} -> {current_version}) — silent"
+                )
+                return
+
+            prev_boot = prev.get('boot_time')
+            intent = prev.get('shutdown_intent')
+            last_alive = int(prev.get('last_alive') or 0)
+
+            # 5-second tolerance absorbs psutil.boot_time() jitter on Windows
+            boot_changed = prev_boot is None or abs(current_boot - int(prev_boot)) > 5
+
+            if boot_changed:
+                # Owlette-initiated reboot/shutdown — silent
+                if intent in ('owlette_reboot', 'owlette_shutdown'):
+                    logging.info(f"Session classifier: planned reboot ({intent}) — silent")
+                    return
+                gap = max(0, current_boot - last_alive)
+                if intent == 'external_clean':
+                    action = 'external_reboot'
+                    details = (
+                        f'boot detected after clean shutdown signal, '
+                        f'last alive {gap}s before boot'
+                    )
+                else:
+                    action = 'unexpected_reboot'
+                    details = (
+                        f'boot detected with no shutdown signal, '
+                        f'last alive {gap}s before boot'
+                    )
+                logging.warning(f"Session classifier: {action} — {details}")
+                self._pending_anomaly_event = (action, details)
+            else:
+                # OS did not reboot — agent process restarted only.
+                # Silent for ALL known intents. A failed-to-reboot owlette
+                # intent is already reported by _handle_pending_reboot_attempt
+                # as scheduled_reboot_failed; do not double-report.
+                if intent is not None:
+                    logging.info(
+                        f"Session classifier: planned service restart ({intent}) — silent"
+                    )
+                    return
+                gap = max(0, int(time.time()) - last_alive)
+                details = (
+                    f'agent restarted with no shutdown signal, '
+                    f'last alive {gap}s ago'
+                )
+                logging.warning(
+                    f"Session classifier: unexpected_service_restart — {details}"
+                )
+                self._pending_anomaly_event = ('unexpected_service_restart', details)
+        except Exception as e:
+            logging.error(f"Session classifier failed: {e}", exc_info=True)
+
+    def _detect_reboot_success_on_startup(self):
+        """If a pending reboot attempt persisted across the boot, detect success.
+
+        Called once during service init (after Firebase client is available but
+        possibly disconnected). Compares psutil.boot_time() against the persisted
+        attempt timestamp. If we did boot since the attempt, marks the entry as
+        fulfilled and advances any other entries whose scheduled instant fell
+        within the last hour (handles multi-entry-within-minutes case).
+        """
+        try:
+            state = reboot_state.read_state()
+            attempt = state.get('attempt')
+            if not attempt or attempt.get('status') != 'pending':
+                return
+
+            try:
+                last_attempt_at = datetime.datetime.fromisoformat(attempt['lastAttemptAt'])
+            except (KeyError, ValueError):
+                return
+
+            boot_dt = datetime.datetime.fromtimestamp(psutil.boot_time(), tz=datetime.timezone.utc)
+            if boot_dt <= last_attempt_at:
+                return  # we haven't booted since the attempt — not a success
+
+            logging.info("Reboot success detected — clearing pending attempt")
+
+            # Advance lastFiredByEntry for ALL entries whose scheduled instant
+            # fell in the last hour (multi-entry case). Use the MACHINE'S
+            # LOCAL timezone — same convention as _check_scheduled_reboot.
+            schedule = shared_utils.read_config(['rebootSchedule']) or {}
+            entries = schedule.get('entries') or []
+            now_tz = self._now_in_local_tz()
+            today = now_tz.date()
+            yesterday = today - datetime.timedelta(days=1)
+            day_names = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+
+            state.setdefault('lastFiredByEntry', {})
+            for entry in entries:
+                entry_id = entry.get('id')
+                time_str = entry.get('time')
+                days = entry.get('days') or []
+                if not entry_id or not time_str:
+                    continue
+                # Check yesterday and today separately — covers reboots near midnight
+                for candidate_date in (yesterday, today):
+                    dayname = day_names[candidate_date.weekday()]
+                    if dayname not in days:
+                        continue
+                    # timezone_str=None → resolves the entry against machine local tz
+                    sched_instant = shared_utils.compute_scheduled_instant(
+                        candidate_date, time_str, None
+                    )
+                    if sched_instant is None:
+                        continue
+                    boot_in_local_tz = boot_dt.astimezone(sched_instant.tzinfo) if sched_instant.tzinfo else boot_dt
+                    delta = (boot_in_local_tz - sched_instant).total_seconds()
+                    if 0 <= delta <= REBOOT_SUCCESS_DETECTION_WINDOW_SECONDS:
+                        state['lastFiredByEntry'][entry_id] = candidate_date.isoformat()
+
+            state['attempt'] = None
+            reboot_state.write_state(state)
+            self._reboot_attempt_started_monotonic = None
+
+            if self.firebase_client and self.firebase_client.is_connected():
+                try:
+                    self.firebase_client.mirror_reboot_state(state)
+                    self.firebase_client.log_event(
+                        action='scheduled_reboot_success',
+                        level='info',
+                        details=f'reboot succeeded (entry {attempt.get("entryId", "")[:8]})'
+                    )
+                except Exception as e:
+                    logging.debug(f"Failed to mirror reboot success (non-critical): {e}")
+        except Exception as e:
+            logging.warning(f"Reboot success detection failed: {e}")
 
     def _handle_reboot_machine(self, command_data):
         """Handle remote reboot command."""
@@ -3325,12 +5302,33 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 details='Remote reboot initiated from dashboard'
             )
 
-            # Set rebooting flag so dashboard shows "Rebooting..." and suppress crash alerts
+            # Set rebooting flag so dashboard shows "Rebooting..." and suppress crash alerts.
+            # Compute target reboot instant as Unix seconds — matches the `shutdown /r /t 30`
+            # countdown so the dashboard pill renders immediately on the same listener tick.
             self._shutting_down = True
-            self.firebase_client.set_machine_flag('rebooting', True)
+            try:
+                session_state.set_intent("owlette_reboot")
+            except Exception as e:
+                logging.debug(f"session_state.set_intent failed in manual reboot: {e}")
+            target_reboot_at_unix = int(
+                (datetime.datetime.now(datetime.timezone.utc)
+                 + datetime.timedelta(seconds=30)).timestamp()
+            )
+            try:
+                self.firebase_client.set_machine_flags({
+                    'rebootScheduledAt': target_reboot_at_unix,
+                    'rebooting': True,
+                    'rebootSource': 'manual',
+                    'rebootCancellable': True,
+                })
+            except Exception as flag_err:
+                # Local state is source of truth; Firestore is a visibility channel.
+                # Match the offline-resilient behavior of _fire_scheduled_reboot.
+                logging.warning(
+                    f"Failed to announce manual reboot to Firestore (proceeding anyway): {flag_err}"
+                )
 
             # Schedule reboot with 30-second delay (gives agent time to complete Firestore writes)
-            import subprocess
             subprocess.run(
                 ['shutdown', '/r', '/t', '30', '/c', 'owlette remote reboot requested'],
                 check=True, timeout=15
@@ -3350,9 +5348,26 @@ class OwletteService(win32serviceutil.ServiceFramework):
             )
 
             self._shutting_down = True
-            self.firebase_client.set_machine_flag('shuttingDown', True)
+            try:
+                session_state.set_intent("owlette_shutdown")
+            except Exception as e:
+                logging.debug(f"session_state.set_intent failed in manual shutdown: {e}")
+            target_shutdown_at_unix = int(
+                (datetime.datetime.now(datetime.timezone.utc)
+                 + datetime.timedelta(seconds=30)).timestamp()
+            )
+            try:
+                self.firebase_client.set_machine_flags({
+                    'shutdownScheduledAt': target_shutdown_at_unix,
+                    'shuttingDown': True,
+                    'rebootSource': 'manual',
+                })
+            except Exception as flag_err:
+                # Local state is source of truth; Firestore is a visibility channel.
+                logging.warning(
+                    f"Failed to announce manual shutdown to Firestore (proceeding anyway): {flag_err}"
+                )
 
-            import subprocess
             subprocess.run(
                 ['shutdown', '/s', '/t', '30', '/c', 'owlette remote shutdown requested'],
                 check=True, timeout=15
@@ -3363,23 +5378,69 @@ class OwletteService(win32serviceutil.ServiceFramework):
             return f"Shutdown failed: {str(e)}"
 
     def _handle_cancel_reboot(self, command_data):
-        """Cancel a pending reboot/shutdown."""
+        """Cancel a pending reboot/shutdown.
+
+        Aborts the OS-level shutdown via `shutdown /a`, clears all in-flight
+        reboot state both locally and in Firestore, and — critically — stamps
+        lastFiredByEntry for any in-progress scheduled-reboot attempt so the
+        same entry cannot re-fire today on the next scheduler tick.
+        """
         try:
             import subprocess
-            subprocess.run(['shutdown', '/a'], check=True, timeout=15)
+            cancel_result = subprocess.run(['shutdown', '/a'], capture_output=True, timeout=15)
+            os_cancel_ok = (cancel_result.returncode == 0)
 
             self._shutting_down = False
-            self.firebase_client.set_machine_flag('rebooting', False)
-            self.firebase_client.set_machine_flag('shuttingDown', False)
-            self.firebase_client.log_event(
-                action='command_executed',
-                level='info',
-                details='Pending reboot/shutdown cancelled from dashboard'
-            )
+            self._reboot_attempt_started_monotonic = None
 
-            return "Reboot/shutdown cancelled"
-        except subprocess.CalledProcessError:
-            return "No pending reboot to cancel"
+            # Clear local reboot state — stamp lastFiredByEntry for any
+            # in-progress scheduled attempt so it cannot re-fire today.
+            try:
+                state = reboot_state.read_state()
+                attempt = state.get('attempt') or {}
+                entry_id = attempt.get('entryId')
+                if entry_id:
+                    today_date_iso = self._today_iso_in_local_tz()
+                    state.setdefault('lastFiredByEntry', {})[entry_id] = today_date_iso
+                state['attempt'] = None
+                reboot_state.write_state(state)
+                if self.firebase_client:
+                    try:
+                        self.firebase_client.mirror_reboot_state(state)
+                    except Exception as e:
+                        logging.debug(f"Failed to mirror cancelled reboot state: {e}")
+            except Exception as e:
+                logging.warning(f"Failed to clear local reboot state on cancel: {e}")
+
+            if self.firebase_client:
+                try:
+                    self.firebase_client.set_machine_flags({
+                        'rebooting': False,
+                        'shuttingDown': False,
+                        'rebootScheduledAt': None,
+                        'rebootCancellable': False,
+                    })
+                    self.firebase_client.log_event(
+                        action='command_executed',
+                        level='info',
+                        details='Pending reboot/shutdown cancelled from dashboard'
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to clear reboot flags on cancel: {e}")
+
+            if os_cancel_ok:
+                # Only clear the session intent if the OS cancel actually
+                # succeeded. If `shutdown /a` failed (the OS already committed
+                # to rebooting), the original owlette_reboot intent must
+                # survive so the imminent reboot is still classified as planned.
+                try:
+                    session_state.set_intent(None)
+                except Exception as e:
+                    logging.debug(f"session_state.set_intent(None) failed on cancel: {e}")
+                return "Reboot/shutdown cancelled"
+            return "No pending OS reboot to cancel (state cleared)"
+        except subprocess.TimeoutExpired:
+            return "Cancel timed out (shutdown /a hung)"
 
     def _handle_dismiss_reboot_pending(self, command_data):
         """Dismiss a reboot pending prompt and reset relaunch counters."""
@@ -3540,7 +5601,7 @@ out_path = os.path.join(output_dir, 'screenshot.jpg')
 with open(out_path, 'wb') as f:
     f.write(jpeg_bytes)
 """
-            result = self.execute_in_user_session('python', capture_code, timeout=8)
+            result = self.execute_in_user_session('python', capture_code, timeout=8, trusted=True)
 
             if result.get('error') or 'screenshot.jpg' not in result.get('files', []):
                 logging.debug("Crash screenshot capture failed — proceeding with relaunch")
@@ -3600,19 +5661,25 @@ with open(out_path, 'wb') as f:
                     details=' — '.join(detail_parts),
                 )
             elif tool_name in self._TIER3_TOOLS:
-                # Log privileged tool executions for audit trail
+                # Log privileged tool executions for audit trail. For script-bearing
+                # tools we capture the first 500 chars (multi-line preserved) so an
+                # operator reviewing the site log can see what actually ran — not
+                # just the first 100 chars of line 1.
                 detail = f'Cortex: {tool_name}'
-                if tool_name in ('run_command', 'run_powershell') and 'command' in tool_params:
+                if tool_name == 'run_command' and 'command' in tool_params:
                     cmd = tool_params['command']
                     if len(cmd) > 100:
                         cmd = cmd[:100] + '...'
                     detail += f' — {cmd}'
-                elif tool_name == 'execute_script' and 'script' in tool_params:
-                    script = tool_params['script']
-                    first_line = script.split('\n', 1)[0]
-                    if len(first_line) > 100:
-                        first_line = first_line[:100] + '...'
-                    detail += f' — {first_line}'
+                elif tool_name in ('run_powershell', 'execute_script') and 'script' in tool_params:
+                    # Scripts get 500 chars (vs 100 for one-liner commands) because
+                    # multi-line PowerShell/Python bodies are only interpretable in
+                    # context — a first-line truncation would hide what actually ran.
+                    script = tool_params.get('script') or ''
+                    preview = script[:500]
+                    if len(script) > 500:
+                        preview += '...'
+                    detail += f'\n{preview}'
                 elif tool_name == 'write_file' and 'path' in tool_params:
                     detail += f' — {tool_params["path"]}'
                 self.firebase_client.log_event(
@@ -3662,7 +5729,7 @@ print(f'size_kb={{len(jpeg_bytes) // 1024}}')
 print(f'monitors={{len(sct.monitors) - 1}}')
 """
 
-            result = self.execute_in_user_session('python', capture_code, timeout=20)
+            result = self.execute_in_user_session('python', capture_code, timeout=20, trusted=True)
 
             if result.get('error'):
                 return {'error': f"Screenshot failed: {result['error']}"}
@@ -3832,7 +5899,7 @@ with mss.mss() as sct:
 try:
     from PIL import Image
     img = Image.open(io.BytesIO(png_bytes))
-    max_width = 1280
+    max_width = 1920
     if img.width > max_width:
         ratio = max_width / img.width
         img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
@@ -3846,7 +5913,7 @@ out_path = os.path.join(output_dir, 'screenshot.jpg')
 with open(out_path, 'wb') as f:
     f.write(jpeg_bytes)
 """
-                    result = self.execute_in_user_session('python', capture_code, timeout=10)
+                    result = self.execute_in_user_session('python', capture_code, timeout=10, trusted=True)
 
                     if result.get('error') or 'screenshot.jpg' not in result.get('files', []):
                         logging.debug(f"Live view capture failed: {result.get('error', 'no screenshot file')}")
@@ -3929,12 +5996,12 @@ with open(out_path, 'wb') as f:
             logging.info(f"Current version: {current_version}")
 
             # ANTI-FRAGILE: Detect stale markers from updates that never completed
-            # (e.g., power loss during install, BSOD, installer hung and was killed)
-            from datetime import datetime
+            # (e.g., power loss during install, BSOD, installer hung and was killed).
+            # Uses module-level `import datetime` (line 32) for consistency across the file.
             marker_age_minutes = float('inf')
             try:
-                marker_time = datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
-                marker_age_minutes = (datetime.now() - marker_time).total_seconds() / 60
+                marker_time = datetime.datetime.strptime(started_at, '%Y-%m-%d %H:%M:%S')
+                marker_age_minutes = (datetime.datetime.now() - marker_time).total_seconds() / 60
                 logging.info(f"Update marker age: {marker_age_minutes:.1f} minutes")
             except (ValueError, TypeError):
                 logging.warning(f"Could not parse marker timestamp: {started_at}")
@@ -4003,6 +6070,111 @@ with open(out_path, 'wb') as f:
             except OSError as marker_err:
                 logging.warning(f"Could not remove update marker during cleanup: {marker_err}")
 
+    def _migrate_legacy_roost_cache(self):
+        """
+        one-time migration: remove the legacy roost cache that earlier agent
+        builds wrote under `C:\\Windows\\System32\\config\\systemprofile\\Documents\\Owlette\\`.
+
+        background: pre-2.9.x versions of sync_downloader / sync_state / etc.
+        resolved `~/Documents/Owlette/...` at runtime. under LocalSystem, `~`
+        expands to the systemprofile directory, so the chunk cache + state DB
+        lived inside System32 — invisible to operators and unreachable without
+        elevation. we moved those caches to `%PROGRAMDATA%\\Owlette\\` in
+        2.9.x; this migration deletes the System32-resident leftovers so they
+        don't grow indefinitely.
+
+        the cache is REBUILDABLE from R2 — chunks re-download on the next
+        sync, state.db is recreated on first SyncState() construction,
+        versions re-fetch. we intentionally DELETE rather than move: the
+        user's explicit ask is that only actual files live under the extract
+        location, and the new cache lives on a different drive anyway
+        (ProgramData vs user profile in System32).
+
+        gated by a one-shot flag file at `%PROGRAMDATA%\\Owlette\\.migrations\\content-store-moved`
+        so we don't walk the legacy tree every boot.
+        """
+        if os.name != 'nt':
+            return  # legacy layout only exists on windows LocalSystem
+
+        program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+        flag_dir = os.path.join(program_data, 'Owlette', '.migrations')
+        flag_path = os.path.join(flag_dir, 'content-store-moved')
+        if os.path.exists(flag_path):
+            return  # already migrated on a prior boot
+
+        system_profile = os.environ.get(
+            'SystemRoot', 'C:\\Windows'
+        ).rstrip('\\') + '\\System32\\config\\systemprofile'
+        legacy_content = os.path.join(
+            system_profile, 'Documents', 'Owlette', '.owlette-content'
+        )
+        legacy_sync = os.path.join(
+            system_profile, 'Documents', 'Owlette', '.owlette-sync'
+        )
+
+        def _count_and_size(root):
+            """return (file_count, total_bytes). returns (0, 0) if root missing."""
+            count, size = 0, 0
+            if not os.path.isdir(root):
+                return count, size
+            for dirpath, _dirs, files in os.walk(root):
+                for name in files:
+                    try:
+                        size += os.path.getsize(os.path.join(dirpath, name))
+                        count += 1
+                    except OSError:
+                        pass
+            return count, size
+
+        import shutil
+
+        any_removed = False
+        for legacy_path in (legacy_content, legacy_sync):
+            if not os.path.isdir(legacy_path):
+                continue
+            count, size = _count_and_size(legacy_path)
+            gb = size / (1024 ** 3)
+            logging.info(
+                f"migration: removing legacy roost cache at {legacy_path!r} "
+                f"({count} files, {gb:.2f} GB)"
+            )
+            try:
+                shutil.rmtree(legacy_path, ignore_errors=False)
+                any_removed = True
+                logging.info(
+                    f"migration: removed legacy cache {legacy_path!r} "
+                    f"({count} files, {gb:.2f} GB freed)"
+                )
+            except OSError as e:
+                # best-effort — a locked file shouldn't block service start.
+                # if deletion fails, we deliberately do NOT write the flag
+                # so the next boot retries. this matters: a stuck 100GB
+                # cache in System32 is exactly what the migration is here
+                # to solve.
+                logging.warning(
+                    f"migration: failed to remove {legacy_path!r}: {e}; "
+                    f"will retry on next service start"
+                )
+                return
+
+        # write the one-shot flag so we don't walk the tree again. we write
+        # it unconditionally when reaching this point — either both paths
+        # existed and were cleaned, or neither existed (fresh install post-
+        # migration) in which case there's nothing more to do.
+        try:
+            os.makedirs(flag_dir, exist_ok=True)
+            with open(flag_path, 'w') as f:
+                f.write(
+                    f"legacy roost cache migrated at {datetime.datetime.now().isoformat()}\n"
+                )
+            if any_removed:
+                logging.info(f"migration: flag written at {flag_path!r}")
+        except OSError as e:
+            logging.warning(
+                f"migration: could not write migration flag at {flag_path!r}: {e}; "
+                f"migration will retry on next boot (idempotent — paths no longer exist)"
+            )
+
     # Main main
     def main(self):
 
@@ -4041,6 +6213,31 @@ with open(out_path, 'wb') as f:
         # Check for update marker (indicates a self-update was in progress)
         self._check_update_status()
 
+        # One-shot cleanup of pre-2.9.x roost cache that lived in System32
+        # under the LocalSystem profile. Safe to run on every boot (gated by
+        # a flag file); idempotent no-op once complete.
+        try:
+            self._migrate_legacy_roost_cache()
+        except Exception as e:
+            logging.warning(f"Legacy roost cache migration errored (non-fatal): {e}")
+
+        # Classify the prior session — detects unexpected reboots, BSODs,
+        # crashes, and operator-initiated reboots that bypassed Owlette.
+        # Queues a warning event in self._pending_anomaly_event for emission
+        # once Firebase is connected. Also writes the fresh session_state.json
+        # baseline so subsequent intent writes have a file to mutate.
+        self._classify_startup_session()
+
+        # Log any pending watchdog-restart snapshots from the previous process.
+        # Firestore submission happens later once the client is connected; this
+        # only surfaces them in the service log for immediate visibility.
+        try:
+            pending = watchdog_state.read_pending_history()
+            for entry in pending:
+                shared_utils.log_watchdog_restart_replay(entry)
+        except Exception as e:
+            logging.debug(f"watchdog restart replay skipped (non-fatal): {e}")
+
         # Start Firebase client and upload local config
         if self.firebase_client:
             try:
@@ -4068,6 +6265,12 @@ with open(out_path, 'wb') as f:
                     lambda code, msg: self._update_health_state('connection_failure', code, msg)
                 )
 
+                # Wire self-restart watchdog callback BEFORE start() so the
+                # watchdog thread (spawned by start) always has one registered.
+                self.firebase_client.connection_manager.set_restart_callback(
+                    self._handle_watchdog_restart
+                )
+
                 # NOW start Firebase background threads (including config listener)
                 # At this point, Firestore has our local config, and the hash is set
                 _t0 = time.time()
@@ -4086,6 +6289,23 @@ with open(out_path, 'wb') as f:
                     except Exception as e:
                         logging.warning(f"Failed to log update event to Firebase: {e}")
                     self._pending_update_event = None
+
+                # Log any pending startup anomaly event (from session classifier)
+                if getattr(self, '_pending_anomaly_event', None):
+                    anomaly_action, anomaly_details = self._pending_anomaly_event
+                    try:
+                        self.firebase_client.log_event(
+                            action=anomaly_action,
+                            level='warning',
+                            details=anomaly_details,
+                        )
+                        logging.info(f"Startup anomaly event logged to Firebase: {anomaly_action}")
+                        self._pending_anomaly_event = None
+                    except Exception as e:
+                        logging.warning(f"Failed to log startup anomaly event to Firebase: {e}")
+
+                # Flush pending watchdog-restart events (deferred from prior process)
+                self._flush_pending_watchdog_events()
 
                 # Report update command completion to Firestore (closes the loop for web dashboard)
                 if hasattr(self, '_pending_update_completion') and self._pending_update_completion:
@@ -4134,17 +6354,70 @@ with open(out_path, 'wb') as f:
         # Clear stale reboot/shutdown flags from previous session (e.g., after a completed reboot)
         if self.firebase_client and self.firebase_client.is_connected():
             try:
-                self.firebase_client.set_machine_flag('rebooting', False)
-                self.firebase_client.set_machine_flag('shuttingDown', False)
+                # Atomic clear of all reboot/shutdown flags including the
+                # countdown anchors so the dashboard pill stops showing the
+                # active state immediately on the first listener tick after
+                # the agent reconnects post-reboot.
+                self.firebase_client.set_machine_flags({
+                    'rebooting': False,
+                    'shuttingDown': False,
+                    'rebootScheduledAt': None,
+                    'shutdownScheduledAt': None,
+                    'rebootCancellable': False,
+                    'rebootSource': None,
+                    'rebootEntryId': None,
+                })
                 self.firebase_client.clear_reboot_pending()
                 logging.info("Cleared stale reboot/shutdown flags on startup")
             except Exception as e:
                 logging.warning(f"Failed to clear stale flags on startup: {e}")
 
+        # Detect if a previously-pending scheduled reboot succeeded across the boot
+        self._detect_reboot_success_on_startup()
+
+        # Handle any stale display-revert sentinel left over from a prior
+        # apply_topology attempt that crashed / rebooted before it could ack
+        # or revert. If a sentinel exists at startup at all, the previous
+        # watchdog thread is dead — revert immediately regardless of deadline
+        # so we never leave an unacknowledged apply in place.
+        try:
+            sentinel_path = shared_utils.get_data_path('.display_revert_pending')
+            if os.path.exists(sentinel_path):
+                logging.warning(
+                    f"Found stale display revert sentinel at {sentinel_path} — "
+                    "previous apply did not complete cleanly, reverting"
+                )
+                apply_revert = getattr(display_manager, 'apply_revert_from_sentinel', None)
+                if callable(apply_revert):
+                    try:
+                        # Pass firebase_client so the no-console-session deferral
+                        # path (Wave 5) can emit `display_revert_deferred`.
+                        result = apply_revert(firebase_client=self.firebase_client)
+                        logging.info(f"Display revert from sentinel: {result}")
+                    except Exception as revert_err:
+                        logging.error(f"Display revert from sentinel failed: {revert_err}")
+                        # Still try to delete the sentinel so we don't loop on next start.
+                        try:
+                            os.remove(sentinel_path)
+                        except OSError as rm_err:
+                            logging.warning(f"Failed to delete stale display sentinel: {rm_err}")
+                else:
+                    logging.warning(
+                        "display_manager.apply_revert_from_sentinel not available; "
+                        "deleting sentinel without revert"
+                    )
+                    try:
+                        os.remove(sentinel_path)
+                    except OSError as rm_err:
+                        logging.warning(f"Failed to delete stale display sentinel: {rm_err}")
+        except Exception as e:
+            logging.warning(f"Display sentinel check failed: {e}")
+
         # The heart of owlette
         cleanup_counter = 0  # Counter for periodic cleanup
         log_cleanup_counter = 0  # Counter for log cleanup (runs less frequently)
         firebase_check_counter = 0  # Counter for Firebase state check (runs every minute)
+        reboot_pending_counter = 0  # Counter for reboot-pending check (runs every 15 min)
         last_firebase_state = {
             'enabled': self.firebase_client is not None,
             'site_id': shared_utils.read_config(['firebase', 'site_id']) if self.firebase_client else None
@@ -4172,16 +6445,12 @@ with open(out_path, 'wb') as f:
 
         try:
             while self.is_alive:
-                # Check for shutdown flag from tray icon
-                shutdown_flag = shared_utils.get_data_path('tmp/shutdown.flag')
-                if os.path.exists(shutdown_flag):
-                    logging.info("Shutdown flag detected - initiating graceful shutdown")
-                    try:
-                        os.remove(shutdown_flag)
-                    except Exception as e:
-                        logging.debug(f"Could not remove shutdown flag: {e}")
-                    self.is_alive = False
-                    break
+                # Note: there is no "shutdown flag" mechanism. The tray's "exit"
+                # uses elevated `net stop OwletteService` (a controlled SCM stop),
+                # which NSSM respects without auto-restarting. A flag-based
+                # approach was tried previously but doesn't work — NSSM
+                # auto-restarts on any process exit, so the service would just
+                # come back up immediately after exiting cleanly.
 
                 # Check for restart flag from tray icon.
                 # Exit with code 42 so NSSM auto-restarts us (AppExit Default Restart).
@@ -4193,9 +6462,24 @@ with open(out_path, 'wb') as f:
                         os.remove(restart_flag)
                     except Exception as e:
                         logging.debug(f"Could not remove restart flag: {e}")
+                    # Mark this restart as Owlette-initiated so the next startup
+                    # classifier treats it as planned and stays silent.
+                    try:
+                        session_state.set_intent("owlette_service_restart")
+                    except Exception as e:
+                        logging.debug(f"session_state.set_intent failed in restart flag: {e}")
                     self._restart_exit_code = 42
                     self.is_alive = False
                     break
+
+                # Refresh session_state.json last_alive — used by the next
+                # startup classifier to compute the gap between "last seen
+                # alive" and the next boot. Belt-and-suspenders alongside
+                # the metrics-thread heartbeat in firebase_client._metrics_loop.
+                try:
+                    session_state.update_alive()
+                except Exception as e:
+                    logging.debug(f"session_state.update_alive failed: {e}")
 
                 # Ensure tray icon is running (with cooldown to avoid crash-relaunch thrashing)
                 self._try_launch_tray()
@@ -4221,9 +6505,10 @@ with open(out_path, 'wb') as f:
                     self.results = {}
 
                 # Load in all processes in config json
-                processes = shared_utils.read_config(['processes'])
+                processes = shared_utils.read_config(['processes']) or []
+                self._diff_and_apply_launch_modes(processes)
                 for process in processes:
-                    mode = process.get('launch_mode', 'always' if process.get('autolaunch', False) else 'off')
+                    mode = self._get_process_launch_mode(process)
                     if mode == 'always':
                         self.handle_process(process)
                     elif mode == 'scheduled':
@@ -4266,11 +6551,27 @@ with open(out_path, 'wb') as f:
                                         pass
                     # mode == 'off': skip entirely
 
-                # Scheduled reboot check (every ~60 seconds to avoid hammering Firestore)
+                # Scheduled reboot check — runs every REBOOT_CHECK_INTERVAL_SECONDS
+                # (derived from SLEEP_INTERVAL so changes propagate automatically)
                 self._reboot_schedule_counter += 1
-                if self._reboot_schedule_counter >= 6:
+                if self._reboot_schedule_counter >= REBOOT_CHECK_ITERATIONS:
                     self._reboot_schedule_counter = 0
                     self._check_scheduled_reboot()
+
+                # Display topology signature check — runs every DISPLAY_CHECK_ITERATIONS.
+                # Logs real topology changes; Firestore upload is driven by the
+                # firebase_client metrics loop (Task 2.2), not from here.
+                self._display_check_counter += 1
+                if self._display_check_counter >= DISPLAY_CHECK_ITERATIONS:
+                    self._display_check_counter = 0
+                    self._check_display_topology()
+
+                # roost periodic scrub dispatch — hourly check, single-flight,
+                # daemon thread. Cheap when there's nothing due (one SQL query).
+                self._roost_scrub_check_counter += 1
+                if self._roost_scrub_check_counter >= ROOST_SCRUB_CHECK_ITERATIONS:
+                    self._roost_scrub_check_counter = 0
+                    self._maybe_dispatch_roost_scrub()
 
                 if self.first_start:
                     logging.info('owlette initialized')
@@ -4288,6 +6589,31 @@ with open(out_path, 'wb') as f:
                             logging.debug("Logged agent_started event to Firestore")
                         except Exception as log_err:
                             logging.error(f"Failed to log agent_started event: {log_err}")
+
+                        # Backup emission for startup anomaly event — fires only
+                        # if the primary emission near firebase_client.start() was
+                        # skipped (e.g. Firebase wasn't connected yet at that point).
+                        if getattr(self, '_pending_anomaly_event', None):
+                            anomaly_action, anomaly_details = self._pending_anomaly_event
+                            try:
+                                self.firebase_client.log_event(
+                                    action=anomaly_action,
+                                    level='warning',
+                                    details=anomaly_details,
+                                )
+                                logging.info(
+                                    f"Startup anomaly event logged to Firebase (deferred): {anomaly_action}"
+                                )
+                                self._pending_anomaly_event = None
+                            except Exception as log_err:
+                                logging.error(
+                                    f"Failed to log startup anomaly event (deferred): {log_err}"
+                                )
+
+                        # Same pattern for watchdog-restart events — retry if the
+                        # primary flush after start() was skipped or any entry
+                        # failed to submit.
+                        self._flush_pending_watchdog_events()
 
                 self.first_start = False
 
@@ -4362,6 +6688,15 @@ with open(out_path, 'wb') as f:
                     cleanup_counter = 0
 
                 # Periodic cleanup of old log files (every 8640 iterations = 24 hours)
+                # Reboot-pending check every 15 min (180 iterations at SLEEP_INTERVAL=5s)
+                reboot_pending_counter += 1
+                if reboot_pending_counter >= 180:
+                    try:
+                        self._check_and_alert_reboot_pending()
+                    except Exception as e:
+                        logging.debug(f"Reboot-pending check failed (non-critical): {e}")
+                    reboot_pending_counter = 0
+
                 log_cleanup_counter += 1
                 if log_cleanup_counter >= 17280:
                     try:

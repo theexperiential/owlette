@@ -39,7 +39,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 
 const mockTestWebhook = jest.fn();
 jest.mock('@/lib/webhookSender.server', () => ({
-  testWebhook: (...args: any[]) => mockTestWebhook(...args),
+  testWebhook: (...args: unknown[]) => mockTestWebhook(...args),
 }));
 
 import { POST } from '@/app/api/webhooks/test/route';
@@ -84,7 +84,7 @@ describe('POST /api/webhooks/test', () => {
   it('sends test and returns success for 2xx response', async () => {
     mockDocGet.mockResolvedValue({
       exists: true,
-      data: () => ({ url: 'https://hooks.example.com', secret: 'abc' }),
+      data: () => ({ url: 'https://hooks.example.com', signingSecret: 'abc' }),
       ref: { update: mockDocUpdate },
     });
     mockTestWebhook.mockResolvedValue({ status: 200 });
@@ -101,7 +101,7 @@ describe('POST /api/webhooks/test', () => {
   it('returns success:false for non-2xx response', async () => {
     mockDocGet.mockResolvedValue({
       exists: true,
-      data: () => ({ url: 'https://hooks.example.com', secret: 'abc' }),
+      data: () => ({ url: 'https://hooks.example.com', signingSecret: 'abc' }),
       ref: { update: mockDocUpdate },
     });
     mockTestWebhook.mockResolvedValue({ status: 500 });
@@ -117,7 +117,7 @@ describe('POST /api/webhooks/test', () => {
   it('returns error message on network failure', async () => {
     mockDocGet.mockResolvedValue({
       exists: true,
-      data: () => ({ url: 'https://hooks.example.com', secret: 'abc' }),
+      data: () => ({ url: 'https://hooks.example.com', signingSecret: 'abc' }),
       ref: { update: mockDocUpdate },
     });
     mockTestWebhook.mockResolvedValue({ status: 0, error: 'ECONNREFUSED' });

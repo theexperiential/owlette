@@ -22,17 +22,22 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { generateText, stepCountIs, tool, jsonSchema } from 'ai';
-import { Timestamp } from 'firebase-admin/firestore';
+import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 import { createModel, buildAutonomousSystemPrompt } from '@/lib/llm';
 import { getToolsByTier, EXISTING_COMMAND_MAPPINGS, type McpToolDefinition } from '@/lib/mcp-tools';
 import {
   resolveLlmConfig,
   isMachineOnline,
-  executeToolOnAgent,
-  executeExistingCommand,
+  isCortexEnabled,
 } from '@/lib/cortex-utils.server';
+import {
+  dispatchToolCallAsSystem,
+  dispatchExistingCommandAsSystem,
+} from '@/lib/cortex/dispatch.server';
 import { escalate } from '@/lib/cortex-escalation.server';
+import { emitSecurityBoundaryMetric } from '@/lib/securityBoundaryMetrics.server';
 
 const MAX_STEPS = 15;
 const MAX_CONCURRENT_SESSIONS = 3;
@@ -46,6 +51,7 @@ interface AutonomousRequest {
   processName: string;
   errorMessage: string;
   agentVersion?: string;
+  nonce?: string;
 }
 
 interface CortexSettings {
@@ -58,8 +64,40 @@ interface CortexSettings {
   escalationEmail?: boolean;
 }
 
+function emitCortexEventMetric(
+  name: 'cortex_events_incoming_total' | 'cortex_events_processed_total',
+  params: {
+    siteId: string;
+    machineId: string;
+    eventId?: string;
+    status?: string;
+    eventType?: string;
+    durationMs?: number;
+  },
+): void {
+  emitSecurityBoundaryMetric(name, 1, {
+    labels: {
+      site: params.siteId,
+      status: params.status,
+      eventType: params.eventType,
+    },
+    fields: {
+      machineId: params.machineId,
+      eventId: params.eventId,
+      durationMs: params.durationMs,
+    },
+  });
+}
+
 /**
  * Build executable tools for autonomous mode (single machine, no streaming).
+ *
+ * security-boundary-migration wave 3.12 — every dispatch flows through
+ * `invokeAsSystem` (via `dispatchToolCallAsSystem` /
+ * `dispatchExistingCommandAsSystem`) so the cortex_autonomous actor's
+ * audit rows + system rate-limit bucket are honored. Tool implementations
+ * themselves still live on the agent — only the dispatch layer changed.
+ *
  * Separate from the shared buildExecutableTools to avoid the `tool()` import issue
  * with generateText vs streamText — they use the same tool() helper.
  */
@@ -68,8 +106,11 @@ function buildAutonomousTools(
   siteId: string,
   machineId: string,
   chatId: string,
+  eventId: string,
   toolDefs: McpToolDefinition[]
 ) {
+  const dispatchCtx = { db, siteId, machineId, chatId, eventId };
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: Record<string, any> = {};
 
@@ -83,10 +124,13 @@ function buildAutonomousTools(
       execute: async (params) => {
         const existingCmd = EXISTING_COMMAND_MAPPINGS[toolName];
         if (existingCmd) {
-          const processName = (params as Record<string, unknown>).process_name as string;
-          return executeExistingCommand(db, siteId, machineId, existingCmd, processName);
+          return dispatchExistingCommandAsSystem(
+            dispatchCtx,
+            existingCmd,
+            params as Record<string, unknown>,
+          );
         }
-        return executeToolOnAgent(db, siteId, machineId, toolName, params as Record<string, unknown>, chatId);
+        return dispatchToolCallAsSystem(dispatchCtx, toolName, params as Record<string, unknown>);
       },
     });
   }
@@ -104,7 +148,7 @@ export async function POST(request: NextRequest) {
 
     // 2. Parse & validate body
     const body = await request.json() as AutonomousRequest;
-    const { siteId, machineId, machineName, eventType, processName, errorMessage, agentVersion } = body;
+    const { siteId, machineId, machineName, eventType, processName, errorMessage, agentVersion, nonce } = body;
 
     if (!siteId || !machineId || !processName || !eventType) {
       return NextResponse.json(
@@ -124,6 +168,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 4. Dedup check — same machine+process within cooldown window
+    //    Also dedup by nonce if provided (prevents replay attacks)
     const cooldownMs = (settings.cooldownMinutes ?? DEFAULT_COOLDOWN_MINUTES) * 60 * 1000;
     const cutoffTime = Timestamp.fromMillis(Date.now() - cooldownMs);
 
@@ -139,6 +184,18 @@ export async function POST(request: NextRequest) {
       const existingEvent = recentEvents.docs[0].data();
       console.log(`[cortex/autonomous] Dedup: skipping ${machineId}:${processName} (existing event ${existingEvent.status})`);
       return NextResponse.json({ accepted: false, reason: 'cooldown_active' });
+    }
+
+    // Nonce-based dedup: reject exact replay of same request
+    if (nonce) {
+      const nonceRef = db.doc(`sites/${siteId}/cortex-nonces/${nonce}`);
+      const nonceDoc = await nonceRef.get();
+      if (nonceDoc.exists) {
+        console.log(`[cortex/autonomous] Nonce replay blocked: ${nonce}`);
+        return NextResponse.json({ accepted: false, reason: 'duplicate_nonce' });
+      }
+      // Store nonce with TTL (cleaned up by cooldown window naturally)
+      await nonceRef.set({ machineId, processName, timestamp: FieldValue.serverTimestamp() });
     }
 
     // 5. Concurrency check — max sessions per site
@@ -176,6 +233,13 @@ export async function POST(request: NextRequest) {
       summary: '',
       actions: [],
     });
+    emitCortexEventMetric('cortex_events_incoming_total', {
+      siteId,
+      machineId,
+      eventId,
+      status: 'investigating',
+      eventType,
+    });
 
     console.log(`[cortex/autonomous] Accepted: ${eventId} — ${processName} ${eventType} on ${machineName}`);
 
@@ -191,8 +255,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ accepted: true, eventId, chatId });
 
   } catch (error: unknown) {
-    console.error('[cortex/autonomous] Unhandled error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'cortex/autonomous');
   }
 }
 
@@ -243,6 +306,44 @@ async function runAutonomousInvestigation(
       }
 
       console.log(`[cortex/autonomous] ${eventId}: escalated (machine offline)`);
+      emitCortexEventMetric('cortex_events_processed_total', {
+        siteId,
+        machineId,
+        eventId,
+        status: 'escalated',
+        eventType,
+        durationMs: Date.now() - startTime,
+      });
+      return;
+    }
+
+    // Respect the per-machine Cortex kill switch — skip autonomous investigation
+    // but still escalate so operators aren't left in the dark.
+    const cortexEnabled = await isCortexEnabled(db, siteId, machineId);
+    if (!cortexEnabled) {
+      await eventRef.update({
+        status: 'escalated',
+        summary: 'Cortex disabled on this machine — autonomous investigation skipped',
+        resolvedAt: Timestamp.now(),
+        durationMs: Date.now() - startTime,
+      });
+
+      if (settings.escalationEmail !== false) {
+        await escalate(
+          siteId, eventId, machineName, processName,
+          `Cortex is disabled on "${machineName}". Process "${processName}" ${eventType === 'process_start_failed' ? 'failed to start' : 'crashed'} but autonomous investigation was skipped because the kill switch is engaged.\n\nError: ${errorMessage}`
+        );
+      }
+
+      console.log(`[cortex/autonomous] ${eventId}: escalated (cortex disabled)`);
+      emitCortexEventMetric('cortex_events_processed_total', {
+        siteId,
+        machineId,
+        eventId,
+        status: 'escalated',
+        eventType,
+        durationMs: Date.now() - startTime,
+      });
       return;
     }
 
@@ -252,7 +353,7 @@ async function runAutonomousInvestigation(
     // Build tools (tier-capped)
     const maxTier = settings.maxTier ?? 2;
     const toolDefs = getToolsByTier(maxTier as 1 | 2 | 3);
-    const tools = buildAutonomousTools(db, siteId, machineId, chatId, toolDefs);
+    const tools = buildAutonomousTools(db, siteId, machineId, chatId, eventId, toolDefs);
 
     // Build event context
     const eventLabel = eventType === 'process_start_failed' ? 'failed to start' : 'crashed';
@@ -332,6 +433,14 @@ async function runAutonomousInvestigation(
     }
 
     console.log(`[cortex/autonomous] ${eventId}: ${status} in ${Date.now() - startTime}ms (${actions.length} tool calls)`);
+    emitCortexEventMetric('cortex_events_processed_total', {
+      siteId,
+      machineId,
+      eventId,
+      status,
+      eventType,
+      durationMs: Date.now() - startTime,
+    });
 
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : 'Unknown error';
@@ -343,6 +452,14 @@ async function runAutonomousInvestigation(
       resolvedAt: Timestamp.now(),
       durationMs: Date.now() - startTime,
     }).catch(() => {});
+    emitCortexEventMetric('cortex_events_processed_total', {
+      siteId,
+      machineId,
+      eventId,
+      status: 'failed',
+      eventType,
+      durationMs: Date.now() - startTime,
+    });
 
   } finally {
     // Always decrement the active session counter (retry once on failure)

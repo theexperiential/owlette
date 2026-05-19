@@ -1,0 +1,37 @@
+name: deploy roost with owlette
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      OWLETTE_API_URL: ${{ vars.OWLETTE_API_URL || 'https://owlette.app' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build artifact
+        run: npm run build
+
+      - name: Publish and deploy with Owlette
+        uses: theexperiential/owlette/.github/actions/owlette-roost-deploy@main
+        with:
+          token: ${{ secrets.OWLETTE_TOKEN }}
+          api-url: ${{ env.OWLETTE_API_URL }}
+          site-id: ${{ vars.OWLETTE_SITE_ID }}
+          roost-id: ${{ vars.OWLETTE_ROOST_ID }}
+          path: dist
+          description: ${{ github.ref_name }}

@@ -4,6 +4,7 @@ import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.ser
 import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * GET /api/cron/process-alerts
@@ -174,11 +175,6 @@ export async function GET(request: NextRequest) {
         // Get timezone from the first machine for display
         const tz = await getMachineTimezone(siteId, siteAlerts[0].machineId);
 
-        // Smart subject line
-        const subject = siteAlerts.length === 1
-          ? `Process ${siteAlerts[0].eventType === 'process_start_failed' ? 'failed to start' : 'crashed'}: ${siteAlerts[0].processName} on ${siteAlerts[0].machineId}`
-          : `${siteAlerts.length} process event(s) in ${siteId}`;
-
         // Send per-recipient emails (for individual unsubscribe links)
         for (const recipient of recipients) {
           try {
@@ -241,7 +237,6 @@ export async function GET(request: NextRequest) {
       sites: alertsBySite.size,
     });
   } catch (error) {
-    console.error('[cron/process-alerts] Error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return apiError(error, 'cron/process-alerts');
   }
 }

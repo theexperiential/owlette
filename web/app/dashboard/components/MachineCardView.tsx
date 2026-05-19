@@ -8,29 +8,36 @@
  * - Machine status (online/offline)
  * - System metrics (CPU, Memory, Disk, GPU) with sparkline charts
  * - Expandable process list
- * - Process controls (autolaunch, edit, kill)
+ * - Process controls (autolaunch, edit, restart, kill)
  * - Create add process button
  * - Click sparklines to open detail panel
  *
  * Used by: Dashboard page for card view display
  */
 
-import { useState, useEffect } from 'react';
+import { useMinuteTick } from '@/hooks/useMinuteTick';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MachineContextMenu } from '@/components/MachineContextMenu';
+import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, Settings2, BellOff } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, RotateCw, Settings2, BellOff } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass, getUsageRingClass } from '@/lib/usageColorUtils';
-import { formatHeartbeatTime } from '@/lib/timeUtils';
-import { formatThroughput, getPrimaryNic } from '@/lib/networkUtils';
+import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
+import { formatThroughput } from '@/lib/networkUtils';
+import { DISK_IO_COLORS, formatDiskIO } from '@/lib/diskIOUtils';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
+import { useDevicePrefs, type DeviceKind } from '@/hooks/useDevicePrefs';
+import { useDisplayState } from '@/hooks/useDisplayState';
+import { DisplayCanvas } from '@/components/charts/DisplayCanvas';
+import { resolveDevice, shouldShowDeviceDropdown } from '@/lib/deviceResolvers';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
 
@@ -38,14 +45,17 @@ interface MachineCardViewProps {
   machines: Machine[];
   statsExpanded: boolean;
   processesExpanded: boolean;
+  displaysExpanded?: boolean;
   onToggleStats: () => void;
   onToggleProcesses: () => void;
+  onToggleDisplays?: () => void;
   currentSiteId: string;
   siteTimezone?: string;
   siteTimeFormat?: '12h' | '24h';
   onEditProcess: (machineId: string, process: Process) => void;
   onCreateProcess: (machineId: string) => void;
   onKillProcess: (machineId: string, processId: string, processName: string) => void;
+  onRestartProcess: (machineId: string, processId: string, processName: string) => void;
   onSetLaunchMode: (machineId: string, processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
   onConfigureSchedule?: (machineId: string, process: Process) => void;
   onRemoveMachine: (machineId: string, machineName: string, isOnline: boolean) => void;
@@ -66,16 +76,21 @@ interface MachineCardProps {
   machine: Machine;
   statsExpanded: boolean;
   processesExpanded: boolean;
+  displaysExpanded?: boolean;
   currentSiteId: string;
   siteTimezone: string;
   siteTimeFormat: '12h' | '24h';
   userPreferences: { temperatureUnit: 'C' | 'F' };
-  isAdmin: boolean;
+  isSiteAdmin: boolean;
+  cardPref: { cpu?: string; disk?: string; gpu?: string; nic?: string };
+  onSetCardPref: (kind: DeviceKind, id: string | null) => void;
   onToggleStats: () => void;
   onToggleProcesses: () => void;
+  onToggleDisplays?: () => void;
   onEditProcess: (process: Process) => void;
   onCreateProcess: () => void;
   onKillProcess: (processId: string, processName: string) => void;
+  onRestartProcess: (processId: string, processName: string) => void;
   onSetLaunchMode: (processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
   onConfigureSchedule?: (process: Process) => void;
   onRemoveMachine: () => void;
@@ -86,22 +101,28 @@ interface MachineCardProps {
   onDismissRebootPending?: (processName: string) => Promise<void>;
   onScreenshot?: () => void;
   onLiveView?: () => void;
+  showLocalClock?: boolean;
 }
 
 function MachineCard({
   machine,
   statsExpanded,
   processesExpanded,
+  displaysExpanded,
   currentSiteId,
   siteTimezone,
   siteTimeFormat,
   userPreferences,
-  isAdmin,
+  isSiteAdmin,
+  cardPref,
+  onSetCardPref,
   onToggleStats,
   onToggleProcesses,
+  onToggleDisplays,
   onEditProcess,
   onCreateProcess,
   onKillProcess,
+  onRestartProcess,
   onSetLaunchMode,
   onConfigureSchedule,
   onRemoveMachine,
@@ -112,77 +133,159 @@ function MachineCard({
   onDismissRebootPending,
   onScreenshot,
   onLiveView,
+  showLocalClock,
 }: MachineCardProps) {
   const isDemo = !!useDemoContext();
   const { userPreferences: fullPrefs } = useAuth();
   const isMuted = fullPrefs.mutedMachines.includes(machine.machineId);
-  // Per-card expand state, synced from parent's global toggle
-  const [localStatsExpanded, setLocalStatsExpanded] = useState(statsExpanded);
-  const [localProcessesExpanded, setLocalProcessesExpanded] = useState(processesExpanded);
-
-  // Sync when parent global toggle changes
-  useEffect(() => { setLocalStatsExpanded(statsExpanded); }, [statsExpanded]);
-  useEffect(() => { setLocalProcessesExpanded(processesExpanded); }, [processesExpanded]);
 
   // Fetch sparkline data for this machine
   const sparklineData = useAllSparklineData(currentSiteId, machine.machineId);
 
-  // Format heartbeat time with timezone and time format support
-  const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, siteTimezone, siteTimeFormat);
+  // Live display topology (monitors + mosaic). Always subscribed so the
+  // collapsed card summary can show the resolution list — otherwise it'd
+  // render "no data" until the user expanded the section. We skip the
+  // assigned-layout sub here because the drift dot now reads from the
+  // heartbeat-published `metrics.displayDriftCount`, not a client-side diff.
+  const { profile: displayProfile } = useDisplayState(
+    currentSiteId,
+    machine.machineId,
+    { enabled: true, subscribeAssigned: false }
+  );
+  const displayMonitors = displayProfile?.monitors ?? [];
+  const displayDriftCount = machine.metrics?.displayDriftCount ?? 0;
+  // Parent preference is the source of truth; default collapsed on first render.
+  const effectiveDisplaysExpanded = displaysExpanded ?? false;
+
+  // Format heartbeat time. The display tz is resolved per-machine according
+  // to the user's chosen `timeDisplayMode` (preferences) — see getDisplayTimezone.
+  const displayTz = getDisplayTimezone(
+    fullPrefs.timeDisplayMode || 'machine',
+    fullPrefs.timezone,
+    machine.machineTimezone,
+    siteTimezone
+  );
+  const heartbeat = formatHeartbeatTime(machine.lastHeartbeat, displayTz, siteTimeFormat);
+
+  // Live-updating local clock for this machine's own timezone (under hostname).
+  // Subscribing to the shared wall-clock minute tick re-renders this card
+  // once per minute (in lockstep with every other machine card) so the
+  // formatted clock string below stays current. One interval, app-wide.
+  useMinuteTick();
+  const localClock = formatMachineLocalClock(machine.machineTimezone, siteTimeFormat);
+  const localTzShort = formatTimezoneShortName(machine.machineTimezone);
+
+  // Resolve per-card device selection (user pref → primary → first).
+  const primary = machine.metrics?.primary;
+  const cpuDevice = resolveDevice(machine.devices?.cpus, cardPref.cpu, primary?.cpu);
+  const diskDevice = resolveDevice(machine.devices?.disks, cardPref.disk, primary?.disk);
+  const gpuDevice = resolveDevice(machine.devices?.gpus, cardPref.gpu, primary?.gpu);
+  const nicDevice = resolveDevice(machine.devices?.nics, cardPref.nic, primary?.nic);
+
+  const showCpuDropdown = shouldShowDeviceDropdown(machine.devices?.cpus);
+  const showDiskDropdown = shouldShowDeviceDropdown(machine.devices?.disks);
+  const showGpuDropdown = shouldShowDeviceDropdown(machine.devices?.gpus);
+  const showNicDropdown = shouldShowDeviceDropdown(machine.devices?.nics);
+
+  // Derive memory total from usedGb / (percent/100) when percent > 0. v2 agents
+  // no longer send total_gb — the ratio is recoverable from the two fields we do
+  // have. Guard against divide-by-zero / missing fields.
+  const memory = machine.metrics?.memory;
+  const memoryTotalGb =
+    memory && memory.usedGb != null && memory.percent != null && memory.percent > 0
+      ? memory.usedGb / (memory.percent / 100)
+      : null;
+
+  // Tiny shadcn Select helpers for the per-card device selectors.
+  // Kept inline so they can close over machine + resolved device state.
+  const renderDeviceSelect = (
+    kind: DeviceKind,
+    devices: { id: string }[],
+    currentId: string | undefined,
+    labelFor: (id: string) => string
+  ) => (
+    <Select
+      value={currentId ?? 'auto'}
+      onValueChange={(v) => onSetCardPref(kind, v === 'auto' ? null : v)}
+    >
+      <SelectTrigger
+        size="sm"
+        className="h-5 px-1.5 py-0 text-xs border-0 bg-transparent shadow-none gap-1 text-muted-foreground hover:text-foreground focus-visible:ring-0"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent onClick={(e) => e.stopPropagation()}>
+        <SelectItem value="auto">auto (most active)</SelectItem>
+        {devices.map((d) => (
+          <SelectItem key={d.id} value={d.id}>{labelFor(d.id)}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
 
   return (
-    <Card className="border-border bg-card py-0 gap-0">
+    <Card data-testid="machine-card" className="border-border bg-card py-0 gap-0">
       <CardHeader className="py-3 px-4 gap-0">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-xl font-semibold text-white select-text flex items-center gap-1.5">
-            {machine.machineId}
-            {isMuted && <span title="alerts muted"><BellOff className="h-3.5 w-3.5 text-muted-foreground" /></span>}
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            <Badge className={`select-none text-xs ${
-              machine.rebooting ? 'bg-amber-600' :
-              machine.shuttingDown ? 'bg-amber-600' :
-              machine.online ? 'bg-green-600' :
-              'bg-red-600'
-            }`}>
-              {machine.rebooting ? 'rebooting...' :
-               machine.shuttingDown ? 'shutting down...' :
-               machine.online ? 'online' : 'offline'}
-            </Badge>
-            {(machine.rebooting || machine.shuttingDown) && isAdmin && onCancelReboot && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs text-amber-400 hover:text-amber-300 hover:bg-amber-950/30 cursor-pointer"
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  try {
-                    await onCancelReboot();
-                  } catch {}
-                }}
-              >
-                cancel
-              </Button>
+          <div className="flex flex-col min-w-0">
+            <CardTitle className="text-xl font-semibold text-white select-text flex items-center gap-1.5">
+              {machine.machineId}
+              {isMuted && <span title="alerts muted"><BellOff className="h-3.5 w-3.5 text-muted-foreground" /></span>}
+            </CardTitle>
+            {showLocalClock && machine.machineTimezone && localClock && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-xs text-muted-foreground mt-0.5 cursor-help select-none">
+                    {localTzShort}, {localClock} local
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="max-w-xs">this machine&apos;s local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
+                </TooltipContent>
+              </Tooltip>
             )}
-            <span
-              className={`text-xs flex items-center gap-1 select-none cursor-default ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
-              title={heartbeat.tooltip}
-            >
-              <Clock className="h-3 w-3" />
-              {heartbeat.display}
-            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <MachineStatusPill
+              online={machine.online}
+              rebooting={machine.rebooting}
+              shuttingDown={machine.shuttingDown}
+              rebootScheduledAt={machine.rebootScheduledAt}
+              shutdownScheduledAt={machine.shutdownScheduledAt}
+              isSiteAdmin={isSiteAdmin}
+              onCancel={onCancelReboot}
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className={`text-xs flex items-center gap-1 select-none cursor-help ${heartbeat.isStale ? 'text-red-400' : 'text-muted-foreground'}`}
+                >
+                  <Clock className="h-3 w-3" />
+                  {heartbeat.display}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{heartbeat.tooltip}</p>
+              </TooltipContent>
+            </Tooltip>
             {!isDemo && (
               <MachineContextMenu
                 machineId={machine.machineId}
                 machineName={machine.machineId}
+                machineTimezone={machine.machineTimezone}
                 siteId={currentSiteId}
                 isOnline={machine.online}
-                isAdmin={isAdmin}
+                rebooting={machine.rebooting}
+                shuttingDown={machine.shuttingDown}
+                isSiteAdmin={isSiteAdmin}
                 onRemoveMachine={onRemoveMachine}
                 onReboot={onReboot}
                 onShutdown={onShutdown}
+                onCancelReboot={onCancelReboot}
                 onScreenshot={onScreenshot}
                 onLiveView={onLiveView}
+                onViewDisplays={onMetricClick ? () => onMetricClick('display') : undefined}
                 rebootSchedule={machine.rebootSchedule}
               />
             )}
@@ -199,11 +302,12 @@ function MachineCard({
                 reboot pending: {machine.rebootPending.reason || 'process crashed'}
               </span>
             </div>
-            {isAdmin && (
+            {isSiteAdmin && (
               <div className="flex items-center gap-1.5 flex-shrink-0">
                 <Button
                   variant="ghost"
                   size="sm"
+                  data-testid="reboot-pending-approve"
                   className="h-7 px-2.5 text-xs bg-amber-600 hover:bg-amber-700 text-white cursor-pointer"
                   onClick={async (e) => {
                     e.stopPropagation();
@@ -218,6 +322,7 @@ function MachineCard({
                 <Button
                   variant="ghost"
                   size="sm"
+                  data-testid="reboot-pending-dismiss"
                   className="h-7 px-2.5 text-xs text-muted-foreground hover:text-white hover:bg-accent cursor-pointer"
                   onClick={async (e) => {
                     e.stopPropagation();
@@ -236,48 +341,70 @@ function MachineCard({
       )}
 
       {machine.metrics && (
-        <Collapsible open={localStatsExpanded} onOpenChange={() => setLocalStatsExpanded(v => !v)}>
-          {!localStatsExpanded && (
+        <Collapsible open={statsExpanded} onOpenChange={onToggleStats}>
+          {!statsExpanded && (
             <CollapsibleTrigger asChild>
               <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
                 <div className="flex items-center gap-2 w-full select-none">
                   <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
                   <div className="flex items-center gap-2.5 text-sm text-muted-foreground overflow-hidden">
-                    {machine.metrics.cpu && (
-                      <span className="tabular-nums">cpu <span className="text-foreground font-medium">{machine.metrics.cpu.percent}%</span>
-                        {machine.metrics.cpu.temperature !== undefined && (
-                          <span className={`ml-1 ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
-                            {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                    {cpuDevice && cpuDevice.percent != null && (
+                      <span className="tabular-nums">cpu <span className="text-foreground font-medium">{cpuDevice.percent}%</span>
+                        {cpuDevice.temperature != null && (
+                          <span className={`ml-1 ${getTemperatureColorClass(cpuDevice.temperature)}`}>
+                            {formatTemperature(cpuDevice.temperature, userPreferences.temperatureUnit)}
                           </span>
                         )}
                       </span>
                     )}
-                    <span className="text-border">|</span>
-                    <span className="tabular-nums">mem <span className="text-foreground font-medium">{machine.metrics.memory?.percent}%</span></span>
-                    <span className="text-border">|</span>
-                    <span className="tabular-nums">disk <span className="text-foreground font-medium">{machine.metrics.disk?.percent}%</span></span>
-                    {machine.metrics.gpu && (
+                    {memory?.percent != null && (
                       <>
                         <span className="text-border">|</span>
-                        <span className="tabular-nums">gpu <span className="text-foreground font-medium">{machine.metrics.gpu.usage_percent}%</span>
-                          {machine.metrics.gpu.temperature !== undefined && (
-                            <span className={`ml-1 ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
-                              {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
+                        <span className="tabular-nums">mem <span className="text-foreground font-medium">{memory.percent}%</span></span>
+                      </>
+                    )}
+                    {diskDevice && diskDevice.percent != null && (() => {
+                      const io = machine.metrics?.diskio?.[diskDevice.id];
+                      return (
+                        <>
+                          <span className="text-border">|</span>
+                          <span className="tabular-nums">disk <span className="text-foreground font-medium">{diskDevice.percent}%</span>
+                            {io && io.readBps > 0 && (
+                              <span className="ml-1 font-medium" style={{ color: DISK_IO_COLORS.read }}>
+                                r {formatDiskIO(io.readBps)}
+                              </span>
+                            )}
+                            {io && io.writeBps > 0 && (
+                              <span className="ml-1 font-medium" style={{ color: DISK_IO_COLORS.write }}>
+                                w {formatDiskIO(io.writeBps)}
+                              </span>
+                            )}
+                          </span>
+                        </>
+                      );
+                    })()}
+                    {gpuDevice && gpuDevice.usagePercent != null && (
+                      <>
+                        <span className="text-border">|</span>
+                        <span className="tabular-nums">gpu <span className="text-foreground font-medium">{gpuDevice.usagePercent}%</span>
+                          {gpuDevice.temperature != null && (
+                            <span className={`ml-1 ${getTemperatureColorClass(gpuDevice.temperature)}`}>
+                              {formatTemperature(gpuDevice.temperature, userPreferences.temperatureUnit)}
                             </span>
                           )}
                         </span>
                       </>
                     )}
-                    {machine.metrics.network?.latency_ms != null && (
+                    {machine.metrics.network?.latencyMs != null && (
                       <>
                         <span className="text-border">|</span>
                         <span className="tabular-nums">ping <span className={`font-medium ${
-                          machine.metrics.network.latency_ms > 100 ? 'text-red-400' :
-                          machine.metrics.network.latency_ms > 50 ? 'text-yellow-400' :
+                          machine.metrics.network.latencyMs > 100 ? 'text-red-400' :
+                          machine.metrics.network.latencyMs > 50 ? 'text-yellow-400' :
                           'text-foreground'
-                        }`}>{Math.round(machine.metrics.network.latency_ms)}ms</span>
-                          {(machine.metrics.network.packet_loss_pct ?? 0) > 0 && (
-                            <span className="ml-1 text-red-400">{machine.metrics.network.packet_loss_pct}% loss</span>
+                        }`}>{Math.round(machine.metrics.network.latencyMs)}ms</span>
+                          {(machine.metrics.network.packetLossPct ?? 0) > 0 && (
+                            <span className="ml-1 text-red-400">{machine.metrics.network.packetLossPct}% loss</span>
                           )}
                         </span>
                       </>
@@ -287,7 +414,7 @@ function MachineCard({
               </Button>
             </CollapsibleTrigger>
           )}
-          <CollapsibleContent>
+          <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
         <CollapsibleTrigger asChild>
           <div className="border-t border-border relative cursor-pointer group">
             <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -298,9 +425,9 @@ function MachineCard({
         </CollapsibleTrigger>
         <CardContent className="space-y-1.5 select-none pt-0 pb-4">
           {/* CPU Metric */}
-          {machine.metrics.cpu && (
+          {cpuDevice && cpuDevice.percent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(machine.metrics.cpu.percent)}`}
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(cpuDevice.percent)}`}
               onClick={onMetricClick ? () => onMetricClick('cpu') : undefined}
             >
               {/* Sparkline background */}
@@ -308,20 +435,26 @@ function MachineCard({
                 <SparklineChart data={sparklineData.cpu} color="cpu" height={52} loading={sparklineData.loading} />
               </div>
               {/* Left accent bar - color based on usage */}
-              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(machine.metrics.cpu.percent)}`} />
+              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(cpuDevice.percent)}`} />
               {/* Content */}
               <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                 <div className="flex items-center gap-3 min-w-0">
                   <span className="text-sm font-medium text-muted-foreground">cpu</span>
-                  <span className="text-xs text-muted-foreground truncate hidden sm:block" title={machine.metrics.cpu.name || 'Unknown'}>
-                    {machine.metrics.cpu.name || 'Unknown'}
+                  <span className="text-xs text-muted-foreground truncate hidden sm:block" title={cpuDevice.model || cpuDevice.id}>
+                    {cpuDevice.model || cpuDevice.id}
                   </span>
+                  {showCpuDropdown && machine.devices?.cpus && (
+                    renderDeviceSelect('cpu', machine.devices.cpus, cardPref.cpu, (id) => {
+                      const d = machine.devices?.cpus.find(x => x.id === id);
+                      return d?.model || id;
+                    })
+                  )}
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  <span className="text-lg font-bold text-white tabular-nums">{machine.metrics.cpu.percent}%</span>
-                  {machine.metrics.cpu.temperature !== undefined && (
-                    <span className={`text-sm font-medium ${getTemperatureColorClass(machine.metrics.cpu.temperature)}`}>
-                      {formatTemperature(machine.metrics.cpu.temperature, userPreferences.temperatureUnit)}
+                  <span className="text-lg font-bold text-white tabular-nums">{cpuDevice.percent}%</span>
+                  {cpuDevice.temperature != null && (
+                    <span className={`text-sm font-medium ${getTemperatureColorClass(cpuDevice.temperature)}`}>
+                      {formatTemperature(cpuDevice.temperature, userPreferences.temperatureUnit)}
                     </span>
                   )}
                 </div>
@@ -330,59 +463,85 @@ function MachineCard({
           )}
 
           {/* Memory Metric */}
-          <div
-            className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(machine.metrics.memory?.percent ?? 0)}`}
-            onClick={onMetricClick ? () => onMetricClick('memory') : undefined}
-          >
-            {/* Sparkline background */}
-            <div className="absolute inset-0 opacity-80">
-              <SparklineChart data={sparklineData.memory} color="memory" height={52} loading={sparklineData.loading} />
-            </div>
-            {/* Left accent bar - color based on usage */}
-            <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(machine.metrics.memory?.percent ?? 0)}`} />
-            {/* Content */}
-            <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-muted-foreground">memory</span>
-                {machine.metrics.memory?.used_gb !== undefined && machine.metrics.memory?.total_gb !== undefined && (
-                  <span className="text-xs text-muted-foreground hidden sm:block">
-                    {machine.metrics.memory.used_gb.toFixed(1)} / {machine.metrics.memory.total_gb.toFixed(1)} GB
-                  </span>
-                )}
+          {memory?.percent != null && (
+            <div
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(memory.percent)}`}
+              onClick={onMetricClick ? () => onMetricClick('memory') : undefined}
+            >
+              {/* Sparkline background */}
+              <div className="absolute inset-0 opacity-80">
+                <SparklineChart data={sparklineData.memory} color="memory" height={52} loading={sparklineData.loading} />
               </div>
-              <span className="text-lg font-bold text-white tabular-nums">{machine.metrics.memory?.percent}%</span>
+              {/* Left accent bar - color based on usage */}
+              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(memory.percent)}`} />
+              {/* Content */}
+              <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium text-muted-foreground">ram</span>
+                  {memory.usedGb != null && memoryTotalGb != null && (
+                    <span className="text-xs text-muted-foreground hidden sm:block">
+                      {memory.usedGb.toFixed(1)} / {memoryTotalGb.toFixed(1)} GB
+                    </span>
+                  )}
+                </div>
+                <span className="text-lg font-bold text-white tabular-nums">{memory.percent}%</span>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Disk Metric */}
-          <div
-            className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(machine.metrics.disk?.percent ?? 0)}`}
-            onClick={onMetricClick ? () => onMetricClick('disk') : undefined}
-          >
-            {/* Sparkline background */}
-            <div className="absolute inset-0 opacity-80">
-              <SparklineChart data={sparklineData.disk} color="disk" height={52} loading={sparklineData.loading} />
-            </div>
-            {/* Left accent bar - color based on usage */}
-            <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(machine.metrics.disk?.percent ?? 0)}`} />
-            {/* Content */}
-            <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-muted-foreground">disk</span>
-                {machine.metrics.disk?.used_gb !== undefined && machine.metrics.disk?.total_gb !== undefined && (
-                  <span className="text-xs text-muted-foreground hidden sm:block">
-                    {machine.metrics.disk.used_gb.toFixed(1)} / {machine.metrics.disk.total_gb.toFixed(1)} GB
-                  </span>
-                )}
+          {diskDevice && diskDevice.percent != null && (
+            <div
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(diskDevice.percent)}`}
+              onClick={onMetricClick ? () => onMetricClick('disk') : undefined}
+            >
+              {/* Sparkline background */}
+              <div className="absolute inset-0 opacity-80">
+                <SparklineChart data={sparklineData.disk} color="disk" height={52} loading={sparklineData.loading} />
               </div>
-              <span className="text-lg font-bold text-white tabular-nums">{machine.metrics.disk?.percent}%</span>
+              {/* Left accent bar - color based on usage */}
+              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(diskDevice.percent)}`} />
+              {/* Content */}
+              <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium text-muted-foreground">disk</span>
+                  <span className="text-xs text-muted-foreground hidden sm:block">
+                    {diskDevice.id}
+                    {diskDevice.usedGb != null && diskDevice.totalGb != null && (
+                      <> &nbsp;{diskDevice.usedGb.toFixed(1)} / {diskDevice.totalGb.toFixed(1)} GB</>
+                    )}
+                  </span>
+                  {showDiskDropdown && machine.devices?.disks && (
+                    renderDeviceSelect('disk', machine.devices.disks, cardPref.disk, (id) => id)
+                  )}
+                </div>
+                <div className="flex items-center gap-3 flex-shrink-0">
+                  {(() => {
+                    const io = machine.metrics?.diskio?.[diskDevice.id];
+                    if (!io || (io.readBps === 0 && io.writeBps === 0)) return null;
+                    return (
+                      <div className="flex gap-1 text-xs font-medium leading-tight">
+                        <div className="flex flex-col text-right">
+                          <span style={{ color: DISK_IO_COLORS.read }}>r</span>
+                          <span style={{ color: DISK_IO_COLORS.write }}>w</span>
+                        </div>
+                        <div className="flex flex-col text-left tabular-nums">
+                          <span style={{ color: DISK_IO_COLORS.read }}>{formatDiskIO(io.readBps)}</span>
+                          <span style={{ color: DISK_IO_COLORS.write }}>{formatDiskIO(io.writeBps)}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  <span className="text-lg font-bold text-white tabular-nums">{diskDevice.percent}%</span>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* GPU Metric */}
-          {machine.metrics.gpu && (
+          {gpuDevice && gpuDevice.usagePercent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(machine.metrics.gpu.usage_percent ?? 0)}`}
+              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(gpuDevice.usagePercent)}`}
               onClick={onMetricClick ? () => onMetricClick('gpu') : undefined}
             >
               {/* Sparkline background */}
@@ -392,25 +551,31 @@ function MachineCard({
                 </div>
               )}
               {/* Left accent bar - color based on usage */}
-              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(machine.metrics.gpu.usage_percent ?? 0)}`} />
+              <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(gpuDevice.usagePercent)}`} />
               {/* Content */}
               <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                 <div className="flex items-center gap-3 min-w-0">
                   <span className="text-sm font-medium text-muted-foreground">gpu</span>
-                  <span className="text-xs text-muted-foreground truncate hidden sm:block" title={machine.metrics.gpu.name}>
-                    {machine.metrics.gpu.name}
+                  <span className="text-xs text-muted-foreground truncate hidden sm:block" title={gpuDevice.name || gpuDevice.id}>
+                    {gpuDevice.name || gpuDevice.id}
                   </span>
+                  {showGpuDropdown && machine.devices?.gpus && (
+                    renderDeviceSelect('gpu', machine.devices.gpus, cardPref.gpu, (id) => {
+                      const d = machine.devices?.gpus.find(x => x.id === id);
+                      return d?.name || id;
+                    })
+                  )}
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  <span className="text-lg font-bold text-white tabular-nums">{machine.metrics.gpu.usage_percent}%</span>
-                  {machine.metrics.gpu.vram_used_gb !== undefined && machine.metrics.gpu.vram_total_gb && (
+                  <span className="text-lg font-bold text-white tabular-nums">{gpuDevice.usagePercent}%</span>
+                  {gpuDevice.vramUsedGb != null && gpuDevice.vramTotalGb != null && gpuDevice.vramTotalGb > 0 && (
                     <span className="text-xs text-muted-foreground hidden md:block">
-                      {machine.metrics.gpu.vram_used_gb.toFixed(1)}/{machine.metrics.gpu.vram_total_gb.toFixed(1)}GB
+                      {gpuDevice.vramUsedGb.toFixed(1)}/{gpuDevice.vramTotalGb.toFixed(1)}GB
                     </span>
                   )}
-                  {machine.metrics.gpu.temperature !== undefined && (
-                    <span className={`text-sm font-medium ${getTemperatureColorClass(machine.metrics.gpu.temperature)}`}>
-                      {formatTemperature(machine.metrics.gpu.temperature, userPreferences.temperatureUnit)}
+                  {gpuDevice.temperature != null && (
+                    <span className={`text-sm font-medium ${getTemperatureColorClass(gpuDevice.temperature)}`}>
+                      {formatTemperature(gpuDevice.temperature, userPreferences.temperatureUnit)}
                     </span>
                   )}
                 </div>
@@ -419,28 +584,27 @@ function MachineCard({
           )}
 
           {/* Network Metric */}
-          {(() => {
-            const interfaces = machine.metrics?.network?.interfaces;
-            if (!interfaces) return null;
-            const primary = getPrimaryNic(interfaces);
-            if (!primary) return null;
-            const maxUtil = Math.max(primary.data.tx_util, primary.data.rx_util);
+          {nicDevice && nicDevice.txBps != null && nicDevice.rxBps != null && (() => {
+            const maxUtil = Math.max(nicDevice.txUtil ?? 0, nicDevice.rxUtil ?? 0);
             return (
               <div
-                className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group ${getUsageRingClass(maxUtil)}`}
-                onClick={onMetricClick ? () => onMetricClick(`${primary.name}_tx_util` as MetricType) : undefined}
+                className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(maxUtil)}`}
+                onClick={onMetricClick ? () => onMetricClick(`${nicDevice.id}_tx_util` as MetricType) : undefined}
               >
                 <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(maxUtil)}`} />
                 <div className="relative z-10 flex items-center justify-between px-3 py-2.5 pl-4">
                   <div className="flex items-center gap-3 min-w-0">
                     <span className="text-sm font-medium text-muted-foreground">network</span>
-                    <span className="text-xs text-muted-foreground truncate hidden sm:block" title={`${primary.name} (${primary.data.link_speed} Mbps)`}>
-                      {primary.name}
+                    <span className="text-xs text-muted-foreground truncate hidden sm:block" title={nicDevice.linkSpeedMbps ? `${nicDevice.id} (${nicDevice.linkSpeedMbps} Mbps)` : nicDevice.id}>
+                      {nicDevice.id}
                     </span>
+                    {showNicDropdown && machine.devices?.nics && (
+                      renderDeviceSelect('nic', machine.devices.nics, cardPref.nic, (id) => id)
+                    )}
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
-                    <span className="text-xs font-medium text-orange-400">TX {formatThroughput(primary.data.tx_bps)}</span>
-                    <span className="text-xs font-medium text-green-400">RX {formatThroughput(primary.data.rx_bps)}</span>
+                    <span className="text-xs font-medium text-orange-400">{'\u2191 '}{formatThroughput(nicDevice.txBps)}</span>
+                    <span className="text-xs font-medium text-green-400">{'\u2193 '}{formatThroughput(nicDevice.rxBps)}</span>
                   </div>
                 </div>
               </div>
@@ -451,22 +615,123 @@ function MachineCard({
         </Collapsible>
       )}
 
+      {/* Displays Collapsible */}
+      <Collapsible open={effectiveDisplaysExpanded} onOpenChange={onToggleDisplays}>
+        {!effectiveDisplaysExpanded && (
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
+              <div className="flex items-center gap-2 w-full select-none">
+                <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
+                {displayMonitors.length > 0 ? (
+                  <div className="flex items-center gap-2.5 text-sm text-muted-foreground overflow-hidden min-w-0">
+                    <span className="tabular-nums flex-shrink-0">
+                      <span className="text-foreground font-medium">{displayMonitors.length}</span> display{displayMonitors.length === 1 ? '' : 's'}
+                    </span>
+                    <span className="text-border flex-shrink-0">|</span>
+                    <span className="truncate tabular-nums">
+                      {displayMonitors.map((m, i) => {
+                        const rotated = m.rotation === 90 || m.rotation === 270;
+                        const w = rotated ? m.resolution.height : m.resolution.width;
+                        const h = rotated ? m.resolution.width : m.resolution.height;
+                        return (
+                          <span key={m.id}>
+                            {i > 0 && <span className="mx-1.5 text-border">·</span>}
+                            <span className={m.primary ? 'text-foreground font-medium' : ''}>{w}x{h}</span>
+                          </span>
+                        );
+                      })}
+                    </span>
+                    {displayDriftCount > 0 && (
+                      <span
+                        className="inline-block w-2 h-2 rounded-full bg-amber-500 ml-2 flex-shrink-0"
+                        role="img"
+                        aria-label={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
+                        title={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
+                      />
+                    )}
+                    {machine.displayBreakerTripped && (
+                      <span
+                        className="inline-block w-2 h-2 rounded-full bg-destructive ml-1 flex-shrink-0"
+                        role="img"
+                        aria-label="auto-restore disabled — circuit breaker tripped"
+                        title="auto-restore disabled — circuit breaker tripped"
+                      />
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-muted-foreground text-sm">displays: no data</span>
+                )}
+              </div>
+            </Button>
+          </CollapsibleTrigger>
+        )}
+        <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+          <CollapsibleTrigger asChild>
+            <div className="border-t border-border relative cursor-pointer group">
+              <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="relative flex items-center px-4 py-1.5 select-none">
+                <ChevronUp className="h-4 w-4 text-foreground/50 group-hover:text-foreground/70 transition-colors flex-shrink-0" />
+              </div>
+            </div>
+          </CollapsibleTrigger>
+          <div
+            className={`px-4 pb-4 pt-2 ${onMetricClick ? 'cursor-pointer hover:bg-secondary/20 transition-colors' : ''}`}
+            onClick={onMetricClick ? (e) => { e.stopPropagation(); onMetricClick('display'); } : undefined}
+          >
+            {displayMonitors.length > 0 ? (
+              <div className="grid grid-cols-2 gap-0">
+                <div className="min-w-0 h-[160px] border border-border/50 rounded-l-lg md:border-r-0 overflow-hidden">
+                  <DisplayCanvas
+                    monitors={displayMonitors}
+                    mosaicGrids={displayProfile?.mosaicGrids}
+                    labelMode="indexOnly"
+                    className="h-[160px]"
+                  />
+                </div>
+                <div className="h-[160px] border border-border/50 rounded-r-lg overflow-hidden flex flex-col justify-center gap-1.5 px-3 text-xs text-muted-foreground">
+                  {displayMonitors.map((m, i) => {
+                    // Post-rotation dimensions match what Windows treats the
+                    // panel as (and what the canvas rect renders): a 4K panel
+                    // rotated 270° reads as 2160×3840, not 3840×2160.
+                    const isPortrait = m.rotation === 90 || m.rotation === 270;
+                    const effW = isPortrait ? m.resolution.height : m.resolution.width;
+                    const effH = isPortrait ? m.resolution.width : m.resolution.height;
+                    return (
+                      <div key={m.id} className="flex items-center gap-2 min-w-0">
+                        <span className="font-mono text-muted-foreground shrink-0">{i + 1}</span>
+                        <span className="text-foreground font-medium truncate">{m.friendlyName || m.id}</span>
+                        <span className="text-muted-foreground shrink-0 tabular-nums">{effW}×{effH}</span>
+                        {m.primary && <span className="text-amber-500 shrink-0" role="img" aria-label="primary">★</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground py-4 text-center">no display data reported</div>
+            )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+
       {/* Expandable Process List */}
       {machine.processes && machine.processes.length > 0 && (
-        <Collapsible open={localProcessesExpanded} onOpenChange={() => setLocalProcessesExpanded(v => !v)}>
-          {!localProcessesExpanded && (
+        <Collapsible open={processesExpanded} onOpenChange={onToggleProcesses}>
+          {!processesExpanded && (
             <CollapsibleTrigger asChild>
               <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
-                <div className="flex items-center gap-2 w-full select-none">
+                <div className="flex items-center gap-2.5 w-full select-none overflow-hidden">
                   <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
-                  <span className="text-muted-foreground text-sm flex-shrink-0">
-                    {machine.processes.length} process{machine.processes.length > 1 ? 'es' : ''}
+                  <span className="text-sm flex-shrink-0 text-muted-foreground">
+                    <span className="text-foreground font-medium">{machine.processes.length}</span> process{machine.processes.length > 1 ? 'es' : ''}
                   </span>
-                  <div className="flex items-center gap-3 overflow-hidden">
-                    {machine.processes.map((proc) => (
-                      <span key={proc.id} className="flex items-center gap-1 flex-shrink-0">
+                  <span className="text-border flex-shrink-0">|</span>
+                  <div className="flex items-center overflow-hidden min-w-0">
+                    {machine.processes.map((proc, i) => (
+                      <span key={proc.id} className="flex items-center flex-shrink-0">
+                        {i > 0 && <span className="mx-1.5 text-border">·</span>}
                         <span className="text-sm text-muted-foreground truncate max-w-[100px]">{proc.name}</span>
-                        <span className={`inline-block w-2 h-2 rounded-full flex-shrink-0 ${
+                        <span className={`ml-1 inline-block w-2 h-2 rounded-full flex-shrink-0 ${
                           !machine.online ? 'bg-muted-foreground/40' :
                           proc.status === 'RUNNING' ? 'bg-green-500' :
                           proc.status === 'INACTIVE' ? 'bg-slate-500' :
@@ -480,7 +745,7 @@ function MachineCard({
               </Button>
             </CollapsibleTrigger>
           )}
-          <CollapsibleContent>
+          <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
             <CollapsibleTrigger asChild>
               <div className="border-t border-border relative cursor-pointer group">
                 <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -521,7 +786,6 @@ function MachineCard({
                         <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">
                           {(() => {
                             const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
-                            const isScheduled = currentMode === 'scheduled';
                             return (
                               <div className="hidden md:flex items-stretch rounded-md overflow-hidden border border-border h-8">
                                 {(['off', 'always', 'scheduled'] as const).map((mode) => {
@@ -538,18 +802,24 @@ function MachineCard({
                                       <span key={mode} className={`flex items-stretch ${isActive ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground'}`}>
                                         <button
                                           onClick={() => !isActive && onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
-                                          className={`px-3 text-xs font-medium ${isActive ? 'cursor-default' : 'hover:bg-muted/50 cursor-pointer'} transition-colors`}
+                                          className={`px-3 text-sm font-medium ${isActive ? 'cursor-default' : 'hover:bg-accent/50 cursor-pointer'} transition-colors`}
                                         >
                                           {labels[mode]}
                                         </button>
                                         <span className={`w-px ${isActive ? 'bg-blue-400/50' : 'bg-border'}`} />
-                                        <button
-                                          onClick={() => onConfigureSchedule?.(process)}
-                                          className={`px-1.5 transition-colors cursor-pointer flex items-center ${isActive ? 'hover:bg-blue-500' : 'hover:bg-muted/50'}`}
-                                          title="Configure schedule"
-                                        >
-                                          <Settings2 className="h-3.5 w-3.5" />
-                                        </button>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <button
+                                              onClick={() => onConfigureSchedule?.(process)}
+                                              className={`px-1.5 transition-colors cursor-pointer flex items-center ${isActive ? 'hover:bg-blue-500' : 'hover:bg-accent/50'}`}
+                                            >
+                                              <Settings2 className="h-3.5 w-3.5" />
+                                            </button>
+                                          </TooltipTrigger>
+                                          <TooltipContent>
+                                            <p>configure schedule</p>
+                                          </TooltipContent>
+                                        </Tooltip>
                                       </span>
                                     );
                                   }
@@ -558,7 +828,7 @@ function MachineCard({
                                     <button
                                       key={mode}
                                       onClick={() => onSetLaunchMode(process.id, process.name, mode, process.exe_path)}
-                                      className={`px-3 text-xs font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-muted/50'}`}
+                                      className={`px-3 text-sm font-medium transition-all duration-500 cursor-pointer ${isActive ? activeColors[mode] : 'bg-card text-muted-foreground hover:bg-accent/50'}`}
                                     >
                                       {labels[mode]}
                                     </button>
@@ -568,36 +838,59 @@ function MachineCard({
                             );
                           })()}
                           <Button
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
                             onClick={() => onEditProcess(process)}
-                            className="bg-card border-border text-foreground hover:bg-muted hover:border-foreground/40 cursor-pointer p-2"
-                            title="edit"
+                            className="bg-card border border-border text-foreground p-2"
                           >
                             <Pencil className="h-3 w-3" />
                           </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => onKillProcess(process.id, process.name)}
-                            className="bg-card border-border text-red-400 hover:bg-red-950 hover:border-red-700 hover:text-red-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 p-2"
-                            disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
-                            title="kill"
-                          >
-                            <Square className="h-3 w-3" />
-                          </Button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => onRestartProcess(process.id, process.name)}
+                                aria-label={`restart ${process.name}`}
+                                className="bg-card border border-border text-foreground disabled:cursor-not-allowed disabled:opacity-50 p-2"
+                                disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                              >
+                                <RotateCw className="h-3 w-3" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>restart process</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => onKillProcess(process.id, process.name)}
+                                aria-label={`kill ${process.name}`}
+                                className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 p-2"
+                                disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                              >
+                                <Square className="h-3 w-3" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>kill process</p>
+                            </TooltipContent>
+                          </Tooltip>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
                 {/* add process Button */}
-                <div className="flex justify-center pt-3 ml-3">
+                <div className="flex justify-center pt-3">
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     size="sm"
                     onClick={onCreateProcess}
-                    className="bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
+                    className="bg-card border border-border text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
                   >
                     <Plus className="h-3 w-3 mr-1" />
                     add process
@@ -630,14 +923,17 @@ export function MachineCardView({
   machines,
   statsExpanded,
   processesExpanded,
+  displaysExpanded,
   onToggleStats,
   onToggleProcesses,
+  onToggleDisplays,
   currentSiteId,
   siteTimezone = 'UTC',
   siteTimeFormat = '12h',
   onEditProcess,
   onCreateProcess,
   onKillProcess,
+  onRestartProcess,
   onSetLaunchMode,
   onConfigureSchedule,
   onRemoveMachine,
@@ -649,26 +945,40 @@ export function MachineCardView({
   onScreenshot,
   onLiveView,
 }: MachineCardViewProps) {
-  const { userPreferences, isAdmin } = useAuth();
+  const { userPreferences, isSiteAdmin } = useAuth();
+  const canSiteAdmin = isSiteAdmin(currentSiteId);
+  const { prefs, setCardPref } = useDevicePrefs();
+  const uniqueTimezones = new Set(machines.map(m => m.machineTimezone).filter(Boolean));
+  const showLocalClock = uniqueTimezones.size > 1;
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    // `machines-grid` is a hook for the slide-animation perf rule in
+    // globals.css — when the dashboard marks the ancestor with
+    // data-slide-pausing="true" during the detail panel's transition,
+    // each card here gets `content-visibility: auto` so offscreen cards
+    // skip layout/paint and don't compete with the slide for frame budget.
+    <div className="machines-grid grid gap-4 md:grid-cols-2">
       {machines.map((machine) => (
         <MachineCard
           key={machine.machineId}
           machine={machine}
           statsExpanded={statsExpanded}
           processesExpanded={processesExpanded}
+          displaysExpanded={displaysExpanded}
           currentSiteId={currentSiteId}
           siteTimezone={siteTimezone}
           siteTimeFormat={siteTimeFormat}
           userPreferences={userPreferences}
-          isAdmin={isAdmin}
+          isSiteAdmin={canSiteAdmin}
+          cardPref={prefs.cardView[machine.machineId] ?? {}}
+          onSetCardPref={(kind, id) => setCardPref(machine.machineId, kind, id)}
           onToggleStats={onToggleStats}
           onToggleProcesses={onToggleProcesses}
+          onToggleDisplays={onToggleDisplays}
           onEditProcess={(process) => onEditProcess(machine.machineId, process)}
           onCreateProcess={() => onCreateProcess(machine.machineId)}
           onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}
+          onRestartProcess={(processId, processName) => onRestartProcess(machine.machineId, processId, processName)}
           onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
             onSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
           }
@@ -681,6 +991,7 @@ export function MachineCardView({
           onDismissRebootPending={onDismissRebootPending ? (processName) => onDismissRebootPending(machine.machineId, processName) : undefined}
           onScreenshot={onScreenshot ? () => onScreenshot(machine.machineId) : undefined}
           onLiveView={onLiveView ? () => onLiveView(machine.machineId) : undefined}
+          showLocalClock={showLocalClock}
         />
       ))}
     </div>

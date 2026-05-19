@@ -201,9 +201,10 @@ def get_default_project_directory() -> str:
     Returns:
         Path to the default project directory
     """
-    # Default to user's Documents folder
+    # Default to user's Documents/Owlette folder (keeps project files isolated
+    # from the user's personal Documents while using a shorter, cleaner name).
     user_home = os.path.expanduser("~")
-    default_dir = os.path.join(user_home, "Documents", "OwletteProjects")
+    default_dir = os.path.join(user_home, "Documents", "Owlette")
     os.makedirs(default_dir, exist_ok=True)
     return default_dir
 

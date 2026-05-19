@@ -1,174 +1,216 @@
 # installation
 
-There are three ways to install and authenticate the owlette agent on a Windows machine.
+There are four supported ways to install or update the owlette agent on a Windows machine:
+
+1. Interactive packaged installer for a single machine
+2. Silent packaged installer with `/ADD=` for bulk enrollment
+3. Remote deployment to machines that already run the agent
+4. Manual packaged repair or source-development setup
 
 ---
 
-## method 1: interactive install (recommended)
+## method 1: interactive packaged install
 
-Download the installer, run it, and pair from your phone or browser.
+Download the packaged installer, run it as Administrator, and authorize the machine with the device-code pairing flow.
 
 ### steps
 
-1. Log into the owlette dashboard
-2. Click the **download button** in the header bar (shows the latest version)
-3. Save the `.exe` installer to the target machine
-4. Run the installer **as Administrator**
-5. Follow the installation wizard
-6. A console window appears with a **pairing phrase** (3 random words)
-7. Your browser opens automatically to the authorization page
-8. Select a site and click **"Authorize"**
-9. The agent receives credentials and the installer completes
+1. Log into the owlette dashboard.
+2. Click the download button in the header bar.
+3. Save `Owlette-Installer-v<version>.exe` to the target machine.
+4. Right-click the installer and select **Run as administrator**.
+5. Follow the installer wizard.
+6. When the console appears, copy the pairing phrase and note the authorization URL.
+7. At the prompt `open browser on this machine? [y/N]`, choose:
+    - `y` to open the pairing page locally, then select a site and authorize.
+    - Enter to keep the browser closed, then enter the phrase from your phone or another computer.
+8. Wait while the agent polls for authorization, stores credentials, and installs the Windows service.
 
-The entire flow takes under a minute. Credentials are stored encrypted on disk — you won't need to re-authenticate unless you explicitly remove the machine.
+Pairing phrases expire after 10 minutes. Credentials are stored encrypted at `C:\ProgramData\Owlette\.tokens.enc`.
 
 ---
 
-## method 2: silent install with `/ADD=` (bulk deployment)
+## method 2: silent install with `/ADD=`
 
-Deploy to many machines without any interaction. Generate a pairing phrase from the dashboard, then run the installer silently.
+Use this path for bulk deployment when an admin has already generated and authorized a pairing phrase.
 
 ### steps
 
-1. On the dashboard, click the **"+"** button next to the view toggle
-2. Select the **"Generate Code"** tab
-3. Copy the pairing phrase (e.g., `silver-compass-drift`)
-4. Run on each target machine:
+1. In the dashboard, click the `+` button next to the view toggle.
+2. Open **Generate Code**.
+3. Copy the pairing phrase, for example `silver-compass-drift`.
+4. Run the installer on each target machine:
 
-```bash
-Owlette-Installer-v2.4.1.exe /ADD=silver-compass-drift /SILENT
+```cmd
+Owlette-Installer-v<version>.exe /ADD=silver-compass-drift /SILENT
 ```
 
-!!! info "Phrase expiry"
-    Generated phrases expire after **10 minutes**. Generate a new one from the dashboard if needed.
+For a fully quiet install:
 
-### silent installation flags
+```cmd
+Owlette-Installer-v<version>.exe /ADD=silver-compass-drift /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+```
+
+The installer passes `/ADD=` to `configure_site.py --add`. The agent polls `/api/agent/auth/device-code/poll` with the phrase and completes as soon as the server returns tokens.
+
+### installer flags
 
 | flag | description |
 |------|-------------|
-| `/ADD=phrase` | Pre-authorized pairing phrase (skips interactive pairing) |
-| `/SILENT` | Minimal UI (shows progress bar only) |
-| `/VERYSILENT` | No UI at all |
-| `/SUPPRESSMSGBOXES` | Suppress all message boxes |
+| `/ADD=phrase` | Preauthorized pairing phrase for silent enrollment |
+| `/SERVER=prod` | Use `https://owlette.app/api`; this is the default |
+| `/SERVER=dev` | Use `https://dev.owlette.app/api` |
+| `/SILENT` | Minimal UI with progress only |
+| `/VERYSILENT` | No installer UI |
+| `/SUPPRESSMSGBOXES` | Suppress message boxes |
 | `/DIR="C:\path"` | Custom install directory |
-| `/NORESTART` | Don't restart after installation |
+| `/NORESTART` | Do not restart after installation |
+| `/LOG="C:\path\setup.log"` | Write an Inno Setup log to the chosen path |
 
-Example (fully silent bulk deploy):
+Example for the dev environment:
 
-```bash
-Owlette-Installer-v2.4.1.exe /ADD=silver-compass-drift /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+```cmd
+Owlette-Installer-v<version>.exe /SERVER=dev /ADD=silver-compass-drift /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
 ---
 
-## method 3: remote deployment (upgrades)
+## method 3: remote deployment or upgrade
 
-Deploy agent updates to machines that already have owlette installed.
+Remote deployment requires a target machine that already has a running owlette agent. The agent receives an `install_software` command, downloads the installer, verifies its SHA-256 checksum, and then executes it with the provided silent flags.
 
-1. In the dashboard, go to **Deployments**
-2. Click **"New Deployment"**
-3. Configure:
-    - **Name**: e.g., "owlette Agent v2.4.1"
-    - **Installer URL**: Direct download link to the installer `.exe`
-    - **Silent Flags**: `/VERYSILENT /SUPPRESSMSGBOXES`
-    - **Verify Path**: `C:\ProgramData\Owlette\agent\src\owlette_service.py`
-4. Select target machines
-5. Click **Deploy**
+Required fields for an owlette agent upgrade:
 
-!!! warning "Prerequisites"
-    Remote deployment requires the target machine to already have a running owlette agent (to receive the deployment command). Use this method for **upgrading** existing agents or deploying other software.
+| field | required | notes |
+|-------|----------|-------|
+| `installer_url` | yes | Direct URL to the installer `.exe` |
+| `installer_name` | no | Defaults to `installer.exe` when omitted |
+| `silent_flags` | no | Use installer flags such as `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` |
+| `sha256_checksum` | yes | 64-character SHA-256 of the installer; the agent refuses remote installs without it |
+| `verify_path` | no | Optional path checked after installation |
+| `timeout_seconds` | no | Defaults to 2400 seconds |
+
+Example command payload:
+
+```json
+{
+  "installer_url": "https://downloads.example.com/Owlette-Installer-v<version>.exe",
+  "installer_name": "Owlette-Installer-v<version>.exe",
+  "silent_flags": "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SERVER=prod",
+  "sha256_checksum": "<64-character sha256>",
+  "verify_path": "C:\\ProgramData\\Owlette\\agent\\src\\owlette_service.py",
+  "timeout_seconds": 2400
+}
+```
+
+In the dashboard deployment flow, provide the same installer URL, silent flags, checksum, optional verify path, and target machines before starting the deployment.
 
 ---
 
-## method 4: manual installation (development)
+## method 4: manual packaged repair or source development
 
-For development or custom setups:
+There are two distinct manual flows.
 
-```bash
-# Clone the repository
-git clone https://github.com/theexperiential/owlette.git
-cd owlette/agent
+### packaged installer layout
 
-# Install Python dependencies
-pip install -r requirements.txt
+Use this only on a machine that already has the packaged layout under `C:\ProgramData\Owlette`. The service installer script expects embedded Python, NSSM, scripts, and agent source in that layout:
 
-# Run the service install script (as Administrator)
+- `C:\ProgramData\Owlette\python\python.exe`
+- `C:\ProgramData\Owlette\tools\nssm.exe`
+- `C:\ProgramData\Owlette\scripts\install.bat`
+- `C:\ProgramData\Owlette\agent\src\owlette_runner.py`
+
+To re-run pairing:
+
+```cmd
+cd /d C:\ProgramData\Owlette
+python\python.exe agent\src\configure_site.py
+```
+
+To repair the Windows service registration:
+
+```cmd
+cd /d C:\ProgramData\Owlette
 scripts\install.bat
 ```
 
-The install script:
+### source clone for development
 
-1. Installs NSSM if not present
-2. Creates the `OwletteService` Windows service
-3. Configures the service to auto-start on boot
-4. Starts the service
+A raw source clone does not include the packaged `python\`, `tools\`, or installed service layout. Use it for development, testing, or building a new installer package:
 
-After installing, run the pairing flow manually:
-
-```bash
-cd C:\ProgramData\Owlette\agent\src
-python configure_site.py
+```cmd
+git clone https://github.com/theexperiential/owlette.git
+cd owlette\agent
+python -m pip install -r requirements.txt
 ```
+
+Do not run `agent\scripts\install.bat` directly from a raw clone unless you have first built or staged the same packaged layout that the installer creates.
 
 ---
 
 ## how pairing works
 
-When the agent connects for the first time, it authenticates via a device code flow:
+The installer runs `configure_site.py` after copying files and before installing the service, unless an existing valid site configuration is already present.
 
-```
+```text
 Installer runs configure_site.py
-    │
-    ▼
-Agent requests pairing phrase from server
-    │
-    ▼
-Console displays phrase (e.g., "silver-compass-drift")
-Browser auto-opens to owlette.app/add
-    │
-    ▼
-User selects site → clicks "Authorize"
-    │
-    ▼
-Server generates tokens → agent polls and receives them
-    │
-    ├── Access Token (1-hour expiry, auto-refreshes)
-    └── Refresh Token (never expires, admin-revocable)
-    │
-    ▼
-Tokens encrypted to C:\ProgramData\Owlette\.tokens.enc
-Agent authenticated — starts syncing
+  |
+  v
+Agent requests a device code from the API
+  |
+  v
+Console displays the pairing phrase, authorization URL, and 10-minute expiry
+  |
+  v
+Prompt: open browser on this machine? [y/N]
+  |
+  +-- y: browser opens locally; select a site and authorize
+  |
+  +-- Enter: enter the phrase from another device
+  |
+  v
+Agent polls until authorization completes or expires
+  |
+  v
+Server returns access token, refresh token, and site ID
+  |
+  v
+Tokens are encrypted at C:\ProgramData\Owlette\.tokens.enc
+Config is written to C:\ProgramData\Owlette\config\config.json
 ```
 
-Three ways to authorize:
+Authorization options:
 
 | method | when to use |
-|--------|------------|
-| **Browser auto-open** | Default — browser opens on the machine with phrase pre-filled |
-| **Dashboard "+" button** | Enter the phrase on the dashboard from any device |
-| **`/ADD=` flag** | Pre-authorized phrase for silent/bulk installs |
+|--------|-------------|
+| Local browser prompt | Single-machine install when the target machine has a usable browser |
+| Phrase on another device | Single-machine install when the target machine is headless, locked down, or inconvenient to sign in from |
+| `/ADD=` | Bulk install with a preauthorized phrase |
 
 ---
 
 ## post-installation verification
 
-After installation, verify the agent is running:
+After installation, verify the agent is running.
 
 ### check windows services
 
-1. Open Services (`Win + R` → `services.msc`)
-2. Find **"OwletteService"**
-3. Status should be **"Running"**
+1. Open Services (`Win + R`, then `services.msc`).
+2. Find `OwletteService`.
+3. Confirm the status is **Running**.
 
 ### check logs
 
-```
+```text
 C:\ProgramData\Owlette\logs\service.log
+C:\ProgramData\Owlette\logs\service_stdout.log
+C:\ProgramData\Owlette\logs\service_stderr.log
+C:\ProgramData\Owlette\logs\pairing_debug.log
 ```
 
-Look for:
+Useful startup lines include:
 
-```
+```text
 INFO: owlette service started successfully
 INFO: Firebase client initialized for site: your_site_id
 INFO: Firebase client started successfully
@@ -176,31 +218,39 @@ INFO: Firebase client started successfully
 
 ### check dashboard
 
-The machine should appear in your site's dashboard within 30 seconds with:
+The machine should appear in the selected site with:
 
-- Green "Online" indicator
-- CPU, memory, disk metrics populating
-- Agent version displayed
+- Online status
+- CPU, memory, and disk metrics
+- Agent version
 
 ### check system tray
 
-An owl icon should appear in the Windows system tray. Right-click it for status and options.
+The owlette tray icon starts through the user's Startup folder. If it is not visible, check the hidden-icons overflow menu or launch **Owlette Tray Icon** from the Start menu.
 
 ---
 
 ## uninstallation
 
-**Windows Settings** → **Apps** → **owlette** → **Uninstall**
+Use **Windows Settings** > **Apps** > **owlette** > **Uninstall**.
 
-The uninstaller will:
+The uninstaller:
 
-1. Stop the owlette service
-2. Remove the NSSM service wrapper
-3. Remove Windows Defender exclusions
-4. Delete program files from `C:\ProgramData\Owlette`
+1. Stops `OwletteService`.
+2. Removes the NSSM service wrapper.
+3. Removes the Windows Defender exclusions added by the installer.
+4. Removes installed component directories: `python\`, `agent\`, `tools\`, and `scripts\`.
+5. Removes installed top-level files such as `README.md` and `LICENSE`.
 
-!!! note "Data preservation"
-    Configuration, tokens, and logs in `C:\ProgramData\Owlette\` are preserved by default. To fully remove all data after uninstalling: `rd /s /q C:\ProgramData\Owlette`
+By default, it preserves user data under `C:\ProgramData\Owlette`, including:
+
+- `config\`
+- `logs\`
+- `cache\`
+- `tmp\`
+- `.tokens.enc`
+
+In non-silent uninstall mode, the uninstaller asks whether to remove all owlette configuration and data files. Accept that prompt only when you want a full cleanup. Silent uninstalls preserve data for upgrade and repair flows.
 
 ---
 
@@ -210,11 +260,11 @@ The owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.p
 
 | component | purpose |
 |-----------|---------|
-| **Embedded Python** | Python 3.11 interpreter (no system Python needed) |
-| **NSSM** | Service manager for reliable Windows service operation |
-| **Agent source** | All Python modules in `agent/src/` |
-| **Configuration GUI** | CustomTkinter-based local configuration tool |
-| **System tray** | Background tray icon for status monitoring |
+| Embedded Python | Python runtime; no system Python is needed for packaged installs |
+| NSSM | Windows service wrapper at `C:\ProgramData\Owlette\tools\nssm.exe` |
+| Agent source | Python modules under `C:\ProgramData\Owlette\agent\src\` |
+| Configuration GUI | Local configuration tool |
+| System tray | Background tray icon for status monitoring |
 
 ---
 
@@ -222,8 +272,8 @@ The owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.p
 
 | requirement | minimum |
 |-------------|---------|
-| **OS** | Windows 10 or later (64-bit) |
-| **RAM** | 50 MB (agent overhead) |
-| **Disk** | ~200 MB (including embedded Python) |
-| **Network** | Internet access for cloud sync |
-| **Permissions** | Administrator (for service installation) |
+| OS | Windows 10 or later, 64-bit |
+| RAM | 50 MB agent overhead |
+| Disk | About 200 MB including embedded Python |
+| Network | Access to the configured owlette API and Firebase services |
+| Permissions | Administrator privileges for service installation |

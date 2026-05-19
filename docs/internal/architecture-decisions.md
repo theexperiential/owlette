@@ -171,7 +171,7 @@ config/
 users/
   user_xyz/
     email: "admin@example.com"
-    role: "admin"
+    role: "superadmin"         # or "admin" for site-scoped ops, "member" for read-only
     sites: ["site_abc123xyz", "site_def456uvw"]
 ```
 

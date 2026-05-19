@@ -3,11 +3,12 @@
 import { useEffect, useState } from 'react';
 import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import type { FirestoreTs } from './useFirestore';
 
 export interface ScreenshotRecord {
   id: string;
   url: string;
-  timestamp: any; // Firestore Timestamp (new) or number (legacy)
+  timestamp: FirestoreTs;
   sizeKB: number;
 }
 
@@ -20,16 +21,18 @@ export function useScreenshotHistory(
   machineId: string,
   enabled: boolean
 ) {
-  const [screenshots, setScreenshots] = useState<ScreenshotRecord[]>([]);
-  const [loading, setLoading] = useState(false);
+  // loadedKey pins the snapshot data to the (siteId, machineId) it was fetched
+  // for, so `loading` can be derived at render without a sync setState on key
+  // change. Errors from the listener also land through the state setter.
+  const [state, setState] = useState<{
+    screenshots: ScreenshotRecord[];
+    loadedKey: string | null;
+  }>({ screenshots: [], loadedKey: null });
+
+  const currentKey = enabled && db && siteId && machineId ? `${siteId}/${machineId}` : null;
 
   useEffect(() => {
-    if (!enabled || !db || !siteId || !machineId) {
-      setScreenshots([]);
-      return;
-    }
-
-    setLoading(true);
+    if (!currentKey || !db) return;
 
     const col = collection(db, 'sites', siteId, 'machines', machineId, 'screenshots');
     const q = query(col, orderBy('timestamp', 'desc'), limit(20));
@@ -39,15 +42,22 @@ export function useScreenshotHistory(
         id: doc.id,
         ...(doc.data() as Omit<ScreenshotRecord, 'id'>),
       }));
-      setScreenshots(records);
-      setLoading(false);
+      setState({ screenshots: records, loadedKey: currentKey });
     }, (error) => {
       console.error('[useScreenshotHistory] Snapshot error:', error);
-      setLoading(false);
+      // Mark as "loaded" so the spinner clears; consumers get an empty list.
+      setState({ screenshots: [], loadedKey: currentKey });
     });
 
     return () => unsubscribe();
-  }, [enabled, siteId, machineId]);
+  }, [currentKey, siteId, machineId]);
 
+  // Gate the returned list on key-match so stale data from a prior machine
+  // never leaks, and derive loading without needing a sync setState.
+  const screenshots = currentKey && state.loadedKey === currentKey ? state.screenshots : EMPTY_SCREENSHOTS;
+  const loading = currentKey !== null && state.loadedKey !== currentKey;
   return { screenshots, loading };
 }
+
+/** Stable empty array so consumers' memo/effect deps don't churn. */
+const EMPTY_SCREENSHOTS: ScreenshotRecord[] = [];

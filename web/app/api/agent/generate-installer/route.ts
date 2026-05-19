@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { ApiAuthError, assertUserHasSiteAccess, requireSession } from '@/lib/apiAuth.server';
+import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 
 /**
@@ -74,14 +75,10 @@ export async function POST(request: NextRequest) {
       { status: 200 }
     );
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    console.error('Error generating registration code:', error);
-    return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
-    );
+    return apiError(error, 'agent/generate-installer');
   }
 }

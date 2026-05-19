@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 
 /**
  * GET /api/unsubscribe?token=...
@@ -68,7 +69,6 @@ export async function GET(request: NextRequest) {
     const baseUrl = request.nextUrl.origin;
     return NextResponse.redirect(`${baseUrl}/unsubscribe?success=true`);
   } catch (error) {
-    console.error('[unsubscribe] Error updating preferences:', error);
-    return NextResponse.json({ error: 'Failed to unsubscribe' }, { status: 500 });
+    return apiError(error, 'unsubscribe');
   }
 }

@@ -1,0 +1,3 @@
+smoke-output.log
+__pycache__/
+*.pyc

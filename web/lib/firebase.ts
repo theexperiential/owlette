@@ -8,9 +8,9 @@
  */
 
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { getAuth, Auth } from 'firebase/auth';
-import { getFirestore, Firestore } from 'firebase/firestore';
-import { getStorage, FirebaseStorage } from 'firebase/storage';
+import { getAuth, Auth, connectAuthEmulator } from 'firebase/auth';
+import { getFirestore, Firestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getStorage, FirebaseStorage, connectStorageEmulator } from 'firebase/storage';
 
 // Firebase configuration
 // These values come from Firebase Console > Project Settings > Web App
@@ -23,10 +23,19 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || 'placeholder',
 };
 
-// Check if Firebase is configured
-const isConfigured = typeof window !== 'undefined' &&
-                     process.env.NEXT_PUBLIC_FIREBASE_API_KEY &&
-                     process.env.NEXT_PUBLIC_FIREBASE_API_KEY !== 'placeholder';
+// Check if Firebase is configured. In emulator mode (Playwright E2E) the API
+// key doesn't need to be real — emulator accepts anything — so we treat that
+// as configured regardless of the env var value.
+const isEmulatorMode =
+  typeof window !== 'undefined' &&
+  process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
+const isConfigured = typeof window !== 'undefined' && (
+  isEmulatorMode ||
+  (
+    !!process.env.NEXT_PUBLIC_FIREBASE_API_KEY &&
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY !== 'placeholder'
+  )
+);
 
 // Initialize Firebase (singleton pattern) - only on client side
 let app: FirebaseApp | null = null;
@@ -34,16 +43,74 @@ let auth: Auth | null = null;
 let db: Firestore | null = null;
 let storage: FirebaseStorage | null = null;
 
+function parseEmulatorHost(value: string | undefined, fallbackHost: string, fallbackPort: number) {
+  const trimmed = value?.trim();
+  if (!trimmed) return { host: fallbackHost, port: fallbackPort };
+
+  try {
+    const url = new URL(trimmed.includes('://') ? trimmed : `http://${trimmed}`);
+    return {
+      host: url.hostname || fallbackHost,
+      port: Number(url.port) || fallbackPort,
+    };
+  } catch {
+    return { host: fallbackHost, port: fallbackPort };
+  }
+}
+
+function makeIdempotencyKey(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+// Emulator wiring for Playwright E2E tests. Gated on NEXT_PUBLIC_USE_FIREBASE_EMULATOR
+// so production builds never connect to localhost. Called exactly once per app
+// instance (tracked on window to survive hot-reload re-execution of this module).
+function maybeConnectEmulators(
+  authInstance: Auth,
+  dbInstance: Firestore,
+  storageInstance: FirebaseStorage,
+) {
+  if (typeof window === 'undefined') return;
+  if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR !== 'true') return;
+  const w = window as Window & { __OWLETTE_EMULATORS_CONNECTED__?: boolean };
+  if (w.__OWLETTE_EMULATORS_CONNECTED__) return;
+
+  const authEmulator = parseEmulatorHost(
+    process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST,
+    '127.0.0.1',
+    9099,
+  );
+  const firestoreEmulator = parseEmulatorHost(
+    process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST,
+    '127.0.0.1',
+    8080,
+  );
+  const storageEmulator = parseEmulatorHost(
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_EMULATOR_HOST,
+    '127.0.0.1',
+    9199,
+  );
+
+  connectAuthEmulator(authInstance, `http://${authEmulator.host}:${authEmulator.port}`, {
+    disableWarnings: true,
+  });
+  connectFirestoreEmulator(dbInstance, firestoreEmulator.host, firestoreEmulator.port);
+  connectStorageEmulator(storageInstance, storageEmulator.host, storageEmulator.port);
+  w.__OWLETTE_EMULATORS_CONNECTED__ = true;
+}
+
 if (typeof window !== 'undefined' && !getApps().length && isConfigured) {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   db = getFirestore(app);
   storage = getStorage(app);
+  maybeConnectEmulators(auth, db, storage);
 } else if (typeof window !== 'undefined' && getApps().length) {
   app = getApps()[0];
   auth = getAuth(app);
   db = getFirestore(app);
   storage = getStorage(app);
+  maybeConnectEmulators(auth, db, storage);
 }
 
 export { app, auth, db, storage, isConfigured };
@@ -52,7 +119,7 @@ export { app, auth, db, storage, isConfigured };
  * Firebase Helper Functions
  */
 
-import { collection, getDocs, getDoc, query, orderBy, limit, doc, setDoc, Timestamp } from 'firebase/firestore';
+import { getDoc, doc } from 'firebase/firestore';
 
 /**
  * Get the latest Owlette agent version from installer_metadata collection
@@ -149,25 +216,36 @@ export async function sendOwletteUpdateCommand(
       console.warn('Could not refresh download URL, using provided URL:', urlErr);
     }
 
-    const commandId = `update_owlette_${Date.now()}`;
-    const commandRef = doc(
-      db,
-      'sites', siteId,
-      'machines', machineId,
-      'commands', 'pending'
-    );
-
-    await setDoc(commandRef, {
-      [commandId]: {
-        type: 'update_owlette',
+    const params: Record<string, string> = {
         installer_url: freshUrl,
-        deployment_id: deploymentId || null,
         target_version: targetVersion,
         checksum_sha256: checksumSha256,
-        timestamp: Timestamp.now(),
-        status: 'pending',
-      }
-    }, { merge: true });
+    };
+    if (deploymentId) params.deployment_id = deploymentId;
+
+    const res = await fetch(
+      `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/commands`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': makeIdempotencyKey(`update-owlette-${machineId}-${targetVersion}`),
+        },
+        body: JSON.stringify({
+          type: 'update_owlette',
+          params,
+        }),
+      },
+    );
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(body?.detail || body?.title || 'Failed to queue update command');
+    }
+
+    const commandId = body?.data?.commandId;
+    if (typeof commandId !== 'string' || commandId.length === 0) {
+      throw new Error('Update command response did not include a commandId.');
+    }
 
     console.log(`Sent update_owlette command to ${machineId}:`, commandId);
     return commandId;

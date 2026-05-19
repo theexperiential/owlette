@@ -15,8 +15,8 @@ import { Plus, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function SchedulePresetsPage() {
-  const { user, isAdmin, userSites, userPreferences } = useAuth();
-  const { sites } = useSites(user?.uid, userSites, isAdmin);
+  const { user, isSuperadmin, userSites, userPreferences } = useAuth();
+  const { sites } = useSites(user?.uid, userSites, isSuperadmin);
 
   // Use first site by default
   const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null);
@@ -63,8 +63,9 @@ export default function SchedulePresetsPage() {
       toast.success(`Preset "${presetToDelete.name}" deleted`);
       setDeleteDialogOpen(false);
       setPresetToDelete(null);
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to delete preset');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(message || 'Failed to delete preset');
     } finally {
       setDeleting(false);
     }
@@ -196,7 +197,7 @@ export default function SchedulePresetsPage() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)} className="hover:bg-accent! hover:text-foreground! cursor-pointer">
+            <Button variant="ghost" onClick={() => setDeleteDialogOpen(false)} className="bg-secondary border border-border cursor-pointer">
               cancel
             </Button>
             <Button

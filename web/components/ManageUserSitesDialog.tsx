@@ -3,19 +3,19 @@
 import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Plus, X, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSites } from '@/hooks/useFirestore';
 import { useAuth } from '@/contexts/AuthContext';
+import type { UserRole } from '@/hooks/useUserManagement';
 
 interface ManageUserSitesDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   userId: string;
   userEmail: string;
-  userRole: 'user' | 'admin';
+  userRole: UserRole;
   userSites: string[];
   onAssignSite: (userId: string, siteId: string) => Promise<void>;
   onRemoveSite: (userId: string, siteId: string) => Promise<void>;
@@ -31,8 +31,8 @@ export function ManageUserSitesDialog({
   onAssignSite,
   onRemoveSite,
 }: ManageUserSitesDialogProps) {
-  const { user, isAdmin, userSites: adminSites } = useAuth();
-  const { sites, loading: sitesLoading } = useSites(user?.uid, adminSites, isAdmin);
+  const { user, isSuperadmin, userSites: adminSites } = useAuth();
+  const { sites, loading: sitesLoading } = useSites(user?.uid, adminSites, isSuperadmin);
   const [assigningTo, setAssigningTo] = useState<string | null>(null);
   const [removingFrom, setRemovingFrom] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -63,11 +63,12 @@ export function ManageUserSitesDialog({
       toast.success('Site Assigned', {
         description: `${userEmail} now has access to this site.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Revert optimistic update on error
       setLocalUserSites(prev => prev.filter(id => id !== siteId));
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Assignment Failed', {
-        description: err.message || 'Failed to assign site to user.',
+        description: message || 'Failed to assign site to user.',
       });
     } finally {
       setAssigningTo(null);
@@ -85,11 +86,12 @@ export function ManageUserSitesDialog({
       toast.success('Site Removed', {
         description: `${userEmail} no longer has access to this site.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Revert optimistic update on error
       setLocalUserSites(prev => [...prev, siteId]);
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Removal Failed', {
-        description: err.message || 'Failed to remove site from user.',
+        description: message || 'Failed to remove site from user.',
       });
     } finally {
       setRemovingFrom(null);
@@ -127,7 +129,7 @@ export function ManageUserSitesDialog({
         {userRole === 'admin' && (
           <div className="bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-3 mt-4">
             <p className="text-accent-cyan text-sm">
-              <strong className="font-semibold">Admin Access:</strong> This user has admin privileges and can access <strong>all sites</strong> in the system regardless of the assignments below. The "Assigned Sites" list only controls which sites appear in this user's site dropdown for convenience.
+              <strong className="font-semibold">Admin Access:</strong> This user has admin privileges and can access <strong>all sites</strong> in the system regardless of the assignments below. The &quot;Assigned Sites&quot; list only controls which sites appear in this user&apos;s site dropdown for convenience.
             </p>
           </div>
         )}
@@ -199,7 +201,7 @@ export function ManageUserSitesDialog({
                 </h3>
                 <div className="space-y-2">
                   <div className="text-xs text-muted-foreground mb-2 p-2 bg-red-950/20 border border-red-900 rounded">
-                    these site IDs are in the user's access list but the sites no longer exist or are inaccessible. remove them to fix the site count.
+                    these site IDs are in the user&apos;s access list but the sites no longer exist or are inaccessible. remove them to fix the site count.
                   </div>
                   {orphanedSiteIds.map((siteId) => (
                     <div
@@ -251,10 +253,10 @@ export function ManageUserSitesDialog({
                       </div>
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="ghost"
                         onClick={() => handleAssignSite(site.id)}
                         disabled={assigningTo === site.id}
-                        className="border-accent-cyan/50 text-accent-cyan hover:bg-accent-cyan/10 hover:text-accent-cyan cursor-pointer"
+                        className="border border-accent-cyan/50 text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan cursor-pointer"
                       >
                         {assigningTo === site.id ? (
                           <>

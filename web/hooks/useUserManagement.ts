@@ -5,18 +5,13 @@ import {
   collection,
   query,
   onSnapshot,
-  doc,
-  updateDoc,
   orderBy,
   Timestamp,
-  arrayUnion,
-  arrayRemove,
-  deleteDoc,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
 
-export type UserRole = 'user' | 'admin';
+export type UserRole = 'member' | 'admin' | 'superadmin';
 
 export interface UserData {
   uid: string;
@@ -42,52 +37,45 @@ export interface UserData {
  */
 export function useUserManagement() {
   const [users, setUsers] = useState<UserData[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(!!db);
+  const [error, setError] = useState<string | null>(db ? null : 'Firebase is not configured');
 
   // Fetch all users with real-time updates
   useEffect(() => {
-    if (!db) {
-      setError('Firebase is not configured');
-      setLoading(false);
-      return;
-    }
+    if (!db) return;
 
-    try {
-      const usersRef = collection(db, 'users');
-      const q = query(usersRef, orderBy('createdAt', 'desc'));
+    // No try/catch: `collection()`/`query()` only throw for invalid path or
+    // query shape (both literals here), and onSnapshot surfaces runtime
+    // listener errors through its error callback. A sync catch-block setState
+    // would violate react-hooks/set-state-in-effect.
+    const usersRef = collection(db, 'users');
+    const q = query(usersRef, orderBy('createdAt', 'desc'));
 
-      const unsubscribe = onSnapshot(
-        q,
-        (snapshot) => {
-          const usersData: UserData[] = [];
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const usersData: UserData[] = [];
 
-          snapshot.forEach((doc) => {
-            usersData.push({
-              uid: doc.id,
-              ...doc.data(),
-            } as UserData);
-          });
+        snapshot.forEach((doc) => {
+          usersData.push({
+            uid: doc.id,
+            ...doc.data(),
+          } as UserData);
+        });
 
-          setUsers(usersData);
-          setLoading(false);
-          setError(null);
-        },
-        (err) => {
-          console.error('Error fetching users:', err);
-          const friendlyMessage = handleError(err);
-          setError(friendlyMessage);
-          setLoading(false);
-        }
-      );
+        setUsers(usersData);
+        setLoading(false);
+        setError(null);
+      },
+      (err) => {
+        console.error('Error fetching users:', err);
+        const friendlyMessage = handleError(err);
+        setError(friendlyMessage);
+        setLoading(false);
+      }
+    );
 
-      return () => unsubscribe();
-    } catch (err) {
-      console.error('Error setting up users listener:', err);
-      const friendlyMessage = handleError(err);
-      setError(friendlyMessage);
-      setLoading(false);
-    }
+    return () => unsubscribe();
   }, []);
 
   /**
@@ -103,10 +91,16 @@ export function useUserManagement() {
       }
 
       try {
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, {
-          role: newRole,
+        const endpoint =
+          newRole === 'member'
+            ? `/api/users/${encodeURIComponent(userId)}/demote`
+            : `/api/users/${encodeURIComponent(userId)}/promote`;
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ role: newRole }),
         });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to update user role'));
       } catch (err) {
         console.error('Error updating user role:', err);
         throw new Error(handleError(err));
@@ -116,16 +110,21 @@ export function useUserManagement() {
   );
 
   /**
-   * Get count of users by role
+   * Get count of users by role under the three-tier permission model.
+   * - superadmins: platform-wide god-mode
+   * - admins: site-scoped elevated tier (can edit site config on their assigned sites)
+   * - members: standard users with site-level access
    */
   const getUserCounts = useCallback(() => {
-    const adminCount = users.filter((u) => u.role === 'admin').length;
-    const userCount = users.filter((u) => u.role === 'user').length;
+    const superadmins = users.filter((u) => u.role === 'superadmin').length;
+    const admins = users.filter((u) => u.role === 'admin').length;
+    const members = users.filter((u) => u.role === 'member').length;
 
     return {
       total: users.length,
-      admins: adminCount,
-      users: userCount,
+      superadmins,
+      admins,
+      members,
     };
   }, [users]);
 
@@ -142,10 +141,12 @@ export function useUserManagement() {
       }
 
       try {
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, {
-          sites: arrayUnion(siteId),
+        const response = await fetch(`/api/users/${encodeURIComponent(userId)}/assign-sites`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ siteIds: [siteId] }),
         });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to assign site'));
       } catch (err) {
         console.error('Error assigning site to user:', err);
         throw new Error(handleError(err));
@@ -167,10 +168,12 @@ export function useUserManagement() {
       }
 
       try {
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, {
-          sites: arrayRemove(siteId),
+        const response = await fetch(`/api/users/${encodeURIComponent(userId)}/remove-sites`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ siteIds: [siteId] }),
         });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to remove site'));
       } catch (err) {
         console.error('Error removing site from user:', err);
         throw new Error(handleError(err));
@@ -191,8 +194,8 @@ export function useUserManagement() {
       }
 
       try {
-        const userRef = doc(db, 'users', userId);
-        await deleteDoc(userRef);
+        const response = await fetch(`/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete user'));
       } catch (err) {
         console.error('Error deleting user:', err);
         throw new Error(handleError(err));
@@ -211,4 +214,13 @@ export function useUserManagement() {
     removeSiteFromUser,
     deleteUser,
   };
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }

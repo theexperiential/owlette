@@ -39,7 +39,7 @@ This updates:
 - `web/package.json` - Web app version
 
 **The script will remind you to:**
-1. Update CHANGELOG.md with release notes
+1. Update docs/changelog.md with release notes
 2. Commit changes: `git commit -am "chore: Bump version to X.Y.Z"`
 3. Create tag: `git tag vX.Y.Z`
 4. Push with tags: `git push origin main --tags`
@@ -66,8 +66,8 @@ Firestore rules track security schema changes independently:
 **Normal release (sync all components):**
 ```bash
 node sync-versions.js 2.1.0
-# Update CHANGELOG.md
-git add VERSION agent/VERSION web/package.json CHANGELOG.md
+# Update docs/changelog.md
+git add VERSION agent/VERSION web/package.json docs/changelog.md
 git commit -m "chore: Bump version to 2.1.0"
 git tag v2.1.0
 git push origin main --tags
@@ -83,12 +83,41 @@ node sync-versions.js 2.1.0-rc.1
 node sync-versions.js
 ```
 
+## Role Migration
+
+One-off data migration for the two-role → three-role permission model split. See [dev/active/permission-model-split/plan.md](../dev/active/permission-model-split/plan.md) for context.
+
+### Usage
+
+```bash
+# Preview changes against dev (read-only)
+node scripts/migrate-roles.mjs --env=dev --dry-run
+
+# Apply to dev
+node scripts/migrate-roles.mjs --env=dev
+
+# Preview against prod (prompts for confirmation on live runs)
+node scripts/migrate-roles.mjs --env=prod --dry-run
+```
+
+Flips `role: 'user'` → `'member'` and `role: 'admin'` → `'superadmin'` on the `users` collection. Idempotent — re-running after migration is a no-op because the three terminal values (`member`/`admin`/`superadmin`) are left untouched.
+
+### Credentials
+
+Reads `FIREBASE_PROJECT_ID_{DEV|PROD}`, `FIREBASE_CLIENT_EMAIL_{DEV|PROD}`, `FIREBASE_PRIVATE_KEY_{DEV|PROD}` from the environment. Falls back to the unsuffixed `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` / `FIREBASE_PRIVATE_KEY` (web/.env.local vars) with a warning — verify those point at the intended project before live runs.
+
+Auto-loads `web/.env.local`, `.claude/.env.local`, and `scripts/.env.local` (in that order; later files don't override earlier values).
+
+### Deploy order
+
+Run migration **before** pushing the updated `firestore.rules`. Reverse order would transiently lock existing admins out of their sites during the window between the rules deploy and the data migration.
+
 ## Related Documentation
 
 - [docs/version-management.md](../docs/version-management.md) - Complete version management guide
 - [.claude/CLAUDE.md](../.claude/CLAUDE.md#version-management) - Developer workflow
-- [CHANGELOG.md](../CHANGELOG.md) - Release history
+- [docs/changelog.md](../docs/changelog.md) - Release history
 
 ---
 
-**Last Updated:** 2025-11-05
+**Last Updated:** 2026-04-19

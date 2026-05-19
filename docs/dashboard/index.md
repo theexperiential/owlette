@@ -14,12 +14,14 @@ The owlette web dashboard is a Next.js application that provides real-time monit
 | **Register** | `/register` | Create a new account |
 | **2FA Setup** | `/setup-2fa` | Configure TOTP two-factor authentication |
 | **2FA Verify** | `/verify-2fa` | TOTP verification step during login |
-| **Add Machine** | `/add` | Device code machine pairing target |
-| **Dashboard** | `/dashboard` | Main machine and process monitoring view |
-| **Cortex** | `/cortex` | AI chat interface for natural language machine management |
-| **Deployments** | `/deployments` | Remote software deployment management |
-| **Projects** | `/projects` | Project file distribution |
-| **Logs** | `/logs` | Activity log viewer with filtering |
+| **Add Machine** | `/add` | Pairing phrase entry for authorizing an agent to a site |
+| **dashboard** | `/dashboard` | Main machine and process monitoring view |
+| **cortex** | `/cortex` | AI chat interface for natural language machine management |
+| **deploy** | `/deployments` | Remote software deployment management |
+| **roost** | `/roosts` | Content-addressed file sync, immutable versions, target sync, and rollback |
+| **logs** | `/logs` | Activity log viewer with filtering |
+| **settings: webhooks** | `/settings/webhooks` | Site webhook subscriptions, delivery history, retries, and secret rotation |
+| **settings: api keys** | `/settings/api-keys` | Scoped API key management for automation |
 | **Admin: Users** | `/admin/users` | User management (admin only) |
 | **Admin: Installers** | `/admin/installers` | Agent installer version management (admin only) |
 | **Admin: Presets** | `/admin/presets` | System preset management (admin only) |

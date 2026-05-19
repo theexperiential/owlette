@@ -7,9 +7,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import { validateSiteId, generateSiteIdFromName, generateRandomSiteId } from '@/lib/validators';
+import { validateSiteId, generateRandomSiteId } from '@/lib/validators';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { CheckCircle2, XCircle, Loader2, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { db } from '@/lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 
@@ -82,9 +83,10 @@ export function CreateSiteDialog({
         setAvailabilityStatus('available');
         setValidationError('');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error checking site availability:', error);
-      if (error?.code === 'permission-denied') {
+      const e = error as { code?: string };
+      if (e?.code === 'permission-denied') {
         setAvailabilityStatus('available');
         setValidationError('');
         return;
@@ -149,8 +151,9 @@ export function CreateSiteDialog({
       if (onSiteCreated) {
         onSiteCreated(createdSiteId);
       }
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to create site');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'Failed to create site');
     } finally {
       setIsCreating(false);
     }
@@ -200,14 +203,20 @@ export function CreateSiteDialog({
               <span>site ID:</span>
               <span className="font-mono text-accent-cyan">{newSiteId}</span>
               {getAvailabilityIcon()}
-              <button
-                type="button"
-                onClick={handleRegenerate}
-                className="text-muted-foreground hover:text-accent-cyan transition-colors cursor-pointer"
-                title="generate new ID"
-              >
-                <RefreshCw className="h-3 w-3" />
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleRegenerate}
+                    className="text-muted-foreground hover:text-accent-cyan transition-colors cursor-pointer"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>generate new ID</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
 
             {validationError && (
@@ -248,9 +257,9 @@ export function CreateSiteDialog({
         </div>
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="ghost"
             onClick={() => onOpenChange(false)}
-            className="border-border bg-secondary text-white hover:bg-muted cursor-pointer"
+            className="bg-secondary border border-border cursor-pointer"
           >
             cancel
           </Button>

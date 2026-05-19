@@ -1,0 +1,103 @@
+name: Owlette Roost Deploy
+description: Publish a directory as an Owlette Roost version and optionally deploy that version.
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  token:
+    description: Owlette API key with site read plus roost write/deploy scope.
+    required: true
+  site-id:
+    description: Owlette site id that owns the Roost.
+    required: true
+  roost-id:
+    description: Target Roost id.
+    required: true
+  path:
+    description: Directory to publish.
+    required: false
+    default: dist
+  api-url:
+    description: Owlette API base URL.
+    required: false
+    default: https://owlette.app
+  description:
+    description: Version description. Defaults to the Git ref name when omitted.
+    required: false
+    default: ''
+  deploy:
+    description: Deploy the newly published Roost version after push.
+    required: false
+    default: 'true'
+  machines:
+    description: Optional comma-separated machine ids for a targeted deploy.
+    required: false
+    default: ''
+  cli-version:
+    description: npm dist-tag or version for @owlette/cli.
+    required: false
+    default: rc
+
+outputs:
+  version-id:
+    description: Published Owlette Roost version id.
+    value: ${{ steps.publish.outputs.version_id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install owlette CLI
+      shell: bash
+      run: npm install -g "@owlette/cli@${{ inputs['cli-version'] }}"
+
+    - name: Verify API compatibility
+      shell: bash
+      env:
+        OWLETTE_TOKEN: ${{ inputs.token }}
+        OWLETTE_API_URL: ${{ inputs['api-url'] }}
+      run: owlette version
+
+    - name: Publish Roost version
+      id: publish
+      shell: bash
+      env:
+        OWLETTE_TOKEN: ${{ inputs.token }}
+        OWLETTE_API_URL: ${{ inputs['api-url'] }}
+        OWLETTE_SITE_ID: ${{ inputs['site-id'] }}
+        OWLETTE_ROOST_ID: ${{ inputs['roost-id'] }}
+        OWLETTE_BUILD_PATH: ${{ inputs.path }}
+        OWLETTE_DESCRIPTION: ${{ inputs.description }}
+      run: |
+        set -euo pipefail
+        description="${OWLETTE_DESCRIPTION:-${GITHUB_REF_NAME:-github-actions}}"
+        push_json="$(owlette --json roost push "$OWLETTE_BUILD_PATH" \
+          --to "$OWLETTE_ROOST_ID" \
+          --site "$OWLETTE_SITE_ID" \
+          --description "$description")"
+        version_id="$(node -e "const fs = require('fs'); const body = JSON.parse(fs.readFileSync(0, 'utf8')); if (!body.versionId) throw new Error('missing versionId in owlette roost push output'); console.log(body.versionId);" <<< "$push_json")"
+        echo "version_id=$version_id" >> "$GITHUB_OUTPUT"
+        echo "published $version_id"
+
+    - name: Deploy Roost version
+      if: ${{ inputs.deploy == 'true' }}
+      shell: bash
+      env:
+        OWLETTE_TOKEN: ${{ inputs.token }}
+        OWLETTE_API_URL: ${{ inputs['api-url'] }}
+        OWLETTE_SITE_ID: ${{ inputs['site-id'] }}
+        OWLETTE_ROOST_ID: ${{ inputs['roost-id'] }}
+        OWLETTE_VERSION_ID: ${{ steps.publish.outputs.version_id }}
+        OWLETTE_MACHINES: ${{ inputs.machines }}
+      run: |
+        set -euo pipefail
+        args=(roost deploy "$OWLETTE_ROOST_ID" --site "$OWLETTE_SITE_ID" --version "$OWLETTE_VERSION_ID")
+        if [ -n "$OWLETTE_MACHINES" ]; then
+          args+=(--machines "$OWLETTE_MACHINES")
+        fi
+        owlette "${args[@]}"

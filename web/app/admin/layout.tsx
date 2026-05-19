@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import RequireAdmin from '@/components/RequireAdmin';
+import RequireSuperadmin from '@/components/RequireSuperadmin';
 import { Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, Clock, Bell } from 'lucide-react';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
  * Admin Layout
  *
  * Wraps all admin pages with:
- * - Admin permission check (RequireAdmin component)
+ * - Superadmin permission check (RequireSuperadmin component)
  * - Navigation sidebar for admin sections
  * - Consistent styling
  * - Mobile responsive with hamburger menu
@@ -74,26 +74,26 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     },
   ];
 
-  const [backLabel, setBackLabel] = useState('go back');
-
-  useEffect(() => {
+  // Read sessionStorage in a lazy initializer so the initial render already
+  // has the correct back-target — avoids a post-mount setState inside an
+  // effect (which violates react-hooks/set-state-in-effect). Guarded on
+  // `window` for SSR safety; falls back to the dashboard when unavailable.
+  const [{ backLabel, backPath }] = useState(() => {
+    if (typeof window === 'undefined') return { backLabel: 'go back', backPath: '/dashboard' };
     const prev = sessionStorage.getItem('owlette_pre_admin_path');
-    if (prev) {
-      const name = prev.replace(/^\//, '').split('/')[0] || 'dashboard';
-      setBackLabel(`back to ${name}`);
-    }
-  }, []);
+    if (!prev) return { backLabel: 'go back', backPath: '/dashboard' };
+    const name = prev.replace(/^\//, '').split('/')[0] || 'dashboard';
+    return { backLabel: `back to ${name}`, backPath: prev };
+  });
 
+  // Jump directly to the pre-admin path instead of router.back() — the back-button
+  // should skip over any admin → admin internal navigation the user took on the way in.
   const handleBack = () => {
-    if (window.history.length > 1) {
-      router.back();
-    } else {
-      router.push('/dashboard');
-    }
+    router.push(backPath);
   };
 
   return (
-    <RequireAdmin>
+    <RequireSuperadmin>
       <TooltipProvider delayDuration={100}>
         <div className="flex min-h-screen">
         {/* Mobile Menu Button */}
@@ -197,7 +197,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                           <p className="font-medium text-sm">{item.name}</p>
                           <p
                             className={`text-xs mt-0.5 ${
-                              isActive ? 'text-accent-cyan/70' : 'text-muted-foreground'
+                              isActive ? 'text-accent-cyan' : 'text-muted-foreground'
                             }`}
                           >
                             {item.description}
@@ -223,6 +223,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </main>
       </div>
       </TooltipProvider>
-    </RequireAdmin>
+    </RequireSuperadmin>
   );
 }

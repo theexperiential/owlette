@@ -1,14 +1,17 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { LayoutGrid, List, Monitor, Cog, ChevronsUpDown, ChevronsDownUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Table, TableBody } from '@/components/ui/table';
 import { PageHeader } from '@/components/PageHeader';
 import { MetricsDetailPanel, type MetricType } from '@/components/charts';
+import { DisplayLayoutPanel } from '@/components/charts/DisplayLayoutPanel';
 import { MachineCardView } from '@/app/dashboard/components/MachineCardView';
 import { MachineRow, MemoizedTableHeader as ListViewTableHeader } from '@/app/dashboard/components/MachineListView';
 import { AddMachineButton } from '@/app/dashboard/components/AddMachineButton';
+import { useSlidePanel } from '@/hooks/useSlidePanel';
 import { DemoContext } from '@/contexts/DemoContext';
 import {
   DEMO_SITE_ID,
@@ -16,6 +19,7 @@ import {
   getDemoMachines,
   getDemoSparklineData,
   getDemoHistoricalData,
+  getDemoDisplayState,
 } from '@/lib/demo-data';
 
 type ViewType = 'card' | 'list';
@@ -32,10 +36,38 @@ const noopAsync = async () => {};
 const noop = () => {};
 
 export default function DemoPage() {
+  // Demo machine synthesis (`getDemoMachines()`) calls Math.random() and
+  // Date.now() — values that drift between SSR and client render. React 19
+  // discards the SSR DOM on hydration mismatch and re-renders fresh, which
+  // re-fires the wrapper's CSS fade-in. Gating the body on a post-mount flag
+  // makes SSR + initial CSR render identical (an empty shell), so the
+  // animation only plays once after hydration.
+  //
+  // The set-state-in-effect lint rule flags this pattern as cascading-render,
+  // but here that's exactly the point: the cascade is a single mount → render
+  // boundary, not a value-syncing loop.
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => setMounted(true), []);
+
   const machines = useMemo(() => getDemoMachines(), []);
   const [viewType, setViewType] = useState<ViewType>('list');
   const [statsExpanded, setStatsExpanded] = useState(false);
   const [detailPanel, setDetailPanel] = useState<DetailPanelState | null>(null);
+
+  // Slide-reveal animation for the detail panel — same hook the
+  // dashboard uses, so demo and prod feel identical when expanding /
+  // collapsing a metric or display panel.
+  const {
+    wrapperRef: slideWrapperRef,
+    contentRef: slideContentRef,
+    held: heldDetailPanel,
+    slideAnimating,
+  } = useSlidePanel<DetailPanelState>({
+    value: detailPanel,
+    reanimateKey: (p) => p.machineId,
+    reflowKey: (p) => (p.metric === 'display' ? 'display' : 'metric'),
+  });
 
   // Per-row expand state — initialize all as collapsed
   const [expandedMachineIds, setExpandedMachineIds] = useState<Set<string>>(
@@ -53,7 +85,7 @@ export default function DemoPage() {
       setStatsExpanded(true);
       return new Set(machines.map(m => m.machineId));
     });
-  }, []);
+  }, [machines]);
 
   const toggleMachineExpanded = useCallback((machineId: string) => {
     setExpandedMachineIds(prev => {
@@ -73,7 +105,16 @@ export default function DemoPage() {
       machineName: machine?.machineId || machineId,
       metric,
     });
-  }, []);
+  }, [machines]);
+
+  // Switch the open metrics panel to another machine, keeping the current metric.
+  const handleSwitchMachine = useCallback((machineId: string) => {
+    setDetailPanel(prev => {
+      if (!prev || prev.metric === 'display') return prev;
+      const machine = machines.find(m => m.machineId === machineId);
+      return { machineId, machineName: machine?.machineId || machineId, metric: prev.metric };
+    });
+  }, [machines]);
 
   const sites = useMemo(() => [DEMO_SITE], []);
   const onlineMachines = machines.filter(m => m.online).length;
@@ -85,6 +126,7 @@ export default function DemoPage() {
     isDemo: true as const,
     getSparklineData: getDemoSparklineData,
     getHistoricalData: getDemoHistoricalData,
+    getDisplayState: getDemoDisplayState,
   }), []);
 
   return (
@@ -109,8 +151,10 @@ export default function DemoPage() {
           </div>
         </div>
 
-        {/* Main content */}
+        {/* Main content — gated on `mounted` so SSR returns an empty shell
+            (no random-data hydration mismatch, no double fade-in). */}
         <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
+         {mounted && (<>
           {/* Welcome + stats */}
           <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="flex-1">
@@ -154,21 +198,43 @@ export default function DemoPage() {
             </div>
           </div>
 
-          {/* Metrics Detail Panel */}
-          {detailPanel && (
-            <div className="mb-6">
-              <MetricsDetailPanel
-                machineId={detailPanel.machineId}
-                machineName={detailPanel.machineName}
-                siteId={DEMO_SITE_ID}
-                initialMetric={detailPanel.metric}
-                onClose={() => setDetailPanel(null)}
-              />
+          {/* Detail Panel — animates open / close via `useSlidePanel`,
+              mirroring the dashboard. The held copy stays mounted during
+              the close transition so the height interpolation has visual
+              content to slide over. `display` renders the topology
+              panel; everything else renders the metrics panel. */}
+          <div
+            ref={slideWrapperRef}
+            className="overflow-hidden transition-[height] duration-200 ease-out"
+            style={{ contain: 'layout paint' }}
+            aria-hidden={!detailPanel}
+          >
+            <div ref={slideContentRef} className="pb-6" style={{ contain: 'layout paint' }}>
+              {heldDetailPanel && (
+                heldDetailPanel.metric === 'display' ? (
+                  <DisplayLayoutPanel
+                    machineId={heldDetailPanel.machineId}
+                    machineName={heldDetailPanel.machineName}
+                    siteId={DEMO_SITE_ID}
+                    onClose={() => setDetailPanel(null)}
+                  />
+                ) : (
+                  <MetricsDetailPanel
+                    machineId={heldDetailPanel.machineId}
+                    machineName={heldDetailPanel.machineName}
+                    siteId={DEMO_SITE_ID}
+                    initialMetric={heldDetailPanel.metric}
+                    onClose={() => setDetailPanel(null)}
+                    machines={machines}
+                    onSwitchMachine={handleSwitchMachine}
+                  />
+                )
+              )}
             </div>
-          )}
+          </div>
 
           {/* Machines */}
-          <div className="space-y-6">
+          <div className="space-y-6" data-slide-pausing={slideAnimating ? 'true' : undefined}>
             <div className="flex items-center justify-between">
               <h3 className="text-lg md:text-xl font-bold text-foreground">machines</h3>
 
@@ -181,32 +247,55 @@ export default function DemoPage() {
 
                 {/* Expand/Collapse All + View Toggle */}
                 <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={toggleAllProcesses}
-                    className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
-                    title={allExpanded ? 'collapse all' : 'expand all'}
-                  >
-                    {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={toggleAllProcesses}
+                        aria-label={allExpanded ? 'collapse all' : 'expand all'}
+                        className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      >
+                        {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{allExpanded ? 'collapse all' : 'expand all'}</p>
+                    </TooltipContent>
+                  </Tooltip>
                   <div className="h-4 w-px bg-border" />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setViewType('card')}
-                    className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
-                  >
-                    <LayoutGrid className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setViewType('list')}
-                    className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
-                  >
-                    <List className="h-4 w-4" />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setViewType('card')}
+                        aria-label="card view"
+                        className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                      >
+                        <LayoutGrid className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>card view</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setViewType('list')}
+                        aria-label="list view"
+                        className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                      >
+                        <List className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>list view</p>
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
             </div>
@@ -226,6 +315,7 @@ export default function DemoPage() {
                   onEditProcess={noop}
                   onCreateProcess={noop}
                   onKillProcess={noop}
+                  onRestartProcess={noop}
                   onSetLaunchMode={noop}
                   onRemoveMachine={noop}
                   onMetricClick={handleMetricClick}
@@ -252,11 +342,12 @@ export default function DemoPage() {
                         siteTimezone={DEMO_SITE.timezone}
                         siteTimeFormat="12h"
                         userPreferences={{ temperatureUnit: 'C' }}
-                        isAdmin={false}
+                        isSiteAdmin={false}
                         onToggleExpanded={() => toggleMachineExpanded(machine.machineId)}
                         onEditProcess={noop}
                         onCreateProcess={noop}
                         onKillProcess={noop}
+                        onRestartProcess={noop}
                         onSetLaunchMode={noop}
                         onRemoveMachine={noop}
                         onMetricClick={(metricType) => handleMetricClick(machine.machineId, metricType)}
@@ -267,6 +358,7 @@ export default function DemoPage() {
               </div>
             )}
           </div>
+         </>)}
         </main>
       </div>
     </DemoContext.Provider>

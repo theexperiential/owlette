@@ -1,6 +1,21 @@
 # web deployment
 
-The owlette dashboard is a Next.js application. This guide covers deploying to Railway (recommended) and general Node.js hosting.
+The owlette dashboard is a Next.js application in `web/`. This guide covers Railway, Vercel, and generic Node.js hosting.
+
+---
+
+## runtime baseline
+
+Use Node.js 20 and npm 10 for every self-hosted deployment.
+
+| source | baseline |
+|--------|----------|
+| Repository root `package.json` | `node >=20.9.0`, `npm >=10.0.0` |
+| Repository `.nvmrc` | `20.18.0` |
+| `web/nixpacks.toml` | `nodejs_20`, `npm-10_x` |
+| Firebase Functions | Node 20 |
+
+For a fresh host, select Node 20.x. Node 20.18.0 matches the repository pin.
 
 ---
 
@@ -8,55 +23,125 @@ The owlette dashboard is a Next.js application. This guide covers deploying to R
 
 ### step 1: create railway project
 
-1. Go to [railway.app](https://railway.app) and sign up with GitHub
-2. Click **"New Project"** → **"Deploy from GitHub repo"**
-3. Select the owlette repository
+1. Go to [railway.app](https://railway.app) and sign up with GitHub.
+2. Click **New Project** -> **Deploy from GitHub repo**.
+3. Select the owlette repository.
 
 ### step 2: configure service
 
-1. Click on your service → **Settings**
-2. Set **Root Directory**: `web`
-3. Set **Branch**: `main` (production) or `dev` (development)
-4. Enable **"Auto-deploy on push"**
+1. Click your service -> **Settings**.
+2. Set **Root Directory** to `web`.
+3. Set **Branch** to `main` for production or `dev` for development.
+4. Enable **Auto-deploy on push**.
 
-The repository includes `web/railway.toml` with build configuration:
+The repository includes the deployment configuration Railway should use:
 
 ```toml
+# web/railway.toml
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm install && npm run build"
+buildCommand = "npm run build"
 
 [deploy]
 startCommand = "npm start"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
+
+[env]
+NODE_ENV = "production"
+```
+
+Install is handled by Nixpacks, not by `railway.toml`:
+
+```toml
+# web/nixpacks.toml
+[phases.setup]
+nixPkgs = ["nodejs_20", "npm-10_x"]
+
+[phases.install]
+cmds = ["npm ci --legacy-peer-deps"]
 ```
 
 ### step 3: add environment variables
 
-In Railway → your service → **Variables** tab, add all variables listed in [Environment Variables](environment-variables.md).
+In Railway -> your service -> **Variables**, add the production values from [Environment Variables](environment-variables.md). A working web deployment needs these runtime groups:
+
+- Firebase client: `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`, `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`, `NEXT_PUBLIC_FIREBASE_APP_ID`
+- Firebase Admin: `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`
+- Session and encryption: `SESSION_SECRET`, `MFA_ENCRYPTION_KEY`, `LLM_ENCRYPTION_KEY`
+- R2 for roost uploads and version bodies: `R2_S3_ENDPOINT`, `R2_S3_ACCESS_KEY_ID`, `R2_S3_SECRET_ACCESS_KEY`
+- Rate limiting: `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
+- Public URL: `NEXT_PUBLIC_BASE_URL`
+- Cron: `CRON_SECRET`
+- Email alerts: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `ADMIN_EMAIL_PROD`, `ADMIN_EMAIL_DEV`
+- Public status page: `INSTATUS_API_KEY`, `INSTATUS_PAGE_ID`, and the `INSTATUS_COMPONENT_*_ID` values when `/api/cron/status-ping` should publish to Instatus
+- Autonomous Cortex: `CORTEX_INTERNAL_SECRET` when autonomous alert investigation is enabled
+
+`RAILWAY_PUBLIC_DOMAIN`, `RAILWAY_ENVIRONMENT`, `PORT`, and `NODE_ENV` are injected by Railway or by `web/railway.toml`. Set `ROOST_ENV=prod` or `ROOST_ENV=dev` only when the automatic roost bucket selection does not match the service.
+
+`NEXT_PUBLIC_*` variables are read during the Next.js build and by the browser. After changing them, redeploy so the built client bundle receives the new values.
 
 ### step 4: deploy
 
 Railway deploys automatically after variables are configured. Monitor the build in the **Deployments** tab.
 
-**Expected build time**: 2-5 minutes.
+Expected build time is 2-5 minutes.
 
 ### step 5: configure firebase auth domain
 
-1. Copy your Railway deployment URL
-2. Go to Firebase Console → Authentication → Settings → **Authorized Domains**
-3. Add your Railway URL (e.g., `owlette-web.up.railway.app`)
+1. Copy your Railway deployment URL.
+2. Go to Firebase Console -> Authentication -> Settings -> **Authorized Domains**.
+3. Add your Railway URL, for example `owlette-web.up.railway.app`.
 
 !!! warning "Required"
-    Without this step, users cannot log in — Firebase rejects auth requests from unauthorized domains.
+    Without this step, users cannot log in because Firebase rejects auth requests from unauthorized domains.
 
 ### step 6: custom domain (optional)
 
-1. Railway → Settings → Networking → **"Add Custom Domain"**
-2. Add CNAME or A record as instructed
-3. Railway auto-provisions SSL via Let's Encrypt
-4. Add the custom domain to Firebase Authorized Domains too
+1. Railway -> Settings -> Networking -> **Add Custom Domain**.
+2. Add the CNAME or A record as instructed.
+3. Railway provisions SSL automatically.
+4. Add the custom domain to Firebase Authorized Domains.
+5. Update `NEXT_PUBLIC_BASE_URL` to the custom HTTPS origin and redeploy.
+
+---
+
+## vercel deployment
+
+Vercel can run the web app as a standard Next.js project.
+
+### step 1: import project
+
+1. In Vercel, click **Add New** -> **Project**.
+2. Import the owlette repository.
+3. Set **Root Directory** to `web`.
+4. Set the framework preset to **Next.js**.
+
+### step 2: configure build settings
+
+Use the same commands as the checked-in Railway/Nixpacks deployment:
+
+| setting | value |
+|---------|-------|
+| Install Command | `npm ci --legacy-peer-deps` |
+| Build Command | `npm run build` |
+| Output Directory | Next.js default; leave unset unless Vercel asks for an explicit value |
+
+Set the Node.js version to 20.x in the Vercel project settings.
+
+### step 3: add environment variables
+
+Add the same variables listed in the Railway section under **Settings** -> **Environment Variables**. Apply them to Production and Preview as needed.
+
+`NEXT_PUBLIC_*` values are bundled at build time, so redeploy after changing Firebase client settings or `NEXT_PUBLIC_BASE_URL`.
+
+### step 4: configure firebase auth domain
+
+Add the Vercel deployment domain and any custom domain to Firebase Authentication -> Settings -> **Authorized Domains**.
+
+### step 5: cron
+
+The current cron routes require `X-Cron-Secret: <CRON_SECRET>`. Use a scheduler that can send that header. If the hosting plan cannot send custom headers or cannot call all required schedules, use an external scheduler.
 
 ---
 
@@ -67,52 +152,79 @@ Set up the machine offline detection cron:
 ### step 1: add cron_secret
 
 ```bash
-# Generate a secret
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Add as `CRON_SECRET` in Railway Variables.
+Add the generated value as `CRON_SECRET` in the host environment variables.
 
 ### step 2: configure cron schedule
 
-1. Railway → your service → Settings → **"Cron Schedule"**
-2. Enter: `*/5 * * * *` (every 5 minutes)
+Call the health-check route every 5 minutes:
+
+```text
+GET https://<your-app>/api/cron/health-check
+X-Cron-Secret: <CRON_SECRET value>
+```
+
+Use cron expression `*/5 * * * *` when the host accepts cron syntax.
 
 !!! warning "Format"
     Use spaces between fields: `*/5 * * * *`. No spaces (`*/5****`) will fail.
+
+### public status-page ping
+
+External public launch also needs a 60-second HTTP cron that calls:
+
+```text
+GET https://<your-app>/api/cron/status-ping
+X-Cron-Secret: <CRON_SECRET value>
+```
+
+The route writes an internal status-ping record and posts component status changes to Instatus when the `INSTATUS_*` variables are configured. It waits for two consecutive failures before degrading a component, then marks it operational on recovery. Publish failures are logged and summarized in the cron response without returning vendor error bodies or failing the local ping write.
+
+Use a separate cron job or service if the hosting provider only supports one schedule per service. Keep `/api/cron/status-ping` internal; it is not part of the public API reference.
+
+After adding the status-page variables, run the readiness check from an operator shell with the same env values loaded:
+
+```powershell
+node scripts/check-status-page-ready.mjs --env-only
+node scripts/check-status-page-ready.mjs --base-url https://<your-app>
+```
+
+The check validates required env names, component ids, and the live status-ping response without printing secrets.
 
 ---
 
 ## two-branch deployment
 
-owlette uses two branches with separate Railway deployments:
+owlette uses two branches with separate deployments:
 
 | branch | deployment | url |
-|--------|-----------|-----|
+|--------|------------|-----|
 | `dev` | Development | `dev.owlette.app` |
 | `main` | Production | `owlette.app` |
 
-Each has its own Railway service, environment variables, and (optionally) Firebase project.
+Each branch should have its own service or project, environment variables, and optionally its own Firebase project.
 
 ---
 
 ## general node.js hosting
 
-For non-Railway deployments:
+For non-Railway and non-Vercel deployments:
 
 ```bash
 cd web
-npm install
+npm ci --legacy-peer-deps
 npm run build
 npm start
 ```
 
-**Requirements:**
+Requirements:
 
-- Node.js 18+
-- All environment variables set
-- Port 3000 available (or set `PORT` env var)
-- HTTPS for Firebase Auth (required)
+- Node.js 20.x, npm 10.x
+- All required environment variables from [Environment Variables](environment-variables.md)
+- A writable port supplied as `PORT` or the default Next.js port 3000
+- HTTPS for Firebase Auth in production
 
 ---
 
@@ -120,28 +232,32 @@ npm start
 
 ### pre-deployment
 
-- [ ] `npm run build` succeeds locally
-- [ ] `npm test` passes
-- [ ] `npx tsc --noEmit` has no errors
-- [ ] All environment variables documented
+- [ ] Host is configured for Node.js 20.x and npm 10.x
+- [ ] `npm ci --legacy-peer-deps` succeeds
+- [ ] `npm run build` succeeds
+- [ ] Required environment variables are set for the target environment
+- [ ] `NEXT_PUBLIC_BASE_URL` matches the public HTTPS origin
 
-### railway setup
+### host setup
 
 - [ ] Repository linked
 - [ ] Root directory set to `web`
 - [ ] Branch configured
-- [ ] All environment variables added
+- [ ] Install command is `npm ci --legacy-peer-deps`
+- [ ] Build command is `npm run build`
+- [ ] Start command is `npm start` where the host requires one
 - [ ] `CRON_SECRET` configured
-- [ ] Cron schedule set (`*/5 * * * *`)
+- [ ] Cron calls configured for `/api/cron/health-check` and `/api/cron/status-ping`
 
 ### post-deployment
 
-- [ ] Railway domain added to Firebase Authorized Domains
+- [ ] Deployment domain added to Firebase Authorized Domains
 - [ ] Registration works
 - [ ] Login works
 - [ ] Dashboard loads and shows data
-- [ ] Real-time updates working
-- [ ] Custom domain configured (if applicable)
+- [ ] R2-backed roost upload/version routes work
+- [ ] Real-time updates work
+- [ ] Custom domain configured and added to Firebase Authorized Domains, if applicable
 
 ---
 
@@ -149,27 +265,39 @@ npm start
 
 ### build fails
 
-- **Missing env var**: Verify all `NEXT_PUBLIC_*` variables are set
-- **TypeScript errors**: Run `npm run build` locally first
-- **Dependency issues**: Ensure `package-lock.json` is committed
+- **Wrong Node version**: Select Node.js 20.x. The repository baseline is Node 20 with npm 10.
+- **Install fails**: Use `npm ci --legacy-peer-deps`, matching `web/nixpacks.toml`.
+- **Missing client env var**: Verify every required `NEXT_PUBLIC_FIREBASE_*` variable is set for the build environment.
+- **TypeScript errors**: Run `npm run build` locally with the same Node and environment values.
+- **Dependency issues**: Ensure `web/package-lock.json` is committed.
 
 ### app crashes after deploy
 
-- Check runtime logs in Railway Deployments tab
-- Look for env var validation errors (`ERROR: Missing required environment variables`)
-- Verify Firebase config values are correct (no quotes around values)
+- Check runtime logs in the host deployment logs.
+- Look for env var validation errors such as `ERROR: Missing required environment variables`.
+- Verify Firebase Admin variables: `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`.
+- Verify session and encryption variables: `SESSION_SECRET`, `MFA_ENCRYPTION_KEY`, `LLM_ENCRYPTION_KEY`.
+- Verify R2 variables: `R2_S3_ENDPOINT`, `R2_S3_ACCESS_KEY_ID`, `R2_S3_SECRET_ACCESS_KEY`.
+- Verify `CRON_SECRET`, email, rate-limit, and Instatus variables when those routes or integrations are enabled.
 
 ### auth not working
 
-- Add Railway domain to Firebase Authorized Domains
-- Clear browser cache and cookies
-- Check browser console for Firebase error details
+- Add the deployment domain to Firebase Authorized Domains.
+- Verify `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` and `NEXT_PUBLIC_BASE_URL` match the target environment.
+- Clear browser cache and cookies.
+- Check browser console for Firebase error details.
+
+### roost uploads or version fetches fail
+
+- Verify the R2 credentials have object read and write access to the owlette buckets.
+- Verify `R2_S3_ENDPOINT` uses `https://<account-id>.r2.cloudflarestorage.com`.
+- Check `ROOST_ENV`, `RAILWAY_ENVIRONMENT`, and `RAILWAY_PUBLIC_DOMAIN` if writes are landing in the wrong dev/prod bucket.
 
 ### slow performance
 
-- **Cold starts**: Upgrade to Railway Pro (no cold starts)
-- **Bundle size**: Run `npm run build` and check `.next/static` output
-- **Firestore queries**: Add indexes for frequently queried fields
+- **Cold starts**: Use a plan that keeps the app warm for production.
+- **Bundle size**: Run `npm run build` and check `.next/static` output.
+- **Firestore queries**: Add indexes for frequently queried fields.
 
 ---
 
@@ -177,13 +305,10 @@ npm start
 
 ### railway pricing
 
-| plan | cost | key features |
-|------|------|-------------|
-| **Hobby** | $5/month | 500 hours, cold starts |
-| **Pro** | $20/month | Unlimited, no cold starts, priority support |
+Check the provider pricing page before provisioning. Keep development and production in separate projects or services so their usage, secrets, and billing limits can be managed independently.
 
 ### optimization
 
-- Use Hobby for development, Pro for production
-- Optimize bundle size for faster cold starts
-- Add CDN (Cloudflare) for static assets
+- Use separate plans or projects for development and production.
+- Optimize bundle size for faster cold starts.
+- Add a CDN such as Cloudflare for static assets and custom-domain traffic.

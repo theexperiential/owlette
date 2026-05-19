@@ -12,8 +12,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generateText } from 'ai';
 import { requireSession } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { apiError } from '@/lib/apiErrorResponse';
 import { createCheapModel } from '@/lib/llm';
-import { resolveLlmConfig } from '@/lib/cortex-utils.server';
+import { resolveLlmConfig, verifyUserSiteAccess } from '@/lib/cortex-utils.server';
+import { getUserIdFromSession, withRateLimit } from '@/lib/withRateLimit';
 
 const CATEGORIES = [
   'Performance',
@@ -34,7 +36,7 @@ function parseCategory(text: string): Category {
   ) || 'General';
 }
 
-export async function POST(request: NextRequest) {
+export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     const userId = await requireSession(request);
     const body = await request.json();
@@ -45,6 +47,7 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getAdminDb();
+    await verifyUserSiteAccess(db, userId, siteId);
     const llmConfig = await resolveLlmConfig(db, userId, siteId);
     const model = createCheapModel(llmConfig);
 
@@ -63,6 +66,10 @@ export async function POST(request: NextRequest) {
           try {
             const chatDoc = await db.collection('chats').doc(chatId).get();
             const data = chatDoc.data();
+            if (!chatDoc.exists || data?.siteId !== siteId) {
+              console.warn(`[Categorize] Skipping chat ${chatId}: not found on site ${siteId}`);
+              return;
+            }
 
             // Skip conversations with no meaningful title — need at least
             // a real title (not "new conversation") or a first message to categorize
@@ -131,6 +138,11 @@ Reply with only the category name, nothing else.`,
       return NextResponse.json({ error: 'Missing chatId or message' }, { status: 400 });
     }
 
+    const chatDoc = await db.collection('chats').doc(chatId).get();
+    if (!chatDoc.exists || chatDoc.data()?.siteId !== siteId) {
+      return NextResponse.json({ error: 'Chat not found' }, { status: 404 });
+    }
+
     const { text } = await generateText({
       model,
       prompt: `You manage IT/media-server systems. Given this user question, respond with exactly two lines:
@@ -153,7 +165,6 @@ Performance`,
 
     return NextResponse.json({ title, category });
   } catch (error) {
-    console.error('Failed to categorize conversation:', error);
-    return NextResponse.json({ error: 'Categorization failed' }, { status: 500 });
+    return apiError(error, 'cortex/categorize');
   }
-}
+}, { strategy: 'user', identifier: 'user', getUserId: getUserIdFromSession });

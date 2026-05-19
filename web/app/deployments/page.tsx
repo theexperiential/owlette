@@ -1,14 +1,15 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
-import { useDeploymentManager } from '@/hooks/useDeployments';
+import { useDeploymentManager, type Deployment, type DeploymentTarget } from '@/hooks/useDeployments';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Plus, CheckCircle2, XCircle, Clock, Loader2, Trash2, X, MoreVertical, RefreshCw, Package, PlayCircle, Archive } from 'lucide-react';
 import DeploymentDialog from '@/components/DeploymentDialog';
 import UninstallDialog from '@/components/UninstallDialog';
@@ -17,9 +18,11 @@ import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
+import { LoadingWord } from '@/components/LoadingWord';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { UpdateOwletteButton } from '@/components/UpdateOwletteButton';
 import { useUninstall } from '@/hooks/useUninstall';
+import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 import { toast } from 'sonner';
 
 function getStatusIcon(status: string) {
@@ -85,28 +88,44 @@ const DeploymentRow = React.memo(function DeploymentRow({
   onUninstall,
   onDelete,
   onCancel,
+  timeDisplayMode,
+  userTz,
+  siteTz,
+  timeFormat,
 }: {
-  deployment: any;
+  deployment: Deployment;
   isSelected: boolean;
   onToggle: (id: string) => void;
-  onRetry: (deployment: any) => void;
-  onUninstall: (deployment: any) => void;
+  onRetry: (deployment: Deployment) => void;
+  onUninstall: (deployment: Deployment) => void;
   onDelete: (id: string) => void;
   onCancel: (deploymentId: string, machineId: string, installerName: string) => void;
+  timeDisplayMode: 'user' | 'machine' | 'site';
+  userTz: string | undefined;
+  siteTz: string | undefined;
+  timeFormat: '12h' | '24h';
 }) {
-  const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed' && t.error);
-  const errorMessages = failedTargets.map((t: any) => `${t.machineId}: ${t.error}`).join('\n');
+  const failedTargets = deployment.targets.filter((t: DeploymentTarget) => t.status === 'failed' && t.error);
+  const errorMessages = failedTargets.map((t: DeploymentTarget) => `${t.machineId}: ${t.error}`).join('\n');
 
   return (
-    <div>
-      <div
-        className="flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer"
-        onClick={() => {
-          const selection = window.getSelection();
-          if (selection && selection.toString().length > 0) return;
-          onToggle(deployment.id);
-        }}
-      >
+    <Collapsible
+      open={isSelected}
+      onOpenChange={() => onToggle(deployment.id)}
+    >
+      <CollapsibleTrigger asChild>
+        <div
+          className="flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors cursor-pointer"
+          onClick={(e) => {
+            // Don't toggle if the user's mid-drag-selecting text in the summary
+            // (names are `select-text`). preventDefault here short-circuits
+            // Radix's trigger (composeEventHandlers respects defaultPrevented).
+            const selection = window.getSelection();
+            if (selection && selection.toString().length > 0) {
+              e.preventDefault();
+            }
+          }}
+        >
         <div className="flex items-center gap-3 min-w-0">
           {getStatusIcon(deployment.status)}
           <div className="min-w-0">
@@ -119,21 +138,29 @@ const DeploymentRow = React.memo(function DeploymentRow({
             {getStatusBadge(deployment.status, errorMessages || undefined)}
           </div>
           <span className="text-xs text-muted-foreground hidden sm:block w-[150px] text-right">
-            {new Date(deployment.createdAt).toLocaleString()}
+            {formatSiteScopedTimestamp(deployment.createdAt, timeDisplayMode, userTz, siteTz, timeFormat)}
           </span>
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={(e) => e.stopPropagation()}
-                className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
-              >
-                <MoreVertical className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label={`deployment actions for ${deployment.name}`}
+                    className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                  >
+                    <MoreVertical className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>more options</p>
+              </TooltipContent>
+            </Tooltip>
             <DropdownMenuContent align="end" className="border-border bg-secondary">
-              {deployment.targets.some((t: any) => t.status === 'failed') && (
+              {deployment.targets.some((t: DeploymentTarget) => t.status === 'failed') && (
                 <DropdownMenuItem
                   onClick={(e) => {
                     e.stopPropagation();
@@ -170,9 +197,10 @@ const DeploymentRow = React.memo(function DeploymentRow({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </div>
+        </div>
+      </CollapsibleTrigger>
 
-      {isSelected && (
+      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
         <div className="border-t border-border">
           <div className="mx-4 my-3 rounded-lg border border-border bg-background p-4 space-y-4">
             <div className="grid gap-2 text-sm">
@@ -197,7 +225,7 @@ const DeploymentRow = React.memo(function DeploymentRow({
             <div>
               <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">targets ({deployment.targets.length})</h4>
               <div className="space-y-1.5">
-                {deployment.targets.map((target: any) => (
+                {deployment.targets.map((target: DeploymentTarget) => (
                   <div key={target.machineId} className="flex items-center justify-between py-1.5 px-3 rounded border border-border/40 bg-background/50">
                     <span className="text-foreground text-sm select-text">{target.machineId}</span>
                     <div className="flex items-center gap-2">
@@ -210,6 +238,7 @@ const DeploymentRow = React.memo(function DeploymentRow({
                           size="sm"
                           variant="ghost"
                           onClick={() => onCancel(deployment.id, target.machineId, deployment.installer_name)}
+                          aria-label={`cancel deployment to ${target.machineId}`}
                           className="h-7 px-2 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
                         >
                           <X className="h-4 w-4" />
@@ -222,15 +251,18 @@ const DeploymentRow = React.memo(function DeploymentRow({
             </div>
           </div>
         </div>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 });
 
 export default function DeploymentsPage() {
-  const { user, loading: authLoading, signOut, userSites, isAdmin, lastSiteId, updateLastSite } = useAuth();
-  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
+  const { user, loading: authLoading, userSites, isSuperadmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
+  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
+  // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
+  const currentSite = sites.find(s => s.id === currentSiteId);
+  const siteTimezone = currentSite?.timezone;
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
   const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
   const [initialSoftwareName, setInitialSoftwareName] = useState<string | undefined>(undefined);
@@ -256,14 +288,15 @@ export default function DeploymentsPage() {
     deleteDeployment,
   } = useDeploymentManager(currentSiteId);
 
-  const { machines, loading: machinesLoading } = useMachines(currentSiteId);
+  const { machines } = useMachines(currentSiteId);
   const { createUninstall } = useUninstall();
 
   const handleCreateUninstall = async (softwareName: string, machineIds: string[], deploymentId?: string) => {
     try {
       await createUninstall(currentSiteId, softwareName, machineIds, deploymentId);
-    } catch (error: any) {
-      throw new Error(error.message || 'failed to create uninstall task');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(message || 'failed to create uninstall task');
     }
   };
 
@@ -273,26 +306,34 @@ export default function DeploymentsPage() {
     try {
       await deleteDeployment(deploymentToDelete);
       toast.success('deployment record deleted successfully');
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to delete deployment:', error);
-      toast.error(error.message || 'failed to delete deployment record');
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'failed to delete deployment record');
     } finally {
       setDeploymentToDelete(null);
     }
   };
 
-  const handleRetryDeployment = useCallback(async (deployment: any) => {
+  // useDeploymentManager returns non-memoized functions, so referencing them
+  // directly in useCallback deps recreates handlers on every render and
+  // defeats React.memo on DeploymentRow. Keep a latest-ref and depend on
+  // nothing, so the handlers keep stable identity for the whole list.
+  const createDeploymentRef = useRef(createDeployment);
+  createDeploymentRef.current = createDeployment;
+
+  const handleRetryDeployment = useCallback(async (deployment: Deployment) => {
     try {
-      const failedTargets = deployment.targets.filter((t: any) => t.status === 'failed');
+      const failedTargets = deployment.targets.filter((t: DeploymentTarget) => t.status === 'failed');
 
       if (failedTargets.length === 0) {
         toast.error('no failed targets to retry');
         return;
       }
 
-      const machineIds = failedTargets.map((t: any) => t.machineId);
+      const machineIds = failedTargets.map((t: DeploymentTarget) => t.machineId);
 
-      await createDeployment({
+      await createDeploymentRef.current({
         name: `${deployment.name} (Retry)`,
         installer_name: deployment.installer_name,
         installer_url: deployment.installer_url,
@@ -302,11 +343,12 @@ export default function DeploymentsPage() {
       }, machineIds);
 
       toast.success(`retrying deployment for ${failedTargets.length} failed machine(s)`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to retry deployment:', error);
-      toast.error(error.message || 'failed to retry deployment');
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message || 'failed to retry deployment');
     }
-  }, [createDeployment]);
+  }, []);
 
   // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
@@ -329,7 +371,7 @@ export default function DeploymentsPage() {
     setSelectedDeploymentId(prev => prev === id ? null : id);
   }, []);
 
-  const handleUninstallFromRow = useCallback((deployment: any) => {
+  const handleUninstallFromRow = useCallback((deployment: Deployment) => {
     setInitialSoftwareName(deployment.installer_name);
     setUninstallDeploymentId(deployment.id);
     setUninstallDialogOpen(true);
@@ -340,13 +382,16 @@ export default function DeploymentsPage() {
     setDeleteDialogOpen(true);
   }, []);
 
+  const cancelDeploymentRef = useRef(cancelDeployment);
+  cancelDeploymentRef.current = cancelDeployment;
+
   const handleCancelTarget = useCallback(async (deploymentId: string, machineId: string, installerName: string) => {
     try {
-      await cancelDeployment(deploymentId, machineId, installerName);
-    } catch (error: any) {
+      await cancelDeploymentRef.current(deploymentId, machineId, installerName);
+    } catch (error: unknown) {
       console.error('Failed to cancel deployment:', error);
     }
-  }, [cancelDeployment]);
+  }, []);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -357,7 +402,7 @@ export default function DeploymentsPage() {
   if (authLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <p className="text-muted-foreground">loading...</p>
+        <p className="text-muted-foreground"><LoadingWord /></p>
       </div>
     );
   }
@@ -371,7 +416,7 @@ export default function DeploymentsPage() {
     <div className="relative min-h-screen pb-8">
       {/* Header */}
       <PageHeader
-        currentPage="deploy software"
+        currentPage="deploy"
         sites={sites}
         currentSiteId={currentSiteId}
         onSiteChange={handleSiteChange}
@@ -538,6 +583,10 @@ export default function DeploymentsPage() {
                   onUninstall={handleUninstallFromRow}
                   onDelete={handleDeleteFromRow}
                   onCancel={handleCancelTarget}
+                  timeDisplayMode={userPreferences.timeDisplayMode || 'machine'}
+                  userTz={userPreferences.timezone}
+                  siteTz={siteTimezone}
+                  timeFormat={userPreferences.timeFormat || '12h'}
                 />
               ))}
             </div>

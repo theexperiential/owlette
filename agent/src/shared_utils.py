@@ -6,10 +6,11 @@ import ctypes
 import socket
 from packaging import version
 import psutil
-import GPUtil
 import platform
 import subprocess
+import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import winreg
 import time
 from pathlib import Path
@@ -62,7 +63,7 @@ STATUS_COLORS = {
     'INACTIVE':      '#94a3b8',  # slate-400
 }
 WINDOW_TITLES = {
-    "owlette_gui": "owlette",
+    "owlette_gui": "owlette configuration",
     "prompt_slack_config": "connect to slack",
     "prompt_restart": "process repeatedly failing!",
     "report_issue": "feedback"
@@ -118,11 +119,40 @@ def get_hostname():
     return socket.gethostname()
 
 def get_machine_timezone():
+    """Return the machine's timezone as the Windows registry name (e.g.
+    "Pacific Standard Time"). Used for diagnostics and back-compat — the
+    web dashboard does not consume this format directly. See
+    get_machine_timezone_iana() for the dashboard-facing IANA value.
+    """
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                             r'SYSTEM\CurrentControlSet\Control\TimeZoneInformation') as key:
             return winreg.QueryValueEx(key, 'TimeZoneKeyName')[0]
     except Exception:
+        return None
+
+
+def get_machine_timezone_iana():
+    """Return the machine's timezone as an IANA name (e.g. "America/Los_Angeles").
+
+    The dashboard needs this format because:
+      - Python's `zoneinfo.ZoneInfo()` requires IANA names
+      - JavaScript's `Intl.DateTimeFormat({ timeZone: ... })` requires IANA names
+      - The Windows registry value (e.g. "Pacific Standard Time") is not
+        compatible with either standard library
+
+    Uses the `tzlocal` package which queries Windows in a more portable way
+    and maps to the CLDR Windows-to-IANA conversion table internally.
+
+    Returns None on any failure — the dashboard handles the missing field
+    gracefully by falling back to other timezone sources or labelling as
+    "unknown".
+    """
+    try:
+        import tzlocal
+        return tzlocal.get_localzone_name()
+    except Exception as e:
+        logging.debug(f"Could not determine machine IANA timezone: {e}")
         return None
 
 def get_cpu_name():
@@ -393,6 +423,275 @@ def get_network_metrics():
         logging.error(f"Error collecting network metrics: {e}")
 
     return result
+
+
+def _wmi_logical_disk_with_timeout(timeout: float = 10.0):
+    """Query Win32_PerfFormattedData_PerfDisk_LogicalDisk under a watchdog.
+
+    Each call spawns a fresh worker thread that initializes its own COM
+    apartment, instantiates wmi.WMI(), runs the query, and extracts the
+    fields we care about INSIDE the worker thread. Returns a list of plain
+    Python dicts — never COM proxies — so the caller can read fields
+    safely without re-entering COM apartment marshalling rules.
+
+    Per-call (rather than persistent) because the python `wmi` package binds
+    its proxy interfaces to the apartment that created them — reusing a
+    cached proxy from a long-lived worker raises RPC_E_WRONG_THREAD
+    (0x8001010E, "interface marshalled for a different thread") on the
+    second and subsequent queries. Per-call avoids that entirely; the
+    ~350ms cost is fine since the metrics loop runs every 120s in idle.
+
+    Returning plain dicts (not COM proxies) avoids a second related crash:
+    if the caller does ANOTHER WMI query before reading attributes off the
+    rows, the worker thread's COM apartment is already torn down and the
+    proxies become dangling pointers — segfault on next attribute access.
+    Extracting in-worker keeps the proxy lifetime contained.
+
+    The 10s timeout is sized to capture the perflib LogicalDisk stalls that
+    occur when the BITS service flips state during Windows Update / Delivery
+    Optimization polling. Empirical observation: 2s and 5s budgets both
+    skipped these stalls (~3-4 timeouts/hour, perfectly spaced ~16 min
+    apart matching SCM event 7040 BITS demand↔auto cycles); the perflib
+    provider lock during a BITS state change consistently exceeds 5s. The
+    metrics loop runs in its own thread (not the main service loop) so a
+    10s WMI call doesn't stall anything else.
+    """
+    def _query():
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
+        import wmi
+        c = wmi.WMI()
+        return [
+            {
+                'Name': str(getattr(row, 'Name', '') or ''),
+                'DiskReadBytesPerSec': int(getattr(row, 'DiskReadBytesPerSec', 0) or 0),
+                'DiskWriteBytesPerSec': int(getattr(row, 'DiskWriteBytesPerSec', 0) or 0),
+                'DiskReadsPerSec': int(getattr(row, 'DiskReadsPerSec', 0) or 0),
+                'DiskWritesPerSec': int(getattr(row, 'DiskWritesPerSec', 0) or 0),
+                'PercentIdleTime': float(getattr(row, 'PercentIdleTime', 100) or 100),
+            }
+            for row in c.Win32_PerfFormattedData_PerfDisk_LogicalDisk()
+        ]
+
+    # Manual lifecycle (not `with`) so we can shutdown(wait=False) on timeout.
+    # The default `with` exit calls shutdown(wait=True), which would block on a
+    # hung WMI worker thread — defeating the watchdog. Leaking a thread per
+    # failed tick is acceptable; stalling the metrics loop is not.
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(_query)
+        try:
+            return future.result(timeout=timeout)
+        except FuturesTimeoutError:
+            logging.warning('Win32_PerfFormattedData_PerfDisk_LogicalDisk timed out — skipping sample')
+            return None
+        except Exception as e:
+            logging.warning(f'Win32_PerfFormattedData_PerfDisk_LogicalDisk failed: {e}')
+            return None
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+# --- Disk IO max-throughput estimation (for percentage scaling on the chart) ---
+#
+# `metrics.diskio[*].maxBps` is the denominator the web uses to plot read/write
+# as a 0-100% bandwidth utilization line. Computed as max(hardware_estimate,
+# observed_peak):
+#
+#   - Hardware estimate is detected once at first call by querying
+#     MSFT_PhysicalDisk for each volume's BusType + MediaType, then mapping to
+#     a conservative manufacturer-class throughput (NVMe ≈ 3.5 GB/s, SATA SSD
+#     ≈ 550 MB/s, etc).
+#   - Observed peak is ratcheted upward in process memory whenever a sample
+#     exceeds the current max. Self-corrects if the hardware estimate is
+#     conservative; preserves a sensible cold-start value when it's not.
+#
+# Both halves cached per volume id (drive letter). Cleared on service restart;
+# warm-up is one WMI tick.
+_disk_max_bps_cache: dict = {}        # volume_id -> int (bytes/sec)
+_disk_max_bps_hw_resolved: bool = False
+_disk_max_bps_lock = threading.Lock()
+
+# Conservative class baselines. Real-world peaks vary widely; values picked
+# to be "the chart shows ~30-60% during a normal heavy workload" rather than
+# best-case marketing numbers. Ratchet handles the drives that actually go
+# faster.
+_DISK_MAX_BPS_BY_CLASS = {
+    ('NVMe',  'SSD'):      3_500 * 1024 * 1024,   # NVMe SSD: ~3.5 GB/s
+    ('NVMe',  'Unknown'):  3_500 * 1024 * 1024,
+    ('SATA',  'SSD'):        550 * 1024 * 1024,   # SATA SSD: ~550 MB/s
+    ('SAS',   'SSD'):       1000 * 1024 * 1024,   # SAS SSD: ~1 GB/s
+    ('SATA',  'HDD'):        150 * 1024 * 1024,   # 7200rpm HDD: ~150 MB/s
+    ('SAS',   'HDD'):        200 * 1024 * 1024,   # SAS HDD: ~200 MB/s
+    ('USB',   'SSD'):        400 * 1024 * 1024,   # USB SSD: USB 3.2-ish
+    ('USB',   'HDD'):        100 * 1024 * 1024,   # USB HDD: USB 3.0-ish
+    ('USB',   'Unknown'):    100 * 1024 * 1024,
+}
+_DISK_MAX_BPS_FALLBACK = 200 * 1024 * 1024  # 200 MB/s — generic spinning-disk-class default
+
+# WMI BusType enum (subset relevant to consumer/server storage)
+_WMI_BUS_TYPE = {
+    1:  'SCSI',  2: 'ATAPI', 3:  'ATA',  4: '1394', 5:  'SSA',  6: 'FibreChannel',
+    7:  'USB',   8: 'RAID',  9:  'iSCSI', 10: 'SAS', 11: 'SATA',
+    14: 'MMC',  15: 'Virtual', 16: 'FileBackedVirtual', 17: 'NVMe',
+}
+_WMI_MEDIA_TYPE = {0: 'Unknown', 3: 'HDD', 4: 'SSD', 5: 'SCM'}
+
+
+def _resolve_disk_hardware_max_bps() -> dict:
+    """Query MSFT_PhysicalDisk for each volume's bus + media type, return {drive_letter: max_bytes_per_sec}.
+
+    Uses the Storage WMI namespace (root\\Microsoft\\Windows\\Storage) and walks
+    DiskToPartition + PartitionToVolume associations to map physical disks back
+    to drive letters. Returns {} silently on any failure — the caller falls back
+    to the observed-peak ratchet.
+    """
+    def _query():
+        try:
+            import pythoncom
+            pythoncom.CoInitialize()
+        except Exception:
+            pass
+        import wmi
+        c = wmi.WMI(namespace='root/Microsoft/Windows/Storage')
+        result = {}
+        try:
+            disks = c.MSFT_PhysicalDisk()
+        except Exception:
+            return {}
+        # Map: DeviceId -> bus/media class
+        disk_class = {}
+        for d in disks:
+            bus = _WMI_BUS_TYPE.get(int(getattr(d, 'BusType', 0) or 0), 'Unknown')
+            media = _WMI_MEDIA_TYPE.get(int(getattr(d, 'MediaType', 0) or 0), 'Unknown')
+            disk_class[str(getattr(d, 'DeviceId', ''))] = (bus, media)
+        # Walk Disk -> Partition -> Volume to get drive letters
+        try:
+            partitions = c.MSFT_Partition()
+        except Exception:
+            return {}
+        for part in partitions:
+            # DriveLetter is a uint16 ASCII char code (0 when no letter is mounted)
+            letter_code = int(getattr(part, 'DriveLetter', 0) or 0)
+            if letter_code < ord('A') or letter_code > ord('Z'):
+                continue
+            letter = chr(letter_code)
+            disk_num = str(getattr(part, 'DiskNumber', ''))
+            cls = disk_class.get(disk_num)
+            if not cls:
+                continue
+            max_bps = _DISK_MAX_BPS_BY_CLASS.get(cls, _DISK_MAX_BPS_FALLBACK)
+            result[f'{letter}:'] = max_bps
+        return result
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(_query)
+        try:
+            return future.result(timeout=10.0)
+        except FuturesTimeoutError:
+            logging.warning('MSFT_PhysicalDisk hardware-class query timed out — disk maxBps will fall back to ratchet only')
+            return {}
+        except Exception as e:
+            logging.warning(f'MSFT_PhysicalDisk hardware-class query failed: {e}')
+            return {}
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _disk_max_bps_for(volume_id: str, observed_bps: int) -> int:
+    """Return the larger of (hardware estimate for this volume) and (all-time observed peak).
+
+    First call resolves the hardware estimate map (one WMI query, ~300ms).
+    Subsequent calls hit the in-memory cache + ratchet only.
+    """
+    global _disk_max_bps_hw_resolved
+    with _disk_max_bps_lock:
+        if not _disk_max_bps_hw_resolved:
+            hw = _resolve_disk_hardware_max_bps()
+            for vol, mb in hw.items():
+                # Only seed if no observed peak is already higher.
+                _disk_max_bps_cache[vol] = max(_disk_max_bps_cache.get(vol, 0), mb)
+            _disk_max_bps_hw_resolved = True
+        # Ratchet: if a sample exceeds our current max, raise the bar.
+        cached = _disk_max_bps_cache.get(volume_id, 0)
+        if observed_bps > cached:
+            cached = observed_bps
+            _disk_max_bps_cache[volume_id] = cached
+        # Final floor — never report 0 as max (would cause division by zero downstream).
+        return max(cached, _DISK_MAX_BPS_FALLBACK)
+
+
+def _is_real_drive_letter(name: str) -> bool:
+    """True for `C:`, `L:`, etc. — single-letter colon volumes that map to user-visible drive letters.
+
+    Excludes WMI's `_Total`, internal `HarddiskVolumeN` raw partitions, and any
+    other oddly-shaped Name fields. Drive letters are always 2 chars: A-Z + ':'.
+    """
+    return len(name) == 2 and name[0].isalpha() and name[1] == ':'
+
+
+def get_disk_io_metrics():
+    """
+    Get per-logical-volume disk IO metrics via WMI.
+
+    Uses Win32_PerfFormattedData_PerfDisk_LogicalDisk, which returns pre-computed
+    rates keyed by volume (e.g., 'C:', 'L:'). WMI perf counters need two internal
+    samples to compute rates, so the first call after boot may return zeros.
+
+    Only volumes with real drive letters are emitted — WMI's internal
+    `HarddiskVolumeN` raw-partition entries are filtered out as they have no
+    user-visible mapping in the dashboard.
+
+    Each entry includes `maxBps` — the denominator the web uses to plot read/write
+    as a 0-100% bandwidth utilization line. See `_disk_max_bps_for()` for the
+    hardware-estimate + observed-peak ratchet logic.
+
+    Returns:
+        dict: {
+            '<volume_id>': {
+                'readBps': int,      # Read bytes per second
+                'writeBps': int,     # Write bytes per second
+                'readIops': int,     # Read operations per second
+                'writeIops': int,    # Write operations per second
+                'busyPct': float,    # 100 - %IdleTime, clamped to [0, 100]
+                'maxBps': int,       # Hardware-class estimate, ratcheted up by observed peak
+            },
+            ...
+        }
+        Returns {} on WMI timeout or failure.
+    """
+    try:
+        rows = _wmi_logical_disk_with_timeout()
+        if rows is None:
+            return {}
+
+        result = {}
+        for row in rows:
+            name = row.get('Name', '')
+            if not name or not _is_real_drive_letter(name):
+                continue
+            idle_pct = row.get('PercentIdleTime', 100.0)
+            busy_pct = round(max(0.0, min(100.0 - idle_pct, 100.0)), 1)
+            read_bps = row.get('DiskReadBytesPerSec', 0)
+            write_bps = row.get('DiskWriteBytesPerSec', 0)
+            max_bps = _disk_max_bps_for(name, max(read_bps, write_bps))
+            result[name] = {
+                'readBps': read_bps,
+                'writeBps': write_bps,
+                'readIops': row.get('DiskReadsPerSec', 0),
+                'writeIops': row.get('DiskWritesPerSec', 0),
+                'busyPct': busy_pct,
+                'maxBps': max_bps,
+            }
+        return result
+
+    except Exception as e:
+        logging.warning(f"Error collecting disk IO metrics: {e}")
+        return {}
 
 
 # --- Network quality (ping-based) ---
@@ -678,7 +977,24 @@ def get_project_id(environment=None):
     else:
         return 'owlette-prod-90a12'
 
+# TTL cache for is_script_running(). psutil.process_iter() is one of the
+# slowest psutil calls on Windows (200-500ms cmdline parse across all procs);
+# the metrics thread hits it every 5-120s just to pick a heartbeat cadence.
+# Cache for 10s — GUI can't appear/disappear faster than the 5s main loop
+# and the metrics interval selection responds within one cycle either way.
+_script_running_cache = {}  # script_name -> (result, expires_at_monotonic)
+_SCRIPT_RUNNING_TTL = 10.0
+
 def is_script_running(script_name):
+    now = time.monotonic()
+    cached = _script_running_cache.get(script_name)
+    if cached is not None and cached[1] > now:
+        return cached[0]
+    result = _is_script_running_uncached(script_name)
+    _script_running_cache[script_name] = (result, now + _SCRIPT_RUNNING_TTL)
+    return result
+
+def _is_script_running_uncached(script_name):
     for process in psutil.process_iter(attrs=['pid', 'name', 'cmdline']):
         try:
             name = process.info.get('name') or ''
@@ -693,6 +1009,139 @@ def is_script_running(script_name):
 # PATHS - Now using ProgramData for proper Windows service data storage
 CONFIG_PATH = get_data_path('config/config.json')
 RESULT_FILE_PATH = get_data_path('tmp/app_states.json')
+
+# Lazy GPUtil import — avoids eager GPU probing at module load (saves ~5-10 MB
+# baseline and a startup delay for every process that imports shared_utils).
+# Failures are sticky only for _GPUTIL_RETRY_BACKOFF seconds so a transient
+# import error during a driver update recovers on its own.
+_gputil_module = None
+_gputil_retry_after = 0.0  # monotonic seconds; 0 = retry immediately
+_gputil_popen_patched = False
+_GPUTIL_RETRY_BACKOFF = 300.0  # 5 min between retries after a failed import
+
+def _ensure_gputil_no_window_popen_patched():
+    global _gputil_popen_patched
+    if _gputil_popen_patched:
+        return
+    if sys.platform != 'win32':
+        _gputil_popen_patched = True
+        return
+
+    try:
+        import GPUtil.GPUtil as _gputil_impl
+
+        def _wrap_popen(original_popen):
+            if getattr(original_popen, '_owlette_create_no_window', False):
+                return original_popen
+
+            def _popen_no_window(*args, **kwargs):
+                kwargs['creationflags'] = (
+                    (kwargs.get('creationflags') or 0)
+                    | subprocess.CREATE_NO_WINDOW
+                )
+                return original_popen(*args, **kwargs)
+
+            _popen_no_window._owlette_create_no_window = True
+            _popen_no_window._owlette_original_popen = original_popen
+            return _popen_no_window
+
+        patched_targets = []
+
+        popen = getattr(_gputil_impl, 'Popen', None)
+        if popen is not None:
+            _gputil_impl.Popen = _wrap_popen(popen)
+            patched_targets.append('GPUtil.GPUtil.Popen')
+
+        gputil_subprocess = getattr(_gputil_impl, 'subprocess', None)
+        subprocess_popen = getattr(gputil_subprocess, 'Popen', None)
+        if subprocess_popen is not None:
+            class _SubprocessProxy:
+                def __init__(self, module, popen_wrapper):
+                    self._module = module
+                    self.Popen = popen_wrapper
+
+                def __getattr__(self, name):
+                    return getattr(self._module, name)
+
+            _gputil_impl.subprocess = _SubprocessProxy(
+                gputil_subprocess,
+                _wrap_popen(subprocess_popen),
+            )
+            patched_targets.append('GPUtil.GPUtil.subprocess.Popen')
+
+        if patched_targets:
+            logging.debug(
+                "Patched GPUtil Popen for hidden Windows launches: %s",
+                ", ".join(patched_targets),
+            )
+        else:
+            logging.debug(
+                "GPUtil Popen patch warning: no supported Popen reference found"
+            )
+    except Exception as e:
+        logging.debug(
+            "GPUtil Popen patch warning: failed to apply hidden Windows launch: %s",
+            e,
+            exc_info=True,
+        )
+    finally:
+        _gputil_popen_patched = True
+
+def _get_gputil():
+    global _gputil_module, _gputil_retry_after
+    if _gputil_module is not None:
+        return _gputil_module
+    if time.monotonic() < _gputil_retry_after:
+        return None
+    try:
+        import GPUtil as _g
+        _ensure_gputil_no_window_popen_patched()
+        _gputil_module = _g
+        return _gputil_module
+    except Exception:
+        _gputil_retry_after = time.monotonic() + _GPUTIL_RETRY_BACKOFF
+        return None
+
+# Config cache with mtime-based invalidation. The agent is multi-threaded
+# (main service loop + metrics thread + Firestore listener), and read_config()
+# is called multiple times per 5s tick. Caching by mtime eliminates redundant
+# disk reads without changing semantics: external edits are picked up as soon
+# as the OS publishes the new mtime, and in-process writes invalidate directly.
+import copy as _copy
+_config_cache_lock = threading.Lock()
+_config_cache_mtime = 0.0
+_config_cache_data = None
+
+def _read_config_cached():
+    """Return the parsed config.json, using an mtime-invalidated cache.
+
+    Returns a deep copy so callers can safely mutate the result without
+    corrupting the shared cache entry.
+    """
+    global _config_cache_mtime, _config_cache_data
+    try:
+        mtime = os.path.getmtime(CONFIG_PATH)
+    except OSError:
+        # File missing — fall through to the raw reader, which has its own
+        # not-found handling and retry logic.
+        return read_json_from_file(CONFIG_PATH)
+
+    with _config_cache_lock:
+        if _config_cache_data is not None and mtime == _config_cache_mtime:
+            return _copy.deepcopy(_config_cache_data)
+
+    data = read_json_from_file(CONFIG_PATH)
+    with _config_cache_lock:
+        _config_cache_mtime = mtime
+        _config_cache_data = data
+    return _copy.deepcopy(data)
+
+def _invalidate_config_cache(new_data=None):
+    """Reset the config cache. Call after any in-process write to config.json."""
+    global _config_cache_mtime, _config_cache_data
+    with _config_cache_lock:
+        _config_cache_mtime = 0.0
+        _config_cache_data = _copy.deepcopy(new_data) if new_data is not None else None
 
 # Cortex (local AI agent) paths
 CORTEX_PID_PATH = get_data_path('tmp/cortex.pid')
@@ -909,7 +1358,8 @@ def log_startup_system_snapshot():
         logging.info(f"  RAM          : {mem_gb} GB total")
         logging.info(f"  Disk (C:\\)   : {disk_str}")
         try:
-            gpus = GPUtil.getGPUs()
+            _g = _get_gputil()
+            gpus = _g.getGPUs() if _g else []
             if gpus:
                 for i, gpu in enumerate(gpus):
                     vram_gb = round(gpu.memoryTotal / 1024, 1)
@@ -935,6 +1385,52 @@ def _get_primary_ips():
     except Exception:
         pass
     return ips
+
+
+def log_watchdog_restart_block(snapshot: dict):
+    """Log a visually distinct banner when the self-restart watchdog fires.
+
+    Tagged [WATCHDOG-RESTART] for easy grep across rotated log files. Also
+    emits a single [WATCHDOG-JSON] line with the full snapshot for machine
+    parsing (jq / Loki / ELK).
+    """
+    try:
+        sep = "=" * 70
+        logging.info(sep)
+        logging.info("  [WATCHDOG-RESTART] INITIATING PROCESS EXIT FOR SELF-RECOVERY")
+        logging.info(sep)
+        logging.info(f"  Reason code        : {snapshot.get('reason_code', 'unknown')}")
+        logging.info(f"  Seconds since OK   : {snapshot.get('seconds_since_last_success', 'n/a')}")
+        logging.info(f"  Consecutive fails  : {snapshot.get('consecutive_failures', 'n/a')}")
+        logging.info(f"  Internet (TCP)     : {snapshot.get('internet_check_tcp', 'n/a')}")
+        logging.info(f"  Last error         : {snapshot.get('last_error', 'n/a')}")
+        logging.info(f"  Process uptime (s) : {snapshot.get('process_uptime_s', 'n/a')}")
+        logging.info(f"  Restarts in window : {snapshot.get('restart_count_in_window', 'n/a')}")
+        logging.info(f"  Restart ID         : {snapshot.get('restart_id', 'n/a')}")
+        logging.info(f"  Timestamp (UTC)    : {snapshot.get('timestamp_utc', 'n/a')}")
+        logging.info(sep)
+        # Machine-parseable JSON line alongside the human banner
+        logging.info("[WATCHDOG-JSON] " + json.dumps(snapshot, default=str))
+    except Exception as e:
+        logging.error(f"log_watchdog_restart_block failed: {e}")
+
+
+def log_watchdog_restart_replay(snapshot: dict):
+    """Log a block on startup when the previous process exited via watchdog."""
+    try:
+        sep = "-" * 70
+        logging.info(sep)
+        logging.info("  [WATCHDOG-RESTART REPLAY] previous process exited via self-restart watchdog")
+        logging.info(sep)
+        logging.info(f"  Reason code        : {snapshot.get('reason_code', 'unknown')}")
+        logging.info(f"  Restart ID         : {snapshot.get('restart_id', 'n/a')}")
+        logging.info(f"  Timestamp (UTC)    : {snapshot.get('timestamp_utc', 'n/a')}")
+        logging.info(f"  Seconds since OK   : {snapshot.get('seconds_since_last_success', 'n/a')}")
+        logging.info(f"  Last error         : {snapshot.get('last_error', 'n/a')}")
+        logging.info(f"  Submitted          : {'yes' if snapshot.get('submitted_at') else 'pending firestore submission'}")
+        logging.info(sep)
+    except Exception as e:
+        logging.warning(f"log_watchdog_restart_replay failed (non-fatal): {e}")
 
 
 def log_startup_config_summary():
@@ -1233,6 +1729,47 @@ def is_within_schedule(schedules, timezone_str=None):
                     return True
     return False
 
+
+def compute_scheduled_instant(date_obj, time_str, timezone_str=None):
+    """Build a timezone-aware datetime for a specific date + HH:MM time.
+
+    Used by the reboot scheduler to convert an entry's `{date, time}` into an
+    absolute instant for comparison against `now` and `boot_time`.
+
+    Args:
+        date_obj: A `datetime.date` (the day the instant lands on).
+        time_str: "HH:MM" 24-hour format.
+        timezone_str: Optional IANA timezone (e.g. 'America/New_York'). Local time if None.
+
+    Returns:
+        A timezone-aware `datetime.datetime`, or None if `time_str` is malformed.
+        On DST forward jumps where the requested local time doesn't exist, the
+        returned instant is the closest valid post-jump moment (zoneinfo's default
+        behavior). The reboot scheduler treats this as "the entry fires at the
+        next valid wall-clock time after the gap" — acceptable per the plan.
+    """
+    from datetime import datetime, time as dt_time
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        from backports.zoneinfo import ZoneInfo
+
+    try:
+        h, m = map(int, time_str.split(':'))
+        wall_time = dt_time(h, m)
+    except (ValueError, AttributeError):
+        return None
+
+    try:
+        tz = ZoneInfo(timezone_str) if timezone_str else None
+    except (KeyError, Exception):
+        logging.warning(f"Invalid timezone '{timezone_str}', falling back to local time")
+        tz = None
+
+    naive = datetime.combine(date_obj, wall_time)
+    return naive.replace(tzinfo=tz) if tz else naive.astimezone()
+
+
 # Read a JSON file and returns its content as a Python dictionary with retry logic
 def read_json_from_file(file_path, max_retries=3, initial_delay=0.1):
     """
@@ -1368,6 +1905,27 @@ def generate_config_file(existing_config=None):
         "sentry": {
             "enabled": False,
             "dsn": ""
+        },
+        "displays": {
+            "enabled": True,
+            "assigned": None,
+            "auto_enforce": False,
+            "remoteApplyEnabled": False
+        },
+        "watchdog": {
+            "enabled": True,
+            "thresholds": {
+                "failure_seconds": 360,
+                "boot_grace_seconds": 180
+            },
+            "budget": {
+                "max_per_window": 3,
+                "window_seconds": 3600
+            },
+            "preconditions": {
+                "require_internet": True,
+                "fatal_error_suppression_seconds": 3600
+            }
         }
     }
 
@@ -1387,7 +1945,7 @@ def generate_config_file(existing_config=None):
 
 # Read specific keys from the configuration file or a specific process by its ID
 def read_config(keys=None, process_list_id=None):
-    config = read_json_from_file(CONFIG_PATH)
+    config = _read_config_cached()
 
     # If process_list_id is provided, find the corresponding process
     if process_list_id:
@@ -1427,6 +1985,9 @@ def write_config(keys, value):
     item[keys[-1]] = value
 
     write_json_to_file(config, CONFIG_PATH)
+    # Publish the fresh data to the cache so subsequent reads in this process
+    # see the new value immediately (don't wait for mtime propagation).
+    _invalidate_config_cache(config)
 
 # PROCESS TERMINATION
 
@@ -1595,7 +2156,8 @@ def get_system_info():
     cpu_usage = psutil.cpu_percent()
     memory_info = psutil.virtual_memory()
     disk_info = psutil.disk_usage('/')
-    gpus = GPUtil.getGPUs()
+    _g = _get_gputil()
+    gpus = _g.getGPUs() if _g else []
     gpu_info = gpus[0] if gpus else "No GPU detected"
 
     # Convert bytes to gigabytes
@@ -1622,60 +2184,90 @@ def get_system_metrics(skip_gpu=False):
     Args:
         skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
     """
-    # Read config from disk
-    config = read_json_from_file(CONFIG_PATH)
+    # Route through the mtime-cached reader so repeated calls inside a tick
+    # don't re-hit disk. read_config() returns a deep copy, safe to pass down.
+    config = read_config()
     return get_system_metrics_with_config(config, skip_gpu)
 
 
-def get_system_metrics_with_config(config, skip_gpu=False):
+def get_system_metrics_with_config(config=None, skip_gpu=False):
     """
-    Get system metrics with clear units for Firebase.
-    Accepts config as parameter to avoid file read race conditions.
+    Get system metrics with clear units. Returns the legacy snake_case shape
+    (cpu/memory/disk/gpu/network/processes) for in-process consumers such as
+    mcp_tools, report_issue, and the tray GUI; firebase_client reads only the
+    `memory` and `processes` keys and sources per-device metrics directly from
+    hardware_profile.collect_dynamic_metrics() for the v2 heartbeat.
 
     Args:
-        config: Configuration dict (to avoid re-reading from disk)
-        skip_gpu: If True, skip GPU checks to avoid command window flashing (use when called from GUI)
+        config: Configuration dict (to avoid re-reading from disk). If None,
+            loads via the mtime-cached read_config() — no extra disk I/O when
+            the cache is warm.
+        skip_gpu: If True, skip GPU queries (used by GUI callers to avoid the
+            nvidia-smi / WinTmp console window flash).
     """
+    if config is None:
+        config = read_config()
     try:
-        # CPU - model name, percentage, and temperature
+        # CPU - model, aggregate percent, temperature
         cpu_name = get_cpu_name()
         cpu_percent = round(psutil.cpu_percent(interval=0.1), 1)
-        cpu_temp = get_cpu_temperature()  # Celsius or None
+        cpu_temp = get_cpu_temperature()
 
-        # Memory - bytes to GB
+        # Memory - bytes to GB (both snake and camelCase for v1 + v2 readers)
         mem = psutil.virtual_memory()
         mem_used_gb = round(mem.used / (1024**3), 2)
         mem_total_gb = round(mem.total / (1024**3), 2)
         mem_percent = round(mem.percent, 1)
 
-        # Disk - bytes to GB
-        disk = psutil.disk_usage('/')
-        disk_used_gb = round(disk.used / (1024**3), 2)
-        disk_total_gb = round(disk.total / (1024**3), 2)
-        disk_percent = round(disk.percent, 1)
+        # Disk - system drive
+        try:
+            disk = psutil.disk_usage('/')
+            disk_used_gb = round(disk.used / (1024**3), 2)
+            disk_total_gb = round(disk.total / (1024**3), 2)
+            disk_percent = round(disk.percent, 1)
+        except Exception:
+            disk_used_gb = 0.0
+            disk_total_gb = 0.0
+            disk_percent = 0.0
 
-        # GPU - usage %, VRAM, and temperature (skip if requested to avoid command window flashing)
+        # GPU - first GPU (skipped in GUI to avoid subprocess flash)
         gpu_usage_percent = 0
         gpu_vram_used_gb = 0
         gpu_vram_total_gb = 0
         gpu_name = "N/A"
-        gpu_temp = None  # Celsius or None
+        gpu_temp = None
         if not skip_gpu:
             try:
-                gpus = GPUtil.getGPUs()
+                _g = _get_gputil()
+                gpus = _g.getGPUs() if _g else []
                 if gpus:
-                    gpu = gpus[0]
-                    gpu_usage_percent = round(gpu.load * 100, 1)
-                    gpu_vram_used_gb = round(gpu.memoryUsed / 1024, 2)  # MB to GB
-                    gpu_vram_total_gb = round(gpu.memoryTotal / 1024, 2)
-                    gpu_name = gpu.name
-
-                    # Get GPU temperature (first GPU only, to match GPUtil behavior)
+                    g0 = gpus[0]
+                    gpu_usage_percent = round(g0.load * 100, 1)
+                    gpu_vram_used_gb = round(g0.memoryUsed / 1024, 2)
+                    gpu_vram_total_gb = round(g0.memoryTotal / 1024, 2)
+                    gpu_name = g0.name
                     gpu_temps = get_gpu_temperatures()
-                    if gpu_temps and len(gpu_temps) > 0:
-                        gpu_temp = gpu_temps[0]['temperature']  # Celsius
-            except:
+                    if gpu_temps:
+                        gpu_temp = gpu_temps[0].get('temperature')
+            except Exception:
                 pass
+
+        # Network (legacy shape — v1 consumers)
+        try:
+            network_metrics = get_network_metrics() or {}
+        except Exception:
+            network_metrics = {}
+        try:
+            quality = get_network_quality() or {}
+        except Exception:
+            quality = {}
+        network_metrics.setdefault('interfaces', {})
+        if 'latency_ms' in quality:
+            network_metrics['latency_ms'] = quality.get('latency_ms')
+        if 'packet_loss_pct' in quality:
+            network_metrics['packet_loss_pct'] = quality.get('packet_loss_pct')
+        if 'gateway_ip' in quality:
+            network_metrics['gateway_ip'] = quality.get('gateway_ip')
 
         # Processes - combine config and runtime state
         processes_data = {}
@@ -1743,51 +2335,50 @@ def get_system_metrics_with_config(config, skip_gpu=False):
         except Exception as e:
             logging.error(f"Error collecting process data: {e}")
 
-        # Build CPU metrics with optional temperature
         cpu_metrics = {
             'name': cpu_name,
             'percent': cpu_percent,
-            'unit': '%'
+            'unit': '%',
         }
         if cpu_temp is not None:
-            cpu_metrics['temperature'] = round(cpu_temp, 1)  # Celsius, 1 decimal place
+            cpu_metrics['temperature'] = round(cpu_temp, 1)
 
-        # Build GPU metrics with optional temperature
         gpu_metrics = {
             'name': gpu_name,
             'usage_percent': gpu_usage_percent,
             'vram_used_gb': gpu_vram_used_gb,
             'vram_total_gb': gpu_vram_total_gb,
-            'unit': 'GB'
+            'unit': '%',
         }
         if gpu_temp is not None:
-            gpu_metrics['temperature'] = round(gpu_temp, 1)  # Celsius, 1 decimal place
+            gpu_metrics['temperature'] = round(gpu_temp, 1)
 
         return {
             'cpu': cpu_metrics,
             'memory': {
+                'percent': mem_percent,
                 'used_gb': mem_used_gb,
                 'total_gb': mem_total_gb,
-                'percent': mem_percent,
-                'unit': 'GB'
+                'usedGb': mem_used_gb,
+                'unit': 'GB',
             },
             'disk': {
+                'percent': disk_percent,
                 'used_gb': disk_used_gb,
                 'total_gb': disk_total_gb,
-                'percent': disk_percent,
-                'unit': 'GB'
+                'unit': 'GB',
             },
             'gpu': gpu_metrics,
-            'network': {**get_network_metrics(), **get_network_quality()},
-            'processes': processes_data
+            'network': network_metrics,
+            'processes': processes_data,
         }
     except Exception as e:
         logging.error(f"Error getting system metrics: {e}")
         return {
-            'cpu': {'name': 'Unknown CPU', 'percent': 0, 'unit': '%'},
-            'memory': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
-            'disk': {'used_gb': 0, 'total_gb': 0, 'percent': 0, 'unit': 'GB'},
-            'gpu': {'name': 'N/A', 'usage_percent': 0, 'vram_used_gb': 0, 'vram_total_gb': 0, 'unit': 'GB'},
-            'network': {'interfaces': {}, 'gateway_ip': None, 'latency_ms': None, 'packet_loss_pct': None},
-            'processes': {}
+            'cpu': {'name': 'Unknown', 'percent': 0.0, 'unit': '%'},
+            'memory': {'percent': 0.0, 'used_gb': 0.0, 'total_gb': 0.0, 'usedGb': 0.0, 'unit': 'GB'},
+            'disk': {'percent': 0.0, 'used_gb': 0.0, 'total_gb': 0.0, 'unit': 'GB'},
+            'gpu': {'name': 'N/A', 'usage_percent': 0, 'vram_used_gb': 0, 'vram_total_gb': 0, 'unit': '%'},
+            'network': {'interfaces': {}},
+            'processes': {},
         }

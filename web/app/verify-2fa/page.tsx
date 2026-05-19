@@ -11,19 +11,24 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { setMfaVerifiedForSession, trustDevice } from '@/lib/mfaSession';
+import { trustDevice } from '@/lib/mfaSession';
 
 function Verify2FAContent() {
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const returnUrl = searchParams.get('return') || '/dashboard';
+  // Accept both `redirect` (new contract, set by proxy + login page) and
+  // `return` (historical contract from pre-Wave-2 callers). Either way
+  // the value must be a same-origin relative path or we fall back to
+  // /dashboard to avoid open-redirect issues.
+  const rawReturn = searchParams.get('redirect') ?? searchParams.get('return') ?? '/dashboard';
+  const returnUrl = (rawReturn.startsWith('/') && !rawReturn.startsWith('//')) ? rawReturn : '/dashboard';
 
   const [verificationCode, setVerificationCode] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [useBackupCode, setUseBackupCode] = useState(false);
   const [trustThisDevice, setTrustThisDevice] = useState(false);
-  const [mfaReady, setMfaReady] = useState(false);
+  const [, setMfaReady] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -31,7 +36,12 @@ function Verify2FAContent() {
       return;
     }
 
-    // Check if user has MFA enrolled
+    // Check if user has MFA enrolled. The proxy already gates this page
+    // — an unverified, MFA-required session is the only thing it lets
+    // through to /verify-2fa for an authenticated user — but we re-check
+    // client-side to render the right copy and to handle the corner
+    // case where the user landed here without an MFA challenge active
+    // (e.g. clicked a stale bookmark after disabling MFA).
     if (user && db) {
       const userDocRef = doc(db, 'users', user.uid);
       getDoc(userDocRef)
@@ -110,10 +120,15 @@ function Verify2FAContent() {
         });
       }
 
-      // Verification successful - mark session as MFA verified
-      setMfaVerifiedForSession(user.uid);
+      // Server-side authority: /api/mfa/verify-login already flipped the
+      // session cookie to mfaVerified=true. No client-side flag needed
+      // for the proxy to allow the next navigation.
 
-      // Trust device for 30 days if checked
+      // Trust device for 30 days if checked. This is currently a
+      // client-side hint only — the proxy still gates protected paths
+      // on the server-side session, which always requires MFA when
+      // enrolled. Wave 3 will wire trusted-device support into the
+      // session cookie so this checkbox behaves as labelled.
       if (trustThisDevice) {
         trustDevice(user.uid);
         toast.success('Verification Successful', {

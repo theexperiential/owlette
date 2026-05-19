@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { headers } from "next/headers";
 import "./globals.css";
 import { LazyAuthProvider } from "@/components/LazyAuthProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Footer } from "@/components/Footer";
 import SentryInit from "@/components/SentryInit";
+import { SecurityVersionBanner } from "@/components/SecurityVersionBanner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const geist = Geist({
   variable: "--font-geist",
@@ -58,11 +61,14 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Reading request headers opts the app into per-request rendering so the
+  // proxy CSP nonce can be applied to Next.js framework inline scripts.
+  await headers();
   // Validate Firebase environment variables
   // In development: logs warnings
   // In production: throws error if misconfigured
@@ -113,11 +119,14 @@ export default function RootLayout({
 
 -->` }} style={{ display: 'none' }} />
         <SentryInit />
+        <SecurityVersionBanner />
         <ErrorBoundary>
           <LazyAuthProvider>
-            {children}
-            <Footer />
-            <Toaster theme="dark" />
+            <TooltipProvider delayDuration={300}>
+              {children}
+              <Footer />
+              <Toaster theme="dark" />
+            </TooltipProvider>
           </LazyAuthProvider>
         </ErrorBoundary>
       </body>

@@ -94,11 +94,11 @@ export default function TermsPage() {
             <section>
               <h2 className="text-xl font-semibold text-white mb-4">5. intellectual property</h2>
               <p>
-                the owlette software is released under the GNU Affero General Public License v3.0 (AGPL-3.0).
-                you may use, modify, and distribute the software in accordance with that license.
+                the owlette software is released under the Functional Source License, Version 1.1, Apache 2.0 Future License (FSL-1.1-Apache-2.0).
+                you may use, modify, and distribute the software for any permitted purpose — excluding competing commercial uses — in accordance with that license. each release automatically converts to Apache License 2.0 two years after it is made available.
               </p>
               <p className="mt-4">
-                the owlette name, logo, and branding are trademarks of TEC and may not be used
+                the owlette name, logo, and branding are trademarks of The Experiential Company and may not be used
                 without our express written permission.
               </p>
               <p className="mt-4">
@@ -199,7 +199,7 @@ export default function TermsPage() {
               <p>
                 before filing a claim against TEC, you agree to try to resolve the dispute
                 informally by contacting us at{' '}
-                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan">
+                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan underline underline-offset-2">
                   support@owlette.app
                 </a>
                 . we will try to resolve the dispute informally by contacting you via email.
@@ -233,7 +233,7 @@ export default function TermsPage() {
               </p>
               <p className="mt-4">
                 <strong>email:</strong>{' '}
-                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan">
+                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan underline underline-offset-2">
                   support@owlette.app
                 </a>
               </p>

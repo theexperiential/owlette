@@ -1,0 +1,556 @@
+/**
+ * @jest-environment node
+ *
+ * Scope-enforcement matrix for the shared helpers used by every roost public
+ * api route. Exercises every (resource × permission) combination plus the
+ * legacy-key fallback, rotation grace window, and expiration hard-cutoff.
+ */
+import { NextRequest } from 'next/server';
+
+jest.mock('@sentry/nextjs', () => ({
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+}));
+
+jest.mock('@/lib/auditLogClient', () => ({
+  emitApiKeyUsed: jest.fn(),
+  scopeFingerprint: jest.fn(() => 'test-fingerprint'),
+}));
+
+jest.mock('@/lib/firebase-admin', () => ({
+  getAdminAuth: jest.fn(() => ({
+    verifyIdToken: jest.fn().mockRejectedValue(new Error('not an id token')),
+  })),
+  getAdminDb: jest.fn(),
+}));
+
+/**
+ * Mock the auth module — keep `requireScope`, `scopeMatches`, `ApiAuthError`,
+ * `applyAuthDeprecations` real so the pure logic is actually exercised, but
+ * control `resolveAuth` and `assertUserHasSiteAccess`.
+ */
+jest.mock('@/lib/apiAuth.server', () => {
+  const actual = jest.requireActual('@/lib/apiAuth.server');
+  return {
+    ...actual,
+    resolveAuth: jest.fn(),
+    assertUserHasSiteAccess: jest.fn(),
+  };
+});
+
+import {
+  resolveAuth,
+  assertUserHasSiteAccess,
+  type ResolvedAuth,
+} from '@/lib/apiAuth.server';
+import { getAdminDb } from '@/lib/firebase-admin';
+import { emitApiKeyUsed } from '@/lib/auditLogClient';
+import {
+  requireSiteAuthAndScope,
+  requireRoostAuthAndScope,
+  requireAgentOrSiteAuthAndScope,
+  requirePlatformAuthAndScope,
+  applyAuthDeprecations,
+} from '@/app/api/_shared';
+import type { ApiKeyPermission, ApiKeyScope } from '@/lib/apiKeyTypes';
+import { NextResponse } from 'next/server';
+
+const mockedResolveAuth = resolveAuth as jest.MockedFunction<typeof resolveAuth>;
+const mockedAssertSite = assertUserHasSiteAccess as jest.MockedFunction<
+  typeof assertUserHasSiteAccess
+>;
+const mockedAuditEmit = emitApiKeyUsed as jest.MockedFunction<typeof emitApiKeyUsed>;
+const mockedGetAdminDb = getAdminDb as jest.MockedFunction<typeof getAdminDb>;
+
+const SITE_ID = 'site-test-01';
+const ROOST_ID = 'roost-test-01';
+const OTHER_SITE_ID = 'site-test-02';
+const OTHER_ROOST_ID = 'roost-test-02';
+
+const ALL_PERMISSIONS: ApiKeyPermission[] = ['read', 'write', 'deploy', 'rollback', 'admin'];
+
+function makeRequest(opts: { method?: string; url?: string; headers?: Record<string, string> } = {}) {
+  return new NextRequest(new URL(opts.url ?? 'http://localhost/api/test'), {
+    headers: opts.headers,
+    method: opts.method ?? 'POST',
+  });
+}
+
+function authFromScopes(scopes: ApiKeyScope[] | null): ResolvedAuth {
+  return {
+    userId: 'user-test',
+    keyContext: {
+      keyId: 'key-test',
+      scopes,
+      environment: 'live',
+      expiresAt: Date.now() + 60_000,
+      isLegacy: scopes === null,
+    },
+  };
+}
+
+function sessionAuth(): ResolvedAuth {
+  return { userId: 'user-test', keyContext: null };
+}
+
+function mockPlatformRole(role: 'superadmin' | 'admin' | 'member' | null): void {
+  mockedGetAdminDb.mockReturnValue({
+    collection: () => ({
+      doc: () => ({
+        get: async () => ({
+          exists: role !== null,
+          data: () => (role === null ? undefined : { role }),
+        }),
+      }),
+    }),
+  } as unknown as ReturnType<typeof getAdminDb>);
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockedAssertSite.mockResolvedValue({ siteId: SITE_ID, siteData: {} });
+  mockPlatformRole('superadmin');
+});
+
+describe('requireSiteAuthAndScope — site resource matrix', () => {
+  describe.each(ALL_PERMISSIONS)('permission=%s', (permission) => {
+    it(`200 when site scope grants ${permission} on the target site`, async () => {
+      const scopes: ApiKeyScope[] = [
+        { resource: 'site', id: SITE_ID, permissions: [permission] },
+      ];
+      mockedResolveAuth.mockResolvedValue(authFromScopes(scopes));
+      const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, permission);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.scopeCheck.isLegacy).toBe(false);
+      }
+    });
+
+    it(`200 when site wildcard scope grants ${permission}`, async () => {
+      const scopes: ApiKeyScope[] = [
+        { resource: 'site', id: '*', permissions: [permission] },
+      ];
+      mockedResolveAuth.mockResolvedValue(authFromScopes(scopes));
+      const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, permission);
+      expect(result.ok).toBe(true);
+    });
+
+    it(`403 scope_insufficient when scope is wrong resource but has ${permission}`, async () => {
+      const scopes: ApiKeyScope[] = [
+        { resource: 'roost', id: '*', permissions: [permission] },
+      ];
+      mockedResolveAuth.mockResolvedValue(authFromScopes(scopes));
+      const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, permission);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.response.status).toBe(403);
+        const body = await result.response.json();
+        expect(body.code).toBe('scope_insufficient');
+        expect(body.required).toEqual({ resource: 'site', id: SITE_ID, permission });
+      }
+    });
+
+    it(`403 when scope targets a different siteId with ${permission}`, async () => {
+      const scopes: ApiKeyScope[] = [
+        { resource: 'site', id: OTHER_SITE_ID, permissions: [permission] },
+      ];
+      mockedResolveAuth.mockResolvedValue(authFromScopes(scopes));
+      const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, permission);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.response.status).toBe(403);
+      }
+    });
+
+    it(`403 when scope has different permission than ${permission}`, async () => {
+      const otherPerm: ApiKeyPermission = permission === 'read' ? 'write' : 'read';
+      const scopes: ApiKeyScope[] = [
+        { resource: 'site', id: SITE_ID, permissions: [otherPerm] },
+      ];
+      mockedResolveAuth.mockResolvedValue(authFromScopes(scopes));
+      const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, permission);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.response.status).toBe(403);
+      }
+    });
+  });
+});
+
+describe('requireRoostAuthAndScope — roost resource matrix', () => {
+  describe.each(ALL_PERMISSIONS)('permission=%s', (permission) => {
+    it(`200 when roost scope grants ${permission} on the target roost`, async () => {
+      const scopes: ApiKeyScope[] = [
+        { resource: 'roost', id: ROOST_ID, permissions: [permission] },
+      ];
+      mockedResolveAuth.mockResolvedValue(authFromScopes(scopes));
+      const result = await requireRoostAuthAndScope(
+        makeRequest(),
+        SITE_ID,
+        ROOST_ID,
+        permission,
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it(`200 when roost wildcard scope grants ${permission}`, async () => {
+      const scopes: ApiKeyScope[] = [
+        { resource: 'roost', id: '*', permissions: [permission] },
+      ];
+      mockedResolveAuth.mockResolvedValue(authFromScopes(scopes));
+      const result = await requireRoostAuthAndScope(
+        makeRequest(),
+        SITE_ID,
+        ROOST_ID,
+        permission,
+      );
+      expect(result.ok).toBe(true);
+    });
+
+    it(`403 when scope targets a different roostId with ${permission}`, async () => {
+      const scopes: ApiKeyScope[] = [
+        { resource: 'roost', id: OTHER_ROOST_ID, permissions: [permission] },
+      ];
+      mockedResolveAuth.mockResolvedValue(authFromScopes(scopes));
+      const result = await requireRoostAuthAndScope(
+        makeRequest(),
+        SITE_ID,
+        ROOST_ID,
+        permission,
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.response.status).toBe(403);
+      }
+    });
+
+    it(`403 when site-scope is held instead of roost-scope for ${permission}`, async () => {
+      // Site-scoped write does NOT imply roost-scoped write — scope check is
+      // strict per (resource, id, permission).
+      const scopes: ApiKeyScope[] = [
+        { resource: 'site', id: SITE_ID, permissions: [permission] },
+      ];
+      mockedResolveAuth.mockResolvedValue(authFromScopes(scopes));
+      const result = await requireRoostAuthAndScope(
+        makeRequest(),
+        SITE_ID,
+        ROOST_ID,
+        permission,
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.response.status).toBe(403);
+      }
+    });
+  });
+});
+
+describe('machine-scope enforcement (via scopeMatches directly)', () => {
+  it.each(ALL_PERMISSIONS)('machine scope accepts %s on exact machine id', async (permission) => {
+    // Routes don't currently call requireScope with 'machine', but the
+    // helper must accept that dimension for future endpoints.
+    const { requireScope } = jest.requireActual('@/lib/apiAuth.server') as typeof import('@/lib/apiAuth.server');
+    const auth = authFromScopes([
+      { resource: 'machine', id: 'm-1', permissions: [permission] },
+    ]);
+    expect(() => requireScope(auth, 'machine', 'm-1', permission)).not.toThrow();
+  });
+
+  it('machine scope rejects mismatched permission', () => {
+    const { requireScope } = jest.requireActual('@/lib/apiAuth.server') as typeof import('@/lib/apiAuth.server');
+    const auth = authFromScopes([
+      { resource: 'machine', id: 'm-1', permissions: ['read'] },
+    ]);
+    expect(() => requireScope(auth, 'machine', 'm-1', 'write')).toThrow(
+      expect.objectContaining({ status: 403, code: 'scope_insufficient' }),
+    );
+  });
+});
+
+describe('legacy-key empty scopes', () => {
+  it('rejects site scope check with empty legacy scopes', async () => {
+    mockedResolveAuth.mockResolvedValue(authFromScopes([]));
+    const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('scope_insufficient');
+      expect(body.required).toEqual({
+        resource: 'site',
+        id: SITE_ID,
+        permission: 'write',
+      });
+    }
+  });
+
+  it('applyAuthDeprecations sets X-Roost-Deprecation header on legacy bypass', () => {
+    const response = NextResponse.json({ ok: true });
+    const decorated = applyAuthDeprecations(response, { isLegacy: true });
+    expect(decorated.headers.get('X-Roost-Deprecation')).toBe('legacy-key-scope-missing');
+  });
+
+  it('applyAuthDeprecations is a no-op for non-legacy', () => {
+    const response = NextResponse.json({ ok: true });
+    const decorated = applyAuthDeprecations(response, { isLegacy: false });
+    expect(decorated.headers.get('X-Roost-Deprecation')).toBeNull();
+  });
+
+  it('legacy key + roost route also rejects on scope check', async () => {
+    mockedResolveAuth.mockResolvedValue(authFromScopes([]));
+    const result = await requireRoostAuthAndScope(
+      makeRequest(),
+      SITE_ID,
+      ROOST_ID,
+      'rollback',
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('scope_insufficient');
+      expect(body.required).toEqual({
+        resource: 'roost',
+        id: ROOST_ID,
+        permission: 'rollback',
+      });
+    }
+  });
+});
+
+describe('session / id-token auth (no API key)', () => {
+  it('bypasses scope check entirely', async () => {
+    mockedResolveAuth.mockResolvedValue(sessionAuth());
+    const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'admin');
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.scopeCheck.isLegacy).toBe(false);
+  });
+
+  it('does NOT emit api_key_used audit event for session auth', async () => {
+    mockedResolveAuth.mockResolvedValue(sessionAuth());
+    await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
+    expect(mockedAuditEmit).not.toHaveBeenCalled();
+  });
+});
+
+describe('requirePlatformAuthAndScope', () => {
+  it('allows a superadmin session without API-key scope', async () => {
+    mockedResolveAuth.mockResolvedValue(sessionAuth());
+    mockPlatformRole('superadmin');
+
+    const result = await requirePlatformAuthAndScope(makeRequest(), 'user', 'admin');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.scopeCheck.isLegacy).toBe(false);
+    }
+  });
+
+  it('rejects a superadmin API key that lacks the required platform scope', async () => {
+    mockedResolveAuth.mockResolvedValue(
+      authFromScopes([{ resource: 'installer', id: '*', permissions: ['read'] }]),
+    );
+    mockPlatformRole('superadmin');
+
+    const result = await requirePlatformAuthAndScope(makeRequest(), 'user', 'admin');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('scope_insufficient');
+      expect(body.required).toEqual({ resource: 'user', id: '*', permission: 'admin' });
+    }
+  });
+
+  it('rejects a non-superadmin API key even when the key has platform scope', async () => {
+    mockedResolveAuth.mockResolvedValue(
+      authFromScopes([{ resource: 'user', id: '*', permissions: ['admin'] }]),
+    );
+    mockPlatformRole('member');
+
+    const result = await requirePlatformAuthAndScope(makeRequest(), 'user', 'admin');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('forbidden');
+      expect(body.detail).toBe('superadmin access required');
+    }
+  });
+
+  it('rejects a legacy superadmin key without required platform scope', async () => {
+    mockedResolveAuth.mockResolvedValue(authFromScopes([]));
+    mockPlatformRole('superadmin');
+
+    const result = await requirePlatformAuthAndScope(makeRequest(), 'installer', 'admin');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('scope_insufficient');
+      expect(body.required).toEqual({
+        resource: 'installer',
+        id: '*',
+        permission: 'admin',
+      });
+    }
+  });
+});
+
+describe('audit-log emission', () => {
+  it('emits api_key_used when API key auth succeeds', async () => {
+    mockedResolveAuth.mockResolvedValue(
+      authFromScopes([
+        { resource: 'site', id: SITE_ID, permissions: ['write'] },
+      ]),
+    );
+    await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
+    expect(mockedAuditEmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT emit when scope check fails (no successful resolution)', async () => {
+    mockedResolveAuth.mockResolvedValue(
+      authFromScopes([
+        { resource: 'site', id: SITE_ID, permissions: ['read'] },
+      ]),
+    );
+    await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
+    expect(mockedAuditEmit).not.toHaveBeenCalled();
+  });
+
+  it('does NOT emit for legacy key with empty scopes because scope check fails', async () => {
+    mockedResolveAuth.mockResolvedValue(authFromScopes([]));
+    const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
+    expect(result.ok).toBe(false);
+    expect(mockedAuditEmit).not.toHaveBeenCalled();
+  });
+});
+
+describe('input validation', () => {
+  it('400 when siteId has invalid format', async () => {
+    const result = await requireSiteAuthAndScope(
+      makeRequest(),
+      'bad site id with spaces',
+      'write',
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(400);
+    }
+  });
+
+  it('400 when roostId has invalid format', async () => {
+    const result = await requireRoostAuthAndScope(
+      makeRequest(),
+      SITE_ID,
+      'short',
+      'write',
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(400);
+    }
+  });
+});
+
+describe('site-access failures', () => {
+  it('404 when assertUserHasSiteAccess throws 404 (site not found)', async () => {
+    const { ApiAuthError } = jest.requireActual('@/lib/apiAuth.server');
+    mockedResolveAuth.mockResolvedValue(
+      authFromScopes([
+        { resource: 'site', id: '*', permissions: ['write'] },
+      ]),
+    );
+    mockedAssertSite.mockRejectedValue(new ApiAuthError(404, 'not found'));
+    const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(404);
+  });
+
+  it('collapses 403 to 404 (anti-enumeration)', async () => {
+    const { ApiAuthError } = jest.requireActual('@/lib/apiAuth.server');
+    mockedResolveAuth.mockResolvedValue(
+      authFromScopes([
+        { resource: 'site', id: '*', permissions: ['write'] },
+      ]),
+    );
+    mockedAssertSite.mockRejectedValue(new ApiAuthError(403, 'no access'));
+    const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(404);
+  });
+});
+
+describe('rotation grace + expiration (end-to-end via resolveAuth failures)', () => {
+  it('surfaces token_expired as 401 with problem+json body', async () => {
+    const { ApiAuthError } = jest.requireActual('@/lib/apiAuth.server');
+    const expiredAt = Date.now() - 1000;
+    mockedResolveAuth.mockRejectedValue(
+      new ApiAuthError(401, 'Unauthorized: API key expired', {
+        code: 'token_expired',
+        details: { expiredAt },
+      }),
+    );
+    const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(401);
+      const body = await result.response.json();
+      expect(body.code).toBe('token_expired');
+      expect(body.expiredAt).toBe(expiredAt);
+    }
+  });
+
+  it('surfaces retired-past-grace as plain 401 (mirrors revocation)', async () => {
+    const { ApiAuthError } = jest.requireActual('@/lib/apiAuth.server');
+    mockedResolveAuth.mockRejectedValue(
+      new ApiAuthError(401, 'Unauthorized: Invalid API key'),
+    );
+    const result = await requireSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(401);
+  });
+});
+
+describe('requireAgentOrSiteAuthAndScope — operator fallthrough', () => {
+  it('operator with scoped key passes via requireSiteAuthAndScope path', async () => {
+    mockedResolveAuth.mockResolvedValue(
+      authFromScopes([
+        { resource: 'site', id: SITE_ID, permissions: ['read'] },
+      ]),
+    );
+    const result = await requireAgentOrSiteAuthAndScope(makeRequest(), SITE_ID, 'read');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.isAgent).toBe(false);
+    }
+  });
+
+  it('operator with insufficient scope gets 403', async () => {
+    mockedResolveAuth.mockResolvedValue(
+      authFromScopes([
+        { resource: 'site', id: SITE_ID, permissions: ['read'] },
+      ]),
+    );
+    const result = await requireAgentOrSiteAuthAndScope(makeRequest(), SITE_ID, 'write');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('scope_insufficient');
+    }
+  });
+
+  it('400 when siteId invalid', async () => {
+    const result = await requireAgentOrSiteAuthAndScope(
+      makeRequest(),
+      'bad site id with spaces',
+      'read',
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(400);
+  });
+});

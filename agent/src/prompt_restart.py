@@ -42,6 +42,15 @@ class PromptRestart:
 
     def restart_now(self):
         print("Restarting")
+        # Mark this reboot as Owlette-initiated so the next startup classifier
+        # treats it as planned and stays silent. The dialog only appears after
+        # Owlette spawned us in response to a process exceeding max relaunch
+        # attempts, so any reboot from this dialog is part of the Owlette flow.
+        try:
+            import session_state
+            session_state.set_intent("owlette_reboot")
+        except Exception as e:
+            print(f"session_state.set_intent failed in prompt_restart: {e}")
         os.system('shutdown /r /t 1')
         self.master.quit()
 

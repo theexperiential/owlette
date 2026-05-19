@@ -13,8 +13,16 @@
 # testing
 /coverage
 
+# Playwright E2E — outputs clustered under e2e/.output/ via playwright.config.ts
+/e2e/.output/
+/playwright/.cache/
+/e2e/fixtures/
+/e2e/.auth/
+/e2e/debug/
+
 # next.js
 /.next/
+/.next-e2e/
 /out/
 
 # production

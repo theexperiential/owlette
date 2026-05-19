@@ -7,7 +7,7 @@
  * NEW IMPLEMENTATION:
  * - Server-side: lib/sessionManager.server.ts (HTTPOnly, encrypted cookies)
  * - API routes: app/api/auth/session/route.ts
- * - Used by: contexts/AuthContext.tsx, middleware.ts
+ * - Used by: contexts/AuthContext.tsx, proxy.ts
  *
  * DO NOT USE THIS FILE IN NEW CODE.
  * Kept for backward compatibility during migration period only.
@@ -22,7 +22,7 @@
 
 /**
  * Sets a session cookie when user logs in
- * This cookie is checked by middleware for route protection
+ * This cookie is checked by the proxy for route protection
  *
  * @param userId - The authenticated user's ID
  * @param expirationDays - Number of days until session expires (default: 7)
@@ -42,7 +42,7 @@ export const setSessionCookie = (userId: string, expirationDays: number = 7): vo
   // In production, this should be an encrypted token
   document.cookie = `__session=${userId}; expires=${expirationDate.toUTCString()}; path=/; SameSite=Lax${secureFlag}`;
 
-  // Also set a shorter-lived auth indicator for middleware
+  // Also set a shorter-lived auth indicator for the proxy
   document.cookie = `auth=true; expires=${expirationDate.toUTCString()}; path=/; SameSite=Lax${secureFlag}`;
 };
 

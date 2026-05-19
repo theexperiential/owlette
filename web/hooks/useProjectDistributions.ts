@@ -1,276 +1,91 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { collection, onSnapshot, doc, setDoc, getDocs, deleteDoc, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { useEffect, useMemo, useState } from 'react';
+import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-
-export interface ProjectDistributionTemplate {
-  id: string;
-  name: string;
-  project_name: string;
-  project_url: string;
-  extract_path?: string;
-  verify_files?: string[];
-  createdAt: any; // Firestore Timestamp (new) or number (legacy)
-}
+import { useProjectDistributionPresets } from '@/hooks/useProjectDistributionPresets';
+import { firestoreTsToMs, type FirestoreTs } from './useFirestore';
 
 export interface ProjectDistributionTarget {
   machineId: string;
-  status: 'pending' | 'downloading' | 'extracting' | 'completed' | 'failed';
+  status: 'pending' | 'downloading' | 'extracting' | 'completed' | 'failed' | 'cancelled';
   progress?: number;
   error?: string;
-  completedAt?: number;
+  completedAt?: FirestoreTs;
+  cancelledAt?: FirestoreTs;
 }
 
 export interface ProjectDistribution {
   id: string;
   name: string;
-  project_name: string;
+  file_name: string;
   project_url: string;
   extract_path?: string;
   verify_files?: string[];
   targets: ProjectDistributionTarget[];
-  createdAt: any; // Firestore Timestamp (new) or number (legacy)
-  completedAt?: any;
-  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial';
-}
-
-export function useProjectDistributionTemplates(siteId: string) {
-  const [templates, setTemplates] = useState<ProjectDistributionTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!db || !siteId) {
-      setLoading(false);
-      setError('Firebase not configured or no site selected');
-      return;
-    }
-
-    try {
-      const templatesRef = collection(db, 'sites', siteId, 'project_templates');
-
-      const unsubscribe = onSnapshot(
-        templatesRef,
-        (snapshot) => {
-          const templateData: ProjectDistributionTemplate[] = [];
-
-          snapshot.forEach((doc) => {
-            const data = doc.data();
-            templateData.push({
-              id: doc.id,
-              name: data.name || 'Unnamed Template',
-              project_name: data.project_name || '',
-              project_url: data.project_url || '',
-              extract_path: data.extract_path,
-              verify_files: data.verify_files,
-              createdAt: data.createdAt || Date.now(),
-            });
-          });
-
-          // Sort by created date (newest first)
-          templateData.sort((a, b) => (b.createdAt?.toMillis?.() ?? b.createdAt ?? 0) - (a.createdAt?.toMillis?.() ?? a.createdAt ?? 0));
-
-          setTemplates(templateData);
-          setLoading(false);
-        },
-        (err) => {
-          console.error('Error fetching project templates:', err);
-          setError(err.message);
-          setLoading(false);
-        }
-      );
-
-      return () => unsubscribe();
-    } catch (err: any) {
-      setError(err.message);
-      setLoading(false);
-    }
-  }, [siteId]);
-
-  const createTemplate = async (template: Omit<ProjectDistributionTemplate, 'id' | 'createdAt'>) => {
-    if (!db || !siteId) throw new Error('Firebase not configured');
-
-    const templateId = `project-template-${Date.now()}`;
-    const templateRef = doc(db!, 'sites', siteId, 'project_templates', templateId);
-
-    await setDoc(templateRef, {
-      ...template,
-      createdAt: serverTimestamp(),
-    });
-
-    return templateId;
-  };
-
-  const updateTemplate = async (templateId: string, template: Partial<Omit<ProjectDistributionTemplate, 'id' | 'createdAt'>>) => {
-    if (!db || !siteId) throw new Error('Firebase not configured');
-
-    const templateRef = doc(db!, 'sites', siteId, 'project_templates', templateId);
-    await setDoc(templateRef, template, { merge: true });
-  };
-
-  const deleteTemplate = async (templateId: string) => {
-    if (!db || !siteId) throw new Error('Firebase not configured');
-
-    const templateRef = doc(db!, 'sites', siteId, 'project_templates', templateId);
-    await deleteDoc(templateRef);
-  };
-
-  return { templates, loading, error, createTemplate, updateTemplate, deleteTemplate };
+  createdAt: FirestoreTs;
+  completedAt?: FirestoreTs;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'partial' | 'cancelled';
 }
 
 export function useProjectDistributions(siteId: string) {
-  const [distributions, setDistributions] = useState<ProjectDistribution[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // loadedSiteId pins data to the site it was populated for so `loading` can be
+  // derived at render. Status reconciliation is server-owned.
+  const [state, setState] = useState<{
+    distributions: ProjectDistribution[];
+    loadedSiteId: string | null;
+    error: string | null;
+  }>({
+    distributions: [],
+    loadedSiteId: null,
+    error: db ? null : 'Firebase not configured',
+  });
 
   useEffect(() => {
-    if (!db || !siteId) {
-      setLoading(false);
-      setError('Firebase not configured or no site selected');
-      return;
-    }
+    if (!db || !siteId) return;
 
-    try {
-      const distributionsRef = collection(db, 'sites', siteId, 'project_distributions');
+    const distributionsRef = collection(db, 'sites', siteId, 'project_distributions');
 
-      const unsubscribe = onSnapshot(
-        distributionsRef,
-        (snapshot) => {
-          const distributionData: ProjectDistribution[] = [];
+    const unsubscribe = onSnapshot(
+      distributionsRef,
+      (snapshot) => {
+        const distributionData: ProjectDistribution[] = [];
 
-          snapshot.forEach((doc) => {
-            const data = doc.data();
-            distributionData.push({
-              id: doc.id,
-              name: data.name || 'Unnamed Distribution',
-              project_name: data.project_name || '',
-              project_url: data.project_url || '',
-              extract_path: data.extract_path,
-              verify_files: data.verify_files,
-              targets: data.targets || [],
-              createdAt: data.createdAt || Date.now(),
-              completedAt: data.completedAt,
-              status: data.status || 'pending',
-            });
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          distributionData.push({
+            id: doc.id,
+            name: data.name || 'Unnamed Distribution',
+            file_name: data.file_name || '',
+            project_url: data.project_url || '',
+            extract_path: data.extract_path,
+            verify_files: data.verify_files,
+            targets: data.targets || [],
+            createdAt: data.createdAt || Date.now(),
+            completedAt: data.completedAt,
+            status: data.status || 'pending',
           });
+        });
 
-          // Sort by created date (newest first)
-          distributionData.sort((a, b) => (b.createdAt?.toMillis?.() ?? b.createdAt ?? 0) - (a.createdAt?.toMillis?.() ?? a.createdAt ?? 0));
+        distributionData.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
 
-          setDistributions(distributionData);
-          setLoading(false);
-        },
-        (err) => {
-          console.error('Error fetching project distributions:', err);
-          setError(err.message);
-          setLoading(false);
-        }
-      );
+        setState({ distributions: distributionData, loadedSiteId: siteId, error: null });
+      },
+      (err) => {
+        console.error('Error fetching project distributions:', err);
+        setState((prev) => ({ ...prev, error: err.message }));
+      }
+    );
 
-      return () => unsubscribe();
-    } catch (err: any) {
-      setError(err.message);
-      setLoading(false);
-    }
+    return () => unsubscribe();
   }, [siteId]);
 
-  // Listen for command completions and update distribution status
-  useEffect(() => {
-    if (!db || !siteId || distributions.length === 0) return;
-
-    const unsubscribes: (() => void)[] = [];
-
-    // Get all unique machine IDs from in-progress distributions
-    const machineIds = new Set<string>();
-    distributions.forEach(distribution => {
-      if (distribution.status === 'in_progress' || distribution.status === 'pending') {
-        distribution.targets.forEach(target => machineIds.add(target.machineId));
-      }
-    });
-
-    // Listen to completed commands for each machine
-    machineIds.forEach(machineId => {
-      const completedRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'completed');
-
-      const unsubscribe = onSnapshot(completedRef, async (snapshot) => {
-        if (!snapshot.exists()) return;
-
-        const completedCommands = snapshot.data();
-
-        // Check each completed command for distribution_id
-        for (const [commandId, commandData] of Object.entries(completedCommands)) {
-          const command = commandData as any;
-
-          if (command.distribution_id) {
-            const distribution = distributions.find(d => d.id === command.distribution_id);
-            if (!distribution) continue;
-
-            const distributionRef = doc(db!, 'sites', siteId, 'project_distributions', command.distribution_id);
-
-            if (command.status === 'completed') {
-              // Handle completed distributions
-              const updatedTargets = distribution.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: 'completed' as const, completedAt: command.completedAt || new Date() }
-                  : target
-              );
-
-              // Calculate overall status
-              const allCompleted = updatedTargets.every(t => t.status === 'completed');
-              const anyFailed = updatedTargets.some(t => t.status === 'failed');
-              const newStatus = allCompleted ? 'completed' : anyFailed ? 'partial' : 'in_progress';
-
-              // Update distribution
-              await setDoc(distributionRef, {
-                targets: updatedTargets,
-                status: newStatus,
-                ...(allCompleted ? { completedAt: serverTimestamp() } : {}),
-              }, { merge: true });
-            } else if (command.status === 'failed') {
-              // Handle failed distributions
-              const updatedTargets = distribution.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: 'failed' as const, error: command.error, completedAt: command.completedAt || new Date() }
-                  : target
-              );
-
-              // Calculate overall status
-              const allDone = updatedTargets.every(t => t.status === 'completed' || t.status === 'failed');
-              const anyCompleted = updatedTargets.some(t => t.status === 'completed');
-              const newStatus = allDone ? (anyCompleted ? 'partial' : 'failed') : 'in_progress';
-
-              // Update distribution
-              await setDoc(distributionRef, {
-                targets: updatedTargets,
-                status: newStatus,
-                ...(allDone ? { completedAt: serverTimestamp() } : {}),
-              }, { merge: true });
-            } else if (command.status === 'downloading' || command.status === 'extracting') {
-              // Handle intermediate states (downloading, extracting)
-              const updatedTargets = distribution.targets.map(target =>
-                target.machineId === machineId
-                  ? { ...target, status: command.status as 'downloading' | 'extracting', progress: command.progress }
-                  : target
-              );
-
-              // Update distribution with new target status
-              await setDoc(distributionRef, {
-                targets: updatedTargets,
-                status: 'in_progress',
-              }, { merge: true });
-            }
-          }
-        }
-      });
-
-      unsubscribes.push(unsubscribe);
-    });
-
-    return () => {
-      unsubscribes.forEach(unsub => unsub());
-    };
-  }, [siteId, distributions]);
+  const distributions = useMemo(
+    () => (state.loadedSiteId === siteId ? state.distributions : []),
+    [state.loadedSiteId, state.distributions, siteId],
+  );
+  const loading = !!db && !!siteId && state.loadedSiteId !== siteId;
+  const error = state.error;
 
   const createDistribution = async (
     distribution: Omit<ProjectDistribution, 'id' | 'createdAt' | 'status'>,
@@ -278,98 +93,73 @@ export function useProjectDistributions(siteId: string) {
   ) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const distributionId = `project-dist-${Date.now()}`;
-    const distributionRef = doc(db!, 'sites', siteId, 'project_distributions', distributionId);
+    const body = {
+      name: distribution.name,
+      file_name: distribution.file_name,
+      project_url: distribution.project_url,
+      machines: machineIds,
+      ...(distribution.extract_path ? { extract_path: distribution.extract_path } : {}),
+      ...(distribution.verify_files?.length ? { verify_files: distribution.verify_files } : {}),
+    };
 
-    // Initialize targets with pending status
-    const targets: ProjectDistributionTarget[] = machineIds.map(machineId => ({
-      machineId,
-      status: 'pending',
-    }));
-
-    // Create distribution document
-    await setDoc(distributionRef, {
-      ...distribution,
-      targets,
-      createdAt: serverTimestamp(),
-      status: 'pending',
+    const response = await fetch(projectDistributionsUrl(siteId), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'Idempotency-Key': makeIdempotencyKey('project-dist-create'),
+      },
+      body: JSON.stringify(body),
     });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to create project distribution'));
 
-    // Send distribute_project command to each machine in parallel
-    const commandPromises = machineIds.map(async (machineId) => {
-      // Use underscores to avoid Firestore field path parsing issues with hyphens
-      const sanitizedDistributionId = distributionId.replace(/-/g, '_');
-      const sanitizedMachineId = machineId.replace(/-/g, '_');
-      const commandId = `distribute_${sanitizedDistributionId}_${sanitizedMachineId}_${Date.now()}`;
-      const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
-
-      await setDoc(commandRef, {
-        [commandId]: {
-          type: 'distribute_project',
-          project_url: distribution.project_url,
-          project_name: distribution.project_name,
-          extract_path: distribution.extract_path,
-          verify_files: distribution.verify_files,
-          distribution_id: distributionId,
-          timestamp: serverTimestamp(),
-          status: 'pending',
-        }
-      }, { merge: true });
-    });
-
-    // Wait for all commands to be sent
-    await Promise.all(commandPromises);
-
-    // Update distribution status to in_progress
-    await setDoc(distributionRef, {
-      status: 'in_progress',
-    }, { merge: true });
-
-    return distributionId;
+    const result = await response.json();
+    return result.distributionId as string;
   };
 
-  const cancelDistribution = async (distributionId: string, machineId: string, project_name: string) => {
+  const cancelDistribution = async (distributionId: string, machineId: string, fileName: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
+    void machineId;
+    void fileName;
 
-    // Send cancel command to the machine
-    const sanitizedMachineId = machineId.replace(/-/g, '_');
-    const commandId = `cancel_${Date.now()}_${sanitizedMachineId}`;
-    const commandRef = doc(db!, 'sites', siteId, 'machines', machineId, 'commands', 'pending');
+    const response = await fetch(`${projectDistributionsUrl(siteId)}/${encodeURIComponent(distributionId)}/cancel`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'Idempotency-Key': makeIdempotencyKey(`project-dist-cancel-${distributionId}`),
+      },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to cancel project distribution'));
 
-    await setDoc(commandRef, {
-      [commandId]: {
-        type: 'cancel_distribution',
-        project_name: project_name,
-        distribution_id: distributionId,
-        timestamp: serverTimestamp(),
-      }
-    }, { merge: true });
-
-    return commandId;
+    return `cancel-project-dist-${distributionId}`;
   };
 
   const deleteDistribution = async (distributionId: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
-    const distributionRef = doc(db!, 'sites', siteId, 'project_distributions', distributionId);
-    await deleteDoc(distributionRef);
+    const response = await fetch(`${projectDistributionsUrl(siteId)}/${encodeURIComponent(distributionId)}`, {
+      method: 'DELETE',
+      headers: {
+        'content-type': 'application/json',
+        'Idempotency-Key': makeIdempotencyKey(`project-dist-delete-${distributionId}`),
+      },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete project distribution'));
   };
 
   return { distributions, loading, error, createDistribution, cancelDistribution, deleteDistribution };
 }
 
-// Convenience hook to get both templates and distributions
+// Convenience hook to get both presets and distributions
 export function useProjectDistributionManager(siteId: string) {
-  const templates = useProjectDistributionTemplates(siteId);
+  const presets = useProjectDistributionPresets(siteId);
   const distributions = useProjectDistributions(siteId);
 
   return {
-    templates: templates.templates,
-    templatesLoading: templates.loading,
-    templatesError: templates.error,
-    createTemplate: templates.createTemplate,
-    updateTemplate: templates.updateTemplate,
-    deleteTemplate: templates.deleteTemplate,
+    presets: presets.presets,
+    presetsLoading: presets.loading,
+    presetsError: presets.error,
 
     distributions: distributions.distributions,
     distributionsLoading: distributions.loading,
@@ -378,4 +168,21 @@ export function useProjectDistributionManager(siteId: string) {
     cancelDistribution: distributions.cancelDistribution,
     deleteDistribution: distributions.deleteDistribution,
   };
+}
+
+function projectDistributionsUrl(siteId: string): string {
+  return `/api/sites/${encodeURIComponent(siteId)}/project-distributions`;
+}
+
+function makeIdempotencyKey(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function readApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = await response.json();
+    return body.detail ?? body.title ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }

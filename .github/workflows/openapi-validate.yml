@@ -1,0 +1,44 @@
+name: openapi drift check
+
+on:
+  pull_request:
+    paths:
+      - 'web/openapi.yaml'
+      - 'web/app/api/**/route.ts'
+      - 'web/scripts/validate-openapi.ts'
+      - '.github/workflows/openapi-validate.yml'
+  push:
+    branches: [main, dev]
+    paths:
+      - 'web/openapi.yaml'
+      - 'web/app/api/**/route.ts'
+      - 'web/scripts/validate-openapi.ts'
+
+concurrency:
+  group: openapi-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: validate spec against routes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: install web deps
+        working-directory: web
+        # Matches `.github/workflows/e2e.yml`. `@ai-sdk/react@3.0.136` has a
+        # narrow peer range (`~19.1.2 || ^19.2.1`) that excludes our pinned
+        # `react@19.2.0`; plain `npm ci` fails ERESOLVE on a clean CI cache.
+        run: npm ci --legacy-peer-deps
+
+      - name: validate openapi spec
+        working-directory: web
+        run: npx tsx scripts/validate-openapi.ts

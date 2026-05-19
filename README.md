@@ -6,8 +6,8 @@
 
 ### ai-powered fleet management for Windows applications
 
-[![Version](https://img.shields.io/badge/version-2.4.1-blue)](https://github.com/theexperiential/Owlette/releases)
-[![License](https://img.shields.io/badge/license-AGPL--3.0-green)](LICENSE)
+[![Version](https://img.shields.io/badge/version-2.12.2-blue)](https://github.com/theexperiential/Owlette/releases)
+[![License](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)](https://owlette.app)
 
 [live app](https://owlette.app) &nbsp;&bull;&nbsp; [documentation](https://theexperiential.github.io/owlette/) &nbsp;&bull;&nbsp; [download agent](https://owlette.app/download)
@@ -37,7 +37,7 @@ push software silently to any number of machines. supports NSIS, InnoSetup, MSI,
 LLM-powered fleet management with natural language. AI executes commands on agents via tool-calling across 3 tiers — from read-only diagnostics to privileged operations. screenshot analysis, autonomous crash investigation, and multi-provider support (Anthropic + OpenAI).
 
 **multi-site management**
-organize machines by location, department, or project. role-based access control with site-level permissions. multi-user accounts with admin and user roles.
+organize machines by location, department, or project. three-tier role-based access control (member / admin / superadmin) with site-level permissions. multi-user accounts, per-site admin delegation, and platform-wide administrator roles.
 
 **project distribution**
 sync project files (ZIPs, .toe files, media assets) across your fleet from any URL — Dropbox, Google Drive, your own hosting. zero infrastructure cost. automatic extraction and file verification.
@@ -70,6 +70,8 @@ agents                    cloud                     dashboard
 - **cortex ai** — LLM chat with tool-calling capabilities relayed through Firestore to agents.
 
 ## quick start
+
+For a new maintainer cloning this repo, start with the [maintainer quickstart](docs/maintainer-quickstart.md).
 
 ### hosted (fastest)
 
@@ -135,9 +137,9 @@ full documentation is available at **[theexperiential.github.io/owlette](https:/
 - [agent guide](https://theexperiential.github.io/owlette/agent/) — installation, configuration, system tray, troubleshooting
 - [dashboard guide](https://theexperiential.github.io/owlette/dashboard/) — monitoring, process management, views
 - [remote deployment](https://theexperiential.github.io/owlette/dashboard/deployments/) — silent software installation across machines
-- [project distribution](https://theexperiential.github.io/owlette/dashboard/project-distribution/) — sync project files across your fleet
+- [project distribution](https://theexperiential.github.io/owlette/dashboard/roost/) — sync project files across your fleet
 - [cortex ai & tools](https://theexperiential.github.io/owlette/reference/cortex-tools/) — AI capabilities and tool reference
-- [API reference](https://theexperiential.github.io/owlette/reference/api/) — 63+ endpoints with OpenAPI docs
+- [API reference](https://theexperiential.github.io/owlette/api/reference/) — 63+ endpoints with OpenAPI docs
 - [architecture](https://theexperiential.github.io/owlette/architecture/) — system design and data flow
 - [authentication](https://theexperiential.github.io/owlette/reference/authentication/) — auth methods, device code pairing, tokens
 
@@ -156,4 +158,4 @@ contributions are welcome! please open an issue or submit a pull request.
 
 ## license
 
-this project is licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). if you run a modified version of owlette as a network service, you must make your source code available to users of that service.
+this project is licensed under the [Functional Source License, Version 1.1, Apache 2.0 Future License](LICENSE) (FSL-1.1-Apache-2.0). you may freely use, modify, and self-host owlette for any purpose other than a competing commercial product or service. two years after each release, that version automatically converts to Apache License 2.0.

@@ -7,11 +7,12 @@ import { useSites } from '@/hooks/useFirestore';
 import { Card } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageHeader } from '@/components/PageHeader';
-import { collection, query, orderBy, limit, getDocs, where, startAfter, Query, DocumentData, Timestamp, onSnapshot, writeBatch, doc } from 'firebase/firestore';
+import { collection, query, orderBy, limit, getDocs, where, startAfter, Query, DocumentData, Timestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
 import { ChevronDown, ChevronsUpDown, ChevronsDownUp, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle, Camera } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import ConfirmDialog from '@/components/ConfirmDialog';
@@ -19,6 +20,7 @@ import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
+import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 
 interface LogEvent {
   id: string;
@@ -133,9 +135,9 @@ const getLevelBadge = (level: string) => {
   const base = "inline-flex items-center rounded-full px-1.5 text-[11px] font-medium leading-5 whitespace-nowrap";
   switch (level.toLowerCase()) {
     case 'error':
-      return <span className={`${base} bg-destructive text-white`}>error</span>;
+      return <span className={`${base} bg-red-700 text-white`}>error</span>;
     case 'warning':
-      return <span className={`${base} bg-yellow-600 text-white`}>warning</span>;
+      return <span className={`${base} bg-yellow-400 text-gray-950`}>warning</span>;
     case 'info':
       return <span className={`${base} bg-accent-cyan text-gray-900`}>info</span>;
     default:
@@ -150,11 +152,144 @@ const formatAction = (action: string) => {
     .join(' ');
 };
 
+// Extracted + memoized so toggling one row's expanded state doesn't re-render
+// every other row in the list. Without this, a click burns ~100–300ms on a
+// full page of logs before Radix can flip `data-state` and the animation can
+// start, which reads as "delay before expand."
+const LogRow = React.memo(function LogRow({
+  log,
+  isExpanded,
+  onToggle,
+  onOpenScreenshot,
+  timeDisplayMode,
+  userTz,
+  siteTz,
+  timeFormat,
+}: {
+  log: LogEvent;
+  isExpanded: boolean;
+  onToggle: (id: string) => void;
+  onOpenScreenshot: (url: string) => void;
+  timeDisplayMode: 'user' | 'machine' | 'site';
+  userTz?: string;
+  siteTz?: string;
+  timeFormat: '12h' | '24h';
+}) {
+  return (
+    <Collapsible
+      open={isExpanded}
+      onOpenChange={() => onToggle(log.id)}
+      data-testid={`log-row-${log.id}`}
+      className={`group/row hover:bg-muted/50 transition-colors border-b border-border last:border-b-0 ${isExpanded ? 'bg-muted/30' : ''}`}
+    >
+      <CollapsibleTrigger asChild>
+        <button type="button" className="w-full px-4 py-3 text-left cursor-pointer">
+          <div className="flex items-center justify-between gap-4 text-sm">
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
+                <div className="w-[60px] flex-shrink-0">{getLevelBadge(log.level)}</div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-foreground font-medium truncate max-w-[140px] flex-shrink-0 text-left cursor-help">
+                      {formatAction(log.action)}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{formatAction(log.action)}</TooltipContent>
+                </Tooltip>
+              </div>
+              <span className="text-muted-foreground">•</span>
+              <span className="text-foreground whitespace-nowrap">{log.machineName}</span>
+              {log.processName && (
+                <>
+                  <span className="text-muted-foreground">•</span>
+                  <span className="text-foreground whitespace-nowrap">{log.processName}</span>
+                </>
+              )}
+              {!isExpanded && log.screenshotUrl && (
+                <>
+                  <span className="text-muted-foreground">•</span>
+                  <Camera className="w-3 h-3 text-muted-foreground" />
+                </>
+              )}
+              {!isExpanded && log.details && (
+                <>
+                  <span className="text-muted-foreground">•</span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="text-muted-foreground truncate min-w-0 cursor-help">{log.details}</span>
+                    </TooltipTrigger>
+                    <TooltipContent><p className="max-w-xs">{log.details}</p></TooltipContent>
+                  </Tooltip>
+                </>
+              )}
+            </div>
+            <div className="text-muted-foreground whitespace-nowrap text-xs">
+              {formatSiteScopedTimestamp(
+                log.timestamp?.toDate(),
+                timeDisplayMode,
+                userTz,
+                siteTz,
+                timeFormat
+              )}
+            </div>
+          </div>
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+        <div className="px-4 pb-3 pt-3 border-t border-border/50 text-sm flex gap-6">
+          <div className="flex-shrink-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 self-start">
+            <span className="text-muted-foreground">machine id</span>
+            <span className="text-foreground text-xs font-mono">{log.machineId}</span>
+            {log.userId && (
+              <>
+                <span className="text-muted-foreground">user</span>
+                <span className="text-foreground text-xs font-mono">{log.userId}</span>
+              </>
+            )}
+            <span className="text-muted-foreground">timestamp</span>
+            <span className="text-foreground">
+              {formatSiteScopedTimestamp(
+                log.timestamp?.toDate(),
+                timeDisplayMode,
+                userTz,
+                siteTz,
+                timeFormat
+              )}
+            </span>
+          </div>
+          {log.details && (
+            <div className="flex-1 min-w-0 border-l border-border/50 pl-6">
+              <span className="text-muted-foreground text-xs">details</span>
+              <p className="text-foreground mt-1 whitespace-pre-wrap break-words select-text">{log.details}</p>
+            </div>
+          )}
+          {log.screenshotUrl && (
+            <div className="flex-shrink-0 border-l border-border/50 pl-6">
+              <span className="text-muted-foreground text-xs">crash screenshot</span>
+              <button onClick={() => onOpenScreenshot(log.screenshotUrl!)} className="block mt-1">
+                <img
+                  src={log.screenshotUrl}
+                  alt="Crash screenshot"
+                  className="rounded border border-border/50 max-w-[200px] max-h-[120px] object-cover hover:opacity-80 transition-opacity cursor-pointer"
+                />
+              </button>
+            </div>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+});
+
 export default function LogsPage() {
   const router = useRouter();
-  const { user, loading, isAdmin, userSites, lastSiteId, updateLastSite } = useAuth();
-  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isAdmin);
+  const { user, loading, isSuperadmin, userSites, lastSiteId, updateLastSite, userPreferences } = useAuth();
+  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
+  // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
+  const currentSite = sites.find(s => s.id === currentSiteId);
+  const siteTimezone = currentSite?.timezone;
   const [logs, setLogs] = useState<LogEvent[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
   const [lastDoc, setLastDoc] = useState<DocumentData | null>(null);
@@ -398,56 +533,33 @@ export default function LogsPage() {
     setIsClearing(true);
 
     try {
-      // Build query with same filters as the display
-      const logsRef = collection(db, 'sites', currentSiteId, 'logs');
-      let q: Query = query(logsRef);
-
-      // Apply filters to match current view
-      if (filterAction !== 'all') {
-        q = query(q, where('action', '==', filterAction));
-      }
-      if (filterMachine !== 'all') {
-        q = query(q, where('machineId', '==', filterMachine));
-      }
-      if (filterLevel !== 'all') {
-        q = query(q, where('level', '==', filterLevel));
-      }
-
-      // Fetch all matching logs
-      const snapshot = await getDocs(q);
-
-      if (snapshot.empty) {
-        console.log('No logs to delete');
-        setIsClearing(false);
-        return;
-      }
-
-      // Delete in batches (Firestore limit is 500 per batch)
-      const batchSize = 500;
-      const batches = [];
-      let batch = writeBatch(db);
-      let operationCount = 0;
-
-      snapshot.docs.forEach((document) => {
-        batch.delete(doc(db!, 'sites', currentSiteId, 'logs', document.id));
-        operationCount++;
-
-        if (operationCount === batchSize) {
-          batches.push(batch.commit());
-          batch = writeBatch(db!);
-          operationCount = 0;
-        }
+      const hasFilters =
+        filterAction !== 'all' ||
+        filterMachine !== 'all' ||
+        filterLevel !== 'all';
+      const idempotencySuffix =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const res = await fetch(`/api/sites/${encodeURIComponent(currentSiteId)}/logs`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `dashboard-clear-logs-${idempotencySuffix}`,
+        },
+        body: JSON.stringify({
+          ...(filterAction !== 'all' ? { action: filterAction } : {}),
+          ...(filterMachine !== 'all' ? { machineId: filterMachine } : {}),
+          ...(filterLevel !== 'all' ? { level: filterLevel } : {}),
+          ...(!hasFilters ? { all: true } : {}),
+        }),
       });
-
-      // Commit remaining operations
-      if (operationCount > 0) {
-        batches.push(batch.commit());
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(body?.detail || body?.title || 'Failed to clear logs');
       }
 
-      // Wait for all batches to complete
-      await Promise.all(batches);
-
-      console.log(`Deleted ${snapshot.docs.length} log entries`);
+      console.log(`Deleted ${body?.deletedCount ?? 0} log entries`);
 
       // Logs will refresh via the real-time listener
       setLogs([]);
@@ -566,15 +678,23 @@ export default function LogsPage() {
 
           <div className="flex items-center gap-2 flex-shrink-0">
             {logs.length > 0 && (
-              <Button
-                variant="outline"
-                onClick={toggleAllExpanded}
-                className="hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
-                title={allExpanded ? 'collapse all' : 'expand all'}
-                size="icon"
-              >
-                {allExpanded ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />}
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    onClick={toggleAllExpanded}
+                    aria-label={allExpanded ? 'collapse all logs' : 'expand all logs'}
+                    data-testid="logs-expand-all"
+                    className="hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    size="icon"
+                  >
+                    {allExpanded ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{allExpanded ? 'collapse all' : 'expand all'}</p>
+                </TooltipContent>
+              </Tooltip>
             )}
             <Button
               variant="outline"
@@ -603,7 +723,7 @@ export default function LogsPage() {
               <div>
                 <Label className="text-foreground text-sm mb-2">action type</Label>
                 <Select value={filterAction} onValueChange={setFilterAction}>
-                  <SelectTrigger className="bg-muted border-border">
+                  <SelectTrigger data-testid="logs-filter-action" className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -619,7 +739,7 @@ export default function LogsPage() {
               <div>
                 <Label className="text-foreground text-sm mb-2">machine</Label>
                 <Select value={filterMachine} onValueChange={setFilterMachine}>
-                  <SelectTrigger className="bg-muted border-border">
+                  <SelectTrigger data-testid="logs-filter-machine" className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -636,7 +756,7 @@ export default function LogsPage() {
               <div>
                 <Label className="text-foreground text-sm mb-2">level</Label>
                 <Select value={filterLevel} onValueChange={setFilterLevel}>
-                  <SelectTrigger className="bg-muted border-border">
+                  <SelectTrigger data-testid="logs-filter-level" className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -651,7 +771,7 @@ export default function LogsPage() {
               <div>
                 <Label className="text-foreground text-sm mb-2">date range</Label>
                 <Select value={filterDatePreset} onValueChange={(v) => setFilterDatePreset(v as DatePreset)}>
-                  <SelectTrigger className="bg-muted border-border">
+                  <SelectTrigger data-testid="logs-filter-date" className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -715,88 +835,19 @@ export default function LogsPage() {
                 no logs found for this site
               </div>
             ) : (
-              logs.map((log) => {
-                const isExpanded = expandedLogIds.has(log.id);
-                return (
-                  <div
-                    key={log.id}
-                    className={`group/row px-4 py-3 hover:bg-muted/50 transition-colors border-b border-border last:border-b-0 ${isExpanded ? 'bg-muted/30' : ''}`}
-                  >
-                    <div className="flex items-center justify-between gap-4 text-sm">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <button
-                          type="button"
-                          onClick={() => toggleLogExpanded(log.id)}
-                          className="group/expand flex items-center gap-3 cursor-pointer hover:opacity-80 flex-shrink-0"
-                        >
-                          <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
-                          <div className="w-[60px] flex-shrink-0">{getLevelBadge(log.level)}</div>
-                          <span className="text-foreground font-medium truncate max-w-[140px] flex-shrink-0 text-left">
-                            {formatAction(log.action)}
-                          </span>
-                        </button>
-                        <span className="text-muted-foreground">•</span>
-                        <span className="text-foreground whitespace-nowrap">{log.machineName}</span>
-                        {log.processName && (
-                          <>
-                            <span className="text-muted-foreground">•</span>
-                            <span className="text-foreground whitespace-nowrap">{log.processName}</span>
-                          </>
-                        )}
-                        {!isExpanded && log.screenshotUrl && (
-                          <>
-                            <span className="text-muted-foreground">•</span>
-                            <Camera className="w-3 h-3 text-muted-foreground" />
-                          </>
-                        )}
-                        {!isExpanded && log.details && (
-                          <>
-                            <span className="text-muted-foreground">•</span>
-                            <span className="text-muted-foreground truncate min-w-0">{log.details}</span>
-                          </>
-                        )}
-                      </div>
-                      <div className="text-muted-foreground whitespace-nowrap text-xs">
-                        {log.timestamp?.toDate().toLocaleString()}
-                      </div>
-                    </div>
-                    {isExpanded && (
-                      <div className="mt-3 pt-3 border-t border-border/50 text-sm flex gap-6">
-                        <div className="flex-shrink-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 self-start">
-                          <span className="text-muted-foreground">machine id</span>
-                          <span className="text-foreground text-xs font-mono">{log.machineId}</span>
-                          {log.userId && (
-                            <>
-                              <span className="text-muted-foreground">user</span>
-                              <span className="text-foreground text-xs font-mono">{log.userId}</span>
-                            </>
-                          )}
-                          <span className="text-muted-foreground">timestamp</span>
-                          <span className="text-foreground">{log.timestamp?.toDate().toLocaleString()}</span>
-                        </div>
-                        {log.details && (
-                          <div className="flex-1 min-w-0 border-l border-border/50 pl-6">
-                            <span className="text-muted-foreground text-xs">details</span>
-                            <p className="text-foreground mt-1 whitespace-pre-wrap break-words select-text">{log.details}</p>
-                          </div>
-                        )}
-                        {log.screenshotUrl && (
-                          <div className="flex-shrink-0 border-l border-border/50 pl-6">
-                            <span className="text-muted-foreground text-xs">crash screenshot</span>
-                            <button onClick={() => setScreenshotModalUrl(log.screenshotUrl!)} className="block mt-1">
-                              <img
-                                src={log.screenshotUrl}
-                                alt="Crash screenshot"
-                                className="rounded border border-border/50 max-w-[200px] max-h-[120px] object-cover hover:opacity-80 transition-opacity cursor-pointer"
-                              />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
+              logs.map((log) => (
+                <LogRow
+                  key={log.id}
+                  log={log}
+                  isExpanded={expandedLogIds.has(log.id)}
+                  onToggle={toggleLogExpanded}
+                  onOpenScreenshot={setScreenshotModalUrl}
+                  timeDisplayMode={userPreferences.timeDisplayMode || 'machine'}
+                  userTz={userPreferences.timezone}
+                  siteTz={siteTimezone}
+                  timeFormat={userPreferences.timeFormat || '12h'}
+                />
+              ))
             )}
           </div>
         </Card>
@@ -825,6 +876,7 @@ export default function LogsPage() {
           />
           <button
             onClick={() => setScreenshotModalUrl(null)}
+            aria-label="close screenshot"
             className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors"
           >
             <X className="w-6 h-6" />

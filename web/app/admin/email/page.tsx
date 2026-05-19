@@ -16,6 +16,20 @@ interface EmailConfig {
   adminEmailConfigured: boolean;
 }
 
+type TestEmailResult =
+  | {
+      success: true;
+      template?: string;
+      to?: string;
+      emailId?: string;
+      [extra: string]: unknown;
+    }
+  | {
+      success: false;
+      error?: string;
+      details?: string | Record<string, unknown>;
+    };
+
 const EMAIL_TEMPLATES = [
   { id: 'test', label: 'test email', description: 'generic config verification' },
   { id: 'process_crash', label: 'process crashed', description: 'monitored process stopped unexpectedly' },
@@ -32,7 +46,7 @@ export default function EmailPage() {
   const [config, setConfig] = useState<EmailConfig | null>(null);
   const [configLoading, setConfigLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
-  const [lastResult, setLastResult] = useState<any>(null);
+  const [lastResult, setLastResult] = useState<TestEmailResult | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState('test');
 
   useEffect(() => {
@@ -41,7 +55,7 @@ export default function EmailPage() {
 
   const fetchConfig = async () => {
     try {
-      const response = await fetch('/api/admin/email/config');
+      const response = await fetch('/api/platform/email/config');
       if (response.ok) {
         setConfig(await response.json());
       }

@@ -1,13 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useInstallerManagement } from '@/hooks/useInstallerManagement';
+import type { FirestoreTs } from '@/hooks/useFirestore';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Package, Plus, Loader2, Download, Trash2, CheckCircle, Copy, Sparkles, Paintbrush } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import UploadInstallerDialog from '@/components/admin/UploadInstallerDialog';
 import { formatFileSize } from '@/lib/storageUtils';
@@ -22,6 +24,41 @@ import { formatFileSize } from '@/lib/storageUtils';
  * - Set version as latest
  * - Delete old versions
  */
+function TruncatedReleaseNotes({ text }: { text: string }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [isTruncated, setIsTruncated] = useState(false);
+
+  const checkTruncation = useCallback(() => {
+    const el = ref.current;
+    if (el) setIsTruncated(el.scrollHeight > el.clientHeight);
+  }, []);
+
+  useEffect(() => {
+    checkTruncation();
+    window.addEventListener('resize', checkTruncation);
+    return () => window.removeEventListener('resize', checkTruncation);
+  }, [checkTruncation]);
+
+  const content = (
+    <p ref={ref} className="text-sm text-muted-foreground line-clamp-2 cursor-default">
+      {text}
+    </p>
+  );
+
+  if (!isTruncated) return content;
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>{content}</TooltipTrigger>
+        <TooltipContent side="top" className="max-w-sm whitespace-pre-wrap">
+          {text}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 export default function InstallerVersionsPage() {
   const {
     versions,
@@ -66,9 +103,10 @@ export default function InstallerVersionsPage() {
       toast.success('Latest Version Updated', {
         description: `Version ${versionToSetLatest} is now the latest.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Update Failed', {
-        description: err.message || 'Failed to update latest version.',
+        description: message || 'Failed to update latest version.',
       });
     } finally {
       setSettingLatest(null);
@@ -97,9 +135,10 @@ export default function InstallerVersionsPage() {
       toast.success('Version Deleted', {
         description: `Version ${versionToDelete} has been deleted.`,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Delete Failed', {
-        description: err.message || 'Failed to delete version.',
+        description: message || 'Failed to delete version.',
       });
     } finally {
       setDeletingVersion(null);
@@ -107,9 +146,12 @@ export default function InstallerVersionsPage() {
     }
   };
 
-  const formatDate = (timestamp: any) => {
+  const formatDate = (timestamp: FirestoreTs) => {
     if (!timestamp) return 'N/A';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const t = timestamp as { toDate?: () => Date } | null | undefined;
+    const date = t && typeof t.toDate === 'function'
+      ? t.toDate()
+      : new Date(timestamp as number | string | Date);
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
@@ -129,9 +171,10 @@ export default function InstallerVersionsPage() {
         description: `Deleted ${count} old installer${count !== 1 ? 's' : ''}.`,
       });
       setCleanupDialogOpen(false);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
       toast.error('Cleanup Failed', {
-        description: err.message || 'Failed to clean up versions.',
+        description: message || 'Failed to clean up versions.',
       });
     } finally {
       setCleaningUp(false);
@@ -146,7 +189,7 @@ export default function InstallerVersionsPage() {
       toast.success('Link Copied', {
         description: `Download link for version ${version} copied to clipboard.`,
       });
-    } catch (err) {
+    } catch {
       toast.error('Copy Failed', {
         description: 'Failed to copy link to clipboard.',
       });
@@ -209,24 +252,36 @@ export default function InstallerVersionsPage() {
               </p>
             </div>
             <div className="flex gap-2">
-              <Button
-                onClick={() => window.open(latestVersion.download_url, '_blank')}
-                variant="outline"
-                size="icon"
-                className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
-                title={`Download owlette Agent v${latestVersion.version}`}
-              >
-                <Download className="h-4 w-4" />
-              </Button>
-              <Button
-                onClick={() => copyDownloadLink(latestVersion.download_url, latestVersion.version)}
-                variant="outline"
-                size="icon"
-                className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
-                title={`Copy download link for owlette Agent v${latestVersion.version}`}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={() => window.open(latestVersion.download_url, '_blank')}
+                    variant="outline"
+                    size="icon"
+                    className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
+                  >
+                    <Download className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>download installer</p>
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={() => copyDownloadLink(latestVersion.download_url, latestVersion.version)}
+                    variant="outline"
+                    size="icon"
+                    className="border-border bg-background text-foreground hover:bg-muted! hover:text-foreground! cursor-pointer"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>copy download link</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
         </div>
@@ -265,7 +320,7 @@ export default function InstallerVersionsPage() {
               {versions.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                    No versions uploaded yet. Click "upload new version" to get started.
+                    No versions uploaded yet. Click &quot;upload new version&quot; to get started.
                   </td>
                 </tr>
               ) : (
@@ -310,9 +365,7 @@ export default function InstallerVersionsPage() {
                       {/* Release Notes */}
                       <td className="p-4">
                         {version.release_notes ? (
-                          <p className="text-sm text-muted-foreground line-clamp-2">
-                            {version.release_notes}
-                          </p>
+                          <TruncatedReleaseNotes text={version.release_notes} />
                         ) : (
                           <span className="text-xs text-muted-foreground/60">no notes</span>
                         )}
@@ -348,24 +401,36 @@ export default function InstallerVersionsPage() {
 
                           {/* Right side: Icon buttons (always aligned) */}
                           <div className="flex items-center gap-2">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => window.open(version.download_url, '_blank')}
-                              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
-                              title={`Download owlette Agent v${version.version}`}
-                            >
-                              <Download className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => copyDownloadLink(version.download_url, version.version)}
-                              className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
-                              title={`Copy download link for owlette Agent v${version.version}`}
-                            >
-                              <Copy className="h-3.5 w-3.5" />
-                            </Button>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => window.open(version.download_url, '_blank')}
+                                  className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>download installer</p>
+                              </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => copyDownloadLink(version.download_url, version.version)}
+                                  className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-accent cursor-pointer"
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>copy download link</p>
+                              </TooltipContent>
+                            </Tooltip>
                             {!isLatest ? (
                               <Button
                                 variant="ghost"
@@ -399,7 +464,7 @@ export default function InstallerVersionsPage() {
       {!loading && !error && versions.length > 0 && (
         <div className="mt-6 bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-4">
           <p className="text-accent-cyan text-sm">
-            <strong>Note:</strong> The "Latest" version is what users will download from the public
+            <strong>Note:</strong> The &quot;Latest&quot; version is what users will download from the public
             download link. You can upload multiple versions and switch between them at any time.
             Old versions cannot be deleted if they are currently set as latest.
           </p>
@@ -424,9 +489,9 @@ export default function InstallerVersionsPage() {
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setSetLatestDialogOpen(false)}
-              className="border-border bg-card text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -451,9 +516,9 @@ export default function InstallerVersionsPage() {
           </DialogHeader>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setDeleteDialogOpen(false)}
-              className="border-border bg-card text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
@@ -524,10 +589,10 @@ export default function InstallerVersionsPage() {
 
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={() => setCleanupDialogOpen(false)}
               disabled={cleaningUp}
-              className="border-border bg-card text-foreground hover:bg-accent! hover:text-foreground! cursor-pointer"
+              className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>

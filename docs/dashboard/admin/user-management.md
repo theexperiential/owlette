@@ -1,88 +1,103 @@
 # user management
 
-Manage user accounts, roles, and site assignments from the Admin Panel.
+Manage registered user accounts, global roles, and site assignments from the Admin Panel. The page is available only to `superadmin` users.
 
-**Location**: Admin Panel → User Management (`/admin/users`)
+**Location**: admin panel -> user management (`/admin/users`)
+
+---
+
+## account creation
+
+The user-management page does not invite users or create accounts directly. Users register through the normal sign-up flow, using email/password or Google sign-in, and the first sign-in creates a `users/{uid}` document with:
+
+- `role: "member"`
+- `sites: []`
+- MFA setup flags and default user preferences
+
+After the account exists, a superadmin can open this page to assign sites or promote the user. There is no shipped SAML/OIDC SSO mapping or invite-code workflow on this page.
+
+---
+
+## the three-role model
+
+| role | platform access | site access |
+|------|-----------------|-------------|
+| **member** | none | read-only access to assigned sites, plus self-service preferences and self-delete |
+| **admin** | none | site-scoped write access on assigned sites, including machine commands/configuration, deployments, roosts, site webhooks, logs, and site-member management |
+| **superadmin** | full Admin Panel | implicit access to every site, regardless of assignment |
+
+Only superadmins can open `/admin/users` and change global roles or delete users. Site admins can manage site-scoped members through site-level surfaces where those are available, but they cannot use the platform Admin Panel.
 
 ---
 
 ## user list
 
-The user management page shows all registered users with:
+The page listens to the `users` collection in real time and shows registered user documents ordered by newest registration first.
 
 | column | description |
 |--------|-------------|
-| **Email** | User's email address |
-| **Display Name** | Full name (if provided during registration) |
-| **Role** | `user` or `admin` |
-| **Sites** | Number of assigned sites |
-| **Joined** | Registration date |
+| **user** | Display name when present, email address, and a `You` badge for the signed-in superadmin |
+| **role** | `member`, `admin`, or `superadmin` badge |
+| **sites** | For admins, the assigned site IDs are shown as pills. For members, the page shows an assigned-site count. For superadmins, the page shows `all sites`. |
+| **joined** | Registration date from `createdAt` |
+| **actions** | Row menu for `manage sites`, `change role...`, and `delete user` |
 
-### statistics
-
-The page header shows:
-
-- **Total Users** — All registered accounts
-- **Admins** — Users with admin role
-- **Regular Users** — Non-admin users
+The header cards show total users, members, site admins, and superadmins.
 
 ---
 
-## promoting / demoting users
+## changing a user's role
 
-### promote to admin
+1. Open the row menu.
+2. Select `change role...`.
+3. Pick `member`, `admin`, or `superadmin`.
+4. Select `save role`.
 
-1. Find the user in the list
-2. Click **"Promote to Admin"**
-3. Confirm the action
-4. User immediately gains admin privileges
+Promoting to `admin` or `superadmin` calls `POST /api/users/{uid}/promote` with the selected role. Demoting to `member` calls `POST /api/users/{uid}/demote`. Both routes require the `USER_ROLE_MANAGE` capability, which is granted only to superadmins.
 
-### demote to user
+The dialog disables `save role` when the selected role matches the current role. A signed-in superadmin cannot open the role-change dialog on their own row, and the server also rejects any role change that would remove the last active superadmin.
 
-1. Find the admin user in the list
-2. Click **"Demote to User"**
-3. Confirm the action
-4. User loses admin privileges immediately
-
-!!! warning "Self-demotion"
-    You cannot demote yourself — this prevents accidentally locking all admins out.
-
-!!! note
-    Users must log out and log back in to see role changes reflected in their UI.
+Role changes update the user document immediately. The affected user may need to sign out and back in, or wait for session refresh, before their navigation and permissions reflect the new role everywhere.
 
 ---
 
 ## site assignment
 
-Control which sites a user can access.
+Use `manage sites` to add or remove site IDs from a user's `sites` array. The dialog lists assigned sites, available sites, and invalid site references that no longer resolve to visible site documents.
 
-### assign a site
+| action | behavior |
+|--------|----------|
+| **assign** | Adds the site through `POST /api/users/{uid}/assign-sites`. The server validates that each site exists and uses an idempotent array update. |
+| **remove** | Removes the site through `POST /api/users/{uid}/remove-sites`. The membership change is immediate, and the server best-effort cancels pending commands that user issued on removed sites. |
 
-1. Find the user in the list
-2. Click **"Manage Sites"**
-3. View currently assigned sites and available sites
-4. Click **"Assign"** next to an available site
-5. The user can now access that site's machines and data
+These endpoints require `SITE_MEMBER_MANAGE`. In the Admin Panel, the surrounding page is superadmin-only; site-scoped admin membership management is handled outside this global page.
 
-### remove a site
-
-1. Click **"Manage Sites"** for the user
-2. Click the **X** icon next to an assigned site
-3. The user loses access to that site immediately
-
-### access rules
-
-| role | site access |
-|------|-------------|
-| **User** | Only sites in their `sites` array |
-| **Admin** | All sites (regardless of assignment) |
-| **Agent** | Single site (from OAuth token claims) |
+For `member` users, site assignment controls which sites they can read. For `admin` users, assignment controls where their site-scoped write capabilities apply. For `superadmin` users, site assignment is not required for access; superadmins can reach every site.
 
 ---
 
-## best practices
+## deleting a user
 
-- **Principle of least privilege** — Only grant admin to users who need it
-- **Audit regularly** — Review who has admin access periodically
-- **Site-based organization** — Assign users to sites matching their responsibility (e.g., NYC office staff only see NYC machines)
-- **Redundancy** — Keep at least 2 admin accounts to prevent lockout
+The row menu includes `delete user` for other users. The action is disabled on the signed-in superadmin's own row, and clicking it opens a confirmation dialog.
+
+Deletion calls `DELETE /api/users/{uid}` and is a soft-delete cascade, not a simple row removal:
+
+- sets `users/{uid}.deletedAt`
+- preserves the user document for audit and historical references
+- revokes the user's API keys in both the user subcollection and top-level lookup docs
+- best-effort cancels pending commands issued by that user on their assigned or owned sites
+- refuses to delete a user who owns sites unless the API request supplies a valid `successorUid` for ownership transfer
+
+The current Admin Panel dialog does not collect a successor user. If a delete request fails because the target owns sites, transfer site ownership through an API/admin workflow that can pass `successorUid`, then retry deletion.
+
+The server preserves deleted user documents with `deletedAt` for audit; default API list calls exclude those records. Reissuing the delete request for an already-deleted user is idempotent and returns the original deletion timestamp.
+
+---
+
+## permission checklist
+
+- Use `member` for users who only need assigned-site visibility and self-service account controls.
+- Use `admin` for operators who need write access on specific sites.
+- Use `superadmin` only for platform operators who manage users, installers, global settings, and all sites.
+- Keep at least two active superadmins so one account can recover the other.
+- Review user deletion carefully: it revokes API keys and may cancel queued work issued by the deleted account.

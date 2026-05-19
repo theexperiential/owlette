@@ -15,6 +15,9 @@ const RANDOM_EMOJIS = [
 ];
 
 export function LandingFooter() {
+  // Server Component — Math.random() runs once per server render and is serialized
+  // into HTML. No hydration mismatch is possible (the client never re-runs this).
+  // eslint-disable-next-line react-hooks/purity
   const emoji = RANDOM_EMOJIS[Math.floor(Math.random() * RANDOM_EMOJIS.length)];
 
   return (
@@ -59,7 +62,7 @@ export function LandingFooter() {
             <span>in california</span>
             <span className="mx-1 sm:mx-2">&middot;</span>
             <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">
-              AGPL-3.0
+              FSL-1.1-Apache-2.0
             </a>
           </p>
         </div>

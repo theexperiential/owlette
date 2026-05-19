@@ -153,22 +153,39 @@ echo Dependencies installed successfully!
 :: Step 6: Copy tkinter from system Python 3.11
 :: ============================================================================
 echo [6/9] Copying tkinter from system Python...
-if exist "C:\Program Files\Python311" (
+set "PYTHON311_SOURCE="
+if defined PYTHON311_ROOT (
+    if exist "%PYTHON311_ROOT%\Lib\tkinter" if exist "%PYTHON311_ROOT%\DLLs\_tkinter.pyd" if exist "%PYTHON311_ROOT%\DLLs\tcl86t.dll" if exist "%PYTHON311_ROOT%\DLLs\tk86t.dll" if exist "%PYTHON311_ROOT%\tcl" set "PYTHON311_SOURCE=%PYTHON311_ROOT%"
+)
+if not defined PYTHON311_SOURCE (
+    for /f "delims=" %%p in ('py -3.11 -c "import sys; print(sys.prefix)" 2^>nul') do (
+        if not defined PYTHON311_SOURCE (
+            if exist "%%p\Lib\tkinter" if exist "%%p\DLLs\_tkinter.pyd" if exist "%%p\DLLs\tcl86t.dll" if exist "%%p\DLLs\tk86t.dll" if exist "%%p\tcl" set "PYTHON311_SOURCE=%%p"
+        )
+    )
+)
+if not defined PYTHON311_SOURCE (
+    if exist "C:\Program Files\Python311\Lib\tkinter" if exist "C:\Program Files\Python311\DLLs\_tkinter.pyd" if exist "C:\Program Files\Python311\DLLs\tcl86t.dll" if exist "C:\Program Files\Python311\DLLs\tk86t.dll" if exist "C:\Program Files\Python311\tcl" set "PYTHON311_SOURCE=C:\Program Files\Python311"
+)
+
+if defined PYTHON311_SOURCE (
+    echo Using Python 3.11 from !PYTHON311_SOURCE!
     echo Copying tkinter module...
-    xcopy /E /I /Y "C:\Program Files\Python311\Lib\tkinter" build\python\Lib\tkinter\ >nul
+    xcopy /E /I /Y "!PYTHON311_SOURCE!\Lib\tkinter" build\python\Lib\tkinter\ >nul
 
     echo Copying tkinter DLLs...
-    copy /Y "C:\Program Files\Python311\DLLs\_tkinter.pyd" build\python\ >nul
-    copy /Y "C:\Program Files\Python311\DLLs\tcl86t.dll" build\python\ >nul
-    copy /Y "C:\Program Files\Python311\DLLs\tk86t.dll" build\python\ >nul
+    copy /Y "!PYTHON311_SOURCE!\DLLs\_tkinter.pyd" build\python\ >nul
+    copy /Y "!PYTHON311_SOURCE!\DLLs\tcl86t.dll" build\python\ >nul
+    copy /Y "!PYTHON311_SOURCE!\DLLs\tk86t.dll" build\python\ >nul
 
     echo Copying tcl directory...
-    xcopy /E /I /Y "C:\Program Files\Python311\tcl" build\python\tcl\ >nul
+    xcopy /E /I /Y "!PYTHON311_SOURCE!\tcl" build\python\tcl\ >nul
 ) else (
-    echo WARNING: Python 3.11 not found at C:\Program Files\Python311
-    echo GUI will not work without tkinter
-    pause
+    echo WARNING: Python 3.11 with tkinter not found.
+    echo          Set PYTHON311_ROOT or install Python 3.11 with tkinter to enable the GUI.
+    echo          Continuing without tkinter; core build will proceed.
 )
+set "PYTHON311_SOURCE="
 
 :: ============================================================================
 :: Step 7: Acquire NSSM (cached download or local install fallback)
@@ -285,45 +302,45 @@ copy /Y scripts\launch_gui.bat build\installer_package\scripts\ >nul
 copy /Y scripts\launch_tray.bat build\installer_package\scripts\ >nul
 
 :: ============================================================================
-:: Step 9: Optionally compile with Inno Setup
+:: Step 9: Compile with Inno Setup
 :: ============================================================================
 echo.
 echo [9/9] Checking for Inno Setup...
 
 :: Check for Inno Setup
-set "INNO_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-if exist "%INNO_PATH%" (
-    echo Found Inno Setup! Creating installer.exe...
-    mkdir build\installer_output 2>nul
-    "%INNO_PATH%" owlette_installer.iss
-
-    if errorlevel 1 (
-        echo WARNING: Inno Setup compilation failed
-        echo You can manually compile by running:
-        echo   "%INNO_PATH%" owlette_installer.iss
-    ) else (
-        echo.
-        echo ========================================
-        echo SUCCESS! Installer Created!
-        echo ========================================
-        echo.
-        echo Output: build\installer_output\Owlette-Installer-v%OWLETTE_VERSION%.exe
-        echo.
+set "INNO_PATH="
+if defined ISCC (
+    if exist "%ISCC%" set "INNO_PATH=%ISCC%"
+)
+if not defined INNO_PATH (
+    for /f "delims=" %%i in ('where iscc.exe 2^>nul') do (
+        if not defined INNO_PATH set "INNO_PATH=%%i"
     )
+)
+if not defined INNO_PATH (
+    if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "INNO_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+)
+if not defined INNO_PATH (
+    echo ERROR: Inno Setup 6 not found. Set %%ISCC%% or install to default path.
+    pause
+    exit /b 1
+)
+
+echo Found Inno Setup! Creating installer.exe...
+mkdir build\installer_output 2>nul
+"%INNO_PATH%" owlette_installer.iss
+
+if errorlevel 1 (
+    echo WARNING: Inno Setup compilation failed
+    echo You can manually compile by running:
+    echo   "%INNO_PATH%" owlette_installer.iss
 ) else (
-    echo Inno Setup not found
     echo.
     echo ========================================
-    echo Build Complete!
+    echo SUCCESS! Installer Created!
     echo ========================================
     echo.
-    echo Installer package created at: build\installer_package\
-    echo.
-    echo To create installer.exe, install Inno Setup 6 from:
-    echo   https://jrsoftware.org/isdl.php
-    echo.
-    echo Then run manually:
-    echo   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" owlette_installer.iss
+    echo Output: build\installer_output\Owlette-Installer-v%OWLETTE_VERSION%.exe
     echo.
 )
 

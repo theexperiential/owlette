@@ -1,6 +1,8 @@
-# authentication
+# platform authentication internals
 
-owlette uses four authentication mechanisms: user auth (Firebase Auth), agent auth (device code pairing), passkey authentication (WebAuthn), and optional MFA (TOTP).
+This reference covers Owlette platform authentication internals: Firebase-backed user sessions, agent device-code pairing, passkey authentication (WebAuthn), optional MFA (TOTP), and role-based access control. For HTTP API integrations, use [API authentication](../api/authentication.md), which documents scoped `owk_*` API keys, bearer headers, scopes, and public API error behavior.
+
+Owlette uses four authentication mechanisms: user auth (Firebase Auth), agent auth (device code pairing), passkey authentication (WebAuthn), and optional MFA (TOTP).
 
 ---
 
@@ -70,6 +72,29 @@ Agents authenticate using a device code flow with a two-token system. No Firebas
    ├── Access token: used for Firestore REST API calls (1-hour expiry)
    └── Refresh token: encrypted locally with Fernet AES (machine-bound key)
 ```
+
+### add machine modal (dashboard)
+
+Operators can pair machines without using the installer's browser handoff by clicking the **"+"** button on the dashboard header. The `AddMachineButton` modal (see `web/app/dashboard/components/AddMachineButton.tsx`) exposes two tabs:
+
+**Enter Code** — for operators who already have a pairing phrase (e.g. the installer's GUI is showing `silver-compass-drift` on the target machine):
+
+1. Type the three-word phrase into the input
+2. Click **Authorize**
+3. The modal `POST`s to `/api/agent/auth/device-code/authorize` with the current `siteId` — the agent's pending poll sees the authorization and completes pairing
+
+**Generate Code** — for bulk or silent deployments where no one will be at the machine:
+
+1. Click **Generate Pairing Phrase** — the modal calls `POST /api/agent/auth/device-code` then immediately authorizes the returned phrase for the current site (`POST /api/agent/auth/device-code/authorize`)
+2. Copy the pre-authorized phrase, or copy the silent install command, which the modal formats as:
+
+        Owlette-Installer-v{version}.exe /ADD={phrase} /SILENT
+
+3. The phrase expires **10 minutes** after generation. Run the command on each target machine within that window and the agent will pair on first launch — no GUI, no browser.
+
+Both tabs work only while the viewer has write access to the currently-selected site.
+
+---
 
 ### token refresh flow
 
@@ -226,19 +251,29 @@ Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entire
 
 ## role-based access control
 
+Owlette uses a three-tier model for human users (plus a separate agent tier for service accounts):
+
 ### roles
 
-| role | access |
-|------|--------|
-| **user** | Assigned sites only, no admin features |
-| **admin** | All sites, admin panel, user management |
-| **agent** | Single site + single machine (custom token claims) |
+| role | platform | site access | typical usage |
+|------|----------|-------------|---------------|
+| **member** | none | read-only on assigned sites | viewers, read-only ops |
+| **admin** | none | write on assigned sites (reboot, delete machines, edit display layouts, site settings) | site operators delegated by platform admins |
+| **superadmin** | full Admin Panel (user management, installer uploads, etc.) | implicit access to every site | platform administrators |
+| **agent** | — | single site + single machine (custom token claims) | Owlette agent service accounts |
+
+New users default to `member`. Superadmins promote members to `admin` or `superadmin` from `/admin/users`.
 
 ### enforcement layers
 
-1. **Firestore Security Rules** — Database-level enforcement (cannot be bypassed)
-2. **API Route Middleware** — Server-side session and role verification
-3. **React Components** — `RequireAdmin` component for client-side UI gating
+1. **Firestore Security Rules** — Database-level enforcement (cannot be bypassed). Helpers: `isSuperadmin()`, `isSiteAdmin(siteId)`, `canAccessSite(siteId)`. See [firestore-rules.md](../setup/firestore-rules.md#key-functions).
+2. **API Route Middleware** — Server-side helpers resolve sessions, Firebase ID tokens, and `owk_*` API keys. Public API routes use resource-scoped helpers such as `requireSiteAuthAndScope`, `requireMachineAuthAndScope`, `requireChatAuthAndScope`, and lower-level `resolveAuth`/`requireScope`; roost-specific routes use the same scoped-auth pattern. `requireAdminOrIdToken` is reserved for legacy or superadmin-gated platform routes.
+3. **React Components** — `RequireSuperadmin` for platform-scoped routes; `useAuth().isSiteAdmin(siteId)` for site-scoped UI gates.
+
+### backwards-compatibility notes
+
+- `isAdmin()` in `firestore.rules` is a **deprecated alias** for `isSuperadmin()` during the three-role rollout window. It will be removed in a future release; do not use in new code.
+- `useAuth().isAdmin` is JSDoc-deprecated for the same reason — use `useAuth().isSuperadmin` (platform god-mode) or `useAuth().isSiteAdmin(siteId)` (site-scoped elevated writes) instead.
 
 ### how role is determined
 
