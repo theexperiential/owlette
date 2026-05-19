@@ -392,6 +392,32 @@ export async function requireMachineAuthAndScope(
     };
   }
 
+  // Agent short-circuit: an agent's Firebase ID token carries role + site_id
+  // + machine_id claims set by the device-code exchange. assertSiteAccessOrProblem
+  // below reads users/{uid}.sites[] which agents don't have a doc in, so a plain
+  // fall-through would 404 every agent screenshot/command call. Validate the
+  // token's site_id and machine_id directly instead.
+  const authHeader = req.headers.get('authorization') || '';
+  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (bearerMatch && !bearerMatch[1].startsWith('owk_')) {
+    try {
+      const decoded = await getAdminAuth().verifyIdToken(bearerMatch[1]);
+      if (decoded.role === 'agent') {
+        if (decoded.site_id !== siteId || decoded.machine_id !== machineId) {
+          return { ok: false, response: problemNotFound('site not found or no access') };
+        }
+        return {
+          ok: true,
+          userId: decoded.uid,
+          auth: { userId: decoded.uid, keyContext: null },
+          scopeCheck: { isLegacy: false },
+        };
+      }
+    } catch {
+      /* not an agent id token — fall through to standard resolveAuthOrProblem */
+    }
+  }
+
   const authResult = await resolveAuthOrProblem(req);
   if (!authResult.ok) return authResult;
 
