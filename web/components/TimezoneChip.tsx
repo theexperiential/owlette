@@ -18,16 +18,18 @@ interface TimezoneChipProps {
 }
 
 /**
- * Small "times in [City]" chip used at the top of every dialog/panel that
+ * Small "times in [TZ]" chip used at the top of every dialog/panel that
  * displays or collects times. The chip names the timezone once per surface so
  * times themselves can stay clean (no `14:35 PT` redundancy on every row).
  *
- * Visual is the same as the inline JSX that previously lived in
- * ScheduleEditor — extracted into a shared component so we can reuse it
- * everywhere with consistent styling and tooltip behavior.
+ * The chip renders the timezone *abbreviation* (PDT / PST / EDT / etc.) via
+ * `Intl.DateTimeFormat` rather than the city-name segment of the IANA id.
+ * Abbreviations are observance-aware — a Los Angeles agent shows `PDT` in
+ * summer and `PST` in winter automatically. For zones without a stable
+ * abbreviation, Intl returns `GMT±N` which is still clear.
  *
- * Hover tooltip explains the source so the user always knows which setting
- * drives this surface's reference frame:
+ * Hover tooltip carries the full IANA name + source so the user can see
+ * which setting drives this surface's reference frame:
  *   - 'machine' → "this machine's local timezone (America/Los_Angeles)"
  *   - 'user'    → "your preferred timezone (America/Los_Angeles)"
  *   - 'site'    → "site timezone (America/Los_Angeles)"
@@ -35,8 +37,22 @@ interface TimezoneChipProps {
  * Falls back to "unknown" when `tz` is undefined (e.g. older agents that
  * have not yet deployed the IANA-aware build).
  */
+function tzAbbreviation(tz: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      timeZoneName: 'short',
+    }).formatToParts(new Date());
+    const abbr = parts.find((p) => p.type === 'timeZoneName')?.value;
+    if (abbr) return abbr;
+  } catch {
+    /* invalid IANA name — fall through to city segment */
+  }
+  return tz.replace(/_/g, ' ').split('/').pop() ?? tz;
+}
+
 export function TimezoneChip({ tz, source, prefix = 'times in' }: TimezoneChipProps) {
-  const display = tz ? tz.replace(/_/g, ' ').split('/').pop() : 'unknown';
+  const display = tz ? tzAbbreviation(tz) : 'unknown';
 
   const tooltipText = (() => {
     if (!tz) {
@@ -53,11 +69,11 @@ export function TimezoneChip({ tz, source, prefix = 'times in' }: TimezoneChipPr
   })();
 
   return (
-    <span className="text-muted-foreground text-sm">
+    <span className="text-muted-foreground text-xs">
       {prefix}{' '}
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-muted/60 border border-border text-foreground text-xs font-medium cursor-help">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-muted/60 border border-border text-foreground text-[11px] font-medium cursor-help">
             {display}
           </span>
         </TooltipTrigger>
