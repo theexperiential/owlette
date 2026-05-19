@@ -1,26 +1,34 @@
-# Upgrade to 2.12.0 — Full Procedure
+# Upgrade to 2.12.x — Full Procedure
 
-Self-contained runbook for promoting the 2.12.0 hardening release from
+Self-contained runbook for promoting the 2.12.x hardening release from
 `dev` to `main` (production). Owns the entire chain: legacy key handling,
 env-var provisioning, R2 keys, migrations, Firebase + Railway deploys,
 agent installer release, post-deploy verification, and rollback.
 
+> The shipping version is **2.12.1** = 2.12.0 hardening pass + display
+> hash patch + CSP style-src relaxation + UX copy-button. This file
+> originally targeted 2.12.0 — version labels updated throughout.
+>
 > This is a coordinated security release with a staged agent rollout. It
 > is **not** a normal small-feature release — the generic
 > `docs/runbooks/production-deploy.md` does not cover all the steps
-> needed for 2.12.0. Use this file end-to-end.
+> needed for 2.12.x. Use this file end-to-end.
 
 ---
 
 ## 0 — What's shipping
 
-Version: **2.11.3 → 2.12.0** (semver minor — security hardening, no
-intentional user-visible breaking changes).
+Version: **2.11.3 → 2.12.1** (semver minor + patch — security hardening,
+no intentional user-visible breaking changes).
 
-8 commits on `dev`:
+11 commits on `dev`:
 
 | sha (recent → old) | what |
 |---|---|
+| `0a771c7` | feat(ui): copy button with check confirmation + clipboard error handling |
+| `f3f6ecc` | fix(csp): allow 'unsafe-inline' for style-src so login page hydrates (script-src stays nonce + strict-dynamic) |
+| `c5d643e` | fix(display): stop flagging connected monitors as "not connected" after RDP / virtual-display events (v2.12.1) |
+| `5e14437` | docs(runbooks,scripts): self-contained 2.12.0 upgrade procedure + key audit tools |
 | `09e2880` | fix(security,audit): post-review fixes for 6 issues (C1–C6) |
 | `b87ebf8` | docs(claude): add review discipline section |
 | `bb181a9` | feat(agent-auth): version-gate refresh-token rotation |
@@ -80,7 +88,7 @@ node scripts/audit-legacy-api-keys.mjs --env=prod
 Output: console summary + CSV at `dev/scratch/key-audit-{env}-{ts}.csv`.
 
 Any key with `status=will_be_rejected` needs handling **before** the
-2.12.0 web hits its environment. Three options per key:
+2.12.x web hits its environment. Three options per key:
 
 **A. Replace with scoped key (recommended).** Use the helper:
 
@@ -223,7 +231,7 @@ denied reads.
 ### 2.1 Production Firestore export (irreversible-migration insurance)
 
 ```bash
-gcloud firestore export gs://owlette-prod-backup/pre-2.12.0-$(date +%Y%m%d-%H%M) \
+gcloud firestore export gs://owlette-prod-backup/pre-2.12.1-$(date +%Y%m%d-%H%M) \
   --project owlette-prod-90a12
 ```
 
@@ -332,7 +340,7 @@ reads `users/{uid}.role == 'superadmin'`.
 # From repo root:
 git checkout main
 git pull --ff-only origin main
-git merge dev --no-ff -m "chore: merge dev for v2.12.0 production release"
+git merge dev --no-ff -m "chore: merge dev for v2.12.1 production release"
 git push origin main
 ```
 
@@ -343,8 +351,8 @@ deploy may be ~1s slower than cached pre-2.12.0 state.
 ### 3.6 Tag the release
 
 ```bash
-git tag v2.12.0
-git push origin v2.12.0
+git tag v2.12.1
+git push origin v2.12.1
 ```
 
 Triggers `.github/workflows/build-installer.yml` if you want to publish
@@ -355,21 +363,27 @@ in §4 — only run this if you also want a CI-built artifact.)
 
 ## 4 — Agent installer release (separate, after web is stable)
 
-The 2.12.0 installer is already built and live on **dev** (sha256
-`ed4240890cfb06836426c71a95d23e778b5d0f3484edf14fa6aa3363d17f955b`).
-Build for prod and upload:
+The 2.12.0 installer is live on **dev** Firebase (sha256
+`ed4240890cfb06836426c71a95d23e778b5d0f3484edf14fa6aa3363d17f955b`) but
+is now STALE — the `c5d643e` display fix bumped to 2.12.1 and that's
+what should ship to prod. Rebuild the dev installer at 2.12.1 first
+(and re-upload to dev Firebase) so the dev environment matches what
+prod will get, then build + upload for prod:
 
 ```bash
 # 1. Verify version files first
-cat VERSION agent/VERSION web/package.json | grep -i version  # all 2.12.0
+cat VERSION agent/VERSION web/package.json | grep -i version  # all 2.12.1
 
-# 2. Full build (~5 min)
-cd c:/Users/admin/Documents/Git/Owlette/agent
-powershell -Command "& './build_installer_full.bat'"
-# Output: agent/build/installer_output/Owlette-Installer-v2.12.0.exe
+# 2. Full build (~5 min, non-interactive — the .bat ends with `pause`
+#    which hangs unless stdin is redirected from NUL)
+cd c:/Users/admin/Documents/Git/Owlette
+cmd /c "C:\Users\admin\Documents\Git\Owlette\agent\build_installer_full.bat < NUL > C:\Users\admin\AppData\Local\Temp\installer-build.log 2>&1"
+# Or from bash:
+#   cd c:/Users/admin/Documents/Git/Owlette/agent && cmd //c "build_installer_full.bat" < /dev/null > /tmp/installer-build.log 2>&1
+# Output: agent/build/installer_output/Owlette-Installer-v2.12.1.exe
 
 # 3. Compute checksum
-sha256sum agent/build/installer_output/Owlette-Installer-v2.12.0.exe
+sha256sum agent/build/installer_output/Owlette-Installer-v2.12.1.exe
 
 # 4. Three-step upload to PROD
 cd ..
@@ -380,22 +394,22 @@ TS=$(date +%s)
 RESP=$(curl -s -X POST "https://owlette.app/api/installer/upload" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
-  -H "Idempotency-Key: installer-upload-2.12.0-$TS" \
-  -d '{"version":"2.12.0","fileName":"Owlette-Installer-v2.12.0.exe","releaseNotes":"2.12.0 security hardening — see docs/changelog.md","setAsLatest":true}')
+  -H "Idempotency-Key: installer-upload-2.12.1-$TS" \
+  -d '{"version":"2.12.1","fileName":"Owlette-Installer-v2.12.1.exe","releaseNotes":"2.12.1 — security hardening + display hash + CSP fixes. See docs/changelog.md","setAsLatest":true}')
 UPLOAD_URL=$(echo "$RESP" | python -c "import sys,json; print(json.load(sys.stdin).get('uploadUrl',''))")
 UPLOAD_ID=$(echo "$RESP" | python -c "import sys,json; print(json.load(sys.stdin).get('uploadId',''))")
 
 # Step 4b: PUT binary to GCS
 curl -X PUT "$UPLOAD_URL" \
   -H "Content-Type: application/octet-stream" \
-  --data-binary @agent/build/installer_output/Owlette-Installer-v2.12.0.exe
+  --data-binary @agent/build/installer_output/Owlette-Installer-v2.12.1.exe
 
 # Step 4c: finalize
-SHA=$(sha256sum agent/build/installer_output/Owlette-Installer-v2.12.0.exe | cut -d' ' -f1)
+SHA=$(sha256sum agent/build/installer_output/Owlette-Installer-v2.12.1.exe | cut -d' ' -f1)
 curl -s -X PUT "https://owlette.app/api/installer/upload" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
-  -H "Idempotency-Key: installer-finalize-2.12.0-$(date +%s)" \
+  -H "Idempotency-Key: installer-finalize-2.12.1-$(date +%s)" \
   -d "{\"uploadId\":\"$UPLOAD_ID\",\"checksum_sha256\":\"$SHA\"}"
 
 # 5. Verify
@@ -561,17 +575,18 @@ key is still cached locally (in your prior `.claude/.env.local`).
   - **Passkey logins now require user verification** (PIN/biometric).
     Users with FIDO keys without UV configured will need to re-enroll
     or configure UV on their key
-  - **Agents update automatically** to 2.12.0 (refresh-token rotation
-    + device-code encryption + display IPC hardening)
+  - **Agents update automatically** to 2.12.1 (refresh-token rotation
+    + device-code encryption + display IPC hardening + display-hash
+    monitor-presence fix)
   - **No action required for normal users**
 
 ### 7.3 Draft release email
 
-> Subject: Owlette 2.12.0 — security hardening release
+> Subject: Owlette 2.12.1 — security hardening release
 >
 > Hi all,
 >
-> We've just shipped Owlette 2.12.0 — a comprehensive security
+> We've just shipped Owlette 2.12.1 — a comprehensive security
 > hardening release. Highlights:
 >
 > - Multi-factor authentication is now enforced server-side. If you're
@@ -583,7 +598,7 @@ key is still cached locally (in your prior `.claude/.env.local`).
 >   configured, please re-enroll your passkey or configure UV on the
 >   key.
 >
-> - Owlette agents will auto-update to 2.12.0 in the background — no
+> - Owlette agents will auto-update to 2.12.1 in the background — no
 >   action needed.
 >
 > - API keys with no explicit scopes (legacy pre-scope-system keys)
@@ -591,7 +606,7 @@ key is still cached locally (in your prior `.claude/.env.local`).
 >   {date}, you'll need to create a new one with explicit scopes in
 >   the dashboard. We've directly emailed anyone affected.
 >
-> Full changelog: https://owlette.app/docs/changelog#2.12.0
+> Full changelog: https://owlette.app/docs/changelog#2.12.1
 >
 > Questions? Reply to this email.
 
@@ -640,7 +655,7 @@ Items not addressed in this release but worth tracking:
 
 ### File paths for verification
 
-- Dev installer: `agent/build/installer_output/Owlette-Installer-v2.12.0.exe` (96 MB, sha256 `ed4240890cfb06836426c71a95d23e778b5d0f3484edf14fa6aa3363d17f955b`)
+- Dev installer: `agent/build/installer_output/Owlette-Installer-v2.12.1.exe` (96 MB, sha256 `ed4240890cfb06836426c71a95d23e778b5d0f3484edf14fa6aa3363d17f955b`)
 - Dev installer (live on dev Firebase): `https://dev.owlette.app/api/installer/latest`
 - Changelog: `docs/changelog.md` `[2.12.0]`
 - Plan history: `dev/scratch/PROD-PUSH-FINAL.md` (pre-hardening review), `dev/scratch/PROD-PUSH-READY.md` (mid-hardening plan)
