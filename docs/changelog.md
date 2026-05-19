@@ -9,11 +9,23 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
-## [Unreleased]
+## [2.12.2] - 2026-05-19
 
 ### fixed
 
+- **Agent screenshot capture restored.** Two regressions from the api-sprint refactor (`3027713`, 2026-04-26) silently broke capture for ~3 weeks:
+  1. `/api/sites/{siteId}/machines/{machineId}/screenshots/upload-url` 404'd every agent call with `"site not found or no access"`. The new `requireMachineAuthAndScope` helper had no agent-token short-circuit, so agent IDs fell through to a `users/{uid}.sites[]` lookup — a doc agents don't have. Fixed by mirroring the agent-token branch from the sibling `requireAgentOrSiteAuthAndScope` (with a defense-in-depth check that the token's `machine_id` matches the URL path).
+  2. The new `screenshot_capture.capture_and_upload` flow ran `mss` directly in the service process. The agent service runs as LocalSystem in Session 0, so mss captured a blank ~2 KB LocalSystem display instead of the actual user desktop. The pre-refactor path ran capture inside the active user's session via `CreateProcessAsUser` and uploaded via `/api/agent/screenshot` (which also writes the `lastScreenshot` Firestore field the dashboard listens on); the new path skipped both. `machine_commands._handle_capture_screenshot` now delegates back to that working method.
+
+- **Audit-export Cloud Function deploys cleanly to prod.** `exportSecurityBoundaryAuditDevDaily` referenced a dedicated service account that only exists in the dev project (`security-boundary-audit-export@owlette-dev-3838a`). Cloud Functions Gen 2 validated the SA at deploy time and would reject the prod deploy of all 24 functions in `firebase deploy --only functions`. The serviceAccount config is now conditionally attached only for the dev project, and the function body early-returns with a log message outside dev. (Provisioning the prod SA + bucket + IAM is a follow-up; this lets the rest of the release ship.)
+
+- **TimezoneChip shows abbreviation, not city name.** `tz.split('/').pop()` rendered "Los Angeles" / "New York" / "Berlin" — which read more like a city than a timezone. `Intl.DateTimeFormat({ timeZoneName: 'short' })` is observance-aware and returns `PDT` / `PST` / `EDT` automatically. Zones without a stable abbreviation fall back to `GMT±N`. Chip font also reduced one step (the screenshot-dialog history sidebar where this is most visible was too prominent).
+
 - **Login page no longer fails to hydrate under the 2.12.0 CSP.** The hardening pass set `style-src` and `style-src-elem` to `'self' 'nonce-...'`, but Next 16 emits inline `<style>` blocks during client-side hydration/navigation that the request-header nonce only covers for scripts. The browser blocked those styles, the page hit a React #418 hydration mismatch, and the login form became inert (Playwright E2E suite caught the regression on every push). Both directives now use `'self' 'unsafe-inline'` — modern browsers ignore `'unsafe-inline'` when a nonce is present, so the style nonce was dropped intentionally. Script injection remains nonce + strict-dynamic locked; style injection is materially lower risk.
+
+### infrastructure
+
+- **`functions/.gitignore` tightened.** Now blocks all `.env*` overlays (e.g. `.env.owlette-prod-90a12`) except the committed `.env.example` template, preventing prod secrets from being accidentally tracked.
 
 ## [2.12.1] - 2026-05-18
 
