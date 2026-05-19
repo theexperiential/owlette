@@ -2,20 +2,35 @@
 machine_commands — public-API command handlers that register on the
 CommandRouter (api-sprint wave 2 — track 2A).
 
-This module wires the `capture_screenshot` command type to the new
-signed-URL upload flow in `screenshot_capture.py`. The handler runs on
-the `_slow_command_worker` thread (per CommandRouter contract): a
-multi-monitor PNG capture takes ~200 ms but the upload is bounded only
-by the network, so blocking the main 10-second loop would stall presence
-+ heartbeat.
+This module wires the `capture_screenshot` command type into the
+CommandRouter so the public command-dispatch surface
+(`POST /api/sites/{siteId}/machines/{machineId}/commands` with
+`type=capture_screenshot`) lands on a real handler.
 
-return shape:
-- the handler returns a dict — `firebase_client._mark_command_completed`
-  stores it verbatim under `result: {...}`. the public GET status route
-  re-mints a signed read url for `result.screenshot_path` per request.
-- on failure, the handler returns a string starting with `'Error:'` so
-  `_execute_command` routes it through `_mark_command_failed` (matches
-  the existing convention for other handlers).
+History: the original api-sprint implementation called the new
+`screenshot_capture.capture_and_upload()` flow, which runs mss directly
+in the service process and uploads via the `/screenshots/upload-url`
+signed-URL endpoint. Two problems with that on a real install:
+
+  1. The Windows service runs as LocalSystem in Session 0. mss inside
+     Session 0 captures the LocalSystem display (blank, ~2 KB), not the
+     interactive user's desktop. Pre-refactor screenshots ran inside the
+     active user's session via CreateProcessAsUser.
+  2. The signed-URL upload writes a `screenshot_path` into the command
+     result but never updates the `machine.lastScreenshot` Firestore
+     field the dashboard's ScreenshotDialog listens on. So even a
+     successful upload doesn't surface in the UI.
+
+OwletteService still has `_handle_capture_screenshot` (uses
+`execute_in_user_session` → user-session mss → `/api/agent/screenshot`
+which writes `lastScreenshot` correctly) — the working flow that has
+shipped to prod since 2.11. We delegate to it here and translate the
+return shape so the command-router contract is unchanged.
+
+Follow-up: when prod field agents have all upgraded past 2.12.x, port
+the user-session capture into `screenshot_capture.py` and switch back
+to the signed-URL upload (which is the long-term plan because it avoids
+proxying multi-MB image bodies through Next.js).
 """
 
 from __future__ import annotations
@@ -23,12 +38,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import shared_utils
 from command_router import CommandRouter
-from screenshot_capture import (
-    ScreenshotCaptureError,
-    capture_and_upload,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -46,63 +56,38 @@ def register_handlers(router: CommandRouter) -> None:
 
 def _handle_capture_screenshot(cmd_data: dict, cmd_id: str, service: Any):
     """
-    capture_screenshot handler. takes the agent's bearer id-token from the
-    auth manager, requests a signed upload url from the web tier, captures
-    via mss, and uploads directly to Firebase Storage.
+    capture_screenshot handler. Delegates to OwletteService's working
+    user-session capture + base64 upload path (see file docstring for
+    why we don't use the new signed-URL flow yet).
 
     returns:
-      dict { screenshot_path, size_kb, monitor, monitor_count } on success.
-      'Error: ...' string on failure, which routes through _mark_command_failed.
+      dict { size_kb, monitor, url } on success (url empty if upload
+        succeeded but the response had no url).
+      'Error: ...' string on failure, which routes through
+        _mark_command_failed.
     """
-    monitor = cmd_data.get("monitor", 0)
-
-    fb = getattr(service, "firebase_client", None)
-    if fb is None:
-        return "Error: firebase_client unavailable; cannot dispatch capture_screenshot"
-
-    auth_manager = getattr(fb, "auth_manager", None)
-    if auth_manager is None:
-        return "Error: auth_manager unavailable on firebase_client"
+    handler = getattr(service, "_handle_capture_screenshot", None)
+    if handler is None:
+        return "Error: service._handle_capture_screenshot unavailable"
 
     try:
-        token = auth_manager.get_valid_token()
+        result = handler(cmd_data)
     except Exception as e:
-        return f"Error: failed to obtain valid auth token: {e}"
-
-    site_id = getattr(fb, "site_id", None)
-    machine_id = getattr(fb, "machine_id", None)
-    if not site_id or not machine_id:
-        return "Error: site_id or machine_id missing on firebase_client"
-
-    api_base = shared_utils.get_api_base_url()
-
-    try:
-        result = capture_and_upload(
-            api_base=api_base,
-            site_id=site_id,
-            machine_id=machine_id,
-            bearer_token=token,
-            monitor=monitor,
-        )
-    except ScreenshotCaptureError as e:
-        return f"Error: capture_screenshot failed: {e}"
-    except Exception as e:
-        # surface unexpected failures with the same Error: prefix so they
-        # land in completed.{cmd_id}.error rather than completed.result.
         logger.exception("capture_screenshot: unexpected error")
         return f"Error: capture_screenshot raised {type(e).__name__}: {e}"
 
-    try:
-        fb.log_event(
-            action="command_executed",
-            level="info",
-            details=(
-                f"Screenshot captured "
-                f"({result.get('size_kb', 0)}KB, monitor={result.get('monitor')})"
-            ),
-        )
-    except Exception as e:
-        # Best-effort audit logging — do not surface to the command result.
-        logger.debug(f"capture_screenshot: log_event failed: {e}")
+    if not isinstance(result, dict):
+        return f"Error: unexpected handler return type {type(result).__name__}"
 
-    return result
+    err = result.get("error")
+    if err:
+        return f"Error: {err}"
+
+    # Translate to a compact result envelope (omit the base64 blob — the
+    # GET command-status route doesn't need it and it bloats Firestore).
+    return {
+        "size_kb": result.get("size_kb", 0),
+        "monitor": result.get("monitor", 0),
+        "url": result.get("url", ""),
+        "message": result.get("message", ""),
+    }
