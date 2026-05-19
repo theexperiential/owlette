@@ -165,6 +165,15 @@ _CONNECTION_TYPE_MAP = {
     _OUTPUT_TECH_INTERNAL: 'internal',
 }
 
+# DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY values for virtual / indirect displays:
+# Miracast, Indirect Wired (Microsoft Remote Display Adapter / IddCx), and
+# Indirect Virtual. We drop these at enumeration time because they appear and
+# disappear with RDP / Miracast / dummy-plug drivers and would otherwise show
+# up in the dashboard as "added/removed monitors" and corrupt the topology
+# signature every time someone attaches a remote session. Value 18
+# (DISPLAYPORT_USB_TUNNEL) is a real USB-C display and stays included.
+_INDIRECT_OUTPUT_TECHS = frozenset({15, 16, 17})
+
 ERROR_SUCCESS = 0
 ERROR_INSUFFICIENT_BUFFER = 122
 ERROR_GEN_FAILURE = 31  # SetDisplayConfig may return this during GPU TDR
@@ -1149,9 +1158,82 @@ def _serial_from_device_path(device_path: str) -> str:
     return ''
 
 
-def _edid_hash(manufacturer: str, product_code: int, serial: str, friendly: str) -> str:
-    payload = '{0}|{1}|{2}|{3}'.format(manufacturer, product_code, serial, friendly)
+def _edid_hash(manufacturer: str, product_code: int, serial: str) -> str:
+    # Identity-only hash. Friendly name was previously part of the payload
+    # but Windows reports it inconsistently during driver state transitions
+    # (RDP attach/detach, monitor sleep, EDID re-read fallback), causing the
+    # same physical monitor to receive different hashes between snapshots —
+    # which surfaced as every stored monitor showing "not connected" after a
+    # remote session. The (manufacturer, product_code, device-path serial)
+    # tuple is what actually identifies the panel.
+    payload = '{0}|{1}|{2}'.format(manufacturer, product_code, serial)
     return hashlib.sha1(payload.encode('utf-8')).hexdigest()[:16]
+
+
+def _product_code_to_int(product_code) -> int:
+    # Live enumeration computes the hash from the raw integer product code,
+    # but uploaded monitor dicts (and stored assigned layouts in Firestore)
+    # carry it as a zero-padded hex string like "000A". Canonicalisation has
+    # to round-trip that representation back to the int so the recomputed
+    # hash matches what `_enumerate_monitors_ccd` produced for the same panel.
+    if product_code is None or product_code == '':
+        return 0
+    if isinstance(product_code, int):
+        return product_code
+    try:
+        return int(str(product_code), 16)
+    except (TypeError, ValueError):
+        return 0
+
+
+def canonical_edid_hash_for_monitor(monitor: dict) -> str:
+    """Recompute a monitor's `edidHash` from its own raw identity fields.
+
+    Use this when reading a monitor dict that may have been persisted with
+    an older hashing scheme (e.g. an assigned layout in Firestore written
+    before the friendly-name was dropped). Returns the canonical hash; falls
+    back to the stored `edidHash` if the raw fields are missing.
+    """
+    if not isinstance(monitor, dict):
+        return ''
+    manufacturer = monitor.get('manufacturerId') or ''
+    product_code = _product_code_to_int(monitor.get('productCode'))
+    serial = monitor.get('serialNumber') or ''
+    if not (manufacturer or product_code or serial):
+        return monitor.get('edidHash') or ''
+    return _edid_hash(manufacturer, product_code, serial)
+
+
+def canonicalize_monitor_hashes(monitors):
+    """Return a new list of monitor dicts with each `edidHash` re-derived
+    from the monitor's raw identity fields. Idempotent on already-canonical
+    input. Safe on None / non-list / non-dict entries (filtered out).
+    """
+    if not monitors:
+        return []
+    out = []
+    for m in monitors:
+        if not isinstance(m, dict):
+            continue
+        canonical = dict(m)
+        canonical['edidHash'] = canonical_edid_hash_for_monitor(m)
+        out.append(canonical)
+    return out
+
+
+def canonicalize_assigned_layout(layout):
+    """Apply `canonicalize_monitor_hashes` to an assigned-layout dict's
+    `monitors` field in place of the originals. Returns the original input
+    unchanged if it isn't a dict with a monitor list.
+    """
+    if not isinstance(layout, dict):
+        return layout
+    monitors = layout.get('monitors')
+    if not isinstance(monitors, list):
+        return layout
+    out = dict(layout)
+    out['monitors'] = canonicalize_monitor_hashes(monitors)
+    return out
 
 
 def _refresh_hz(rate: DISPLAYCONFIG_RATIONAL) -> float:
@@ -1651,6 +1733,13 @@ def _enumerate_monitors_ccd() -> list:
         source = path.sourceInfo
         target = path.targetInfo
 
+        if int(target.outputTechnology) in _INDIRECT_OUTPUT_TECHS:
+            logger.debug(
+                'skipping indirect/virtual display path (tech=%s, targetId=%s)',
+                int(target.outputTechnology), int(target.id),
+            )
+            continue
+
         source_mode = None
         source_mode_idx = source.modeInfoIdx
         if 0 <= source_mode_idx < len(modes):
@@ -1676,7 +1765,7 @@ def _enumerate_monitors_ccd() -> list:
         adapter_str = _luid_to_str(target.adapterId)
         target_id = int(target.id)
         monitor_id = '{0}:{1}'.format(adapter_str, target_id)
-        edid_hash = _edid_hash(manufacturer, product_code, serial, friendly_name)
+        edid_hash = _edid_hash(manufacturer, product_code, serial)
 
         x = int(source_mode.position.x)
         y = int(source_mode.position.y)
@@ -1837,11 +1926,12 @@ def _build_display_modes_catalogue() -> dict:
             continue
         source = path.sourceInfo
         target = path.targetInfo
+        if int(target.outputTechnology) in _INDIRECT_OUTPUT_TECHS:
+            continue
         device_info = _get_target_device_name(target.adapterId, target.id)
         if device_info is None:
             continue
 
-        friendly_name = (device_info.monitorFriendlyDeviceName or '').strip()
         if device_info.flags.bits.edidIdsValid:
             manufacturer = _decode_edid_manufacturer(device_info.edidManufactureId)
             product_code = int(device_info.edidProductCodeId)
@@ -1849,7 +1939,7 @@ def _build_display_modes_catalogue() -> dict:
             manufacturer = ''
             product_code = 0
         serial = _serial_from_device_path(device_info.monitorDevicePath or '')
-        edid_hash = _edid_hash(manufacturer, product_code, serial, friendly_name)
+        edid_hash = _edid_hash(manufacturer, product_code, serial)
 
         # Clone / mirror topologies can point two active paths at the same
         # physical panel — first-entry-wins avoids re-enumerating the same
@@ -1889,14 +1979,15 @@ def compute_drift_count(live_monitors, assigned_monitors) -> int:
     don't register as drift. Monitors present in `live` but missing from
     `assigned` (or vice versa) are not counted — that's a higher-level
     "layout changed" signal handled by the dashboard.
+
+    Re-derives the assigned-side hashes so layouts stored under an older
+    hashing scheme still match canonical live hashes by physical identity.
     """
     if not live_monitors or not assigned_monitors:
         return 0
 
     assigned_by_hash = {}
-    for m in assigned_monitors:
-        if not isinstance(m, dict):
-            continue
+    for m in canonicalize_monitor_hashes(assigned_monitors):
         edid = m.get('edidHash')
         if edid:
             assigned_by_hash[edid] = m
@@ -1978,17 +2069,15 @@ def _edid_hash_for_target(adapter_id: LUID, target_id: int) -> str:
     given (adapterId, targetId). Used to match desired monitors to live paths.
     """
     device_name = _get_target_device_name(adapter_id, target_id)
-    friendly_name = ''
     manufacturer = ''
     product_code = 0
     serial = ''
     if device_name is not None:
-        friendly_name = (device_name.monitorFriendlyDeviceName or '').strip()
         if device_name.flags.bits.edidIdsValid:
             manufacturer = _decode_edid_manufacturer(device_name.edidManufactureId)
             product_code = int(device_name.edidProductCodeId)
         serial = _serial_from_device_path(device_name.monitorDevicePath or '')
-    return _edid_hash(manufacturer, product_code, serial, friendly_name)
+    return _edid_hash(manufacturer, product_code, serial)
 
 
 def _serialize_path(path: DISPLAYCONFIG_PATH_INFO) -> dict:
@@ -2698,7 +2787,15 @@ def _apply_core(
             if ehash:
                 hash_by_path_idx[idx] = ehash
 
-        desired_by_hash = {m['edidHash']: m for m in desired_layout['monitors']}
+        # Canonicalise so a layout stored under the previous (friendly-name
+        # inclusive) hashing scheme still matches the live identity hashes
+        # this apply path produces. Without this, every legacy stored layout
+        # would fail with MISSING_MONITORS after the agent upgrades.
+        desired_by_hash = {
+            m['edidHash']: m
+            for m in canonicalize_monitor_hashes(desired_layout['monitors'])
+            if m.get('edidHash')
+        }
         live_hashes = set(hash_by_path_idx.values())
         missing = [h for h in desired_by_hash if h not in live_hashes]
         if missing:

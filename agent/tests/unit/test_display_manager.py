@@ -1515,3 +1515,234 @@ class TestAutoRestoreCycle:
         fake_service._run_auto_restore(assigned_layout, drift_key='same-drift')
         assert cb['failures'] == 1
         assert fake_service._last_auto_restore_success_key is None
+
+
+class TestEdidHashStability:
+    """Identity hash must NOT shift when only the friendly name changes.
+
+    The previous hash payload included `friendly`, which Windows reports
+    inconsistently across driver state transitions (RDP attach/detach,
+    monitor sleep). That made every stored monitor read as "not connected"
+    after a remote session even though the panel was physically unchanged.
+    """
+
+    def test_friendly_name_not_in_hash(self):
+        # The bug: previously the friendly name was part of the hash payload,
+        # so the same physical monitor produced different hashes when Windows
+        # reported a different friendly name across a driver state transition.
+        # `canonical_edid_hash_for_monitor` reads from the dict, including
+        # `friendlyName` — the invariant is that two monitors with the SAME
+        # identity but DIFFERENT friendly names hash identically.
+        base_identity = {
+            'manufacturerId': 'DEL',
+            'productCode': '40F2',
+            'serialNumber': '5&abcdef&0&UID257',
+        }
+        m_dell = {**base_identity, 'friendlyName': 'DELL U2415'}
+        m_samsung_glitch = {**base_identity, 'friendlyName': 'SAMSUNG'}
+        m_blank = {**base_identity, 'friendlyName': ''}
+        h_dell = dm.canonical_edid_hash_for_monitor(m_dell)
+        h_samsung = dm.canonical_edid_hash_for_monitor(m_samsung_glitch)
+        h_blank = dm.canonical_edid_hash_for_monitor(m_blank)
+        assert h_dell == h_samsung == h_blank
+        # And it equals the raw _edid_hash too — friendlyName is purely cosmetic.
+        assert h_dell == dm._edid_hash('DEL', 0x40F2, '5&abcdef&0&UID257')
+
+    def test_different_identity_produces_different_hash(self):
+        h1 = dm._edid_hash('DEL', 0x40F2, '5&abcdef&0&UID257')
+        h2 = dm._edid_hash('SAM', 0x40F2, '5&abcdef&0&UID257')
+        h3 = dm._edid_hash('DEL', 0xFFFF, '5&abcdef&0&UID257')
+        h4 = dm._edid_hash('DEL', 0x40F2, '5&different&0&UID257')
+        assert len({h1, h2, h3, h4}) == 4
+
+    def test_hash_is_16_hex_chars(self):
+        h = dm._edid_hash('DEL', 0x40F2, '5&abc&0&UID257')
+        assert len(h) == 16
+        assert all(c in '0123456789abcdef' for c in h)
+
+
+class TestCanonicalizeMonitorHashes:
+    """Re-derivation rewrites `edidHash` from raw identity fields so layouts
+    persisted under the old (friendly-inclusive) scheme still match.
+    """
+
+    def _live_format_dell(self):
+        # The shape `_enumerate_monitors_ccd` produces: productCode is a hex
+        # string, edidHash is the new identity-only SHA-1.
+        return {
+            'edidHash': dm._edid_hash('DEL', 0x40F2, '5&abc&0&UID257'),
+            'manufacturerId': 'DEL',
+            'productCode': '40F2',
+            'serialNumber': '5&abc&0&UID257',
+            'friendlyName': 'DELL U2415',
+        }
+
+    def test_old_format_assigned_normalizes_to_new_hash(self):
+        # An assigned-layout monitor written by an older agent: same raw
+        # fields, but its `edidHash` was computed with `friendly` folded in
+        # — so it doesn't match the canonical identity hash.
+        legacy = {
+            'edidHash': 'old_scheme_hash',
+            'manufacturerId': 'DEL',
+            'productCode': '40F2',
+            'serialNumber': '5&abc&0&UID257',
+            'friendlyName': 'DELL U2415',
+        }
+        live = self._live_format_dell()
+        canon = dm.canonicalize_monitor_hashes([legacy])
+        assert canon[0]['edidHash'] == live['edidHash']
+
+    def test_idempotent_on_canonical_input(self):
+        live = self._live_format_dell()
+        canon1 = dm.canonicalize_monitor_hashes([live])
+        canon2 = dm.canonicalize_monitor_hashes(canon1)
+        assert canon1[0]['edidHash'] == canon2[0]['edidHash'] == live['edidHash']
+
+    def test_preserves_other_fields(self):
+        legacy = {
+            'edidHash': 'old',
+            'manufacturerId': 'DEL', 'productCode': '40F2',
+            'serialNumber': '5&abc&0&UID257', 'friendlyName': 'DELL',
+            'position': {'x': 0, 'y': 0}, 'primary': True,
+        }
+        canon = dm.canonicalize_monitor_hashes([legacy])[0]
+        assert canon['friendlyName'] == 'DELL'
+        assert canon['position'] == {'x': 0, 'y': 0}
+        assert canon['primary'] is True
+
+    def test_empty_identity_preserves_existing_hash(self):
+        # Monitors without raw fields (broken EDID, generic driver) keep
+        # their stored hash rather than collapse to a single zero-payload
+        # hash that would alias every unknown monitor together.
+        m = {'edidHash': 'kept', 'manufacturerId': '', 'productCode': '', 'serialNumber': ''}
+        canon = dm.canonicalize_monitor_hashes([m])
+        assert canon[0]['edidHash'] == 'kept'
+
+    def test_handles_none_and_non_dict(self):
+        assert dm.canonicalize_monitor_hashes(None) == []
+        assert dm.canonicalize_monitor_hashes([]) == []
+        # Non-dict entries are filtered out, not crashed on.
+        assert dm.canonicalize_monitor_hashes([None, 'not a dict', 42]) == []
+
+    def test_canonicalize_assigned_layout_wraps_monitors(self):
+        legacy_layout = {
+            'capturedAt': 1700000000,
+            'monitors': [{
+                'edidHash': 'old', 'manufacturerId': 'DEL',
+                'productCode': '40F2', 'serialNumber': '5&abc&0&UID257',
+            }],
+        }
+        canon = dm.canonicalize_assigned_layout(legacy_layout)
+        assert canon['capturedAt'] == 1700000000
+        assert canon['monitors'][0]['edidHash'] == dm._edid_hash(
+            'DEL', 0x40F2, '5&abc&0&UID257',
+        )
+
+    def test_compute_drift_count_matches_legacy_assigned(self):
+        # Drift counter must work even when the assigned-side hashes are
+        # from the old (friendly-inclusive) scheme. Without canonicalisation
+        # inside compute_drift_count, the lookup misses and drift is 0.
+        live = self._live_format_dell()
+        live['position'] = {'x': 0, 'y': 0}
+        live['resolution'] = {'width': 1920, 'height': 1200}
+        live['refreshHz'] = 60.0
+        live['rotation'] = 0
+        live['scalePct'] = 100
+        live['primary'] = True
+
+        assigned = {
+            'edidHash': 'old_friendly_scheme',
+            'manufacturerId': 'DEL', 'productCode': '40F2',
+            'serialNumber': '5&abc&0&UID257',
+            'position': {'x': 100, 'y': 0},  # drift on x
+            'resolution': {'width': 1920, 'height': 1200},
+            'refreshHz': 60.0, 'rotation': 0, 'scalePct': 100, 'primary': True,
+        }
+        assert dm.compute_drift_count([live], [assigned]) == 1
+
+
+class TestIndirectDisplayFilter:
+    """RDP / Miracast / dummy-plug paths must not pollute enumeration."""
+
+    def test_indirect_techs_set(self):
+        # Sanity-check the set contents — these specific tech values are the
+        # ones documented in the WinSDK headers as virtual/indirect outputs.
+        # Value 18 (DISPLAYPORT_USB_TUNNEL) is real USB-C and must stay
+        # included in normal enumeration.
+        assert 15 in dm._INDIRECT_OUTPUT_TECHS  # MIRACAST
+        assert 16 in dm._INDIRECT_OUTPUT_TECHS  # INDIRECT_WIRED
+        assert 17 in dm._INDIRECT_OUTPUT_TECHS  # INDIRECT_VIRTUAL
+        assert 18 not in dm._INDIRECT_OUTPUT_TECHS  # DISPLAYPORT_USB_TUNNEL — real
+
+    def _stub_path(self, source_id, target_id, output_tech):
+        """Build a MagicMock that satisfies the attribute-access pattern
+        `_enumerate_monitors_ccd` uses against ctypes path structs.
+        """
+        p = MagicMock()
+        p.flags = dm.DISPLAYCONFIG_PATH_ACTIVE
+        p.sourceInfo.adapterId = 'A1'
+        p.sourceInfo.id = source_id
+        p.sourceInfo.modeInfoIdx = source_id  # 0, 1, 2 — match the mode array
+        p.targetInfo.adapterId = 'A1'
+        p.targetInfo.id = target_id
+        # Real ctypes field is a uint; the code does `int(target.outputTechnology)`.
+        p.targetInfo.outputTechnology = output_tech
+        # Refresh + rotation paths read these — return zero-like sentinels so
+        # _refresh_hz / _rotation_degrees don't blow up under the mock.
+        p.targetInfo.refreshRate.Numerator = 60
+        p.targetInfo.refreshRate.Denominator = 1
+        p.targetInfo.rotation = dm.DISPLAYCONFIG_ROTATION_IDENTITY
+        return p
+
+    def _stub_mode(self, source_id):
+        """Mode struct for a given source slot — produces a SOURCE-type info
+        block with non-zero position/size so `source_mode` resolves successfully.
+        """
+        m = MagicMock()
+        m.infoType = dm.DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE
+        m.sourceMode.position.x = source_id * 1920
+        m.sourceMode.position.y = 0
+        m.sourceMode.width = 1920
+        m.sourceMode.height = 1080
+        return m
+
+    def _stub_device_name(self, target_id):
+        info = MagicMock()
+        info.monitorFriendlyDeviceName = f'DELL U241{target_id}'
+        info.flags.bits.edidIdsValid = 1
+        info.edidManufactureId = 0x1040  # decodes to some 3-letter id
+        info.edidProductCodeId = 0x40F0 + target_id
+        info.monitorDevicePath = (
+            f'\\\\?\\DISPLAY#DEL40F2#5&abc&0&UID{target_id}#{{x}}'
+        )
+        return info
+
+    def test_indirect_paths_dropped_from_enumeration(self, monkeypatch):
+        # Three CCD paths: two physical (HDMI=5, DP-external=10) and one
+        # RDP-injected virtual (INDIRECT_VIRTUAL=17). After enumeration the
+        # virtual one must be absent from the returned monitor list.
+        physical_a = self._stub_path(source_id=0, target_id=100, output_tech=5)
+        virtual = self._stub_path(source_id=1, target_id=101, output_tech=17)
+        physical_b = self._stub_path(source_id=2, target_id=102, output_tech=10)
+        paths = [physical_a, virtual, physical_b]
+        modes = [self._stub_mode(0), self._stub_mode(1), self._stub_mode(2)]
+
+        monkeypatch.setattr(dm, '_query_active_paths', lambda: (paths, modes))
+        monkeypatch.setattr(dm, '_get_target_device_name',
+                            lambda adapter, tid: self._stub_device_name(tid))
+        monkeypatch.setattr(dm, '_get_dpi_scale_percent', lambda *a, **kw: 100)
+        monkeypatch.setattr(dm, '_luid_to_str', lambda luid: str(luid))
+
+        monitors = dm._enumerate_monitors_ccd()
+        target_ids = sorted(m['targetId'] for m in monitors)
+        assert target_ids == [100, 102], (
+            'expected only the two physical paths to survive; '
+            f'virtual targetId=101 (tech=17) leaked through: {target_ids}'
+        )
+        # Spot-check that USB-C tunnel (tech=18) IS kept — guards against
+        # accidentally widening the filter to include real hardware.
+        usb_c = self._stub_path(source_id=0, target_id=200, output_tech=18)
+        monkeypatch.setattr(dm, '_query_active_paths',
+                            lambda: ([usb_c], [self._stub_mode(0)]))
+        monitors = dm._enumerate_monitors_ccd()
+        assert [m['targetId'] for m in monitors] == [200]

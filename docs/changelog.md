@@ -11,6 +11,16 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ## [Unreleased]
 
+## [2.12.1] - 2026-05-18
+
+### fixed
+
+- **Display layout no longer flags healthy monitors as "not connected" after RDP / virtual-display events.** Two changes:
+  1. The `edidHash` payload no longer includes the Windows-reported monitor friendly name. Windows reports that string inconsistently across driver state transitions (RDP attach/detach, monitor sleep, EDID re-read fallback), so the same physical panel was receiving different hashes between snapshots — which surfaced as every stored monitor showing "⚠ not connected" after a remote session, along with spurious `display_drift` / `display_monitor_added` / `display_monitor_removed` events. The hash is now identity-only: `manufacturer | productCode | device-path serial`.
+  2. Indirect display drivers (Miracast, IddCx-based indirect displays, the RDP `RdpIdd_IndirectDisplay` / "Microsoft Remote Display Adapter", dummy-plug EDIDs like `HDP-V104`) are now skipped at CCD enumeration. These appear and disappear with remote sessions and previously polluted the topology signature, the drift counter, and the events feed every time someone attached. Only physical output technologies (DVI, HDMI, DP, USB-C tunnel, internal, etc.) are enumerated.
+
+  Existing assigned layouts stored under the old hashing scheme are re-derived on read on both the agent and web sides — no manual migration required, no need to re-press "store" after upgrading.
+
 ## [2.12.0] - 2026-05-17
 
 ### security

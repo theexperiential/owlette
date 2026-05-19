@@ -4294,9 +4294,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
             assigned_layout.get('monitors')
             if isinstance(assigned_layout, dict) else None
         ) or []
+        # Re-derive the assigned-side hashes from raw identity fields so a
+        # layout stored under the previous (friendly-name inclusive) hashing
+        # scheme still matches canonical live hashes by physical identity.
+        assigned_monitors = display_manager.canonicalize_monitor_hashes(
+            assigned_monitors,
+        )
         assigned_by_hash = {
             m.get('edidHash'): m for m in assigned_monitors
-            if isinstance(m, dict) and m.get('edidHash')
+            if m.get('edidHash')
         }
         if not assigned_by_hash:
             return []
@@ -4600,7 +4606,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 return
         if not isinstance(assigned_layout, dict):
             return
-        assigned_monitors = assigned_layout.get('monitors') or []
+        assigned_monitors = display_manager.canonicalize_monitor_hashes(
+            assigned_layout.get('monitors') or [],
+        )
         assigned_hashes = {
             m.get('edidHash') for m in assigned_monitors if m.get('edidHash')
         }

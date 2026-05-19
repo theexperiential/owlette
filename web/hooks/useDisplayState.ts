@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useDemoContext } from '@/contexts/DemoContext';
+import { canonicalizeMonitors } from '@/lib/displayCanonical';
 
 export interface MonitorInfo {
   id: string;
@@ -390,27 +391,59 @@ export function useDisplayState(
 
     const profileRef = doc(db, 'sites', siteId, 'machines', machineId, 'hardware', 'display');
 
+    // Monotonic snapshot counters guard against late async canonicalisation
+    // resolving after a newer snapshot has already updated state. SHA-1 of
+    // a handful of monitors is sub-millisecond in practice, but tearing
+    // down the effect or receiving a burst of snapshots could otherwise let
+    // an older result overwrite a newer one.
+    let profileSeq = 0;
+    let assignedSeq = 0;
+    let cancelled = false;
+
     const unsubscribeProfile = onSnapshot(
       profileRef,
       (snap) => {
-        const next = snap.exists() ? (snap.data() as DisplayProfile) : null;
-        setState((prev) => {
-          const sameTarget = prev.siteId === siteId && prev.machineId === machineId;
-          return {
-            siteId,
-            machineId,
-            profile: next,
-            assigned: sameTarget ? prev.assigned : null,
-            autoRestore: sameTarget ? prev.autoRestore : DEFAULT_AUTO_RESTORE,
-            remoteApplyEnabled: sameTarget ? prev.remoteApplyEnabled : false,
-            profileLoaded: true,
-            assignedLoaded: sameTarget ? prev.assignedLoaded : false,
-            error: sameTarget ? prev.error : null,
-          };
-        });
+        const seq = ++profileSeq;
+        const raw = snap.exists() ? (snap.data() as DisplayProfile) : null;
+        void (async () => {
+          let next: DisplayProfile | null = null;
+          if (raw) {
+            try {
+              const canonical = await canonicalizeMonitors(raw.monitors || []);
+              next = { ...raw, monitors: canonical };
+            } catch (e) {
+              // Web Crypto unavailable / malformed monitor field — fall back
+              // to the raw (uncanonicalised) monitors so the panel still
+              // renders. Without this, a digest failure would leave
+              // profileLoaded false forever and the panel stuck on "loading".
+              console.error('canonicalizeMonitors (profile) failed:', e);
+              next = raw;
+            }
+          }
+          if (cancelled || seq !== profileSeq) return;
+          setState((prev) => {
+            const sameTarget = prev.siteId === siteId && prev.machineId === machineId;
+            return {
+              siteId,
+              machineId,
+              profile: next,
+              assigned: sameTarget ? prev.assigned : null,
+              autoRestore: sameTarget ? prev.autoRestore : DEFAULT_AUTO_RESTORE,
+              remoteApplyEnabled: sameTarget ? prev.remoteApplyEnabled : false,
+              profileLoaded: true,
+              assignedLoaded: sameTarget ? prev.assignedLoaded : false,
+              error: sameTarget ? prev.error : null,
+            };
+          });
+        })();
       },
       (err) => {
+        // Bump the seq so a still-in-flight success-path canonicalisation
+        // from the previous snapshot can't slip past us and overwrite the
+        // error state. Same `cancelled` guard for teardown.
+        const seq = ++profileSeq;
         console.error('Error subscribing to display profile:', err);
+        if (cancelled || seq !== profileSeq) return;
         setState((prev) => {
           const sameTarget = prev.siteId === siteId && prev.machineId === machineId;
           return {
@@ -440,18 +473,19 @@ export function useDisplayState(
       unsubscribeAssigned = onSnapshot(
         configRef,
         (snap) => {
-          let next: AssignedLayout | null = null;
+          const seq = ++assignedSeq;
+          let rawMonitors: MonitorInfo[] | null = null;
+          let capturedAt = 0;
+          let capturedBy: string | undefined;
           let nextAutoRestore: DisplayAutoRestoreState = DEFAULT_AUTO_RESTORE;
           let nextRemoteApplyEnabled = false;
           if (snap.exists()) {
             const data = snap.data();
             const candidate = data?.displays?.assigned;
             if (candidate && Array.isArray(candidate.monitors)) {
-              next = {
-                monitors: candidate.monitors as MonitorInfo[],
-                capturedAt: normalizeTimestamp(candidate.capturedAt),
-                capturedBy: typeof candidate.capturedBy === 'string' ? candidate.capturedBy : undefined,
-              };
+              rawMonitors = candidate.monitors as MonitorInfo[];
+              capturedAt = normalizeTimestamp(candidate.capturedAt);
+              capturedBy = typeof candidate.capturedBy === 'string' ? candidate.capturedBy : undefined;
             }
             nextAutoRestore = parseAutoRestore(data?.displays?.autoRestore);
             // Wave 6.1 master kill switch — only literal `true` enables the
@@ -460,23 +494,51 @@ export function useDisplayState(
             // in by having the field default to a truthy non-boolean.
             nextRemoteApplyEnabled = data?.displays?.remoteApplyEnabled === true;
           }
-          setState((prev) => {
-            const sameTarget = prev.siteId === siteId && prev.machineId === machineId;
-            return {
-              siteId,
-              machineId,
-              profile: sameTarget ? prev.profile : null,
-              assigned: next,
-              autoRestore: nextAutoRestore,
-              remoteApplyEnabled: nextRemoteApplyEnabled,
-              profileLoaded: sameTarget ? prev.profileLoaded : false,
-              assignedLoaded: true,
-              error: sameTarget ? prev.error : null,
-            };
-          });
+          void (async () => {
+            let next: AssignedLayout | null = null;
+            if (rawMonitors) {
+              try {
+                const canonical = await canonicalizeMonitors(rawMonitors);
+                next = {
+                  monitors: canonical,
+                  capturedAt,
+                  ...(capturedBy !== undefined ? { capturedBy } : {}),
+                };
+              } catch (e) {
+                // Same fallback rationale as the live-profile path: render
+                // raw monitors rather than getting stuck loading.
+                console.error('canonicalizeMonitors (assigned) failed:', e);
+                next = {
+                  monitors: rawMonitors,
+                  capturedAt,
+                  ...(capturedBy !== undefined ? { capturedBy } : {}),
+                };
+              }
+            }
+            if (cancelled || seq !== assignedSeq) return;
+            setState((prev) => {
+              const sameTarget = prev.siteId === siteId && prev.machineId === machineId;
+              return {
+                siteId,
+                machineId,
+                profile: sameTarget ? prev.profile : null,
+                assigned: next,
+                autoRestore: nextAutoRestore,
+                remoteApplyEnabled: nextRemoteApplyEnabled,
+                profileLoaded: sameTarget ? prev.profileLoaded : false,
+                assignedLoaded: true,
+                error: sameTarget ? prev.error : null,
+              };
+            });
+          })();
         },
         (err) => {
+          // Bump seq to invalidate any in-flight success-path canonicalisation
+          // from the previous snapshot — without this, a late success could
+          // resolve after this error setState and revert us to a stale ok state.
+          const seq = ++assignedSeq;
           console.error('Error subscribing to assigned display layout:', err);
+          if (cancelled || seq !== assignedSeq) return;
           setState((prev) => {
             const sameTarget = prev.siteId === siteId && prev.machineId === machineId;
             return {
@@ -496,6 +558,7 @@ export function useDisplayState(
     }
 
     return () => {
+      cancelled = true;
       unsubscribeProfile();
       if (unsubscribeAssigned) unsubscribeAssigned();
     };
