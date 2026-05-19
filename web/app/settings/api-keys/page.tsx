@@ -6,9 +6,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Loader2, Plus, KeyRound, Copy, X } from 'lucide-react';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Loader2, Plus, KeyRound, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { CopyButton } from '@/components/CopyButton';
 import { CreateKeyDialog } from './CreateKeyDialog';
 import { KeyCard, type ApiKeyListItem } from './KeyCard';
 
@@ -67,11 +67,6 @@ export default function ApiKeysSettingsPage() {
     void refresh();
   }
 
-  function copyToClipboard(value: string) {
-    navigator.clipboard.writeText(value);
-    toast.success('copied to clipboard');
-  }
-
   if (authLoading || (!user && loading)) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -120,22 +115,10 @@ export default function ApiKeysSettingsPage() {
               <code className="flex-1 text-xs bg-background border border-border rounded px-3 py-2 text-white font-mono break-all select-all">
                 {revealedKey}
               </code>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => copyToClipboard(revealedKey)}
-                    className="h-9 border-border text-accent-cyan hover:bg-muted cursor-pointer"
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>copy</p>
-                </TooltipContent>
-              </Tooltip>
+              <CopyButton
+                value={revealedKey}
+                className="h-9 border-border text-accent-cyan hover:bg-muted"
+              />
             </div>
           </Card>
         )}

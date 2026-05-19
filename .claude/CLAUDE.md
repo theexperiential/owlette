@@ -106,8 +106,22 @@ Agents authenticate via a device code flow — no browser login on the target ma
 node scripts/sync-versions.js X.Y.Z
 git add -A && git commit -m "chore: bump version to X.Y.Z" && git push origin dev
 
-# 2. Build installer (~5 min)
-cd agent && powershell -Command "& './build_installer_full.bat'"
+# 2. Build installer (~5 min, non-interactive)
+# build_installer_full.bat ends with `pause` and has `pause` on every error
+# branch, so it MUST be run with stdin redirected from NUL or it will hang
+# the harness forever. Invoke by FULL PATH (cmd /c won't reliably cd via
+# PowerShell quote-stripping) and capture the log explicitly. Run in the
+# background — exit code 0 means the .exe is built; check the log on failure.
+#
+#   powershell (foreground/background):
+#     cmd /c "C:\Users\admin\Documents\Git\Owlette\agent\build_installer_full.bat < NUL > C:\Users\admin\AppData\Local\Temp\installer-build.log 2>&1"
+#
+#   bash:
+#     cd c:/Users/admin/Documents/Git/Owlette/agent && cmd //c "build_installer_full.bat" < /dev/null > /tmp/installer-build.log 2>&1
+#     # (if //c gets mangled by Git Bash, fall back to the powershell cmd /c form above)
+#
+# DO NOT use `cd agent && powershell -Command "& './build_installer_full.bat'"` —
+# the trailing pause will hang non-interactive shells indefinitely.
 # Output: agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
 
 # 3. Compute checksum

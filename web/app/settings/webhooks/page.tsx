@@ -13,9 +13,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Copy, Loader2, Plus, Webhook, X } from 'lucide-react';
+import { Loader2, Plus, Webhook, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { CopyButton } from '@/components/CopyButton';
 import { CreateWebhookDialog } from './CreateWebhookDialog';
 import { WebhookCard, type WebhookListItem } from './WebhookCard';
 
@@ -81,11 +81,6 @@ export default function WebhooksSettingsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch + site-change fetch; state is managed in refresh().
     refresh(selectedSite).catch(() => {});
   }, [user, authLoading, router, refresh, selectedSite]);
-
-  function copyToClipboard(value: string) {
-    navigator.clipboard.writeText(value);
-    toast.success('copied to clipboard');
-  }
 
   if (authLoading || (!user && loading)) {
     return (
@@ -173,22 +168,10 @@ export default function WebhooksSettingsPage() {
               <code className="flex-1 text-xs bg-background border border-border rounded px-3 py-2 text-white font-mono break-all select-all">
                 {revealedSecret}
               </code>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => copyToClipboard(revealedSecret)}
-                    className="h-9 border-border text-accent-cyan hover:bg-muted cursor-pointer"
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>copy</p>
-                </TooltipContent>
-              </Tooltip>
+              <CopyButton
+                value={revealedSecret}
+                className="h-9 border-border text-accent-cyan hover:bg-muted"
+              />
             </div>
           </Card>
         )}

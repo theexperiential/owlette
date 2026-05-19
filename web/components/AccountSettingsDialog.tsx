@@ -11,7 +11,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User, Bell, BellOff, Trash2, Key, Copy, Plus, X, Code } from 'lucide-react';
+import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User, Bell, BellOff, Trash2, Key, Plus, X, Code } from 'lucide-react';
+import { CopyButton } from '@/components/CopyButton';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { PasskeyManager } from '@/components/PasskeyManager';
@@ -1120,25 +1121,12 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                         <code className="flex-1 text-xs bg-background rounded px-3 py-2 text-white font-mono break-all select-all">
                           {createdKey}
                         </code>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                navigator.clipboard.writeText(createdKey);
-                                toast.success('API key copied to clipboard');
-                              }}
-                              className="cursor-pointer border-border text-accent-cyan hover:bg-muted h-8 flex-shrink-0"
-                            >
-                              <Copy className="h-3.5 w-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>copy key</p>
-                          </TooltipContent>
-                        </Tooltip>
+                        <CopyButton
+                          value={createdKey}
+                          successMessage="API key copied to clipboard"
+                          tooltipLabel="copy key"
+                          className="border-border text-accent-cyan hover:bg-muted h-8 flex-shrink-0"
+                        />
                       </div>
                     </div>
                   )}
