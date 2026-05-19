@@ -9,13 +9,31 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
-## [2.12.2] - 2026-05-19
+## [2.12.3] - 2026-05-19
 
 ### fixed
 
-- **Agent screenshot capture restored.** Two regressions from the api-sprint refactor (`3027713`, 2026-04-26) silently broke capture for ~3 weeks:
+- **Agent screenshot capture restored — properly this time.** 2.12.2 fixed the broken signed-URL flow by routing the `capture_screenshot` command back through the pre-refactor `OwletteService._handle_capture_screenshot` path (base64 upload via `/api/agent/screenshot`). That was working but architecturally wrong — Next.js was proxying multi-MB image bodies again, and `screenshot_capture.py` was effectively dead code despite being the api-sprint's intended replacement. 2.12.3 restores the signed-URL design end-to-end with the missing pieces actually built:
+  1. **User-session capture moved into `screenshot_capture.py`.** The Windows service runs as LocalSystem in Session 0; mss inside Session 0 captures a blank ~2 KB LocalSystem display. The pre-refactor working flow ran capture inside the active user's desktop session via `CreateProcessAsUser`. That mechanism (`OwletteService.execute_in_user_session` → `session_exec.py`) is now wired into `screenshot_capture.capture_in_user_session()` via dependency injection — the service passes its `execute_in_user_session` method to `capture_and_upload`, the user-session interpreter runs `mss` + `PIL` (JPEG quality 72, max-width 7680 px, PNG fallback if PIL is missing), and writes the bytes into the IPC output directory.
+  2. **`OwletteService.execute_in_user_session` now returns `outputDir` in its result envelope** so callers can read files directly without scanning `ipc/results/` for the most-recent screenshot (which was the OLD pattern and is racy under concurrent captures).
+  3. **New `POST /api/sites/{siteId}/machines/{machineId}/screenshots/finalize` endpoint.** After the signed-URL PUT lands, the agent calls finalize with the `storagePath` + `sizeKB`. Server-side: verifies the object exists, pins content-type metadata, makes the file public-read, writes `sites/{siteId}/machines/{machineId}.lastScreenshot = { url, timestamp, sizeKB }` (the Firestore field the dashboard's ScreenshotDialog subscribes to in real-time), appends a `screenshots/{docId}` history doc, and prunes to the most-recent 20. Same `lastScreenshot` field + history pruning behavior as the legacy `/api/agent/screenshot` route, but for the signed-URL upload path.
+  4. **Path → content-type alignment.** Storage paths now use `.jpg` for JPEG bodies and `.png` for PNG fallback, so the URL doesn't lie about its content.
+  5. **`machine_commands._handle_capture_screenshot` reverted** from the 2.12.2 delegation to the proper `capture_and_upload(executor=service.execute_in_user_session, ...)` call. The temp delegation path in OwletteService is no longer invoked by the public API (kept in source for now to keep the diff focused; can be removed in a follow-up cleanup pass).
+
+  Net result: multi-MB image bodies no longer transit Next.js, dashboard `lastScreenshot` updates immediately via Firestore real-time (no polling), and the signed-URL upload concept ships end-to-end as originally designed by the api-sprint (3027713).
+
+## [2.12.2] - 2026-05-19 [superseded by 2.12.3]
+
+> The screenshot fix in 2.12.2 used a temporary delegation to the
+> pre-refactor base64 upload path. 2.12.3 replaces that with the
+> proper signed-URL pipeline. The other 2.12.2 fixes (audit-export
+> guard, TimezoneChip, CSP) shipped unchanged through 2.12.3.
+
+### fixed
+
+- **Agent screenshot capture restored (interim).** Two regressions from the api-sprint refactor (`3027713`, 2026-04-26) silently broke capture for ~3 weeks:
   1. `/api/sites/{siteId}/machines/{machineId}/screenshots/upload-url` 404'd every agent call with `"site not found or no access"`. The new `requireMachineAuthAndScope` helper had no agent-token short-circuit, so agent IDs fell through to a `users/{uid}.sites[]` lookup — a doc agents don't have. Fixed by mirroring the agent-token branch from the sibling `requireAgentOrSiteAuthAndScope` (with a defense-in-depth check that the token's `machine_id` matches the URL path).
-  2. The new `screenshot_capture.capture_and_upload` flow ran `mss` directly in the service process. The agent service runs as LocalSystem in Session 0, so mss captured a blank ~2 KB LocalSystem display instead of the actual user desktop. The pre-refactor path ran capture inside the active user's session via `CreateProcessAsUser` and uploaded via `/api/agent/screenshot` (which also writes the `lastScreenshot` Firestore field the dashboard listens on); the new path skipped both. `machine_commands._handle_capture_screenshot` now delegates back to that working method.
+  2. The new `screenshot_capture.capture_and_upload` flow ran `mss` directly in the service process. The agent service runs as LocalSystem in Session 0, so mss captured a blank ~2 KB LocalSystem display instead of the actual user desktop. The pre-refactor path ran capture inside the active user's session via `CreateProcessAsUser` and uploaded via `/api/agent/screenshot` (which also writes the `lastScreenshot` Firestore field the dashboard listens on); the new path skipped both. `machine_commands._handle_capture_screenshot` was temporarily routed back through that pre-refactor path; 2.12.3 supersedes with the proper signed-URL design.
 
 - **Audit-export Cloud Function deploys cleanly to prod.** `exportSecurityBoundaryAuditDevDaily` referenced a dedicated service account that only exists in the dev project (`security-boundary-audit-export@owlette-dev-3838a`). Cloud Functions Gen 2 validated the SA at deploy time and would reject the prod deploy of all 24 functions in `firebase deploy --only functions`. The serviceAccount config is now conditionally attached only for the dev project, and the function body early-returns with a log message outside dev. (Provisioning the prod SA + bucket + IAM is a follow-up; this lets the rest of the release ship.)
 

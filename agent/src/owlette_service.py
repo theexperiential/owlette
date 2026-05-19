@@ -1746,8 +1746,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
             timeout: Max execution time in seconds (default 30, max 120)
 
         Returns:
-            dict with keys: stdout, stderr, exitCode, error, durationMs, files
-            On failure returns dict with 'error' key.
+            dict with keys: stdout, stderr, exitCode, error, durationMs, files,
+            outputDir. The `outputDir` field is the absolute path of the IPC
+            output directory the user-session process wrote to, so callers
+            (e.g. screenshot_capture) can read files['screenshot.jpg'] etc.
+            without racing on `ipc/results/` directory enumeration.
+            On failure returns dict with 'error' key (plus 'outputDir').
         """
         import uuid
         import json as _json
@@ -1778,7 +1782,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 'session_exec.py', f'"{job_path}"'
             )
             if not success:
-                return {'error': 'Failed to launch in user session — no interactive session available'}
+                return {
+                    'error': 'Failed to launch in user session — no interactive session available',
+                    'outputDir': output_dir,
+                }
 
             # Poll for result (timeout + 5s grace period for startup)
             poll_timeout = timeout + 5
@@ -1790,13 +1797,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     try:
                         with open(result_path, 'r') as f:
                             result = _json.load(f)
+                        # Inject outputDir so callers can read files[] entries
+                        # directly without scanning the IPC results directory.
+                        result['outputDir'] = output_dir
                         return result
                     except (_json.JSONDecodeError, IOError):
                         time.sleep(0.3)
                         continue
                 time.sleep(0.5)
 
-            return {'error': f'Execution timed out after {timeout}s'}
+            return {
+                'error': f'Execution timed out after {timeout}s',
+                'outputDir': output_dir,
+            }
 
         finally:
             # Cleanup job file (result dir cleaned up by caller if needed)
