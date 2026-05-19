@@ -122,9 +122,22 @@ export const exportSecurityBoundaryAuditDevDaily = onSchedule(
     timeZone: 'UTC',
     timeoutSeconds: 120,
     memory: '256MiB',
-    serviceAccount: `security-boundary-audit-export@${resolveProjectId()}.iam.gserviceaccount.com`,
+    // Dedicated SA only exists in dev (owlette-dev-3838a). In prod the
+    // function is a no-op (see guard in body) so it can run under the
+    // project's default compute SA without IAM grants. Provision a
+    // dedicated prod SA + bucket + export role and revert this to a
+    // bare assignment when prod export infra is wired up.
+    ...(resolveProjectId() === DEFAULT_PROJECT_ID
+      ? { serviceAccount: `security-boundary-audit-export@${DEFAULT_PROJECT_ID}.iam.gserviceaccount.com` }
+      : {}),
   },
   async () => {
+    if (resolveProjectId() !== DEFAULT_PROJECT_ID) {
+      console.log(
+        '[securityBoundaryAuditExport] skipping — prod export infra not yet provisioned',
+      );
+      return;
+    }
     const outputUriPrefix = buildOutputUriPrefix();
     const operation = await startSecurityBoundaryAuditExport(outputUriPrefix);
     console.log(

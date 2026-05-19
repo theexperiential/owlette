@@ -5,9 +5,10 @@
 # Dependencies
 node_modules/
 
-# Local env files
-.env
-.env.local
+# Local env files (block all .env* — including project-specific overlays
+# like .env.owlette-prod-90a12 — but keep the committed example template)
+.env*
+!.env.example
 
 # IDE
 .idea/
