@@ -263,14 +263,17 @@ describe('proxy — CSP header', () => {
     expect(csp!.length).toBeGreaterThan(0);
   });
 
-  it('script-src and style-src use the same per-request nonce', async () => {
+  it('script-src nonce is present and unique per request', async () => {
+    // Note: style-src/style-src-elem deliberately use 'unsafe-inline' rather
+    // than a nonce — Next 16 emits inline <style> blocks during client
+    // hydration/navigation that the request-header nonce doesn't cover, and
+    // browsers ignore 'unsafe-inline' when a nonce is also present. Script
+    // injection remains nonce + strict-dynamic locked.
     const response = await proxy(makeRequest('/dashboard'));
     const csp = response.headers.get('Content-Security-Policy') ?? '';
-    // Two nonce-* tokens with the same value (script-src + style-src).
     const matches = csp.match(/'nonce-([A-Za-z0-9+/=]+)'/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(2);
+    expect(matches.length).toBeGreaterThanOrEqual(1);
     const uniqueNonces = new Set(matches.map((m) => m.split('-')[1]));
-    // The script-src + style-src + style-src-elem all share the same nonce.
     expect(uniqueNonces.size).toBe(1);
   });
 

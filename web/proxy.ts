@@ -58,10 +58,17 @@ function buildContentSecurityPolicy(nonce: string) {
     // Dev keeps unsafe-eval for Fast Refresh only; production omits it and
     // does not allow unsafe-inline for scripts.
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' ${isDev ? "'unsafe-eval' " : ''}https://accounts.google.com https://apis.google.com https://*.gstatic.com`,
-    `style-src 'self' 'nonce-${nonce}'`,
-    `style-src-elem 'self' 'nonce-${nonce}'`,
-    // TODO: Migrate remaining React `style={{ ... }}` attributes to classes
-    // or other non-inline styling, then remove this exception.
+    // style-src/style-src-elem allow 'unsafe-inline' because Next.js 16
+    // emits inline <style> blocks during client-side navigation/hydration
+    // that aren't covered by the request-header nonce propagation (which
+    // Next applies to scripts only). Without this, the login page hits
+    // style-src-elem violations, fails hydration with React error #418, and
+    // the form becomes inert. When 'unsafe-inline' is present alongside a
+    // nonce, modern browsers ignore 'unsafe-inline' — so we drop the
+    // style nonce here intentionally. Style-injection is materially lower
+    // risk than script-injection; script-src stays nonce + strict-dynamic.
+    "style-src 'self' 'unsafe-inline'",
+    "style-src-elem 'self' 'unsafe-inline'",
     "style-src-attr 'unsafe-inline'",
     `img-src 'self' data: blob: https:${isEmulatorBuild ? ' http://127.0.0.1:*' : ''}`,
     "font-src 'self' data:",

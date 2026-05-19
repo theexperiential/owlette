@@ -11,6 +11,10 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ## [Unreleased]
 
+### fixed
+
+- **Login page no longer fails to hydrate under the 2.12.0 CSP.** The hardening pass set `style-src` and `style-src-elem` to `'self' 'nonce-...'`, but Next 16 emits inline `<style>` blocks during client-side hydration/navigation that the request-header nonce only covers for scripts. The browser blocked those styles, the page hit a React #418 hydration mismatch, and the login form became inert (Playwright E2E suite caught the regression on every push). Both directives now use `'self' 'unsafe-inline'` — modern browsers ignore `'unsafe-inline'` when a nonce is present, so the style nonce was dropped intentionally. Script injection remains nonce + strict-dynamic locked; style injection is materially lower risk.
+
 ## [2.12.1] - 2026-05-18
 
 ### fixed

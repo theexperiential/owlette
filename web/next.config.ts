@@ -33,10 +33,11 @@ const nextConfig: NextConfig = {
       {
         // Apply static security headers to all routes.
         // CSP is emitted from proxy.ts instead of next.config.ts because it
-        // needs a fresh per-request nonce. Production script/style inline
-        // execution must use that nonce (and script-src strict-dynamic) rather
-        // than 'unsafe-inline'. A scoped style-src-attr exception remains in
-        // proxy.ts until the remaining React style={{ ... }} attrs are migrated.
+        // needs a fresh per-request nonce. Script inline execution must use
+        // that nonce (with strict-dynamic) rather than 'unsafe-inline'. Style
+        // inline execution allows 'unsafe-inline' because Next 16 emits
+        // inline <style> blocks during client navigation that the request-
+        // header nonce doesn't cover — see proxy.ts for the full rationale.
         source: '/:path*',
         headers: [
           {
