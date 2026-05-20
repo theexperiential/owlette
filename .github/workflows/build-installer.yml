@@ -149,7 +149,7 @@ jobs:
       id-token: write       # keyless signing via OIDC
       contents: write       # attach attestation to release
       actions: read         # reusable workflow metadata
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.0.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: "${{ needs.build.outputs.artifact-sha256 }} ${{ needs.build.outputs.artifact-name }}"
       # upload the signed .intoto.jsonl provenance next to the artifact
