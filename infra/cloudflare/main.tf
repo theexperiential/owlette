@@ -82,4 +82,12 @@ resource "cloudflare_load_balancer" "owlette" {
   ]
 
   fallback_pool_id = cloudflare_load_balancer_pool.vercel.id
+
+  # Zero-downtime failover: when Railway's endpoint is unreachable mid-request,
+  # retry against the Vercel pool immediately instead of waiting for the next
+  # health-check cycle (~60s). Single-endpoint pools, so cross-pool is the only
+  # failover path — this is what makes the Railway→Vercel handoff instant.
+  adaptive_routing {
+    failover_across_pools = true
+  }
 }
