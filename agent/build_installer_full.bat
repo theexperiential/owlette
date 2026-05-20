@@ -193,11 +193,22 @@ set "PYTHON311_SOURCE="
 echo [7/9] Acquiring NSSM...
 mkdir build\tools 2>nul
 
-:: SHA256 hash for nssm-2.24.zip (from nssm.cc)
-:: IMPORTANT: Verify this hash manually on first build by downloading from nssm.cc
-:: and computing: certutil -hashfile nssm-2.24.zip SHA256
-:: Update this hash if changing NSSM version
-set NSSM_EXPECTED_HASH=923c35e43bf18a672648abf67d9ded77da89b82baff52b94762a10f285e2db26
+:: Canonical SHA256 for the official nssm-2.24.zip. Cross-verified against
+:: the Chocolatey NSSM 2.24 package metadata (md5 B2EDD0E4..., sha1 BE7B3577...,
+:: sha256 below). The previous pin (923c35e4...) did not match the zip nssm.cc
+:: actually serves and broke every clean build.
+set NSSM_EXPECTED_HASH=727d1e42275c605e0f04aba98095c38a8e1e46def453cdffce42869428aa6743
+
+:: Prefer the vendored, hash-verified zip so the build never depends on
+:: nssm.cc being up (the site is chronically flaky — it served a 197-byte
+:: error page to CI runners). Falls through to download only if the vendored
+:: copy is somehow absent.
+mkdir downloads 2>nul
+if exist "vendor\nssm-2.24.zip" (
+    echo Using vendored NSSM 2.24...
+    copy /Y "vendor\nssm-2.24.zip" downloads\nssm.zip >nul
+    goto :verify_nssm
+)
 
 :: Use cached zip if present
 if exist "downloads\nssm.zip" goto :verify_nssm
