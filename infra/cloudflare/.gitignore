@@ -6,6 +6,9 @@
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+.cftoken
+.env
+.env.*
 crash.log
 crash.*.log
 override.tf
