@@ -21,9 +21,22 @@ function LoginForm() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [redirectUrl, setRedirectUrl] = useState('/dashboard');
+  // WebAuthn support can only be detected client-side (browserSupportsWebAuthn
+  // reads window.PublicKeyCredential). Calling it during render makes the
+  // passkey button render server-side=absent / client-side=present, which is a
+  // hydration mismatch (React #418 — recoverable, but it discards the SSR tree
+  // and re-renders, and in the E2E harness the in-flight re-render drops the
+  // login click so the suite hangs on /login). Gate on a mounted flag so the
+  // first client render matches the server (no button), then reveal it after
+  // hydration.
+  const [canUsePasskey, setCanUsePasskey] = useState(false);
   const { signIn, signInWithGoogle } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  useEffect(() => {
+    setCanUsePasskey(browserSupportsWebAuthn());
+  }, []);
 
   // Read redirect parameter from URL (validated: must be a safe relative path)
   useEffect(() => {
@@ -267,7 +280,7 @@ function LoginForm() {
             Google
           </Button>
 
-          {browserSupportsWebAuthn() && (
+          {canUsePasskey && (
             <Button
               type="button"
               variant="outline"
