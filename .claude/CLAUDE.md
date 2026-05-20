@@ -93,7 +93,9 @@ Agents authenticate via a device code flow — no browser login on the target ma
 
 ## Deployment
 
-**Web**: Push to `dev`/`main` triggers Railway auto-deploy.
+**Web**: Push to `dev`/`main` triggers Railway auto-deploy. A Vercel project (`theexperiential/owlette`) is configured as a failover origin for owlette.app behind Cloudflare Load Balancing.
+
+**Env vars** (Railway dev/prod + Vercel prod): managed via `scripts/env-manifest.json` (canonical key registry — keys + metadata, never values) and `node scripts/sync-env.mjs` (`status` / `check` / `diff` / `sync <target>`). Full workflow + the `must-match` secret rules + the Vercel read-back caveat: `.claude/skills/env-management.md`.
 
 **IMPORTANT: Always version up AND update the changelog BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
 
