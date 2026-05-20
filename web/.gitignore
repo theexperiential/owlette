@@ -20,9 +20,9 @@
 /e2e/.auth/
 /e2e/debug/
 
-# next.js
-/.next/
-/.next-e2e/
+# next.js — glob covers .next, .next-e2e, and any ad-hoc .next-* probe
+# dirs (e.g. .next-dev-probe used when debugging hydration in dev mode)
+/.next*/
 /out/
 
 # production

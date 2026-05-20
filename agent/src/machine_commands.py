@@ -2,35 +2,29 @@
 machine_commands — public-API command handlers that register on the
 CommandRouter (api-sprint wave 2 — track 2A).
 
-This module wires the `capture_screenshot` command type into the
-CommandRouter so the public command-dispatch surface
-(`POST /api/sites/{siteId}/machines/{machineId}/commands` with
-`type=capture_screenshot`) lands on a real handler.
+Wires the `capture_screenshot` command type into the CommandRouter so
+the public command-dispatch surface (`POST /api/sites/{siteId}/
+machines/{machineId}/commands` with `type=capture_screenshot`) lands on
+a handler that runs the full capture → upload → finalize pipeline.
 
-History: the original api-sprint implementation called the new
-`screenshot_capture.capture_and_upload()` flow, which runs mss directly
-in the service process and uploads via the `/screenshots/upload-url`
-signed-URL endpoint. Two problems with that on a real install:
+The handler is intentionally thin — all per-step error handling +
+return-shape contract live in `screenshot_capture.capture_and_upload`.
+We inject `service.execute_in_user_session` as the user-session executor
+so the actual screen grab runs inside the active user's desktop session
+(via CreateProcessAsUser) rather than in the LocalSystem Session-0
+context the service itself runs in.
 
-  1. The Windows service runs as LocalSystem in Session 0. mss inside
-     Session 0 captures the LocalSystem display (blank, ~2 KB), not the
-     interactive user's desktop. Pre-refactor screenshots ran inside the
-     active user's session via CreateProcessAsUser.
-  2. The signed-URL upload writes a `screenshot_path` into the command
-     result but never updates the `machine.lastScreenshot` Firestore
-     field the dashboard's ScreenshotDialog listens on. So even a
-     successful upload doesn't surface in the UI.
-
-OwletteService still has `_handle_capture_screenshot` (uses
-`execute_in_user_session` → user-session mss → `/api/agent/screenshot`
-which writes `lastScreenshot` correctly) — the working flow that has
-shipped to prod since 2.11. We delegate to it here and translate the
-return shape so the command-router contract is unchanged.
-
-Follow-up: when prod field agents have all upgraded past 2.12.x, port
-the user-session capture into `screenshot_capture.py` and switch back
-to the signed-URL upload (which is the long-term plan because it avoids
-proxying multi-MB image bodies through Next.js).
+Return shape contract:
+- On success: the handler returns the dict produced by
+  capture_and_upload (storage_path / url / size_kb / monitor /
+  monitor_count). firebase_client._mark_command_completed stores it
+  verbatim under `result: {...}`. The dashboard listens on
+  machine.lastScreenshot (which the /finalize endpoint writes
+  server-side) — so the command result envelope is for the GET status
+  consumer (CLI, SDK, automation), not the dashboard.
+- On failure: a string starting with `Error:` so _execute_command
+  routes through _mark_command_failed (matches the other handlers in
+  this module).
 """
 
 from __future__ import annotations
@@ -38,7 +32,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import shared_utils
 from command_router import CommandRouter
+from screenshot_capture import (
+    ScreenshotCaptureError,
+    capture_and_upload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,38 +55,76 @@ def register_handlers(router: CommandRouter) -> None:
 
 def _handle_capture_screenshot(cmd_data: dict, cmd_id: str, service: Any):
     """
-    capture_screenshot handler. Delegates to OwletteService's working
-    user-session capture + base64 upload path (see file docstring for
-    why we don't use the new signed-URL flow yet).
+    capture_screenshot handler.
+
+    Pipeline (see screenshot_capture.capture_and_upload):
+      1. capture the screen in the active user's desktop session
+      2. request a 5-min signed PUT url from web
+      3. PUT bytes directly to GCS
+      4. POST /screenshots/finalize — web writes lastScreenshot + history
 
     returns:
-      dict { size_kb, monitor, url } on success (url empty if upload
-        succeeded but the response had no url).
-      'Error: ...' string on failure, which routes through
-        _mark_command_failed.
+      dict { storage_path, url, size_kb, monitor, monitor_count } on
+      success.
+      'Error: ...' string on failure → routes through _mark_command_failed.
     """
-    handler = getattr(service, "_handle_capture_screenshot", None)
-    if handler is None:
-        return "Error: service._handle_capture_screenshot unavailable"
+    monitor = cmd_data.get("monitor", 0)
+
+    fb = getattr(service, "firebase_client", None)
+    if fb is None:
+        return "Error: firebase_client unavailable; cannot dispatch capture_screenshot"
+
+    auth_manager = getattr(fb, "auth_manager", None)
+    if auth_manager is None:
+        return "Error: auth_manager unavailable on firebase_client"
+
+    executor = getattr(service, "execute_in_user_session", None)
+    if executor is None:
+        return (
+            "Error: service.execute_in_user_session unavailable; "
+            "cannot capture in user-desktop session"
+        )
 
     try:
-        result = handler(cmd_data)
+        token = auth_manager.get_valid_token()
     except Exception as e:
+        return f"Error: failed to obtain valid auth token: {e}"
+
+    site_id = getattr(fb, "site_id", None)
+    machine_id = getattr(fb, "machine_id", None)
+    if not site_id or not machine_id:
+        return "Error: site_id or machine_id missing on firebase_client"
+
+    api_base = shared_utils.get_api_base_url()
+
+    try:
+        result = capture_and_upload(
+            user_session_executor=executor,
+            api_base=api_base,
+            site_id=site_id,
+            machine_id=machine_id,
+            bearer_token=token,
+            monitor=monitor,
+        )
+    except ScreenshotCaptureError as e:
+        return f"Error: capture_screenshot failed: {e}"
+    except Exception as e:
+        # surface unexpected failures with the same Error: prefix so they
+        # land in completed.{cmd_id}.error rather than completed.result.
         logger.exception("capture_screenshot: unexpected error")
         return f"Error: capture_screenshot raised {type(e).__name__}: {e}"
 
-    if not isinstance(result, dict):
-        return f"Error: unexpected handler return type {type(result).__name__}"
+    try:
+        fb.log_event(
+            action="command_executed",
+            level="info",
+            details=(
+                f"Screenshot captured "
+                f"({result.get('size_kb', 0)}KB, monitor={result.get('monitor')})"
+            ),
+        )
+    except Exception as e:
+        # Best-effort audit logging — do not surface to the command result.
+        logger.debug(f"capture_screenshot: log_event failed: {e}")
 
-    err = result.get("error")
-    if err:
-        return f"Error: {err}"
-
-    # Translate to a compact result envelope (omit the base64 blob — the
-    # GET command-status route doesn't need it and it bloats Firestore).
-    return {
-        "size_kb": result.get("size_kb", 0),
-        "monitor": result.get("monitor", 0),
-        "url": result.get("url", ""),
-        "message": result.get("message", ""),
-    }
+    return result

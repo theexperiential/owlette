@@ -1,0 +1,76 @@
+{
+  "$schema-note": "Canonical registry of Owlette web env vars. KEYS + metadata only — values NEVER live here, they stay in the providers. Edit this file when you add/remove/move an env var, then run `node scripts/sync-env.mjs check`. See .claude/skills/env-management.md.",
+  "targets": {
+    "railway-dev": {
+      "provider": "railway",
+      "project": "owlette",
+      "environment": "dev",
+      "service": "owlette-dev",
+      "serves": "dev.owlette.app",
+      "readable": true
+    },
+    "railway-prod": {
+      "provider": "railway",
+      "project": "owlette",
+      "environment": "dev",
+      "service": "owlette-prod",
+      "serves": "owlette.app",
+      "readable": true
+    },
+    "vercel-prod": {
+      "provider": "vercel",
+      "project": "owlette",
+      "target": "production",
+      "serves": "owlette.app (failover origin)",
+      "readable": false
+    }
+  },
+  "mirror": [
+    ["railway-prod", "vercel-prod"]
+  ],
+  "classes": {
+    "public": "NEXT_PUBLIC_* — inlined into the client bundle at build time; not secret. Synced non-sensitive so values stay readable in Vercel.",
+    "config": "Non-secret app configuration (emails, ids, endpoints, flags). Synced non-sensitive.",
+    "secret": "Sensitive credential. Synced --sensitive (unreadable after write).",
+    "must-match": "Sensitive AND silently catastrophic if it differs between mirror targets: SESSION_SECRET logs everyone out, MFA_ENCRYPTION_KEY locks out 2FA users, LLM_ENCRYPTION_KEY breaks stored Cortex keys. Synced --sensitive.",
+    "build": "Build-time-only credential (Sentry source-map upload). Synced --sensitive."
+  },
+  "vars": {
+    "ADMIN_EMAIL_DEV": { "class": "config", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "ADMIN_EMAIL_PROD": { "class": "config", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "CORTEX_INTERNAL_SECRET": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "CRON_SECRET": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "FIREBASE_CLIENT_EMAIL": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "FIREBASE_PRIVATE_KEY": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "FIREBASE_PROJECT_ID": { "class": "config", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "INSTATUS_API_KEY": { "class": "secret", "targets": ["railway-prod", "vercel-prod"] },
+    "INSTATUS_COMPONENT_DASHBOARD_ID": { "class": "config", "targets": ["railway-prod", "vercel-prod"] },
+    "INSTATUS_PAGE_ID": { "class": "config", "targets": ["railway-prod", "vercel-prod"] },
+    "LLM_ENCRYPTION_KEY": { "class": "must-match", "targets": ["railway-dev", "railway-prod", "vercel-prod"], "note": "mismatch between railway-prod and vercel-prod breaks decryption of stored LLM provider keys" },
+    "MFA_ENCRYPTION_KEY": { "class": "must-match", "targets": ["railway-dev", "railway-prod", "vercel-prod"], "note": "mismatch locks out every 2FA user on failover — values must be byte-identical across mirror targets" },
+    "NEXT_PUBLIC_BASE_URL": { "class": "public", "targets": ["railway-prod", "vercel-prod"] },
+    "NEXT_PUBLIC_FIREBASE_API_KEY": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "NEXT_PUBLIC_FIREBASE_APP_ID": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "NEXT_PUBLIC_FIREBASE_PROJECT_ID": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "NEXT_PUBLIC_SENTRY_DSN": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "NEXT_PUBLIC_SENTRY_ENVIRONMENT": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "R2_S3_ACCESS_KEY_ID": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "R2_S3_ENDPOINT": { "class": "config", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "R2_S3_SECRET_ACCESS_KEY": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "RATE_LIMIT_OBSERVE_ONLY": { "class": "config", "targets": ["railway-dev"], "note": "dev-only — rate limiting runs in observe (non-blocking) mode" },
+    "RESEND_API_KEY": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "RESEND_FROM_EMAIL": { "class": "config", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "ROOST_ENV": { "class": "config", "targets": ["railway-prod", "vercel-prod"] },
+    "SECURITY_BOUNDARY_SENTRY_METRICS": { "class": "config", "targets": ["railway-dev"], "note": "dev-only — security-boundary E2E drill toggle" },
+    "SENTRY_AUTH_TOKEN": { "class": "build", "targets": ["railway-prod", "vercel-prod"] },
+    "SENTRY_ORG": { "class": "build", "targets": ["railway-prod", "vercel-prod"] },
+    "SENTRY_PROJECT": { "class": "build", "targets": ["railway-prod", "vercel-prod"] },
+    "SESSION_SECRET": { "class": "must-match", "targets": ["railway-dev", "railway-prod", "vercel-prod"], "note": "mismatch invalidates every session cookie on failover — all users logged out" },
+    "UPSTASH_REDIS_REST_TOKEN": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "UPSTASH_REDIS_REST_URL": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "W8_1_DRILL_TS": { "class": "config", "targets": ["railway-dev"], "note": "temporary security-drill marker (wave 8.1) — remove from Railway + this manifest when the drill is retired" }
+  }
+}

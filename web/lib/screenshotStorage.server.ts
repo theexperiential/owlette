@@ -59,17 +59,30 @@ function resolveBucketName(): string {
   return explicit;
 }
 
+/** Map a screenshot content-type to its file extension. */
+function extForContentType(contentType: string): string {
+  return contentType === 'image/jpeg' ? 'jpg' : 'png';
+}
+
 /**
  * Compose the canonical storage path for a freshly-captured screenshot.
+ * The extension reflects the content-type so a JPEG body never sits at a
+ * `.png` URL (browsers honor content-type, but a mismatched extension is
+ * a foot-gun for anything that trusts the path — downloads, CDN sniffing,
+ * manual inspection).
  *
- * Exposed (rather than inlined into `issueWriteUrl`) so tests + the
- * upload-url route can independently construct the path when re-issuing
- * read URLs without round-tripping through the storage SDK.
+ * Exposed (rather than inlined into `issueScreenshotUploadUrl`) so tests +
+ * the upload-url route can independently construct the path when
+ * re-issuing read URLs without round-tripping through the storage SDK.
  */
-export function buildScreenshotPath(siteId: string, machineId: string): string {
+export function buildScreenshotPath(
+  siteId: string,
+  machineId: string,
+  contentType: string = DEFAULT_CONTENT_TYPE,
+): string {
   const ts = Date.now();
   const suffix = crypto.randomBytes(4).toString('hex');
-  return `screenshots/${siteId}/${machineId}/${ts}-${suffix}.png`;
+  return `screenshots/${siteId}/${machineId}/${ts}-${suffix}.${extForContentType(contentType)}`;
 }
 
 /**
@@ -85,7 +98,7 @@ export async function issueScreenshotUploadUrl(
 ): Promise<SignedWriteUrlResult> {
   const storage = getAdminStorage();
   const bucket = storage.bucket(resolveBucketName());
-  const storagePath = buildScreenshotPath(siteId, machineId);
+  const storagePath = buildScreenshotPath(siteId, machineId, contentType);
   const file = bucket.file(storagePath);
 
   const expiresAt = new Date(Date.now() + WRITE_URL_TTL_MS);

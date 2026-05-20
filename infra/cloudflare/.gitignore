@@ -1,0 +1,17 @@
+# Terraform local state + secrets. State can contain resource detail; real
+# tfvars hold account/zone IDs — keep both out of git. The provider lock file
+# (.terraform.lock.hcl) IS committed for reproducible provider versions.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.cftoken
+.env
+.env.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

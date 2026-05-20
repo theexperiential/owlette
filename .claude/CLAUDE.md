@@ -2,7 +2,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. Monorepo: Python Windows service (agent) + Next.js web dashboard (web) + Firebase/Firestore backend.
 
-**Version**: 2.12.2 | **License**: FSL-1.1-Apache-2.0
+**Version**: 2.12.3 | **License**: FSL-1.1-Apache-2.0
 
 ## In-Flight Major Initiative: roost (project distribution v2)
 
@@ -93,7 +93,11 @@ Agents authenticate via a device code flow — no browser login on the target ma
 
 ## Deployment
 
-**Web**: Push to `dev`/`main` triggers Railway auto-deploy.
+**Web**: Push to `dev`/`main` triggers Railway auto-deploy. A Vercel project (`theexperiential/owlette`) is configured as a failover origin for owlette.app behind Cloudflare Load Balancing.
+
+**Env vars** (Railway dev/prod + Vercel prod): managed via `scripts/env-manifest.json` (canonical key registry — keys + metadata, never values) and `node scripts/sync-env.mjs` (`status` / `check` / `diff` / `sync <target>`). Full workflow + the `must-match` secret rules + the Vercel read-back caveat: `.claude/skills/env-management.md`.
+
+**Failover load balancer**: `owlette.app` is fronted by a Cloudflare LB (Railway primary, Vercel standby) defined as Terraform in `infra/cloudflare/`. Health probe is `/api/health`. Apply workflow, token scope, and the origin-hostname gotchas: `.claude/skills/cf-load-balancing.md`.
 
 **IMPORTANT: Always version up AND update the changelog BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
 

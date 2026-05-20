@@ -24,13 +24,13 @@ export K6_ROOST_ID=roost-load-folder
 export K6_VERSION_CHUNK_HASHES=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 # smoke: 1 VU, 10 seconds
-k6 run --env SCENARIO=smoke load-tests/k6/sites-list.js
+k6 run --env SCENARIO=smoke test/load/k6/sites-list.js
 
 # sustained: ramp to normal launch load
-k6 run --env SCENARIO=sustained load-tests/k6/sites-list.js
+k6 run --env SCENARIO=sustained test/load/k6/sites-list.js
 
 # spike: short burst for read-heavy routes
-k6 run --env SCENARIO=spike load-tests/k6/sites-list.js
+k6 run --env SCENARIO=spike test/load/k6/sites-list.js
 ```
 
 PowerShell:
@@ -42,7 +42,7 @@ $env:K6_SITE_ID = 'owlette-load-site'
 $env:K6_MACHINE_ID = 'owlette-load-machine'
 $env:K6_ROOST_ID = 'roost-load-folder'
 $env:K6_VERSION_CHUNK_HASHES = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
-k6 run --env SCENARIO=smoke load-tests/k6/sites-list.js
+k6 run --env SCENARIO=smoke test/load/k6/sites-list.js
 ```
 
 ## SLO targets
@@ -112,4 +112,4 @@ Public launch should use:
 
 A non-zero k6 exit code means a latency or reliability threshold failed and should block launch until the run is explained or the regression is fixed.
 
-Record real run results in [API load testing and SLOs](../../docs/api/load-testing.md).
+Record real run results in [API load testing and SLOs](../../../docs/api/load-testing.md).

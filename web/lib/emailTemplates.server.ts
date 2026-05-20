@@ -120,7 +120,15 @@ export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {
 /*  Timestamp helper                                                   */
 /* ------------------------------------------------------------------ */
 
-/** Format a date for email display in a locale-independent way. */
+/**
+ * Format a date for email display in a locale-independent way.
+ *
+ * `timezone` must be an IANA name (e.g. "America/New_York") — `Intl` throws a
+ * RangeError on Windows registry names like "Eastern Standard Time". We guard
+ * against that here so a malformed value can never throw and silently abort an
+ * alert email; on any failure (or when no timezone is supplied) we fall back to
+ * UTC, which is the deploy server's timezone on Railway/Vercel.
+ */
 export function emailTimestamp(date: Date = new Date(), timezone?: string): string {
   const options: Intl.DateTimeFormatOptions = {
     month: 'numeric',
@@ -130,22 +138,24 @@ export function emailTimestamp(date: Date = new Date(), timezone?: string): stri
     minute: '2-digit',
     second: '2-digit',
     hour12: true,
-    ...(timezone ? { timeZone: timezone } : {}),
   };
 
-  const formatted = date.toLocaleString('en-US', options);
-
-  let tzLabel = 'UTC';
   if (timezone) {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      timeZoneName: 'short',
-    }).formatToParts(date);
-    const tzPart = parts.find((p) => p.type === 'timeZoneName');
-    if (tzPart) tzLabel = tzPart.value;
+    try {
+      const formatted = date.toLocaleString('en-US', { ...options, timeZone: timezone });
+      const tzPart = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        timeZoneName: 'short',
+      })
+        .formatToParts(date)
+        .find((p) => p.type === 'timeZoneName');
+      return `${formatted} ${tzPart?.value ?? timezone}`;
+    } catch {
+      // Invalid timezone (e.g. a Windows registry name) — fall through to UTC.
+    }
   }
 
-  return `${formatted} ${tzLabel}`;
+  return `${date.toLocaleString('en-US', options)} UTC`;
 }
 
 // ---------------------------------------------------------------------------

@@ -21,11 +21,11 @@ host and imports real pywin32 service APIs at module load.
 From the repository root:
 
 ```bash
-docker compose -f test-infra/docker-compose.yml up --build agent-runner
+docker compose -f test/infra/docker-compose.yml up --build agent-runner
 ```
 
 This uses Docker Compose v2/BuildKit named build contexts so the runner can
-build from `test-infra/agent-runner/` while copying only `agent/src`,
+build from `test/infra/agent-runner/` while copying only `agent/src`,
 `agent/tests`, `agent/VERSION`, and `agent/requirements.txt` from the repo root.
 
 The same command also starts the MinIO R2 stand-in and waits for the bucket
@@ -38,12 +38,12 @@ http://minio:9000
 The current smoke output is captured at:
 
 ```text
-test-infra/agent-runner/smoke-output.log
+test/infra/agent-runner/smoke-output.log
 ```
 
 ## Adding test modules
 
-The default test command lives in `test-infra/agent-runner/Dockerfile` as the
+The default test command lives in `test/infra/agent-runner/Dockerfile` as the
 `CMD` array. Add new modules in dependency order so failures are easy to
 attribute. The recommended order is:
 
@@ -53,13 +53,13 @@ agent/tests/unit/test_sync_version.py
 agent/tests/unit/test_sync_downloader.py
 agent/tests/unit/test_sync_assembler.py
 agent/tests/unit/test_sync_commands.py
-test-infra/agent-runner/tests/test_sync_pipeline_minio.py
+test/infra/agent-runner/tests/test_sync_pipeline_minio.py
 ```
 
 After adding a module, rebuild and run:
 
 ```bash
-docker compose -f test-infra/docker-compose.yml up --build agent-runner
+docker compose -f test/infra/docker-compose.yml up --build agent-runner
 ```
 
 ## Known limitations
@@ -85,7 +85,7 @@ Wave 4c.5 can use this service in GitHub Actions by checking out the repo,
 starting the compose stack, and letting the runner entrypoint decide pass/fail:
 
 ```bash
-docker compose -f test-infra/docker-compose.yml up --build --exit-code-from agent-runner agent-runner
+docker compose -f test/infra/docker-compose.yml up --build --exit-code-from agent-runner agent-runner
 ```
 
 That command returns pytest's exit code, so CI fails if the container cannot

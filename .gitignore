@@ -3,6 +3,9 @@
 .env.local
 .env*.local
 
+# Vercel CLI link metadata
+.vercel
+
 # Python
 __pycache__/
 *.py[cod]
@@ -10,8 +13,12 @@ __pycache__/
 *.so
 .Python
 *.egg-info/
-dist-info/
 *.egg
+
+# Pytest
+.pytest_cache/
+.pytest-tmp/
+.pytest-basetemp*/
 
 # Virtual environments
 venv/
@@ -31,6 +38,8 @@ dev/scratch/
 # transcripts, and ad-hoc debug notes are scratch work and don't belong in
 # the repo. .claude/codex-prompts/ is local-only prompt scratchpad.
 dev/codex-*
+dev/**/codex-*
+dev/**/claude-*
 !dev/codex-dev-audit-*.output.md
 dev/build-failure-context.md
 *.output.txt
@@ -98,7 +107,6 @@ agent/config/firebase_cache.json
 
 # Temporary/generated files
 nul
-Manage
 *.spec.bak
 hook-*.py
 pywin32_postinstall.py

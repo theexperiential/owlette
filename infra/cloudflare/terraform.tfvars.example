@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and fill in real values. terraform.tfvars is gitignored.
+#
+# Auth is via env var, NOT this file:
+#   export CLOUDFLARE_API_TOKEN=...    (token scoped to:
+#     Account > Load Balancing: Monitors and Pools > Edit
+#     Zone    > Load Balancers        > Edit   for the owlette.app zone)
+#
+# Prereq: the Load Balancing add-on must be enabled on the Cloudflare account,
+# or `terraform apply` will be rejected by the API.
+
+account_id     = "your-cloudflare-account-id"
+zone_id        = "your-owlette.app-zone-id"
+app_host       = "owlette.app"
+railway_origin = "owlette-prod-xxxx.up.railway.app" # hostname only, no https://
+vercel_origin  = "owlette-eight.vercel.app"         # hostname only, no https://
+
+# notification_email = "alerts@roscover.com"        # optional pool health alerts

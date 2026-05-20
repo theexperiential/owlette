@@ -6,7 +6,7 @@
 # targeting R2 via the aws-sdk-s3 library works unchanged here.
 #
 # Usage:
-#   docker compose -f test-infra/docker-compose.yml up -d
+#   docker compose -f test/infra/docker-compose.yml up -d
 #   # wait a few seconds; `init-buckets` exits once setup is done
 #
 # Endpoints:
@@ -18,7 +18,7 @@
 #   owlette-dev-content      — chunk objects at project-content/{siteId}/{hash[:2]}/{hash}
 #   owlette-dev-manifests    — manifest bodies at project-manifests/{siteId}/{folderId}/{manifestId}.json
 #
-# Teardown: `docker compose -f test-infra/docker-compose.yml down -v`
+# Teardown: `docker compose -f test/infra/docker-compose.yml down -v`
 #           The `-v` removes the data volume — destroys all uploaded chunks.
 
 services:
@@ -63,14 +63,14 @@ services:
     entrypoint: ["/bin/sh", "/scripts/init.sh"]
     volumes:
       - ./minio/init.sh:/scripts/init.sh:ro
-      - ../storage/r2-bucket-policy.json:/scripts/r2-bucket-policy.json:ro
+      - ../../storage/r2-bucket-policy.json:/scripts/r2-bucket-policy.json:ro
 
   agent-runner:
     build:
       context: ./agent-runner
       dockerfile: Dockerfile
       additional_contexts:
-        repo: ..
+        repo: ../..
     depends_on:
       minio:
         condition: service_healthy

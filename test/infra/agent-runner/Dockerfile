@@ -40,8 +40,8 @@ COPY --from=repo agent/src/ /app/agent/src/
 COPY --from=repo agent/tests/ /app/agent/tests/
 COPY --from=repo agent/VERSION /app/agent/VERSION
 COPY pywin32-stubs/ /app/stubs/
-COPY tests/ /app/test-infra/agent-runner/tests/
+COPY tests/ /app/test/infra/agent-runner/tests/
 
 ENV PYTHONPATH=/app/stubs:/app/agent/src:/app
 
-CMD ["python", "-m", "pytest", "agent/tests/unit/test_sync_state.py", "agent/tests/unit/test_sync_version.py", "agent/tests/unit/test_sync_downloader.py", "agent/tests/unit/test_sync_assembler.py", "agent/tests/unit/test_sync_commands.py", "test-infra/agent-runner/tests/test_sync_pipeline_minio.py", "-v"]
+CMD ["python", "-m", "pytest", "agent/tests/unit/test_sync_state.py", "agent/tests/unit/test_sync_version.py", "agent/tests/unit/test_sync_downloader.py", "agent/tests/unit/test_sync_assembler.py", "agent/tests/unit/test_sync_commands.py", "test/infra/agent-runner/tests/test_sync_pipeline_minio.py", "-v"]
