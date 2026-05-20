@@ -5,10 +5,10 @@
 ## MinIO — local R2 stand-in
 
 ```bash
-docker compose -f test-infra/docker-compose.yml up -d
+docker compose -f test/infra/docker-compose.yml up -d
 
 # init-buckets exits once setup is done; wait for it (<10 s):
-docker compose -f test-infra/docker-compose.yml logs init-buckets
+docker compose -f test/infra/docker-compose.yml logs init-buckets
 ```
 
 After that:
@@ -43,10 +43,10 @@ The script also does a smoke-check that anonymous listing returns 403 and exits 
 
 ```bash
 # stop containers, keep data
-docker compose -f test-infra/docker-compose.yml down
+docker compose -f test/infra/docker-compose.yml down
 
 # stop + wipe uploaded chunks
-docker compose -f test-infra/docker-compose.yml down -v
+docker compose -f test/infra/docker-compose.yml down -v
 ```
 
 ## What's here vs what isn't
@@ -54,8 +54,8 @@ docker compose -f test-infra/docker-compose.yml down -v
 | wave-1.6 target | status | location |
 |---|---|---|
 | firebase emulator wired into test setup | partial (phase A in commit `cb8d06e`) | `web/e2e/` |
-| MinIO / S3-compatible for R2 mocking | **here** | `test-infra/` |
-| k6 load-test scaffold | done (wave 5.5) | `load-tests/k6/` |
+| MinIO / S3-compatible for R2 mocking | **here** | `test/infra/` |
+| k6 load-test scaffold | done (wave 5.5) | `test/load/k6/` |
 | containerised agent runner for e2e | not started | — |
 | pact contract test scaffold | not started | — |
 
@@ -68,8 +68,8 @@ The docker-compose file is CI-friendly — GitHub Actions' `docker compose` acti
 ```yaml
 - name: start test infra
   run: |
-    docker compose -f test-infra/docker-compose.yml up -d
-    docker compose -f test-infra/docker-compose.yml run --rm init-buckets
+    docker compose -f test/infra/docker-compose.yml up -d
+    docker compose -f test/infra/docker-compose.yml run --rm init-buckets
 - name: web tests against minio
   env:
     OWLETTE_R2_ENDPOINT: http://localhost:9000

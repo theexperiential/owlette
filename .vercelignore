@@ -13,7 +13,6 @@
 /.github
 /.pytest_cache
 /agent
-/api-test
 /cli
 /dev
 /docs
@@ -21,13 +20,12 @@
 /functions
 /icons
 /infra
-/load-tests
 /monitoring
 /scripts
 /sdks
 /site
 /storage
-/test-infra
+/test
 /test-results
 *.log
 /nul

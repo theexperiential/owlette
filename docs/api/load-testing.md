@@ -2,7 +2,7 @@
 
 **Last updated**: 2026-04-29
 
-External public launch requires a load-test pass against the public API hot paths. The k6 suite lives in `load-tests/k6` and enforces p99 latency plus a base reliability budget.
+External public launch requires a load-test pass against the public API hot paths. The k6 suite lives in `test/load/k6` and enforces p99 latency plus a base reliability budget.
 
 Developer preview can proceed without these runs. External launch should not.
 
@@ -25,7 +25,7 @@ The gate is about customer-facing launch confidence, not local unit-test coverag
 
 ## targets
 
-The authoritative p99 thresholds are enforced in `load-tests/k6/lib/config.js`.
+The authoritative p99 thresholds are enforced in `test/load/k6/lib/config.js`.
 
 | script | endpoint | p99 target | launch role |
 |---|---|---:|---|
@@ -72,8 +72,8 @@ $env:K6_MACHINE_ID = 'owlette-load-machine'
 $env:K6_ROOST_ID = 'roost-load-folder'
 $env:K6_VERSION_CHUNK_HASHES = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 
-k6 run --env SCENARIO=smoke load-tests/k6/sites-list.js
-k6 run --env SCENARIO=sustained load-tests/k6/sites-list.js
+k6 run --env SCENARIO=smoke test/load/k6/sites-list.js
+k6 run --env SCENARIO=sustained test/load/k6/sites-list.js
 ```
 
 Prefer API keys over Firebase ID tokens for launch SLO runs because external clients use the API-key path.

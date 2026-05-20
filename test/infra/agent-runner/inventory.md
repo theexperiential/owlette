@@ -36,7 +36,7 @@ handler `_handle_sync_pull` in `agent/src/sync_commands.py`.
 
 ## Stubbed modules
 
-`test-infra/agent-runner/pywin32-stubs/` provides import-compatible stubs for:
+`test/infra/agent-runner/pywin32-stubs/` provides import-compatible stubs for:
 
 - `winreg`
 - `win32event`

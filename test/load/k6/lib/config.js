@@ -7,7 +7,7 @@
  *   K6_BASE_URL=https://dev.owlette.app
  *   K6_API_KEY=owk_test_...
  *   K6_SITE_ID=owlette-load-site
- *   k6 run load-tests/k6/chunks-check.js
+ *   k6 run test/load/k6/chunks-check.js
  *
  * Target SLOs are expressed as k6 thresholds. A failing threshold fails the
  * run's exit code, so CI and humans get a direct pass/fail signal.

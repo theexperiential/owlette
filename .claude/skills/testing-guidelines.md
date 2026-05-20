@@ -1,6 +1,6 @@
 # Testing Guidelines
 
-**Applies To**: `web/` (Jest), `agent/` (pytest), `api-test/` (integration)
+**Applies To**: `web/` (Jest), `agent/` (pytest), `test/integration/` (integration)
 
 ---
 
@@ -14,13 +14,13 @@ cd web && npx jest __tests__/api/ --verbose
 cd agent && python -m pytest tests/unit/ -v
 
 # Integration tests (40 tests, hits real dev.owlette.app)
-cd api-test && python -m pytest -m api -v
+cd test/integration && python -m pytest -m api -v
 
 # All web tests (unit + existing lib tests)
 cd web && npm test
 
 # Everything (from repo root)
-cd web && npx jest __tests__/api/ && cd ../agent && python -m pytest tests/unit/ -v && cd ../api-test && python -m pytest -m api -v
+cd web && npx jest __tests__/api/ && cd ../agent && python -m pytest tests/unit/ -v && cd ../test/integration && python -m pytest -m api -v
 ```
 
 ---
@@ -31,7 +31,7 @@ cd web && npx jest __tests__/api/ && cd ../agent && python -m pytest tests/unit/
 |-------|----------|-----------|---------------|-------------|
 | **Web unit** | `web/__tests__/api/` | Jest | API route handlers with mocked Firebase | None |
 | **Agent unit** | `agent/tests/unit/` | pytest | Agent modules with mocked HTTP/Firestore | None |
-| **Integration** | `api-test/api/` | pytest + requests | Real endpoints on dev.owlette.app | API key required |
+| **Integration** | `test/integration/api/` | pytest + requests | Real endpoints on dev.owlette.app | API key required |
 
 ---
 
@@ -151,7 +151,7 @@ mock_system_metrics      # CPU/memory/disk/GPU/processes dict
 
 ### Setup (one-time)
 ```bash
-cd api-test
+cd test/integration
 cp .env.test.example .env.test
 # Edit .env.test:
 #   OWLETTE_API_URL=https://dev.owlette.app
@@ -163,7 +163,7 @@ pip install -r requirements.txt
 
 ### Run Commands
 ```bash
-cd api-test
+cd test/integration
 python -m pytest -m api -v              # All API tests
 python -m pytest api/test_processes.py -v  # Single file
 python -m pytest -m readonly -v          # Safe read-only tests only
