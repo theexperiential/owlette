@@ -312,13 +312,57 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../reference/" class="md-tabs__link">
+        <a href="../../api/overview/" class="md-tabs__link">
           
   
   
     
   
   api
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../cli/overview/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  cli
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  reference
 
         </a>
       </li>
@@ -656,15 +700,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#method-1-interactive-install-recommended" class="md-nav__link">
+  <a href="#method-1-interactive-packaged-install" class="md-nav__link">
     <span class="md-ellipsis">
       
-        method 1: interactive install (recommended)
+        method 1: interactive packaged install
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="method 1: interactive install (recommended)">
+    <nav class="md-nav" aria-label="method 1: interactive packaged install">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -684,15 +728,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#method-2-silent-install-with-add-bulk-deployment" class="md-nav__link">
+  <a href="#method-2-silent-install-with-add" class="md-nav__link">
     <span class="md-ellipsis">
       
-        method 2: silent install with /ADD= (bulk deployment)
+        method 2: silent install with /ADD=
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="method 2: silent install with /ADD= (bulk deployment)">
+    <nav class="md-nav" aria-label="method 2: silent install with /ADD=">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -707,10 +751,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#silent-installation-flags" class="md-nav__link">
+  <a href="#installer-flags" class="md-nav__link">
     <span class="md-ellipsis">
       
-        silent installation flags
+        installer flags
       
     </span>
   </a>
@@ -723,10 +767,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#method-3-remote-deployment-upgrades" class="md-nav__link">
+  <a href="#method-3-remote-deployment-or-upgrade" class="md-nav__link">
     <span class="md-ellipsis">
       
-        method 3: remote deployment (upgrades)
+        method 3: remote deployment or upgrade
       
     </span>
   </a>
@@ -734,13 +778,41 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#method-4-manual-installation-development" class="md-nav__link">
+  <a href="#method-4-manual-packaged-repair-or-source-development" class="md-nav__link">
     <span class="md-ellipsis">
       
-        method 4: manual installation (development)
+        method 4: manual packaged repair or source development
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="method 4: manual packaged repair or source development">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#packaged-installer-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        packaged installer layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#source-clone-for-development" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        source clone for development
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1062,6 +1134,8 @@
       
         
       
+        
+      
     
     
     
@@ -1237,14 +1311,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../dashboard/project-distribution/" class="md-nav__link">
+      <a href="../../dashboard/roost/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    project distribution
+    roost
   
 
     
@@ -1320,6 +1394,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../dashboard/timezones/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    timezones
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -1354,7 +1456,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_10" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1376,14 +1478,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_9" id="__nav_4_9_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1588,7 +1690,33 @@
     
       
         
-          
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
         
       
         
@@ -1619,9 +1747,8 @@
         <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
-          <div class="md-nav__link md-nav__container">
-            <a href="../../reference/" class="md-nav__link ">
-              
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -1635,14 +1762,8 @@
   
   
 
-            </a>
-            
-              
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
-                <span class="md-nav__icon md-icon"></span>
-              </label>
-            
-          </div>
+            <span class="md-nav__icon md-icon"></span>
+          </label>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
@@ -1656,22 +1777,20 @@
           <ul class="md-nav__list" data-md-scrollfix>
             
               
-            
-              
                 
   
   
   
   
     <li class="md-nav__item">
-      <a href="../../reference/api/" class="md-nav__link">
+      <a href="../../api/overview/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    rest api
+    overview
   
 
     
@@ -1692,7 +1811,455 @@
   
   
     <li class="md-nav__item">
-      <a href="../../dashboard/admin/webhooks/" class="md-nav__link">
+      <a href="../../api/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    api reference links
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/developer-preview-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    developer preview checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/status-uptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    status page and uptime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/load-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    load testing and SLOs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/distribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDK and CLI distribution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/launch-assets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch assets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/launch-runbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/pagination/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    pagination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/idempotency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    idempotency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    errors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/rate-limits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rate limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/chunks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chunks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/versions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    versions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/cortex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cortex
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/webhooks/" class="md-nav__link">
         
   
   
@@ -1719,6 +2286,1157 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_19" id="__nav_5_19_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_19">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    sdks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sdk-node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    node
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sdk-python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_20" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_20" id="__nav_5_20_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_20_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_20">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/sdk-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdk workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/ci-cd-github-actions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ci/cd github actions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/nightly-sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nightly sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/bulk-create/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    bulk create
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/auto-rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auto rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cli
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    cli
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/audit-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    audit log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/installer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    installer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    key
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/listen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    listen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/machine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    machine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/process/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/quota/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quota
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/roost/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    roost
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/site/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    site
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/trigger/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    trigger
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/user/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    user
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    version
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/webhook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    webhook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/whoami/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    whoami
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../reference/authentication/" class="md-nav__link">
         
@@ -1727,7 +3445,35 @@
   <span class="md-ellipsis">
     
   
-    authentication
+    platform authentication internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/agent-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    agent commands
   
 
     
@@ -1776,14 +3522,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/agent-commands/" class="md-nav__link">
+      <a href="../../reference/firestore-data-model/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    agent commands
+    firestore data model
   
 
     
@@ -1906,8 +3652,6 @@
       
         
       
-        
-      
     
     
     
@@ -1923,7 +3667,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1945,14 +3689,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_11" id="__nav_11_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2076,34 +3820,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../reference/firestore-data-model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    firestore data model
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -2138,15 +3854,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#method-1-interactive-install-recommended" class="md-nav__link">
+  <a href="#method-1-interactive-packaged-install" class="md-nav__link">
     <span class="md-ellipsis">
       
-        method 1: interactive install (recommended)
+        method 1: interactive packaged install
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="method 1: interactive install (recommended)">
+    <nav class="md-nav" aria-label="method 1: interactive packaged install">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -2166,15 +3882,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#method-2-silent-install-with-add-bulk-deployment" class="md-nav__link">
+  <a href="#method-2-silent-install-with-add" class="md-nav__link">
     <span class="md-ellipsis">
       
-        method 2: silent install with /ADD= (bulk deployment)
+        method 2: silent install with /ADD=
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="method 2: silent install with /ADD= (bulk deployment)">
+    <nav class="md-nav" aria-label="method 2: silent install with /ADD=">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -2189,10 +3905,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#silent-installation-flags" class="md-nav__link">
+  <a href="#installer-flags" class="md-nav__link">
     <span class="md-ellipsis">
       
-        silent installation flags
+        installer flags
       
     </span>
   </a>
@@ -2205,10 +3921,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#method-3-remote-deployment-upgrades" class="md-nav__link">
+  <a href="#method-3-remote-deployment-or-upgrade" class="md-nav__link">
     <span class="md-ellipsis">
       
-        method 3: remote deployment (upgrades)
+        method 3: remote deployment or upgrade
       
     </span>
   </a>
@@ -2216,13 +3932,41 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#method-4-manual-installation-development" class="md-nav__link">
+  <a href="#method-4-manual-packaged-repair-or-source-development" class="md-nav__link">
     <span class="md-ellipsis">
       
-        method 4: manual installation (development)
+        method 4: manual packaged repair or source development
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="method 4: manual packaged repair or source development">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#packaged-installer-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        packaged installer layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#source-clone-for-development" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        source clone for development
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2352,40 +4096,49 @@
 
 
 <h1 id="installation">installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h1>
-<p>There are three ways to install and authenticate the owlette agent on a Windows machine.</p>
+<p>There are four supported ways to install or update the owlette agent on a Windows machine:</p>
+<ol>
+<li>Interactive packaged installer for a single machine</li>
+<li>Silent packaged installer with <code>/ADD=</code> for bulk enrollment</li>
+<li>Remote deployment to machines that already run the agent</li>
+<li>Manual packaged repair or source-development setup</li>
+</ol>
 <hr />
-<h2 id="method-1-interactive-install-recommended">method 1: interactive install (recommended)<a class="headerlink" href="#method-1-interactive-install-recommended" title="Permanent link">&para;</a></h2>
-<p>Download the installer, run it, and pair from your phone or browser.</p>
+<h2 id="method-1-interactive-packaged-install">method 1: interactive packaged install<a class="headerlink" href="#method-1-interactive-packaged-install" title="Permanent link">&para;</a></h2>
+<p>Download the packaged installer, run it as Administrator, and authorize the machine with the device-code pairing flow.</p>
 <h3 id="steps">steps<a class="headerlink" href="#steps" title="Permanent link">&para;</a></h3>
 <ol>
-<li>Log into the owlette dashboard</li>
-<li>Click the <strong>download button</strong> in the header bar (shows the latest version)</li>
-<li>Save the <code>.exe</code> installer to the target machine</li>
-<li>Run the installer <strong>as Administrator</strong></li>
-<li>Follow the installation wizard</li>
-<li>A console window appears with a <strong>pairing phrase</strong> (3 random words)</li>
-<li>Your browser opens automatically to the authorization page</li>
-<li>Select a site and click <strong>"Authorize"</strong></li>
-<li>The agent receives credentials and the installer completes</li>
+<li>Log into the owlette dashboard.</li>
+<li>Click the download button in the header bar.</li>
+<li>Save <code>Owlette-Installer-v&lt;version&gt;.exe</code> to the target machine.</li>
+<li>Right-click the installer and select <strong>Run as administrator</strong>.</li>
+<li>Follow the installer wizard.</li>
+<li>When the console appears, copy the pairing phrase and note the authorization URL.</li>
+<li>At the prompt <code>open browser on this machine? [y/N]</code>, choose:<ul>
+<li><code>y</code> to open the pairing page locally, then select a site and authorize.</li>
+<li>Enter to keep the browser closed, then enter the phrase from your phone or another computer.</li>
+</ul>
+</li>
+<li>Wait while the agent polls for authorization, stores credentials, and installs the Windows service.</li>
 </ol>
-<p>The entire flow takes under a minute. Credentials are stored encrypted on disk — you won't need to re-authenticate unless you explicitly remove the machine.</p>
+<p>Pairing phrases expire after 10 minutes. Credentials are stored encrypted at <code>C:\ProgramData\Owlette\.tokens.enc</code>.</p>
 <hr />
-<h2 id="method-2-silent-install-with-add-bulk-deployment">method 2: silent install with <code>/ADD=</code> (bulk deployment)<a class="headerlink" href="#method-2-silent-install-with-add-bulk-deployment" title="Permanent link">&para;</a></h2>
-<p>Deploy to many machines without any interaction. Generate a pairing phrase from the dashboard, then run the installer silently.</p>
+<h2 id="method-2-silent-install-with-add">method 2: silent install with <code>/ADD=</code><a class="headerlink" href="#method-2-silent-install-with-add" title="Permanent link">&para;</a></h2>
+<p>Use this path for bulk deployment when an admin has already generated and authorized a pairing phrase.</p>
 <h3 id="steps_1">steps<a class="headerlink" href="#steps_1" title="Permanent link">&para;</a></h3>
 <ol>
-<li>On the dashboard, click the <strong>"+"</strong> button next to the view toggle</li>
-<li>Select the <strong>"Generate Code"</strong> tab</li>
-<li>Copy the pairing phrase (e.g., <code>silver-compass-drift</code>)</li>
-<li>Run on each target machine:</li>
+<li>In the dashboard, click the <code>+</code> button next to the view toggle.</li>
+<li>Open <strong>Generate Code</strong>.</li>
+<li>Copy the pairing phrase, for example <code>silver-compass-drift</code>.</li>
+<li>Run the installer on each target machine:</li>
 </ol>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Owlette-Installer-v2.4.1.exe<span class="w"> </span>/ADD<span class="o">=</span>silver-compass-drift<span class="w"> </span>/SILENT
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Owlette-Installer-v&lt;version&gt;.exe /ADD=silver-compass-drift /SILENT
 </span></code></pre></div>
-<div class="admonition info">
-<p class="admonition-title">Phrase expiry</p>
-<p>Generated phrases expire after <strong>10 minutes</strong>. Generate a new one from the dashboard if needed.</p>
-</div>
-<h3 id="silent-installation-flags">silent installation flags<a class="headerlink" href="#silent-installation-flags" title="Permanent link">&para;</a></h3>
+<p>For a fully quiet install:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Owlette-Installer-v&lt;version&gt;.exe /ADD=silver-compass-drift /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+</span></code></pre></div>
+<p>The installer passes <code>/ADD=</code> to <code>configure_site.py --add</code>. The agent polls <code>/api/agent/auth/device-code/poll</code> with the phrase and completes as soon as the server returns tokens.</p>
+<h3 id="installer-flags">installer flags<a class="headerlink" href="#installer-flags" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
@@ -2396,19 +4149,27 @@
 <tbody>
 <tr>
 <td><code>/ADD=phrase</code></td>
-<td>Pre-authorized pairing phrase (skips interactive pairing)</td>
+<td>Preauthorized pairing phrase for silent enrollment</td>
+</tr>
+<tr>
+<td><code>/SERVER=prod</code></td>
+<td>Use <code>https://owlette.app/api</code>; this is the default</td>
+</tr>
+<tr>
+<td><code>/SERVER=dev</code></td>
+<td>Use <code>https://dev.owlette.app/api</code></td>
 </tr>
 <tr>
 <td><code>/SILENT</code></td>
-<td>Minimal UI (shows progress bar only)</td>
+<td>Minimal UI with progress only</td>
 </tr>
 <tr>
 <td><code>/VERYSILENT</code></td>
-<td>No UI at all</td>
+<td>No installer UI</td>
 </tr>
 <tr>
 <td><code>/SUPPRESSMSGBOXES</code></td>
-<td>Suppress all message boxes</td>
+<td>Suppress message boxes</td>
 </tr>
 <tr>
 <td><code>/DIR="C:\path"</code></td>
@@ -2416,83 +4177,128 @@
 </tr>
 <tr>
 <td><code>/NORESTART</code></td>
-<td>Don't restart after installation</td>
+<td>Do not restart after installation</td>
+</tr>
+<tr>
+<td><code>/LOG="C:\path\setup.log"</code></td>
+<td>Write an Inno Setup log to the chosen path</td>
 </tr>
 </tbody>
 </table>
-<p>Example (fully silent bulk deploy):</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Owlette-Installer-v2.4.1.exe<span class="w"> </span>/ADD<span class="o">=</span>silver-compass-drift<span class="w"> </span>/VERYSILENT<span class="w"> </span>/SUPPRESSMSGBOXES<span class="w"> </span>/NORESTART
+<p>Example for the dev environment:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>Owlette-Installer-v&lt;version&gt;.exe /SERVER=dev /ADD=silver-compass-drift /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 </span></code></pre></div>
 <hr />
-<h2 id="method-3-remote-deployment-upgrades">method 3: remote deployment (upgrades)<a class="headerlink" href="#method-3-remote-deployment-upgrades" title="Permanent link">&para;</a></h2>
-<p>Deploy agent updates to machines that already have owlette installed.</p>
-<ol>
-<li>In the dashboard, go to <strong>Deployments</strong></li>
-<li>Click <strong>"New Deployment"</strong></li>
-<li>Configure:<ul>
-<li><strong>Name</strong>: e.g., "owlette Agent v2.4.1"</li>
-<li><strong>Installer URL</strong>: Direct download link to the installer <code>.exe</code></li>
-<li><strong>Silent Flags</strong>: <code>/VERYSILENT /SUPPRESSMSGBOXES</code></li>
-<li><strong>Verify Path</strong>: <code>C:\ProgramData\Owlette\agent\src\owlette_service.py</code></li>
+<h2 id="method-3-remote-deployment-or-upgrade">method 3: remote deployment or upgrade<a class="headerlink" href="#method-3-remote-deployment-or-upgrade" title="Permanent link">&para;</a></h2>
+<p>Remote deployment requires a target machine that already has a running owlette agent. The agent receives an <code>install_software</code> command, downloads the installer, verifies its SHA-256 checksum, and then executes it with the provided silent flags.</p>
+<p>Required fields for an owlette agent upgrade:</p>
+<table>
+<thead>
+<tr>
+<th>field</th>
+<th>required</th>
+<th>notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>installer_url</code></td>
+<td>yes</td>
+<td>Direct URL to the installer <code>.exe</code></td>
+</tr>
+<tr>
+<td><code>installer_name</code></td>
+<td>no</td>
+<td>Defaults to <code>installer.exe</code> when omitted</td>
+</tr>
+<tr>
+<td><code>silent_flags</code></td>
+<td>no</td>
+<td>Use installer flags such as <code>/VERYSILENT /SUPPRESSMSGBOXES /NORESTART</code></td>
+</tr>
+<tr>
+<td><code>sha256_checksum</code></td>
+<td>yes</td>
+<td>64-character SHA-256 of the installer; the agent refuses remote installs without it</td>
+</tr>
+<tr>
+<td><code>verify_path</code></td>
+<td>no</td>
+<td>Optional path checked after installation</td>
+</tr>
+<tr>
+<td><code>timeout_seconds</code></td>
+<td>no</td>
+<td>Defaults to 2400 seconds</td>
+</tr>
+</tbody>
+</table>
+<p>Example command payload:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">&quot;installer_url&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://downloads.example.com/Owlette-Installer-v&lt;version&gt;.exe&quot;</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">&quot;installer_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Owlette-Installer-v&lt;version&gt;.exe&quot;</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">&quot;silent_flags&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SERVER=prod&quot;</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="nt">&quot;sha256_checksum&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;&lt;64-character sha256&gt;&quot;</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">&quot;verify_path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;C:\\ProgramData\\Owlette\\agent\\src\\owlette_service.py&quot;</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">&quot;timeout_seconds&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">2400</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>In the dashboard deployment flow, provide the same installer URL, silent flags, checksum, optional verify path, and target machines before starting the deployment.</p>
+<hr />
+<h2 id="method-4-manual-packaged-repair-or-source-development">method 4: manual packaged repair or source development<a class="headerlink" href="#method-4-manual-packaged-repair-or-source-development" title="Permanent link">&para;</a></h2>
+<p>There are two distinct manual flows.</p>
+<h3 id="packaged-installer-layout">packaged installer layout<a class="headerlink" href="#packaged-installer-layout" title="Permanent link">&para;</a></h3>
+<p>Use this only on a machine that already has the packaged layout under <code>C:\ProgramData\Owlette</code>. The service installer script expects embedded Python, NSSM, scripts, and agent source in that layout:</p>
+<ul>
+<li><code>C:\ProgramData\Owlette\python\python.exe</code></li>
+<li><code>C:\ProgramData\Owlette\tools\nssm.exe</code></li>
+<li><code>C:\ProgramData\Owlette\scripts\install.bat</code></li>
+<li><code>C:\ProgramData\Owlette\agent\src\owlette_runner.py</code></li>
 </ul>
-</li>
-<li>Select target machines</li>
-<li>Click <strong>Deploy</strong></li>
-</ol>
-<div class="admonition warning">
-<p class="admonition-title">Prerequisites</p>
-<p>Remote deployment requires the target machine to already have a running owlette agent (to receive the deployment command). Use this method for <strong>upgrading</strong> existing agents or deploying other software.</p>
-</div>
-<hr />
-<h2 id="method-4-manual-installation-development">method 4: manual installation (development)<a class="headerlink" href="#method-4-manual-installation-development" title="Permanent link">&para;</a></h2>
-<p>For development or custom setups:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Clone the repository</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/theexperiential/owlette.git
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nb">cd</span><span class="w"> </span>owlette/agent
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># Install Python dependencies</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>requirements.txt
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># Run the service install script (as Administrator)</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>scripts<span class="se">\i</span>nstall.bat
+<p>To re-run pairing:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>cd /d C:\ProgramData\Owlette
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>python\python.exe agent\src\configure_site.py
 </span></code></pre></div>
-<p>The install script:</p>
-<ol>
-<li>Installs NSSM if not present</li>
-<li>Creates the <code>OwletteService</code> Windows service</li>
-<li>Configures the service to auto-start on boot</li>
-<li>Starts the service</li>
-</ol>
-<p>After installing, run the pairing flow manually:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">cd</span><span class="w"> </span>C:<span class="se">\P</span>rogramData<span class="se">\O</span>wlette<span class="se">\a</span>gent<span class="se">\s</span>rc
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>python<span class="w"> </span>configure_site.py
+<p>To repair the Windows service registration:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>cd /d C:\ProgramData\Owlette
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>scripts\install.bat
 </span></code></pre></div>
+<h3 id="source-clone-for-development">source clone for development<a class="headerlink" href="#source-clone-for-development" title="Permanent link">&para;</a></h3>
+<p>A raw source clone does not include the packaged <code>python\</code>, <code>tools\</code>, or installed service layout. Use it for development, testing, or building a new installer package:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>git clone https://github.com/theexperiential/owlette.git
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>cd owlette\agent
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>python -m pip install -r requirements.txt
+</span></code></pre></div>
+<p>Do not run <code>agent\scripts\install.bat</code> directly from a raw clone unless you have first built or staged the same packaged layout that the installer creates.</p>
 <hr />
 <h2 id="how-pairing-works">how pairing works<a class="headerlink" href="#how-pairing-works" title="Permanent link">&para;</a></h2>
-<p>When the agent connects for the first time, it authenticates via a device code flow:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>Installer runs configure_site.py
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    │
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    ▼
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>Agent requests pairing phrase from server
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    │
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    ▼
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>Console displays phrase (e.g., &quot;silver-compass-drift&quot;)
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>Browser auto-opens to owlette.app/add
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    │
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    ▼
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>User selects site → clicks &quot;Authorize&quot;
-</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    │
-</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>    ▼
-</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>Server generates tokens → agent polls and receives them
-</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    │
-</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>    ├── Access Token (1-hour expiry, auto-refreshes)
-</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    └── Refresh Token (never expires, admin-revocable)
-</span><span id="__span-4-18"><a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>    │
-</span><span id="__span-4-19"><a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>    ▼
-</span><span id="__span-4-20"><a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>Tokens encrypted to C:\ProgramData\Owlette\.tokens.enc
-</span><span id="__span-4-21"><a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>Agent authenticated — starts syncing
+<p>The installer runs <code>configure_site.py</code> after copying files and before installing the service, unless an existing valid site configuration is already present.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>Installer runs configure_site.py
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>  |
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>  v
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>Agent requests a device code from the API
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>  |
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>  v
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>Console displays the pairing phrase, authorization URL, and 10-minute expiry
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>  |
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>  v
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>Prompt: open browser on this machine? [y/N]
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>  |
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>  +-- y: browser opens locally; select a site and authorize
+</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>  |
+</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>  +-- Enter: enter the phrase from another device
+</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>  |
+</span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>  v
+</span><span id="__span-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>Agent polls until authorization completes or expires
+</span><span id="__span-7-18"><a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>  |
+</span><span id="__span-7-19"><a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>  v
+</span><span id="__span-7-20"><a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>Server returns access token, refresh token, and site ID
+</span><span id="__span-7-21"><a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>  |
+</span><span id="__span-7-22"><a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>  v
+</span><span id="__span-7-23"><a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>Tokens are encrypted at C:\ProgramData\Owlette\.tokens.enc
+</span><span id="__span-7-24"><a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a>Config is written to C:\ProgramData\Owlette\config\config.json
 </span></code></pre></div>
-<p>Three ways to authorize:</p>
+<p>Authorization options:</p>
 <table>
 <thead>
 <tr>
@@ -2502,59 +4308,68 @@
 </thead>
 <tbody>
 <tr>
-<td><strong>Browser auto-open</strong></td>
-<td>Default — browser opens on the machine with phrase pre-filled</td>
+<td>Local browser prompt</td>
+<td>Single-machine install when the target machine has a usable browser</td>
 </tr>
 <tr>
-<td><strong>Dashboard "+" button</strong></td>
-<td>Enter the phrase on the dashboard from any device</td>
+<td>Phrase on another device</td>
+<td>Single-machine install when the target machine is headless, locked down, or inconvenient to sign in from</td>
 </tr>
 <tr>
-<td><strong><code>/ADD=</code> flag</strong></td>
-<td>Pre-authorized phrase for silent/bulk installs</td>
+<td><code>/ADD=</code></td>
+<td>Bulk install with a preauthorized phrase</td>
 </tr>
 </tbody>
 </table>
 <hr />
 <h2 id="post-installation-verification">post-installation verification<a class="headerlink" href="#post-installation-verification" title="Permanent link">&para;</a></h2>
-<p>After installation, verify the agent is running:</p>
+<p>After installation, verify the agent is running.</p>
 <h3 id="check-windows-services">check windows services<a class="headerlink" href="#check-windows-services" title="Permanent link">&para;</a></h3>
 <ol>
-<li>Open Services (<code>Win + R</code> → <code>services.msc</code>)</li>
-<li>Find <strong>"OwletteService"</strong></li>
-<li>Status should be <strong>"Running"</strong></li>
+<li>Open Services (<code>Win + R</code>, then <code>services.msc</code>).</li>
+<li>Find <code>OwletteService</code>.</li>
+<li>Confirm the status is <strong>Running</strong>.</li>
 </ol>
 <h3 id="check-logs">check logs<a class="headerlink" href="#check-logs" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>C:\ProgramData\Owlette\logs\service.log
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>C:\ProgramData\Owlette\logs\service.log
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>C:\ProgramData\Owlette\logs\service_stdout.log
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>C:\ProgramData\Owlette\logs\service_stderr.log
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>C:\ProgramData\Owlette\logs\pairing_debug.log
 </span></code></pre></div>
-<p>Look for:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>INFO: owlette service started successfully
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>INFO: Firebase client initialized for site: your_site_id
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>INFO: Firebase client started successfully
+<p>Useful startup lines include:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>INFO: owlette service started successfully
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>INFO: Firebase client initialized for site: your_site_id
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>INFO: Firebase client started successfully
 </span></code></pre></div>
 <h3 id="check-dashboard">check dashboard<a class="headerlink" href="#check-dashboard" title="Permanent link">&para;</a></h3>
-<p>The machine should appear in your site's dashboard within 30 seconds with:</p>
+<p>The machine should appear in the selected site with:</p>
 <ul>
-<li>Green "Online" indicator</li>
-<li>CPU, memory, disk metrics populating</li>
-<li>Agent version displayed</li>
+<li>Online status</li>
+<li>CPU, memory, and disk metrics</li>
+<li>Agent version</li>
 </ul>
 <h3 id="check-system-tray">check system tray<a class="headerlink" href="#check-system-tray" title="Permanent link">&para;</a></h3>
-<p>An owl icon should appear in the Windows system tray. Right-click it for status and options.</p>
+<p>The owlette tray icon starts through the user's Startup folder. If it is not visible, check the hidden-icons overflow menu or launch <strong>Owlette Tray Icon</strong> from the Start menu.</p>
 <hr />
 <h2 id="uninstallation">uninstallation<a class="headerlink" href="#uninstallation" title="Permanent link">&para;</a></h2>
-<p><strong>Windows Settings</strong> → <strong>Apps</strong> → <strong>owlette</strong> → <strong>Uninstall</strong></p>
-<p>The uninstaller will:</p>
+<p>Use <strong>Windows Settings</strong> &gt; <strong>Apps</strong> &gt; <strong>owlette</strong> &gt; <strong>Uninstall</strong>.</p>
+<p>The uninstaller:</p>
 <ol>
-<li>Stop the owlette service</li>
-<li>Remove the NSSM service wrapper</li>
-<li>Remove Windows Defender exclusions</li>
-<li>Delete program files from <code>C:\ProgramData\Owlette</code></li>
+<li>Stops <code>OwletteService</code>.</li>
+<li>Removes the NSSM service wrapper.</li>
+<li>Removes the Windows Defender exclusions added by the installer.</li>
+<li>Removes installed component directories: <code>python\</code>, <code>agent\</code>, <code>tools\</code>, and <code>scripts\</code>.</li>
+<li>Removes installed top-level files such as <code>README.md</code> and <code>LICENSE</code>.</li>
 </ol>
-<div class="admonition note">
-<p class="admonition-title">Data preservation</p>
-<p>Configuration, tokens, and logs in <code>C:\ProgramData\Owlette\</code> are preserved by default. To fully remove all data after uninstalling: <code>rd /s /q C:\ProgramData\Owlette</code></p>
-</div>
+<p>By default, it preserves user data under <code>C:\ProgramData\Owlette</code>, including:</p>
+<ul>
+<li><code>config\</code></li>
+<li><code>logs\</code></li>
+<li><code>cache\</code></li>
+<li><code>tmp\</code></li>
+<li><code>.tokens.enc</code></li>
+</ul>
+<p>In non-silent uninstall mode, the uninstaller asks whether to remove all owlette configuration and data files. Accept that prompt only when you want a full cleanup. Silent uninstalls preserve data for upgrade and repair flows.</p>
 <hr />
 <h2 id="installer-details">installer details<a class="headerlink" href="#installer-details" title="Permanent link">&para;</a></h2>
 <p>The owlette installer is built with <a href="https://jrsoftware.org/isinfo.php">Inno Setup</a> and bundles:</p>
@@ -2567,23 +4382,23 @@
 </thead>
 <tbody>
 <tr>
-<td><strong>Embedded Python</strong></td>
-<td>Python 3.11 interpreter (no system Python needed)</td>
+<td>Embedded Python</td>
+<td>Python runtime; no system Python is needed for packaged installs</td>
 </tr>
 <tr>
-<td><strong>NSSM</strong></td>
-<td>Service manager for reliable Windows service operation</td>
+<td>NSSM</td>
+<td>Windows service wrapper at <code>C:\ProgramData\Owlette\tools\nssm.exe</code></td>
 </tr>
 <tr>
-<td><strong>Agent source</strong></td>
-<td>All Python modules in <code>agent/src/</code></td>
+<td>Agent source</td>
+<td>Python modules under <code>C:\ProgramData\Owlette\agent\src\</code></td>
 </tr>
 <tr>
-<td><strong>Configuration GUI</strong></td>
-<td>CustomTkinter-based local configuration tool</td>
+<td>Configuration GUI</td>
+<td>Local configuration tool</td>
 </tr>
 <tr>
-<td><strong>System tray</strong></td>
+<td>System tray</td>
 <td>Background tray icon for status monitoring</td>
 </tr>
 </tbody>
@@ -2599,24 +4414,24 @@
 </thead>
 <tbody>
 <tr>
-<td><strong>OS</strong></td>
-<td>Windows 10 or later (64-bit)</td>
+<td>OS</td>
+<td>Windows 10 or later, 64-bit</td>
 </tr>
 <tr>
-<td><strong>RAM</strong></td>
-<td>50 MB (agent overhead)</td>
+<td>RAM</td>
+<td>50 MB agent overhead</td>
 </tr>
 <tr>
-<td><strong>Disk</strong></td>
-<td>~200 MB (including embedded Python)</td>
+<td>Disk</td>
+<td>About 200 MB including embedded Python</td>
 </tr>
 <tr>
-<td><strong>Network</strong></td>
-<td>Internet access for cloud sync</td>
+<td>Network</td>
+<td>Access to the configured owlette API and Firebase services</td>
 </tr>
 <tr>
-<td><strong>Permissions</strong></td>
-<td>Administrator (for service installation)</td>
+<td>Permissions</td>
+<td>Administrator privileges for service installation</td>
 </tr>
 </tbody>
 </table>
@@ -2657,7 +4472,7 @@
       <div class="md-copyright">
   
     <div class="md-copyright__highlight">
-      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">AGPL-3.0</a>
+      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">FSL-1.1-Apache-2.0</a>
     </div>
   
   

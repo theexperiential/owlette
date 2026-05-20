@@ -16,7 +16,7 @@
         <link rel="prev" href="../cortex/">
       
       
-        <link rel="next" href="../admin/">
+        <link rel="next" href="../timezones/">
       
       
         
@@ -312,13 +312,57 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../reference/" class="md-tabs__link">
+        <a href="../../api/overview/" class="md-tabs__link">
           
   
   
     
   
   api
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../cli/overview/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  cli
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  reference
 
         </a>
       </li>
@@ -820,6 +864,8 @@
       
         
       
+        
+      
     
     
     
@@ -996,14 +1042,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../project-distribution/" class="md-nav__link">
+      <a href="../roost/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    project distribution
+    roost
   
 
     
@@ -1112,17 +1158,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#accessing-logs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        accessing logs
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#event-types" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1145,6 +1180,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#browsing-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        browsing logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#log-entry-details" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1156,10 +1202,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#pagination" class="md-nav__link">
+  <a href="#storage-and-api" class="md-nav__link">
     <span class="md-ellipsis">
       
-        pagination
+        storage and API
       
     </span>
   </a>
@@ -1167,21 +1213,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#log-sources" class="md-nav__link">
+  <a href="#clearing-logs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        log sources
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#retention" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        retention
+        clearing logs
       
     </span>
   </a>
@@ -1192,6 +1227,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../timezones/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    timezones
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1240,7 +1303,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_10" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1262,14 +1325,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_9" id="__nav_4_9_label" tabindex="">
+              <label class="md-nav__link " for="__nav_4_10" id="__nav_4_10_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1474,7 +1537,33 @@
     
       
         
-          
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
         
       
         
@@ -1505,9 +1594,8 @@
         <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
-          <div class="md-nav__link md-nav__container">
-            <a href="../../reference/" class="md-nav__link ">
-              
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -1521,14 +1609,8 @@
   
   
 
-            </a>
-            
-              
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
-                <span class="md-nav__icon md-icon"></span>
-              </label>
-            
-          </div>
+            <span class="md-nav__icon md-icon"></span>
+          </label>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
@@ -1542,22 +1624,20 @@
           <ul class="md-nav__list" data-md-scrollfix>
             
               
-            
-              
                 
   
   
   
   
     <li class="md-nav__item">
-      <a href="../../reference/api/" class="md-nav__link">
+      <a href="../../api/overview/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    rest api
+    overview
   
 
     
@@ -1578,7 +1658,455 @@
   
   
     <li class="md-nav__item">
-      <a href="../admin/webhooks/" class="md-nav__link">
+      <a href="../../api/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    api reference links
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/developer-preview-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    developer preview checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/status-uptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    status page and uptime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/load-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    load testing and SLOs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/distribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDK and CLI distribution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/launch-assets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch assets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/launch-runbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/pagination/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    pagination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/idempotency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    idempotency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    errors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/rate-limits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rate limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/chunks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chunks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/versions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    versions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/cortex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cortex
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/webhooks/" class="md-nav__link">
         
   
   
@@ -1605,6 +2133,1157 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_19" id="__nav_5_19_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_19">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    sdks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sdk-node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    node
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sdk-python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_20" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_20" id="__nav_5_20_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_20_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_20">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/sdk-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdk workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/ci-cd-github-actions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ci/cd github actions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/nightly-sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nightly sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/bulk-create/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    bulk create
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/auto-rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auto rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cli
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    cli
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/audit-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    audit log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/installer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    installer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    key
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/listen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    listen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/machine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    machine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/process/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/quota/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quota
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/roost/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    roost
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/site/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    site
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/trigger/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    trigger
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/user/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    user
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    version
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/webhook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    webhook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/whoami/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    whoami
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../reference/authentication/" class="md-nav__link">
         
@@ -1613,7 +3292,35 @@
   <span class="md-ellipsis">
     
   
-    authentication
+    platform authentication internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/agent-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    agent commands
   
 
     
@@ -1662,14 +3369,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/agent-commands/" class="md-nav__link">
+      <a href="../../reference/firestore-data-model/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    agent commands
+    firestore data model
   
 
     
@@ -1792,8 +3499,6 @@
       
         
       
-        
-      
     
     
     
@@ -1809,7 +3514,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1831,14 +3536,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_11" id="__nav_11_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1962,34 +3667,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../reference/firestore-data-model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    firestore data model
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -2024,17 +3701,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#accessing-logs" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        accessing logs
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#event-types" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2057,6 +3723,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#browsing-logs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        browsing logs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#log-entry-details" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2068,10 +3745,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#pagination" class="md-nav__link">
+  <a href="#storage-and-api" class="md-nav__link">
     <span class="md-ellipsis">
       
-        pagination
+        storage and API
       
     </span>
   </a>
@@ -2079,21 +3756,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#log-sources" class="md-nav__link">
+  <a href="#clearing-logs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        log sources
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#retention" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        retention
+        clearing logs
       
     </span>
   </a>
@@ -2121,66 +3787,90 @@
 
 
 <h1 id="activity-logs">activity logs<a class="headerlink" href="#activity-logs" title="Permanent link">&para;</a></h1>
-<p>The Activity Logs page shows a timeline of events across your machines — process starts, crashes, command executions, and system events.</p>
-<hr />
-<h2 id="accessing-logs">accessing logs<a class="headerlink" href="#accessing-logs" title="Permanent link">&para;</a></h2>
-<p>Navigate to <strong>Logs</strong> from the dashboard menu, or go directly to <code>/logs</code>.</p>
+<p>The activity logs page shows a site-scoped timeline for agent, process, command, deployment, and scheduled reboot events. Open it from the dashboard menu by selecting <strong>logs</strong>, or go directly to <code>/logs</code>.</p>
 <hr />
 <h2 id="event-types">event types<a class="headerlink" href="#event-types" title="Permanent link">&para;</a></h2>
+<p>Common stored action values include:</p>
 <table>
 <thead>
 <tr>
 <th>action</th>
-<th>level</th>
-<th>description</th>
+<th>label</th>
+<th>typical level</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>process_started</code></td>
-<td>Info</td>
-<td>A configured process was launched</td>
-</tr>
-<tr>
-<td><code>process_start_failed</code></td>
-<td>Error</td>
-<td>A process failed to start</td>
-</tr>
-<tr>
-<td><code>process_killed</code></td>
-<td>Warning</td>
-<td>A process was terminated (manually or by agent)</td>
-</tr>
-<tr>
-<td><code>process_crashed</code></td>
-<td>Error</td>
-<td>A process exited unexpectedly</td>
-</tr>
-<tr>
-<td><code>command_executed</code></td>
-<td>Info</td>
-<td>A remote command was executed</td>
-</tr>
-<tr>
 <td><code>agent_started</code></td>
-<td>Info</td>
-<td>The agent service started</td>
+<td>agent started</td>
+<td>info</td>
 </tr>
 <tr>
 <td><code>agent_stopped</code></td>
-<td>Info</td>
-<td>The agent service stopped</td>
+<td>agent stopped</td>
+<td>info</td>
 </tr>
 <tr>
-<td><code>config_updated</code></td>
-<td>Info</td>
-<td>Configuration was changed</td>
+<td><code>process_started</code></td>
+<td>process started</td>
+<td>info</td>
+</tr>
+<tr>
+<td><code>process_killed</code></td>
+<td>process killed</td>
+<td>warning</td>
+</tr>
+<tr>
+<td><code>process_crash</code></td>
+<td>process crashed</td>
+<td>error</td>
+</tr>
+<tr>
+<td><code>process_start_failed</code></td>
+<td>start failed</td>
+<td>error</td>
+</tr>
+<tr>
+<td><code>process_launch_failed</code></td>
+<td>launch failed</td>
+<td>error</td>
+</tr>
+<tr>
+<td><code>exe_missing</code></td>
+<td>executable missing</td>
+<td>error</td>
+</tr>
+<tr>
+<td><code>command_executed</code></td>
+<td>command executed</td>
+<td>info</td>
+</tr>
+<tr>
+<td><code>deployment_completed</code></td>
+<td>deployment completed</td>
+<td>info</td>
+</tr>
+<tr>
+<td><code>deployment_failed</code></td>
+<td>deployment failed</td>
+<td>error</td>
+</tr>
+<tr>
+<td><code>deployment_cancelled</code></td>
+<td>deployment cancelled</td>
+<td>warning</td>
+</tr>
+<tr>
+<td><code>scheduled_reboot</code></td>
+<td>scheduled reboot</td>
+<td>warning</td>
 </tr>
 </tbody>
 </table>
+<p>The menu also includes <strong>all actions</strong> as the reset value.</p>
 <hr />
 <h2 id="filtering">filtering<a class="headerlink" href="#filtering" title="Permanent link">&para;</a></h2>
-<p>Filter logs by:</p>
+<p>Select <strong>show filters</strong> to narrow the timeline.</p>
 <table>
 <thead>
 <tr>
@@ -2190,22 +3880,31 @@
 </thead>
 <tbody>
 <tr>
-<td><strong>Action</strong></td>
-<td>Any event type from the list above</td>
+<td><strong>action type</strong></td>
+<td>all actions, or a dashboard-supported action value</td>
 </tr>
 <tr>
-<td><strong>Machine</strong></td>
-<td>Specific machine name</td>
+<td><strong>machine</strong></td>
+<td>all machines, or a machine present in the loaded logs</td>
 </tr>
 <tr>
-<td><strong>Level</strong></td>
-<td>Info, Warning, Error</td>
+<td><strong>level</strong></td>
+<td>all levels, info, warning, error</td>
+</tr>
+<tr>
+<td><strong>date range</strong></td>
+<td>all time, last hour, last 24 hours, today, yesterday, last 7 days, last 30 days, this week, this month, last month, custom range</td>
 </tr>
 </tbody>
 </table>
+<p>When <strong>custom range</strong> is selected, the page shows <strong>from</strong> and <strong>to</strong> date inputs. Use <strong>reset filters</strong> to clear action, machine, level, and date filters.</p>
+<hr />
+<h2 id="browsing-logs">browsing logs<a class="headerlink" href="#browsing-logs" title="Permanent link">&para;</a></h2>
+<p>The first batch is loaded with a real-time Firestore listener, ordered newest first when the active filters allow it. The page loads 50 entries at a time and uses infinite scroll: when you reach the end of the visible list, the next batch is fetched automatically and a <strong>loading more...</strong> indicator appears.</p>
+<p>There are no numbered page controls on the current page.</p>
 <hr />
 <h2 id="log-entry-details">log entry details<a class="headerlink" href="#log-entry-details" title="Permanent link">&para;</a></h2>
-<p>Each log entry shows:</p>
+<p>Each collapsed row shows:</p>
 <table>
 <thead>
 <tr>
@@ -2215,48 +3914,60 @@
 </thead>
 <tbody>
 <tr>
-<td><strong>Timestamp</strong></td>
-<td>When the event occurred</td>
+<td><strong>level</strong></td>
+<td>Severity badge for info, warning, error, or another stored level</td>
 </tr>
 <tr>
-<td><strong>Action</strong></td>
-<td>Event type (color-coded badge)</td>
+<td><strong>action</strong></td>
+<td>Stored action value rendered as readable text</td>
 </tr>
 <tr>
-<td><strong>Level</strong></td>
-<td>Severity: info (blue), warning (yellow), error (red)</td>
+<td><strong>machine</strong></td>
+<td>Machine name for the event</td>
 </tr>
 <tr>
-<td><strong>Machine</strong></td>
-<td>Which machine the event occurred on</td>
+<td><strong>process</strong></td>
+<td>Process name when the event is process-scoped</td>
 </tr>
 <tr>
-<td><strong>Process</strong></td>
-<td>Which process was involved (if applicable)</td>
+<td><strong>timestamp</strong></td>
+<td>Rendered using the user's selected dashboard time display mode</td>
 </tr>
 <tr>
-<td><strong>Details</strong></td>
-<td>Additional context (error messages, PIDs, etc.)</td>
+<td><strong>details</strong></td>
+<td>Short text preview when present</td>
+</tr>
+<tr>
+<td><strong>screenshot</strong></td>
+<td>Camera marker when a crash screenshot is attached</td>
 </tr>
 </tbody>
 </table>
+<p>Expand a row to see the machine id, user id when present, the full timestamp, full details text, and an attached crash screenshot preview.</p>
 <hr />
-<h2 id="pagination">pagination<a class="headerlink" href="#pagination" title="Permanent link">&para;</a></h2>
-<p>Logs are paginated at 50 entries per page. Use the <strong>Next</strong> and <strong>Previous</strong> buttons to navigate.</p>
+<h2 id="storage-and-api">storage and API<a class="headerlink" href="#storage-and-api" title="Permanent link">&para;</a></h2>
+<p>Logs are stored under:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>sites/{siteId}/logs/{logId}
+</span></code></pre></div>
+<p>The dashboard reads from that collection directly. The site logs API reads the same collection with cursor pagination:</p>
+<div class="language-http highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">GET /api/sites/{siteId}/logs?action=process_crash&amp;machineId=machine-1&amp;level=error&amp;since=1714521600000&amp;until=1714607999999</span>
+</span></code></pre></div>
+<p>Supported API query filters are <code>action</code>, <code>machineId</code>, <code>level</code>, <code>since</code>, <code>until</code>, <code>page_size</code>, and <code>page_token</code>.</p>
+<p>Stored log entries may include <code>timestamp</code>, <code>action</code>, <code>level</code>, <code>machineId</code>, <code>machineName</code>, <code>processName</code>, <code>processId</code>, <code>details</code>, <code>userId</code>, <code>screenshotUrl</code>, <code>eventType</code>, <code>exePath</code>, and <code>suggestedPaths</code>.</p>
 <hr />
-<h2 id="log-sources">log sources<a class="headerlink" href="#log-sources" title="Permanent link">&para;</a></h2>
-<p>Events are logged by two sources:</p>
-<ol>
-<li><strong>Agent</strong> — Writes directly to <code>sites/{siteId}/activity_logs/</code> in Firestore when processes start, crash, or when the agent starts/stops</li>
-<li><strong>Dashboard API</strong> — Writes logs when commands are sent or events are simulated</li>
-</ol>
-<hr />
-<h2 id="retention">retention<a class="headerlink" href="#retention" title="Permanent link">&para;</a></h2>
-<p>Activity logs are stored in Firestore indefinitely. There is no automatic cleanup — delete old logs manually from the Firestore Console if storage is a concern.</p>
-<div class="admonition tip">
-<p class="admonition-title">Admin event simulation</p>
-<p>Admins can simulate events (process crash, machine offline) from <code>/api/admin/events/simulate</code> to test alerting and logging without requiring a real event.</p>
-</div>
+<h2 id="clearing-logs">clearing logs<a class="headerlink" href="#clearing-logs" title="Permanent link">&para;</a></h2>
+<p>The <strong>clear logs</strong> button permanently deletes logs for the current site. It opens a confirmation dialog before sending:</p>
+<div class="language-http highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="err">DELETE /api/sites/{siteId}/logs</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="err">Idempotency-Key: dashboard-clear-logs-&lt;uuid&gt;</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="err">Content-Type: application/json</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="err">{ &quot;action&quot;: &quot;deployment_failed&quot;, &quot;machineId&quot;: &quot;machine-1&quot;, &quot;level&quot;: &quot;error&quot; }</span>
+</span></code></pre></div>
+<p>Clearing requires the site-scoped <code>SITE_LOGS_MANAGE</code> capability. Site admins have this capability for their assigned sites; superadmins have it globally. API-key calls must use an admin-capable key.</p>
+<p>The delete body can include <code>action</code>, <code>machineId</code>, and <code>level</code> filters. If no filters are provided, the body must explicitly be:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span><span class="w"> </span><span class="nt">&quot;all&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">}</span>
+</span></code></pre></div>
+<p>The response includes <code>siteId</code>, <code>deletedCount</code>, and the applied <code>filters</code>. Whole-site clears and filtered clears are destructive and cannot be undone. The current dashboard clear action applies action, machine, and level filters only; date range filters are view filters and are not sent in the clear request.</p>
 
 
 
@@ -2294,7 +4005,7 @@
       <div class="md-copyright">
   
     <div class="md-copyright__highlight">
-      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">AGPL-3.0</a>
+      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">FSL-1.1-Apache-2.0</a>
     </div>
   
   

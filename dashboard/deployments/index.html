@@ -16,7 +16,7 @@
         <link rel="prev" href="../process-management/">
       
       
-        <link rel="next" href="../project-distribution/">
+        <link rel="next" href="../roost/">
       
       
         
@@ -312,13 +312,57 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../reference/" class="md-tabs__link">
+        <a href="../../api/overview/" class="md-tabs__link">
           
   
   
     
   
   api
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../cli/overview/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  cli
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  reference
 
         </a>
       </li>
@@ -820,6 +864,8 @@
       
         
       
+        
+      
     
     
     
@@ -1061,6 +1107,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#deployment-templates-and-presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        deployment templates and presets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#deployment-progress" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1072,10 +1129,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#deployment-templates" class="md-nav__link">
+  <a href="#cancelling-a-deployment" class="md-nav__link">
     <span class="md-ellipsis">
       
-        deployment templates
+        cancelling a deployment
       
     </span>
   </a>
@@ -1083,10 +1140,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cancelling-a-deployment" class="md-nav__link">
+  <a href="#row-actions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        cancelling a deployment
+        row actions
       
     </span>
   </a>
@@ -1120,7 +1177,7 @@
   <a href="#download-failed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        "download failed"
+        download failed
       
     </span>
   </a>
@@ -1139,10 +1196,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#timeout" class="md-nav__link">
+  <a href="#deployment-cannot-be-cancelled" class="md-nav__link">
     <span class="md-ellipsis">
       
-        timeout
+        deployment cannot be cancelled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#record-cannot-be-deleted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record cannot be deleted
       
     </span>
   </a>
@@ -1181,14 +1249,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../project-distribution/" class="md-nav__link">
+      <a href="../roost/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    project distribution
+    roost
   
 
     
@@ -1264,6 +1332,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../timezones/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    timezones
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -1301,7 +1397,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_10" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1323,14 +1419,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_9" id="__nav_4_9_label" tabindex="">
+              <label class="md-nav__link " for="__nav_4_10" id="__nav_4_10_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1535,7 +1631,33 @@
     
       
         
-          
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
         
       
         
@@ -1566,9 +1688,8 @@
         <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
-          <div class="md-nav__link md-nav__container">
-            <a href="../../reference/" class="md-nav__link ">
-              
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -1582,14 +1703,8 @@
   
   
 
-            </a>
-            
-              
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
-                <span class="md-nav__icon md-icon"></span>
-              </label>
-            
-          </div>
+            <span class="md-nav__icon md-icon"></span>
+          </label>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
@@ -1603,22 +1718,20 @@
           <ul class="md-nav__list" data-md-scrollfix>
             
               
-            
-              
                 
   
   
   
   
     <li class="md-nav__item">
-      <a href="../../reference/api/" class="md-nav__link">
+      <a href="../../api/overview/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    rest api
+    overview
   
 
     
@@ -1639,7 +1752,455 @@
   
   
     <li class="md-nav__item">
-      <a href="../admin/webhooks/" class="md-nav__link">
+      <a href="../../api/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    api reference links
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/developer-preview-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    developer preview checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/status-uptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    status page and uptime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/load-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    load testing and SLOs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/distribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDK and CLI distribution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/launch-assets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch assets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/launch-runbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/pagination/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    pagination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/idempotency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    idempotency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    errors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/rate-limits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rate limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/chunks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chunks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/versions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    versions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/cortex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cortex
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/webhooks/" class="md-nav__link">
         
   
   
@@ -1666,6 +2227,1157 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_19" id="__nav_5_19_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_19">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    sdks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sdk-node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    node
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sdk-python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_20" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_20" id="__nav_5_20_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_20_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_20">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/sdk-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdk workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/ci-cd-github-actions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ci/cd github actions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/nightly-sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nightly sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/bulk-create/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    bulk create
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/auto-rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auto rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cli
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    cli
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/audit-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    audit log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/installer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    installer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    key
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/listen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    listen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/machine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    machine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/process/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/quota/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quota
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/roost/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    roost
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/site/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    site
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/trigger/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    trigger
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/user/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    user
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    version
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/webhook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    webhook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/whoami/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    whoami
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../reference/authentication/" class="md-nav__link">
         
@@ -1674,7 +3386,35 @@
   <span class="md-ellipsis">
     
   
-    authentication
+    platform authentication internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/agent-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    agent commands
   
 
     
@@ -1723,14 +3463,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/agent-commands/" class="md-nav__link">
+      <a href="../../reference/firestore-data-model/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    agent commands
+    firestore data model
   
 
     
@@ -1853,8 +3593,6 @@
       
         
       
-        
-      
     
     
     
@@ -1870,7 +3608,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1892,14 +3630,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_11" id="__nav_11_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2023,34 +3761,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../reference/firestore-data-model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    firestore data model
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -2118,6 +3828,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#deployment-templates-and-presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        deployment templates and presets
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#deployment-progress" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2129,10 +3850,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#deployment-templates" class="md-nav__link">
+  <a href="#cancelling-a-deployment" class="md-nav__link">
     <span class="md-ellipsis">
       
-        deployment templates
+        cancelling a deployment
       
     </span>
   </a>
@@ -2140,10 +3861,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#cancelling-a-deployment" class="md-nav__link">
+  <a href="#row-actions" class="md-nav__link">
     <span class="md-ellipsis">
       
-        cancelling a deployment
+        row actions
       
     </span>
   </a>
@@ -2177,7 +3898,7 @@
   <a href="#download-failed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        "download failed"
+        download failed
       
     </span>
   </a>
@@ -2196,10 +3917,21 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#timeout" class="md-nav__link">
+  <a href="#deployment-cannot-be-cancelled" class="md-nav__link">
     <span class="md-ellipsis">
       
-        timeout
+        deployment cannot be cancelled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#record-cannot-be-deleted" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record cannot be deleted
       
     </span>
   </a>
@@ -2243,23 +3975,30 @@
 
 
 <h1 id="deployments">deployments<a class="headerlink" href="#deployments" title="Permanent link">&para;</a></h1>
-<p>Deploy software remotely to one or many machines. owlette downloads and silently installs applications, tracking progress in real-time.</p>
+<p>Deploy Windows installers to one or many machines. owlette creates a tracked deployment record, fans out <code>install_software</code> commands, and reconciles per-machine progress as agents report back.</p>
 <hr />
 <h2 id="overview">overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p>The deployment system allows you to:</p>
+<p>The deployments page lets operators:</p>
 <ul>
-<li>Push installers to multiple machines simultaneously</li>
-<li>Track download and installation progress per machine</li>
-<li>Verify installations with path checking</li>
-<li>Save deployment configurations as templates</li>
-<li>Cancel in-progress deployments</li>
+<li>Start installer deployments from admin-curated system presets, saved templates, or a direct installer URL</li>
+<li>Select all machines, only online machines, or specific machines</li>
+<li>Close managed or named processes before installation</li>
+<li>Track each target through download, install, completion, failure, cancellation, or uninstall</li>
+<li>Retry failed targets, uninstall deployed software, or delete completed records</li>
 </ul>
 <hr />
 <h2 id="creating-a-deployment">creating a deployment<a class="headerlink" href="#creating-a-deployment" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Navigate to <strong>Deployments</strong> from the dashboard menu</li>
-<li>Click <strong>"New Deployment"</strong></li>
-<li>Fill in the deployment configuration:</li>
+<li>Open <strong>deployments</strong> from the dashboard navigation.</li>
+<li>Click <strong>new deployment</strong>.</li>
+<li>Choose a starting point in the <strong>template</strong> selector:</li>
+<li><strong>none</strong> starts from a blank form.</li>
+<li>Admin-curated system presets are grouped by category and fill the installer fields automatically.</li>
+<li>Saved templates are listed under <strong>Saved</strong> and can be reused.</li>
+<li>Optionally click the pencil button to set a deployment name. If you leave the name blank, owlette derives one from the selected preset/template, installer filename, or <code>Deployment</code>.</li>
+<li>Enter or confirm the installer fields.</li>
+<li>Choose target machines with <strong>online only</strong>, <strong>select all</strong>, or individual machine checkboxes.</li>
+<li>Click <strong>deploy to N machines</strong>.</li>
 </ol>
 <table>
 <thead>
@@ -2271,39 +4010,51 @@
 </thead>
 <tbody>
 <tr>
-<td><strong>Name</strong></td>
-<td>Yes</td>
-<td>Descriptive name (e.g., "TouchDesigner 2025")</td>
+<td><strong>Template</strong></td>
+<td>No</td>
+<td>Blank form, system preset, or saved template. System presets are read-only in this dialog.</td>
+</tr>
+<tr>
+<td><strong>Deployment name</strong></td>
+<td>No</td>
+<td>Optional label; otherwise derived automatically.</td>
 </tr>
 <tr>
 <td><strong>Installer URL</strong></td>
 <td>Yes</td>
-<td>Direct HTTPS download link to the <code>.exe</code> installer</td>
+<td>Direct <code>https://</code> URL for the installer. The filename is derived from the URL path.</td>
 </tr>
 <tr>
-<td><strong>Silent Flags</strong></td>
+<td><strong>Silent install flags</strong></td>
+<td>No</td>
+<td>Command-line flags passed to the installer. Empty is allowed, but many installers need flags for unattended operation.</td>
+</tr>
+<tr>
+<td><strong>Parallel install</strong></td>
+<td>No</td>
+<td><code>parallel install (keep existing versions)</code> installs alongside existing versions when the agent and installer support it.</td>
+</tr>
+<tr>
+<td><strong>Verify path</strong></td>
+<td>No</td>
+<td>Saved presets/templates can include a path the agent checks after installation.</td>
+</tr>
+<tr>
+<td><strong>Close running processes before install</strong></td>
+<td>No</td>
+<td>Select managed processes from the chosen machines and/or enter comma-separated executable names.</td>
+</tr>
+<tr>
+<td><strong>Target machines</strong></td>
 <td>Yes</td>
-<td>Flags for unattended installation</td>
-</tr>
-<tr>
-<td><strong>Verify Path</strong></td>
-<td>No</td>
-<td>File path to check after installation</td>
-</tr>
-<tr>
-<td><strong>Save as Template</strong></td>
-<td>No</td>
-<td>Save configuration for reuse</td>
+<td>One or more machine ids in the current site.</td>
 </tr>
 </tbody>
 </table>
-<ol>
-<li>Select target machines (online, all, or specific)</li>
-<li>Click <strong>"Deploy to N Machines"</strong></li>
-</ol>
+<p>When close-process handling is enabled, owlette sends <code>close_processes</code> for executable names and <code>suppress_projects</code> for selected managed processes. The dialog warns which processes will be closed before the install begins.</p>
 <hr />
 <h2 id="silent-installation-flags">silent installation flags<a class="headerlink" href="#silent-installation-flags" title="Permanent link">&para;</a></h2>
-<p>Different installer frameworks use different flags:</p>
+<p>Silent flags are installer-specific. They are not a dashboard requirement, but they are usually required for unattended installs.</p>
 <table>
 <thead>
 <tr>
@@ -2325,7 +4076,7 @@
 </tr>
 <tr>
 <td><strong>MSI</strong></td>
-<td><code>/qn</code> (with <code>msiexec /i</code>)</td>
+<td><code>/qn</code> with <code>msiexec /i</code></td>
 <td>Windows Installer packages</td>
 </tr>
 <tr>
@@ -2337,169 +4088,222 @@
 </table>
 <div class="admonition tip">
 <p class="admonition-title">Testing flags</p>
-<p>Always test your silent flags on one machine before deploying to many. Run the installer manually with the flags to verify it completes without user interaction.</p>
+<p>Test installer flags on one machine before deploying to many. Some installers ignore generic silent flags or still require prerequisites.</p>
 </div>
 <hr />
-<h2 id="deployment-progress">deployment progress<a class="headerlink" href="#deployment-progress" title="Permanent link">&para;</a></h2>
-<p>The dashboard shows real-time status for each machine:</p>
+<h2 id="deployment-templates-and-presets">deployment templates and presets<a class="headerlink" href="#deployment-templates-and-presets" title="Permanent link">&para;</a></h2>
+<p>The template selector combines two sources:</p>
+<ul>
+<li><strong>System presets</strong> come from the admin-curated <code>system_presets</code> library. They are grouped by category, can include installer URL, silent flags, verification path, close-process names, and parallel-install preference, and cannot be edited from the deployment dialog.</li>
+<li><strong>Saved templates</strong> live under the current site and store <code>name</code>, <code>installer_name</code>, <code>installer_url</code>, <code>silent_flags</code>, optional <code>verify_path</code>, optional <code>close_processes</code>, and optional <code>parallel_install</code>.</li>
+</ul>
+<p>Template actions in the dialog:</p>
 <table>
 <thead>
 <tr>
-<th>status</th>
+<th>action</th>
+<th>behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Edit name</strong></td>
+<td>Switches the selector row into a name field for a new or saved template.</td>
+</tr>
+<tr>
+<td><strong>Save</strong></td>
+<td>Creates a new saved template, or updates the selected saved template.</td>
+</tr>
+<tr>
+<td><strong>Delete</strong></td>
+<td>Deletes the selected saved template after confirmation.</td>
+</tr>
+</tbody>
+</table>
+<p>System presets are intentionally protected from these actions; update them through the admin preset workflow.</p>
+<hr />
+<h2 id="deployment-progress">deployment progress<a class="headerlink" href="#deployment-progress" title="Permanent link">&para;</a></h2>
+<p>Target states are stored per machine:</p>
+<table>
+<thead>
+<tr>
+<th>target state</th>
 <th>description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>Pending</strong></td>
-<td>Command queued, waiting for agent</td>
+<td><code>pending</code></td>
+<td>Deployment command is queued for the agent.</td>
 </tr>
 <tr>
-<td><strong>Downloading</strong></td>
-<td>Agent downloading installer (shows %)</td>
+<td><code>closing_processes</code></td>
+<td>Agent is closing configured processes before installation.</td>
 </tr>
 <tr>
-<td><strong>Installing</strong></td>
-<td>Installer running</td>
+<td><code>downloading</code></td>
+<td>Agent is downloading the installer; progress may be shown.</td>
 </tr>
 <tr>
-<td><strong>Completed</strong></td>
-<td>Installation successful</td>
+<td><code>installing</code></td>
+<td>Installer is running; progress may be shown.</td>
 </tr>
 <tr>
-<td><strong>Failed</strong></td>
-<td>Installation failed (shows error)</td>
+<td><code>completed</code></td>
+<td>Installation completed successfully.</td>
 </tr>
 <tr>
-<td><strong>Cancelled</strong></td>
-<td>Deployment was cancelled</td>
+<td><code>failed</code></td>
+<td>Installation failed; the row may include an error.</td>
 </tr>
 <tr>
-<td><strong>Uninstalled</strong></td>
-<td>Software was uninstalled from this machine</td>
+<td><code>cancelled</code></td>
+<td>Deployment work was cancelled for this target.</td>
+</tr>
+<tr>
+<td><code>uninstalled</code></td>
+<td>Software was uninstalled from this target.</td>
 </tr>
 </tbody>
 </table>
-<p>Overall deployment status is calculated automatically:</p>
+<p>Overall deployment status is calculated from the target states:</p>
 <table>
 <thead>
 <tr>
-<th>overall status</th>
+<th>overall state</th>
 <th>meaning</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>Pending</strong></td>
-<td>All targets still pending</td>
+<td><code>pending</code></td>
+<td>Deployment exists but no target has started yet.</td>
 </tr>
 <tr>
-<td><strong>In Progress</strong></td>
-<td>At least one target downloading or installing</td>
+<td><code>in_progress</code></td>
+<td>At least one target is still non-terminal.</td>
 </tr>
 <tr>
-<td><strong>Completed</strong></td>
-<td>All targets completed</td>
+<td><code>completed</code></td>
+<td>All non-cancelled targets completed successfully.</td>
 </tr>
 <tr>
-<td><strong>Failed</strong></td>
-<td>All non-cancelled targets failed</td>
+<td><code>failed</code></td>
+<td>All remaining terminal targets failed.</td>
 </tr>
 <tr>
-<td><strong>Partial</strong></td>
-<td>Mix of completed and failed targets</td>
+<td><code>partial</code></td>
+<td>Terminal targets ended in a mixed result.</td>
 </tr>
 <tr>
-<td><strong>Cancelled</strong></td>
-<td>All targets cancelled</td>
+<td><code>cancelled</code></td>
+<td>Every target was cancelled.</td>
 </tr>
 <tr>
-<td><strong>Uninstalled</strong></td>
-<td>All targets uninstalled</td>
+<td><code>uninstalled</code></td>
+<td>Every target was uninstalled.</td>
+</tr>
+</tbody>
+</table>
+<p>During an uninstall handoff, the API may temporarily mark the deployment <code>uninstalling</code>; reconciliation settles the targets and aggregate state as agents finish.</p>
+<hr />
+<h2 id="cancelling-a-deployment">cancelling a deployment<a class="headerlink" href="#cancelling-a-deployment" title="Permanent link">&para;</a></h2>
+<p>The cancel button is rendered beside active target rows, but the current API is deployment-wide. Clicking the cancel control on any active target calls:</p>
+<div class="language-http highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="err">POST /api/sites/{siteId}/deployments/{deploymentId}/cancel</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="err">Idempotency-Key: &lt;unique-key&gt;</span>
+</span></code></pre></div>
+<p>The server cancels every target in the deployment that is still in a pre-install state:</p>
+<ul>
+<li><code>pending</code></li>
+<li><code>closing_processes</code></li>
+<li><code>downloading</code></li>
+</ul>
+<p>For those targets, the API removes queued <code>install_software</code> commands, fans out <code>cancel_installation</code> commands, marks the targets <code>cancelled</code>, and returns the affected <code>machine_ids</code>. Targets that are already <code>completed</code>, <code>failed</code>, <code>cancelled</code>, or <code>uninstalled</code> are left alone. Targets already in <code>installing</code> may be past the cancellable phase; if no pre-install targets remain, the API returns <code>409 no_cancellable_targets</code>.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Treat cancellation as a whole-deployment action, not a per-machine action. The row-level button identifies the deployment to cancel, but the server applies the request to all currently cancellable targets in that deployment.</p>
+</div>
+<hr />
+<h2 id="row-actions">row actions<a class="headerlink" href="#row-actions" title="Permanent link">&para;</a></h2>
+<p>Each deployment row has an actions menu:</p>
+<table>
+<thead>
+<tr>
+<th>action</th>
+<th>when shown</th>
+<th>behavior and risk</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>retry failed</strong></td>
+<td>At least one target is <code>failed</code>.</td>
+<td>Creates a new deployment named <code>&lt;original name&gt; (Retry)</code> for the failed targets only. The original record remains for history.</td>
+</tr>
+<tr>
+<td><strong>uninstall software</strong></td>
+<td>Deployment is not already <code>uninstalled</code>.</td>
+<td>Opens the uninstall workflow with the installer name prefilled and queues uninstall commands for selected machines. This removes software; it does not delete the deployment record.</td>
+</tr>
+<tr>
+<td><strong>delete record</strong></td>
+<td>Always shown, but the API only allows terminal records.</td>
+<td>Permanently removes the deployment record. It does not uninstall software, and the API rejects deletion while the deployment or any target is still in flight.</td>
 </tr>
 </tbody>
 </table>
 <hr />
-<h2 id="deployment-templates">deployment templates<a class="headerlink" href="#deployment-templates" title="Permanent link">&para;</a></h2>
-<p>Save frequently-used configurations:</p>
-<ol>
-<li>When creating a deployment, check <strong>"Save as template"</strong></li>
-<li>The template stores: name, installer URL, silent flags, verify path</li>
-<li>Load templates from the dropdown in the deployment dialog</li>
-<li>Edit or delete templates as needed</li>
-</ol>
-<hr />
-<h2 id="cancelling-a-deployment">cancelling a deployment<a class="headerlink" href="#cancelling-a-deployment" title="Permanent link">&para;</a></h2>
-<p>To cancel an in-progress deployment:</p>
-<ol>
-<li>Find the deployment in the deployments list</li>
-<li>Click <strong>Cancel</strong> next to the target machine</li>
-<li>Machines that haven't started will skip the deployment</li>
-<li>Machines currently downloading or installing will be stopped (the agent terminates the installer process tree)</li>
-</ol>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>Only targets in <code>pending</code>, <code>downloading</code>, or <code>installing</code> state can be cancelled. Targets that have already completed, failed, or been uninstalled cannot be cancelled.</p>
-</div>
-<hr />
 <h2 id="deployment-flow">deployment flow<a class="headerlink" href="#deployment-flow" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Dashboard creates deployment record in Firestore
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    │
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    ├── For each target machine:
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    │     │
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    │     ├── Write install_software command to pending queue
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    │     │
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    │     ├── Agent detects command
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    │     │     │
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    │     │     ├── Download installer to %TEMP%\owlette_installers\
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    │     │     │   (progress: downloading 0% → 100%)
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    │     │     │
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    │     │     ├── Execute installer with silent flags
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    │     │     │   (timeout: 40 minutes)
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    │     │     │
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    │     │     ├── Verify installation (if verify_path set)
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    │     │     │
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    │     │     └── Report result to Firestore
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    │     │
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>    │     └── Dashboard updates per-machine status in real-time
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>    │
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>    └── Overall deployment status updates when all machines complete
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Dashboard creates a deployment through POST /api/sites/{siteId}/deployments
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  -&gt; API writes sites/{siteId}/deployments/{deploymentId}
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  -&gt; API fans out install_software commands to target machines
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  -&gt; Agent closes configured processes when close_processes is set
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>  -&gt; Agent downloads the installer
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>  -&gt; Agent runs the installer with silent_flags
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>  -&gt; Agent checks verify_path when provided
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>  -&gt; Agent reports command status
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>  -&gt; Cloud Functions reconcile target states and overall deployment status
 </span></code></pre></div>
+<p>The stale-deployment sweeper marks old stuck targets failed:</p>
+<ul>
+<li><code>pending</code> targets older than 15 minutes</li>
+<li><code>downloading</code> or <code>installing</code> targets older than 30 minutes</li>
+</ul>
 <hr />
 <h2 id="troubleshooting">troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
-<h3 id="download-failed">"download failed"<a class="headerlink" href="#download-failed" title="Permanent link">&para;</a></h3>
+<h3 id="download-failed">download failed<a class="headerlink" href="#download-failed" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Test the URL in a browser — it should directly download the file</li>
-<li>Ensure the URL is a direct download link (not a web page)</li>
-<li>Check that the agent machine has internet access</li>
-<li>For Dropbox: change <code>?dl=0</code> to <code>?dl=1</code></li>
+<li>Confirm the URL is a direct <code>https://</code> download link, not a landing page.</li>
+<li>Test the URL from a browser on the target network.</li>
+<li>Check whether the URL is signed or time-limited and has expired.</li>
+<li>For Dropbox links, use a direct-download variant such as <code>?dl=1</code>.</li>
 </ul>
 <h3 id="installation-fails">installation fails<a class="headerlink" href="#installation-fails" title="Permanent link">&para;</a></h3>
 <ul>
-<li>Verify silent flags are correct for the installer type</li>
-<li>Check if the installer requires specific prerequisites (e.g., .NET Framework)</li>
-<li>Review agent logs: <code>C:\ProgramData\Owlette\logs\service.log</code></li>
-<li>Try installing manually with the same flags to diagnose</li>
+<li>Verify the silent flags for that installer family.</li>
+<li>Check whether prerequisites such as .NET, Visual C++ runtimes, or license services are required.</li>
+<li>Review the agent log at <code>C:\ProgramData\Owlette\logs\service.log</code>.</li>
+<li>Try the same installer URL and flags manually on one target machine.</li>
 </ul>
-<h3 id="timeout">timeout<a class="headerlink" href="#timeout" title="Permanent link">&para;</a></h3>
-<p>The default installation timeout is 40 minutes. Very large installers on slow connections may need the agent-side timeout adjusted in <code>installer_utils.py</code>.</p>
-<div class="admonition info">
-<p class="admonition-title">Automatic timeout cleanup</p>
-<p>Firebase Cloud Functions automatically mark stale deployments as failed:</p>
+<h3 id="deployment-cannot-be-cancelled">deployment cannot be cancelled<a class="headerlink" href="#deployment-cannot-be-cancelled" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Pending</strong> targets that haven't started after <strong>15 minutes</strong> are marked failed</li>
-<li><strong>Downloading/Installing</strong> targets stuck for over <strong>30 minutes</strong> are marked failed</li>
+<li>Cancellation is deployment-wide but only applies to targets still in <code>pending</code>, <code>closing_processes</code>, or <code>downloading</code>.</li>
+<li>If every target is terminal or already installing, the cancel API returns <code>no_cancellable_targets</code>.</li>
+<li>Use <strong>retry failed</strong> for failed targets or <strong>uninstall software</strong> when cleanup is needed after a completed install.</li>
 </ul>
-<p>This prevents deployments from appearing stuck indefinitely if a machine goes offline mid-deployment.</p>
-</div>
+<h3 id="record-cannot-be-deleted">record cannot be deleted<a class="headerlink" href="#record-cannot-be-deleted" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Wait until every target is terminal, or cancel the deployment if cancellable work remains.</li>
+<li>Deleting a record does not uninstall software. Use <strong>uninstall software</strong> first when the installed application should be removed.</li>
+</ul>
 <hr />
 <h2 id="security">security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Only deploy from <strong>trusted sources</strong> — the system does not verify installer signatures</li>
-<li><strong>HTTPS URLs are required</strong> — the API rejects HTTP, <code>file://</code>, and other non-HTTPS protocols</li>
-<li>Optional <strong>SHA256 checksum verification</strong> — the agent supports verifying downloaded files against a SHA256 hash when provided via the command payload (not currently exposed in the dashboard UI)</li>
-<li>The agent runs as <strong>SYSTEM</strong> — installed software has full administrative access</li>
-<li>Pre-test installers before mass deployment</li>
+<li>Deployment mutations require deployment-management access for the site.</li>
+<li>Only deploy installers from trusted sources. The agent runs installers with SYSTEM privileges.</li>
+<li><code>https://</code> installer URLs are required by the API.</li>
+<li>SHA256 checksum verification is supported by the API and agent when a <code>sha256_checksum</code> is provided, but the dashboard dialog does not currently expose a checksum field.</li>
+<li>Pre-test installers and flags before broad deployments.</li>
 </ul>
 
 
@@ -2538,7 +4342,7 @@
       <div class="md-copyright">
   
     <div class="md-copyright__highlight">
-      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">AGPL-3.0</a>
+      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">FSL-1.1-Apache-2.0</a>
     </div>
   
   

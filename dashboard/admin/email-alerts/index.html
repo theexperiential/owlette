@@ -312,13 +312,57 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../reference/" class="md-tabs__link">
+        <a href="../../../api/overview/" class="md-tabs__link">
           
   
   
     
   
   api
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../cli/overview/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  cli
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../reference/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  reference
 
         </a>
       </li>
@@ -820,6 +864,8 @@
       
         
       
+        
+      
     
     
     
@@ -996,14 +1042,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../project-distribution/" class="md-nav__link">
+      <a href="../../roost/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    project distribution
+    roost
   
 
     
@@ -1077,6 +1123,34 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../../timezones/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    timezones
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -1116,7 +1190,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" checked>
         
           
           <div class="md-nav__link md-nav__container">
@@ -1138,14 +1212,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_9" id="__nav_4_9_label" tabindex="">
+              <label class="md-nav__link " for="__nav_4_10" id="__nav_4_10_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1336,10 +1410,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#alert-types" class="md-nav__link">
+  <a href="#alert-categories" class="md-nav__link">
     <span class="md-ellipsis">
       
-        alert types
+        alert categories
       
     </span>
   </a>
@@ -1347,177 +1421,82 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#machine-offline-alerts" class="md-nav__link">
+  <a href="#threshold-alert-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
-        machine offline alerts
+        threshold alert rules
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="machine offline alerts">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipients-and-preferences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recipients and preferences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        setup
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="setup">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#how-it-works" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        how it works
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#email-content" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        email content
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#process-crash-alerts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        process crash alerts
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="process crash alerts">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rate-limiting" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        rate limiting
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#setting-up-alerts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        setting up alerts
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="setting up alerts">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        prerequisites
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#configuring-the-cron-job" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        configuring the cron job
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#user-preferences" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        user preferences
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#unsubscribe" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        unsubscribe
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#testing-emails" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        testing emails
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="testing emails">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#test-email-page" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        test email page
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#simulate-events" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        simulate events
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
         environment variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cron-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cron routes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-email-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        testing email delivery
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rate-limits-and-cooldowns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rate limits and cooldowns
       
     </span>
   </a>
@@ -1548,10 +1527,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#duplicate-alerts" class="md-nav__link">
+  <a href="#expected-process-or-display-alerts-are-delayed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        duplicate alerts
+        expected process or display alerts are delayed
       
     </span>
   </a>
@@ -1559,10 +1538,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cron-not-running" class="md-nav__link">
+  <a href="#duplicate-alerts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        cron not running
+        duplicate alerts
       
     </span>
   </a>
@@ -1636,7 +1615,33 @@
     
       
         
-          
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
         
       
         
@@ -1667,9 +1672,8 @@
         <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
-          <div class="md-nav__link md-nav__container">
-            <a href="../../../reference/" class="md-nav__link ">
-              
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -1683,14 +1687,8 @@
   
   
 
-            </a>
-            
-              
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
-                <span class="md-nav__icon md-icon"></span>
-              </label>
-            
-          </div>
+            <span class="md-nav__icon md-icon"></span>
+          </label>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
@@ -1704,22 +1702,20 @@
           <ul class="md-nav__list" data-md-scrollfix>
             
               
-            
-              
                 
   
   
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/api/" class="md-nav__link">
+      <a href="../../../api/overview/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    rest api
+    overview
   
 
     
@@ -1740,7 +1736,455 @@
   
   
     <li class="md-nav__item">
-      <a href="../webhooks/" class="md-nav__link">
+      <a href="../../../api/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    api reference links
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/developer-preview-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    developer preview checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/status-uptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    status page and uptime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/load-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    load testing and SLOs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/distribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDK and CLI distribution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/launch-assets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch assets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/launch-runbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/pagination/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    pagination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/idempotency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    idempotency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    errors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/rate-limits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rate limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/chunks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chunks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/versions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    versions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/cortex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cortex
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/webhooks/" class="md-nav__link">
         
   
   
@@ -1767,6 +2211,1157 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_19" id="__nav_5_19_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_19">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    sdks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/sdk-node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    node
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/sdk-python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_20" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_20" id="__nav_5_20_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_20_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_20">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/examples/sdk-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdk workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/examples/ci-cd-github-actions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ci/cd github actions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/examples/nightly-sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nightly sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/examples/bulk-create/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    bulk create
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/examples/auto-rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auto rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cli
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    cli
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/audit-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    audit log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/installer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    installer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    key
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/listen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    listen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/machine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    machine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/process/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/quota/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quota
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/roost/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    roost
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/site/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    site
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/trigger/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    trigger
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/user/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    user
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    version
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/webhook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    webhook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/whoami/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    whoami
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../../reference/authentication/" class="md-nav__link">
         
@@ -1775,7 +3370,35 @@
   <span class="md-ellipsis">
     
   
-    authentication
+    platform authentication internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/agent-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    agent commands
   
 
     
@@ -1824,14 +3447,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/agent-commands/" class="md-nav__link">
+      <a href="../../../reference/firestore-data-model/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    agent commands
+    firestore data model
   
 
     
@@ -1954,8 +3577,6 @@
       
         
       
-        
-      
     
     
     
@@ -1971,7 +3592,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1993,14 +3614,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_11" id="__nav_11_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2124,34 +3745,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../reference/firestore-data-model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    firestore data model
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -2186,10 +3779,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#alert-types" class="md-nav__link">
+  <a href="#alert-categories" class="md-nav__link">
     <span class="md-ellipsis">
       
-        alert types
+        alert categories
       
     </span>
   </a>
@@ -2197,177 +3790,82 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#machine-offline-alerts" class="md-nav__link">
+  <a href="#threshold-alert-rules" class="md-nav__link">
     <span class="md-ellipsis">
       
-        machine offline alerts
+        threshold alert rules
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="machine offline alerts">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipients-and-preferences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        recipients and preferences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        setup
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="setup">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#how-it-works" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        how it works
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#email-content" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        email content
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#process-crash-alerts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        process crash alerts
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="process crash alerts">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#rate-limiting" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        rate limiting
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#setting-up-alerts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        setting up alerts
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="setting up alerts">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        prerequisites
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#configuring-the-cron-job" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        configuring the cron job
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#user-preferences" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        user preferences
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#unsubscribe" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        unsubscribe
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#testing-emails" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        testing emails
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="testing emails">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#test-email-page" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        test email page
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#simulate-events" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        simulate events
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
         environment variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cron-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cron routes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-email-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        testing email delivery
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rate-limits-and-cooldowns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rate limits and cooldowns
       
     </span>
   </a>
@@ -2398,10 +3896,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#duplicate-alerts" class="md-nav__link">
+  <a href="#expected-process-or-display-alerts-are-delayed" class="md-nav__link">
     <span class="md-ellipsis">
       
-        duplicate alerts
+        expected process or display alerts are delayed
       
     </span>
   </a>
@@ -2409,10 +3907,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cron-not-running" class="md-nav__link">
+  <a href="#duplicate-alerts" class="md-nav__link">
     <span class="md-ellipsis">
       
-        cron not running
+        duplicate alerts
       
     </span>
   </a>
@@ -2445,125 +3943,117 @@
 
 
 <h1 id="email-alerts">email alerts<a class="headerlink" href="#email-alerts" title="Permanent link">&para;</a></h1>
-<p>owlette sends email notifications when machines go offline, processes crash, or connections fail.</p>
+<p>Owlette sends email notifications for machine health, process, threshold, Cortex, and display-event alerts. Superadmins manage alert rules in <strong>Admin Panel -&gt; alerts</strong> (<code>/admin/alerts</code>) and test email delivery in <strong>Admin Panel -&gt; email</strong> (<code>/admin/email</code>). Individual recipients manage their own delivery preferences in <strong>account settings -&gt; alerts</strong>.</p>
 <hr />
-<h2 id="alert-types">alert types<a class="headerlink" href="#alert-types" title="Permanent link">&para;</a></h2>
+<h2 id="alert-categories">alert categories<a class="headerlink" href="#alert-categories" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>alert</th>
+<th>category</th>
 <th>trigger</th>
-<th>recipients</th>
+<th>preference gate</th>
+<th>delivery path</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><strong>Machine Offline</strong></td>
-<td>Heartbeat missing for 3+ minutes</td>
-<td>All site users with <code>healthAlerts</code> enabled</td>
+<td><strong>Machine offline</strong></td>
+<td>A previously online machine has a heartbeat older than 3 minutes</td>
+<td><code>healthAlerts</code></td>
+<td><code>GET /api/cron/health-check</code> sends per-site emails and respects a 1-hour per-machine cooldown</td>
 </tr>
 <tr>
-<td><strong>Process Crash</strong></td>
-<td>Configured process exits unexpectedly</td>
-<td>Users subscribed to process alerts for that site</td>
+<td><strong>Agent connection failure</strong></td>
+<td>The agent posts a <code>connection_failure</code> event</td>
+<td><code>healthAlerts</code></td>
+<td><code>POST /api/agent/alert</code> sends immediately, subject to the agent-alert rate limit</td>
 </tr>
 <tr>
-<td><strong>Process Start Failed</strong></td>
-<td>Process failed to launch</td>
-<td>Users subscribed to process alerts</td>
+<td><strong>Process crashed</strong></td>
+<td>The agent posts <code>process_crash</code> for a monitored process</td>
+<td><code>processAlerts</code></td>
+<td><code>POST /api/agent/alert</code> queues the event; <code>GET /api/cron/process-alerts</code> sends a digest</td>
 </tr>
 <tr>
-<td><strong>Connection Failure</strong></td>
-<td>Agent lost connection to Firestore</td>
-<td>Site admins</td>
+<td><strong>Process failed to start</strong></td>
+<td>The agent posts <code>process_start_failed</code></td>
+<td><code>processAlerts</code></td>
+<td>Same process-alert queue and digest path</td>
+</tr>
+<tr>
+<td><strong>Threshold alert</strong></td>
+<td>A saved metric rule is breached</td>
+<td><code>thresholdAlerts</code></td>
+<td>Cloud Functions evaluates rules and calls <code>POST /api/alerts/trigger</code></td>
+</tr>
+<tr>
+<td><strong>Cortex escalation</strong></td>
+<td>Autonomous Cortex cannot resolve an issue and marks an escalation pending</td>
+<td><code>cortexAlerts</code></td>
+<td><code>POST /api/cortex/escalation</code> or cron-style <code>GET /api/cortex/escalation</code> sends escalation emails</td>
+</tr>
+<tr>
+<td><strong>Display event</strong></td>
+<td>A routed display event needs email delivery</td>
+<td><code>displayAlerts</code></td>
+<td><code>POST /api/agent/alert</code> sends critical display emails immediately or queues a display digest</td>
 </tr>
 </tbody>
 </table>
+<p>Display email delivery is not enabled for every display event. The current email-routed events are <code>display_monitor_removed</code>, <code>display_apply_failed</code>, <code>display_auto_revert_fired</code>, and <code>display_sync_lost</code>. <code>display_monitor_removed</code> and <code>display_auto_revert_fired</code> bypass the digest queue and send immediately; other routed display emails are drained by <code>GET /api/cron/display-alerts</code>.</p>
+<p>The agent alert route also accepts <code>exe_missing</code> events. These are not email-routed today; they are written to <code>sites/{siteId}/logs</code> with <code>action: "exe_missing"</code> and drive the dashboard executable-missing toast.</p>
+<p><code>POST /api/agent/alert</code> accepts both the legacy flat process-alert body and the generic <code>{ "eventType": "...", "data": { ... } }</code> shape used by current agents.</p>
 <hr />
-<h2 id="machine-offline-alerts">machine offline alerts<a class="headerlink" href="#machine-offline-alerts" title="Permanent link">&para;</a></h2>
-<h3 id="how-it-works">how it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h3>
-<p>A Railway cron job runs every 5 minutes, calling <code>GET /api/cron/health-check</code>:</p>
-<ol>
-<li>Scans all <code>sites/{siteId}/machines/{machineId}</code> for stale heartbeats</li>
-<li>A machine is considered <strong>offline</strong> if its last heartbeat is older than 3 minutes</li>
-<li>Sends one grouped email per site listing all offline machines</li>
-<li>Writes <code>health.lastCronAlertAt</code> to Firestore to prevent repeat alerts</li>
-<li><strong>Cooldown</strong>: 1 hour per machine — won't send another alert for the same machine within an hour</li>
-</ol>
-<h3 id="email-content">email content<a class="headerlink" href="#email-content" title="Permanent link">&para;</a></h3>
-<p>The email includes:</p>
+<h2 id="threshold-alert-rules">threshold alert rules<a class="headerlink" href="#threshold-alert-rules" title="Permanent link">&para;</a></h2>
+<p>The <strong>alerts</strong> admin page (<code>/admin/alerts</code>) manages site-scoped threshold rules stored at <code>sites/{siteId}/settings/alerts</code>. A rule includes:</p>
+<table>
+<thead>
+<tr>
+<th>field</th>
+<th>current options</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>metric</td>
+<td><code>cpu_percent</code>, <code>memory_percent</code>, <code>disk_percent</code>, <code>gpu_percent</code>, <code>cpu_temp</code>, <code>gpu_temp</code>, <code>network_latency</code>, <code>network_packet_loss</code></td>
+</tr>
+<tr>
+<td>operator</td>
+<td><code>&gt;</code>, <code>&lt;</code>, <code>&gt;=</code>, <code>&lt;=</code></td>
+</tr>
+<tr>
+<td>severity</td>
+<td><code>info</code>, <code>warning</code>, <code>critical</code></td>
+</tr>
+<tr>
+<td>channel</td>
+<td><code>email</code>, <code>webhook</code>, or both</td>
+</tr>
+<tr>
+<td>cooldown</td>
+<td>minutes before the same rule can notify again for the same machine</td>
+</tr>
+</tbody>
+</table>
+<p>The admin page ships presets for GPU overheating, low disk, high memory, and high CPU. Saving a rule replaces the rules array through <code>PUT /api/sites/{siteId}/alerts</code>.</p>
+<hr />
+<h2 id="recipients-and-preferences">recipients and preferences<a class="headerlink" href="#recipients-and-preferences" title="Permanent link">&para;</a></h2>
+<p>Owlette builds the recipient list from users assigned to the site plus the site owner. If no site user email is available, it falls back to <code>ADMIN_EMAIL_PROD</code> or <code>ADMIN_EMAIL_DEV</code>.</p>
+<p>Each user's <strong>account settings -&gt; alerts</strong> section controls:</p>
 <ul>
-<li>Site name</li>
-<li>List of offline machines with last-seen timestamps</li>
-<li>Direct link to the dashboard</li>
+<li><strong>Machine offline alerts</strong> (<code>healthAlerts</code>)</li>
+<li><strong>Process crash alerts</strong> (<code>processAlerts</code>)</li>
+<li><strong>Threshold alerts</strong> (<code>thresholdAlerts</code>)</li>
+<li><strong>Cortex escalation alerts</strong> (<code>cortexAlerts</code>)</li>
+<li><strong>Display events</strong> (<code>displayAlerts</code>)</li>
+<li><strong>Additional CC recipients</strong> (<code>alertCcEmails</code>, maximum 5)</li>
+<li><strong>Muted machines</strong> (<code>mutedMachines</code>)</li>
 </ul>
+<p>Alert preferences default to enabled unless the stored preference is explicitly <code>false</code>. CC recipients are added to that user's alert emails, and muted machines suppress all alert emails for that user for the selected machine. Users mute or unmute a machine from the machine context menu; muted entries can also be removed from account settings.</p>
 <hr />
-<h2 id="process-crash-alerts">process crash alerts<a class="headerlink" href="#process-crash-alerts" title="Permanent link">&para;</a></h2>
-<p>When the agent detects a process crash:</p>
-<ol>
-<li>Agent sends <code>POST /api/agent/alert</code> with alert type <code>process_crash</code></li>
-<li>Server looks up users subscribed to process alerts for that site</li>
-<li>Sends email with process name, machine name, and error details</li>
-</ol>
-<h3 id="rate-limiting">rate limiting<a class="headerlink" href="#rate-limiting" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Process alerts</strong>: 3 per hour per process per machine</li>
-<li><strong>Connection failures</strong>: 5 per hour per IP</li>
-</ul>
-<hr />
-<h2 id="setting-up-alerts">setting up alerts<a class="headerlink" href="#setting-up-alerts" title="Permanent link">&para;</a></h2>
-<h3 id="prerequisites">prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h3>
-<ol>
-<li><strong>Resend API key</strong> — Set <code>RESEND_API_KEY</code> environment variable in Railway</li>
-<li><strong>Admin email</strong> — Set <code>ADMIN_EMAIL_PROD</code> (production) or <code>ADMIN_EMAIL_DEV</code> (development)</li>
-<li><strong>Cron job</strong> — Configure Railway cron schedule (see below)</li>
-</ol>
-<h3 id="configuring-the-cron-job">configuring the cron job<a class="headerlink" href="#configuring-the-cron-job" title="Permanent link">&para;</a></h3>
-<ol>
-<li>In Railway dashboard, open your web service</li>
-<li>Go to <strong>Settings</strong> → <strong>"Cron Schedule"</strong></li>
-<li>Enter: <code>*/5 * * * *</code> (every 5 minutes)</li>
-<li>Add <code>CRON_SECRET</code> environment variable:
-    <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import secrets; print(secrets.token_hex(32))&quot;</span>
-</span></code></pre></div></li>
-</ol>
-<h3 id="user-preferences">user preferences<a class="headerlink" href="#user-preferences" title="Permanent link">&para;</a></h3>
-<p>Users can control their alert preferences:</p>
-<ul>
-<li><strong>Health alerts</strong>: Opt in/out of machine offline notifications</li>
-<li><strong>Process alerts</strong>: Opt in/out of process crash notifications</li>
-</ul>
-<h3 id="unsubscribe">unsubscribe<a class="headerlink" href="#unsubscribe" title="Permanent link">&para;</a></h3>
-<p>Each alert email contains a one-click unsubscribe link that disables health alerts for that user.</p>
-<hr />
-<h2 id="testing-emails">testing emails<a class="headerlink" href="#testing-emails" title="Permanent link">&para;</a></h2>
-<h3 id="test-email-page">test email page<a class="headerlink" href="#test-email-page" title="Permanent link">&para;</a></h3>
-<p>Admins can send test emails from <strong>Admin Panel → Email Test</strong> (<code>/admin/test-email</code>):</p>
-<ol>
-<li>Enter a recipient email</li>
-<li>Optionally customize subject and message</li>
-<li>Click <strong>"Send Test Email"</strong></li>
-<li>Verify delivery in your inbox</li>
-</ol>
-<h3 id="simulate-events">simulate events<a class="headerlink" href="#simulate-events" title="Permanent link">&para;</a></h3>
-<p>Test the full alert pipeline from <strong><code>/api/admin/events/simulate</code></strong>:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://your-dashboard.app/api/admin/events/simulate<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Cookie: session=...&quot;</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="s1">    &quot;siteId&quot;: &quot;your-site&quot;,</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="s1">    &quot;event&quot;: &quot;process_crash&quot;,</span>
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="s1">    &quot;data&quot;: {</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="s1">      &quot;machineId&quot;: &quot;DESKTOP-TEST&quot;,</span>
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="s1">      &quot;machineName&quot;: &quot;Test Machine&quot;,</span>
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="s1">      &quot;processName&quot;: &quot;TouchDesigner&quot;,</span>
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="s1">      &quot;errorMessage&quot;: &quot;Process exited with code 1&quot;</span>
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="s1">    }</span>
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="s1">  }&#39;</span>
-</span></code></pre></div>
-<p>This triggers the same email alert flow as a real event, without requiring a real crash.</p>
-<hr />
-<h2 id="environment-variables">environment variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
+<h2 id="setup">setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
+<h3 id="environment-variables">environment variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
@@ -2575,23 +4065,120 @@
 <tbody>
 <tr>
 <td><code>RESEND_API_KEY</code></td>
-<td>Yes</td>
-<td>API key from <a href="https://resend.com">Resend</a></td>
+<td>yes</td>
+<td>Enables Resend email delivery</td>
 </tr>
 <tr>
-<td><code>CRON_SECRET</code></td>
-<td>Yes</td>
-<td>Shared secret for cron authentication</td>
+<td><code>RESEND_FROM_EMAIL</code></td>
+<td>production recommended</td>
+<td>Sender address shown by the admin email config page; falls back to <code>onboarding@resend.dev</code> if unset</td>
 </tr>
 <tr>
 <td><code>ADMIN_EMAIL_PROD</code></td>
-<td>Yes</td>
-<td>Fallback admin email (production)</td>
+<td>production</td>
+<td>Fallback recipient and default test-email target in production</td>
 </tr>
 <tr>
 <td><code>ADMIN_EMAIL_DEV</code></td>
-<td>Yes</td>
-<td>Fallback admin email (development)</td>
+<td>development</td>
+<td>Fallback recipient and default test-email target in development</td>
+</tr>
+<tr>
+<td><code>CRON_SECRET</code></td>
+<td>yes for cron alerts</td>
+<td>Shared secret for health, process, and display alert cron endpoints</td>
+</tr>
+<tr>
+<td><code>CORTEX_INTERNAL_SECRET</code></td>
+<td>yes for threshold and Cortex flows</td>
+<td>Shared secret for <code>/api/alerts/trigger</code>, Cortex autonomous flows, and the Cortex escalation POST route</td>
+</tr>
+</tbody>
+</table>
+<h3 id="cron-routes">cron routes<a class="headerlink" href="#cron-routes" title="Permanent link">&para;</a></h3>
+<p>Configure the cron caller to include the expected secret header for each route:</p>
+<table>
+<thead>
+<tr>
+<th>route</th>
+<th>schedule used by code comments</th>
+<th>auth header</th>
+<th>purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/cron/health-check</code></td>
+<td>every 5 minutes</td>
+<td><code>X-Cron-Secret: &lt;CRON_SECRET&gt;</code></td>
+<td>detects stale machine heartbeats</td>
+</tr>
+<tr>
+<td><code>GET /api/cron/process-alerts</code></td>
+<td>every 3 minutes</td>
+<td><code>X-Cron-Secret: &lt;CRON_SECRET&gt;</code></td>
+<td>drains <code>pending_process_alerts</code> after a 2-minute accumulation window</td>
+</tr>
+<tr>
+<td><code>GET /api/cron/display-alerts</code></td>
+<td>every 3 minutes</td>
+<td><code>X-Cron-Secret: &lt;CRON_SECRET&gt;</code></td>
+<td>drains <code>pending_display_alerts</code> after a 2-minute accumulation window</td>
+</tr>
+<tr>
+<td><code>GET /api/cortex/escalation</code></td>
+<td>cron-style polling</td>
+<td><code>Authorization: Bearer &lt;CRON_SECRET&gt;</code></td>
+<td>processes pending Cortex escalation events</td>
+</tr>
+</tbody>
+</table>
+<p>Threshold alerts are not drained by a cron route. The metrics Cloud Function evaluates stored rules and calls <code>POST /api/alerts/trigger</code> with <code>x-internal-secret: &lt;CORTEX_INTERNAL_SECRET&gt;</code>.</p>
+<hr />
+<h2 id="testing-email-delivery">testing email delivery<a class="headerlink" href="#testing-email-delivery" title="Permanent link">&para;</a></h2>
+<p>Use <strong>Admin Panel -&gt; email</strong> (<code>/admin/email</code>) to verify configuration and send template previews. The page reads current configuration from <code>GET /api/platform/email/config</code>, then sends the selected preview through <code>POST /api/test-email</code>.</p>
+<p>The current test templates are:</p>
+<ul>
+<li><code>test</code></li>
+<li><code>process_crash</code></li>
+<li><code>process_start_failed</code></li>
+<li><code>agent_alert</code></li>
+<li><code>threshold_alert</code></li>
+<li><code>machines_offline</code></li>
+<li><code>cortex_escalation</code></li>
+<li><code>welcome</code></li>
+<li><code>user_signup</code></li>
+</ul>
+<p>The UI sends previews to the configured admin email. The API also accepts optional <code>to</code> and <code>cc</code> fields for direct admin-session calls. Event simulation is not part of the shipped email testing flow.</p>
+<hr />
+<h2 id="rate-limits-and-cooldowns">rate limits and cooldowns<a class="headerlink" href="#rate-limits-and-cooldowns" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>alert path</th>
+<th>protection</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Machine offline</td>
+<td>1-hour cooldown per machine via <code>health.lastCronAlertAt</code></td>
+</tr>
+<tr>
+<td>Process alerts</td>
+<td>3 per hour per <code>machineId:processName</code> before queueing</td>
+</tr>
+<tr>
+<td>Agent alert route</td>
+<td>5 requests per hour per IP</td>
+</tr>
+<tr>
+<td>Display alerts</td>
+<td>1 per hour per machine and event type; <code>display_drift</code> uses a 4-hour window</td>
+</tr>
+<tr>
+<td>Threshold alerts</td>
+<td>rule-specific <code>cooldownMinutes</code> per rule and machine</td>
 </tr>
 </tbody>
 </table>
@@ -2599,20 +4186,17 @@
 <h2 id="troubleshooting">troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <h3 id="no-emails-received">no emails received<a class="headerlink" href="#no-emails-received" title="Permanent link">&para;</a></h3>
 <ol>
-<li>Check <code>RESEND_API_KEY</code> is set in Railway environment variables</li>
-<li>Verify the Resend API key is valid (test at resend.com)</li>
-<li>Check spam/junk folder</li>
-<li>Use the test email page to verify delivery</li>
-<li>Check Railway logs for email-related errors</li>
+<li>Check <strong>Admin Panel -&gt; email</strong> for <code>RESEND_API_KEY</code>, sender, environment, and admin email status.</li>
+<li>Send the <code>test</code> template from <code>/admin/email</code>.</li>
+<li>Confirm the relevant account setting is still enabled for the recipient.</li>
+<li>Check whether the machine is muted for that recipient.</li>
+<li>Verify <code>CRON_SECRET</code> or <code>CORTEX_INTERNAL_SECRET</code> for the route that emits the alert.</li>
+<li>Check Railway or function logs for Resend errors.</li>
 </ol>
+<h3 id="expected-process-or-display-alerts-are-delayed">expected process or display alerts are delayed<a class="headerlink" href="#expected-process-or-display-alerts-are-delayed" title="Permanent link">&para;</a></h3>
+<p>Process alerts and non-critical display alerts are digested. The event must be older than the 2-minute accumulation window before the cron route sends it.</p>
 <h3 id="duplicate-alerts">duplicate alerts<a class="headerlink" href="#duplicate-alerts" title="Permanent link">&para;</a></h3>
-<p>The system has built-in cooldowns (1 hour per machine for offline alerts, rate limits for process alerts). If you're getting duplicates, check that the cron job isn't running more frequently than expected.</p>
-<h3 id="cron-not-running">cron not running<a class="headerlink" href="#cron-not-running" title="Permanent link">&para;</a></h3>
-<ol>
-<li>Verify Railway cron schedule is set: <code>*/5 * * * *</code></li>
-<li>Check that <code>CRON_SECRET</code> matches between the env var and the cron configuration</li>
-<li>Review Railway deployment logs for cron execution</li>
-</ol>
+<p>Check whether multiple emitters are calling the same route. The shipped alert paths include cooldowns or rate limits, but duplicate cron schedules can still create noisy logs and unnecessary route traffic.</p>
 
 
 
@@ -2650,7 +4234,7 @@
       <div class="md-copyright">
   
     <div class="md-copyright__highlight">
-      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">AGPL-3.0</a>
+      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">FSL-1.1-Apache-2.0</a>
     </div>
   
   

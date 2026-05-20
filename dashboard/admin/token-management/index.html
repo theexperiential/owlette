@@ -312,13 +312,57 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../reference/" class="md-tabs__link">
+        <a href="../../../api/overview/" class="md-tabs__link">
           
   
   
     
   
   api
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../cli/overview/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  cli
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../reference/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  reference
 
         </a>
       </li>
@@ -820,6 +864,8 @@
       
         
       
+        
+      
     
     
     
@@ -996,14 +1042,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../project-distribution/" class="md-nav__link">
+      <a href="../../roost/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    project distribution
+    roost
   
 
     
@@ -1077,6 +1123,34 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../../timezones/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    timezones
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -1116,7 +1190,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_9" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_10" checked>
         
           
           <div class="md-nav__link md-nav__container">
@@ -1138,14 +1212,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_9" id="__nav_4_9_label" tabindex="">
+              <label class="md-nav__link " for="__nav_4_10" id="__nav_4_10_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1319,10 +1393,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#token-lifecycle" class="md-nav__link">
+  <a href="#refresh-token-records" class="md-nav__link">
     <span class="md-ellipsis">
       
-        token lifecycle
+        refresh-token records
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rotation-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rotation behavior
       
     </span>
   </a>
@@ -1342,21 +1438,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#revoke-single-token" class="md-nav__link">
+  <a href="#revoke-one-token" class="md-nav__link">
     <span class="md-ellipsis">
       
-        revoke single token
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#revoke-all-tokens-for-a-machine" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        revoke all tokens for a machine
+        revoke one token
       
     </span>
   </a>
@@ -1374,8 +1459,30 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#machine-scoped-revoke" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        machine-scoped revoke
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#effect-on-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        effect on agents
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1480,7 +1587,33 @@
     
       
         
-          
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
         
       
         
@@ -1511,9 +1644,8 @@
         <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
-          <div class="md-nav__link md-nav__container">
-            <a href="../../../reference/" class="md-nav__link ">
-              
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -1527,14 +1659,8 @@
   
   
 
-            </a>
-            
-              
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
-                <span class="md-nav__icon md-icon"></span>
-              </label>
-            
-          </div>
+            <span class="md-nav__icon md-icon"></span>
+          </label>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
@@ -1548,22 +1674,20 @@
           <ul class="md-nav__list" data-md-scrollfix>
             
               
-            
-              
                 
   
   
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/api/" class="md-nav__link">
+      <a href="../../../api/overview/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    rest api
+    overview
   
 
     
@@ -1584,7 +1708,455 @@
   
   
     <li class="md-nav__item">
-      <a href="../webhooks/" class="md-nav__link">
+      <a href="../../../api/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    api reference links
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/developer-preview-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    developer preview checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/status-uptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    status page and uptime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/load-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    load testing and SLOs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/distribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDK and CLI distribution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/launch-assets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch assets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/launch-runbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/pagination/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    pagination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/idempotency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    idempotency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    errors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/rate-limits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rate limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/chunks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chunks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/versions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    versions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/cortex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cortex
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/webhooks/" class="md-nav__link">
         
   
   
@@ -1611,6 +2183,1157 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_19" id="__nav_5_19_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_19">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    sdks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/sdk-node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    node
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/sdk-python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_20" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_20" id="__nav_5_20_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_20_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_20">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/examples/sdk-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdk workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/examples/ci-cd-github-actions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ci/cd github actions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/examples/nightly-sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nightly sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/examples/bulk-create/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    bulk create
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../api/examples/auto-rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auto rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cli
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    cli
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/audit-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    audit log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/installer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    installer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    key
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/listen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    listen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/machine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    machine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/process/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/quota/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quota
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/roost/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    roost
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/site/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    site
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/trigger/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    trigger
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/user/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    user
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    version
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/webhook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    webhook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli/reference/whoami/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    whoami
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../../reference/authentication/" class="md-nav__link">
         
@@ -1619,7 +3342,35 @@
   <span class="md-ellipsis">
     
   
-    authentication
+    platform authentication internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/agent-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    agent commands
   
 
     
@@ -1668,14 +3419,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../reference/agent-commands/" class="md-nav__link">
+      <a href="../../../reference/firestore-data-model/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    agent commands
+    firestore data model
   
 
     
@@ -1798,8 +3549,6 @@
       
         
       
-        
-      
     
     
     
@@ -1815,7 +3564,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1837,14 +3586,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_11" id="__nav_11_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1968,34 +3717,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../../reference/firestore-data-model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    firestore data model
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -2041,10 +3762,32 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#token-lifecycle" class="md-nav__link">
+  <a href="#refresh-token-records" class="md-nav__link">
     <span class="md-ellipsis">
       
-        token lifecycle
+        refresh-token records
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rotation-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rotation behavior
       
     </span>
   </a>
@@ -2064,21 +3807,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#revoke-single-token" class="md-nav__link">
+  <a href="#revoke-one-token" class="md-nav__link">
     <span class="md-ellipsis">
       
-        revoke single token
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#revoke-all-tokens-for-a-machine" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        revoke all tokens for a machine
+        revoke one token
       
     </span>
   </a>
@@ -2096,8 +3828,30 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#machine-scoped-revoke" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        machine-scoped revoke
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#effect-on-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        effect on agents
+      
+    </span>
+  </a>
   
 </li>
       
@@ -2133,11 +3887,15 @@
 
 
 <h1 id="token-management">token management<a class="headerlink" href="#token-management" title="Permanent link">&para;</a></h1>
-<p>View and revoke agent OAuth tokens. Each agent has a refresh token that allows it to authenticate with Firestore.</p>
-<p><strong>Location</strong>: Admin Panel → Token Management (<code>/admin/tokens</code>)</p>
+<p>View agent refresh tokens for a site and revoke them when an agent should no longer be able to reconnect.</p>
+<p><strong>Location</strong>: Admin Panel -&gt; agent tokens (<code>/admin/tokens</code>)</p>
+<div class="admonition note">
+<p class="admonition-title">Permissions</p>
+<p>The admin token page is superadmin-only. The backing site APIs require the <code>GLOBAL_SETTINGS_WRITE</code> capability, so site admins and members cannot use this page.</p>
+</div>
 <hr />
 <h2 id="token-list">token list<a class="headerlink" href="#token-list" title="Permanent link">&para;</a></h2>
-<p>The token management page shows all active agent refresh tokens for a site:</p>
+<p>The page starts with a site selector and a refresh button. After a site is selected, it loads active token records from <code>/api/sites/{siteId}/agent-tokens</code>.</p>
 <table>
 <thead>
 <tr>
@@ -2147,69 +3905,129 @@
 </thead>
 <tbody>
 <tr>
-<td><strong>Machine ID</strong></td>
-<td>The machine's hostname</td>
+<td><strong>machine ID</strong></td>
+<td>Machine hostname recorded when the agent paired or exchanged its installer registration code.</td>
 </tr>
 <tr>
-<td><strong>Agent UID</strong></td>
-<td>Firebase UID assigned to the agent</td>
+<td><strong>version</strong></td>
+<td>Agent version that created the token, or <code>N/A</code> when unavailable.</td>
 </tr>
 <tr>
-<td><strong>Created</strong></td>
-<td>When the token was issued</td>
+<td><strong>status</strong></td>
+<td>Expiry status for the refresh token. Current long-duration tokens usually show <strong>Never expires</strong> because new token records omit <code>expiresAt</code>.</td>
 </tr>
 <tr>
-<td><strong>Last Used</strong></td>
-<td>When the agent last refreshed its access token</td>
+<td><strong>created</strong></td>
+<td>When the refresh token record was created.</td>
 </tr>
 <tr>
-<td><strong>Version</strong></td>
-<td>Agent version that created the token</td>
+<td><strong>last used</strong></td>
+<td>When the agent last used this refresh token to request a new Firebase ID token.</td>
+</tr>
+<tr>
+<td><strong>actions</strong></td>
+<td>Per-token revoke action.</td>
 </tr>
 </tbody>
 </table>
+<p>The API also returns internal fields such as the token record ID, <code>createdBy</code>, and <code>agentUid</code>, but the current UI does not display them.</p>
 <hr />
-<h2 id="token-lifecycle">token lifecycle<a class="headerlink" href="#token-lifecycle" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>1. Admin generates registration code (24h expiry)
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>2. Agent exchanges code for tokens:
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>   ├── Custom Firebase Token (1-hour access token)
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>   └── Refresh Token (long-lived)
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>3. Agent stores refresh token encrypted locally
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>4. Every ~55 minutes: agent refreshes access token
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>5. Server updates lastUsed timestamp
+<h2 id="refresh-token-records">refresh-token records<a class="headerlink" href="#refresh-token-records" title="Permanent link">&para;</a></h2>
+<p>Agent refresh tokens are stored server-side in the <code>agent_refresh_tokens</code> collection. The document ID is the SHA-256 hash of the refresh token, so the durable refresh-token record does not store the raw token in plaintext. During device-code pairing, the raw token is held only on the short-lived pairing document until the agent's single-use poll consumes it and deletes that document.</p>
+<p>Each token record contains:</p>
+<table>
+<thead>
+<tr>
+<th>field</th>
+<th>description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>siteId</code></td>
+<td>Site the token authorizes.</td>
+</tr>
+<tr>
+<td><code>machineId</code></td>
+<td>Machine hostname. The refresh endpoint rejects requests when the submitted machine ID does not match this value.</td>
+</tr>
+<tr>
+<td><code>version</code></td>
+<td>Agent version from the pairing or registration exchange.</td>
+</tr>
+<tr>
+<td><code>createdBy</code></td>
+<td>User who generated or authorized the token flow.</td>
+</tr>
+<tr>
+<td><code>createdAt</code></td>
+<td>Server timestamp for token creation.</td>
+</tr>
+<tr>
+<td><code>lastUsed</code></td>
+<td>Server timestamp updated atomically on refresh.</td>
+</tr>
+<tr>
+<td><code>agentUid</code></td>
+<td>Firebase Auth UID for the agent identity.</td>
+</tr>
+<tr>
+<td><code>expiresAt</code></td>
+<td>Optional expiry. If absent, the refresh token does not expire automatically.</td>
+</tr>
+</tbody>
+</table>
+<p>The token list is sorted newest-first by <code>createdAt</code>.</p>
+<hr />
+<h2 id="lifecycle">lifecycle<a class="headerlink" href="#lifecycle" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>1. A pairing or installer flow creates a short-lived registration artifact:
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>   - installer registration codes expire after 24 hours
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>   - device-code pairing phrases expire after 10 minutes
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>2. After authorization, the server creates:
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>   - a Firebase ID token for immediate agent use
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>   - a long-lived random refresh token
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>   - a hashed refresh-token record in `agent_refresh_tokens`
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>3. The agent stores the raw refresh token locally in
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>   `C:\ProgramData\Owlette\.tokens.enc`.
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>4. The agent caches the one-hour Firebase ID token and refreshes before expiry.
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>5. Each successful refresh updates `lastUsed` and returns a new one-hour Firebase ID token.
 </span></code></pre></div>
+<p>The local token file is encrypted with a machine-specific key derived from the Windows MachineGuid and hostname. It stores the refresh token, cached access token, access-token expiry, and site ID.</p>
+<hr />
+<h2 id="rotation-behavior">rotation behavior<a class="headerlink" href="#rotation-behavior" title="Permanent link">&para;</a></h2>
+<p>Refresh-token rotation is manual. The refresh endpoint does not issue a replacement refresh token during normal access-token refresh; it only returns a new one-hour Firebase ID token.</p>
+<p>To rotate an agent refresh token, revoke the existing token and re-register the agent with a new pairing or installer registration flow. The new flow creates a new refresh-token record and a new raw token stored on the machine.</p>
 <hr />
 <h2 id="revoking-tokens">revoking tokens<a class="headerlink" href="#revoking-tokens" title="Permanent link">&para;</a></h2>
-<h3 id="revoke-single-token">revoke single token<a class="headerlink" href="#revoke-single-token" title="Permanent link">&para;</a></h3>
+<h3 id="revoke-one-token">revoke one token<a class="headerlink" href="#revoke-one-token" title="Permanent link">&para;</a></h3>
 <ol>
-<li>Find the token in the list</li>
-<li>Click <strong>"Revoke"</strong></li>
-<li>The agent loses access and goes offline</li>
+<li>Select the site.</li>
+<li>Find the machine row in the token table.</li>
+<li>Click <strong>revoke</strong>.</li>
+<li>Confirm the dialog.</li>
 </ol>
-<h3 id="revoke-all-tokens-for-a-machine">revoke all tokens for a machine<a class="headerlink" href="#revoke-all-tokens-for-a-machine" title="Permanent link">&para;</a></h3>
-<p>If a machine has multiple tokens (e.g., from reinstallation):</p>
-<ol>
-<li>Click <strong>"Revoke All"</strong> for the machine</li>
-<li>All tokens for that machine ID are deleted</li>
-</ol>
+<p>The page sends the token record ID to <code>/api/sites/{siteId}/agent-tokens/revoke</code>, and the server deletes that one <code>agent_refresh_tokens</code> document after confirming it belongs to the selected site.</p>
 <h3 id="revoke-all-tokens-for-a-site">revoke all tokens for a site<a class="headerlink" href="#revoke-all-tokens-for-a-site" title="Permanent link">&para;</a></h3>
-<p>Nuclear option — revokes every agent token for the site:</p>
+<p>When the selected site has active tokens, the page shows <strong>revoke all</strong>.</p>
 <ol>
-<li>Click <strong>"Revoke All Site Tokens"</strong></li>
-<li>Confirm the action</li>
-<li><strong>All agents</strong> in the site lose access and go offline</li>
+<li>Click <strong>revoke all</strong>.</li>
+<li>Confirm the destructive dialog.</li>
+<li>The server deletes every refresh-token record for that site and returns the revoked count.</li>
 </ol>
-<div class="admonition warning">
-<p class="admonition-title">After revocation</p>
-<p>Revoked agents must be re-registered with a new registration code to reconnect.</p>
-</div>
+<p>This is a site-wide action. Every agent in the selected site must be re-registered before it can regain refresh-token access.</p>
+<h3 id="machine-scoped-revoke">machine-scoped revoke<a class="headerlink" href="#machine-scoped-revoke" title="Permanent link">&para;</a></h3>
+<p>The revoke API also accepts a <code>machineId</code> and can delete all token records for that machine in the selected site. The current admin page does not expose a machine-scoped bulk action; it only exposes per-token revoke and site-wide revoke all.</p>
+<hr />
+<h2 id="effect-on-agents">effect on agents<a class="headerlink" href="#effect-on-agents" title="Permanent link">&para;</a></h2>
+<p>Revocation deletes the refresh-token record immediately. A running agent may continue using a still-valid cached Firebase ID token until that token expires. On the next refresh attempt, the server rejects the deleted refresh token, and the agent clears its encrypted local credentials.</p>
+<p>After that point the agent reports an authentication error or no refresh token, disconnects from Firestore-backed sync, and must be paired again with a new registration or device-code flow.</p>
 <hr />
 <h2 id="when-to-revoke">when to revoke<a class="headerlink" href="#when-to-revoke" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Decommissioning a machine</strong> — Revoke its token to clean up</li>
-<li><strong>Security concern</strong> — If a machine is compromised, revoke immediately</li>
-<li><strong>Duplicate tokens</strong> — If a machine was reinstalled and has stale tokens</li>
-<li><strong>Debugging</strong> — Force an agent to re-authenticate</li>
+<li><strong>Decommissioning a machine</strong> - revoke the token before removing or repurposing the machine.</li>
+<li><strong>Security concern</strong> - revoke immediately if the machine or local token file may be compromised.</li>
+<li><strong>Duplicate registrations</strong> - revoke stale tokens after reinstalling or re-pairing an agent.</li>
+<li><strong>Credential rotation</strong> - revoke and re-register when a new refresh token is required.</li>
 </ul>
 
 
@@ -2248,7 +4066,7 @@
       <div class="md-copyright">
   
     <div class="md-copyright__highlight">
-      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">AGPL-3.0</a>
+      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">FSL-1.1-Apache-2.0</a>
     </div>
   
   

@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://theexperiential.github.io/owlette/dashboard/cortex/">
       
       
-        <link rel="prev" href="../project-distribution/">
+        <link rel="prev" href="../roost/">
       
       
         <link rel="next" href="../activity-logs/">
@@ -312,13 +312,57 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../reference/" class="md-tabs__link">
+        <a href="../../api/overview/" class="md-tabs__link">
           
   
   
     
   
   api
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../cli/overview/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  cli
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  reference
 
         </a>
       </li>
@@ -820,6 +864,8 @@
       
         
       
+        
+      
     
     
     
@@ -996,14 +1042,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../project-distribution/" class="md-nav__link">
+      <a href="../roost/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    project distribution
+    roost
   
 
     
@@ -1107,18 +1153,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#configure-an-llm-provider" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        configure an llm provider
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="configure an llm provider">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
   <a href="#user-level-key" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1130,18 +1164,13 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#site-level-key-admin" class="md-nav__link">
+  <a href="#site-level-key" class="md-nav__link">
     <span class="md-ellipsis">
       
-        site-level key (admin)
+        site-level key
       
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
         
@@ -1187,45 +1216,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="tool tiers">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#tier-1-read-only-auto-approved" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        tier 1: read-only (auto-approved)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tier-2-process-management-auto-approved" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        tier 2: process management (auto-approved)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tier-3-privileged-requires-confirmation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        tier 3: privileged (requires confirmation)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -1236,6 +1226,45 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="how it works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#single-machine-with-local-cortex" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        single machine with local Cortex
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#single-machine-fallback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        single machine fallback
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#site-wide-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        site-wide mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1252,10 +1281,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#how-it-works_1" class="md-nav__link">
+  <a href="#flow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        how it works
+        flow
       
     </span>
   </a>
@@ -1263,10 +1292,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-directive" class="md-nav__link">
+  <a href="#directive" class="md-nav__link">
     <span class="md-ellipsis">
       
-        the directive
+        directive
       
     </span>
   </a>
@@ -1300,28 +1329,6 @@
     <span class="md-ellipsis">
       
         guardrails
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#reviewing-autonomous-actions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        reviewing autonomous actions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#escalation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        escalation
       
     </span>
   </a>
@@ -1387,6 +1394,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../timezones/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    timezones
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -1424,7 +1459,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_9" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_10" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -1446,14 +1481,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_9" id="__nav_4_9_label" tabindex="">
+              <label class="md-nav__link " for="__nav_4_10" id="__nav_4_10_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_9">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1658,7 +1693,33 @@
     
       
         
-          
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
         
       
         
@@ -1689,9 +1750,8 @@
         <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
         
           
-          <div class="md-nav__link md-nav__container">
-            <a href="../../reference/" class="md-nav__link ">
-              
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
   
   
   <span class="md-ellipsis">
@@ -1705,14 +1765,8 @@
   
   
 
-            </a>
-            
-              
-              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
-                <span class="md-nav__icon md-icon"></span>
-              </label>
-            
-          </div>
+            <span class="md-nav__icon md-icon"></span>
+          </label>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
@@ -1726,22 +1780,20 @@
           <ul class="md-nav__list" data-md-scrollfix>
             
               
-            
-              
                 
   
   
   
   
     <li class="md-nav__item">
-      <a href="../../reference/api/" class="md-nav__link">
+      <a href="../../api/overview/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    rest api
+    overview
   
 
     
@@ -1762,7 +1814,455 @@
   
   
     <li class="md-nav__item">
-      <a href="../admin/webhooks/" class="md-nav__link">
+      <a href="../../api/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    api reference links
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/developer-preview-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    developer preview checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/status-uptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    status page and uptime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/load-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    load testing and SLOs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/distribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDK and CLI distribution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/launch-assets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch assets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/launch-runbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/pagination/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    pagination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/idempotency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    idempotency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    errors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/rate-limits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rate limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/chunks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chunks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/versions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    versions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/cortex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cortex
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/webhooks/" class="md-nav__link">
         
   
   
@@ -1789,6 +2289,1157 @@
   
   
   
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_19" id="__nav_5_19_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_19">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    sdks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sdk-node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    node
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sdk-python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_20" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_20" id="__nav_5_20_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_20_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_20">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/sdk-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdk workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/ci-cd-github-actions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ci/cd github actions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/nightly-sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nightly sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/bulk-create/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    bulk create
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/auto-rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auto rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cli
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    cli
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/audit-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    audit log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/installer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    installer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    key
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/listen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    listen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/machine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    machine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/process/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/quota/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quota
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/roost/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    roost
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/site/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    site
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/trigger/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    trigger
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/user/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    user
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    version
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/webhook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    webhook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/whoami/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    whoami
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
     <li class="md-nav__item">
       <a href="../../reference/authentication/" class="md-nav__link">
         
@@ -1797,7 +3448,35 @@
   <span class="md-ellipsis">
     
   
-    authentication
+    platform authentication internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/agent-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    agent commands
   
 
     
@@ -1846,14 +3525,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/agent-commands/" class="md-nav__link">
+      <a href="../../reference/firestore-data-model/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    agent commands
+    firestore data model
   
 
     
@@ -1976,8 +3655,6 @@
       
         
       
-        
-      
     
     
     
@@ -1993,7 +3670,7 @@
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -2015,14 +3692,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_11" id="__nav_11_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_9">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2146,34 +3823,6 @@
 
               
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../reference/firestore-data-model/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    firestore data model
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
           </ul>
         </nav>
       
@@ -2231,18 +3880,6 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#configure-an-llm-provider" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        configure an llm provider
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="configure an llm provider">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
   <a href="#user-level-key" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2254,18 +3891,13 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#site-level-key-admin" class="md-nav__link">
+  <a href="#site-level-key" class="md-nav__link">
     <span class="md-ellipsis">
       
-        site-level key (admin)
+        site-level key
       
     </span>
   </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
         
@@ -2311,45 +3943,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="tool tiers">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#tier-1-read-only-auto-approved" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        tier 1: read-only (auto-approved)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tier-2-process-management-auto-approved" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        tier 2: process management (auto-approved)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tier-3-privileged-requires-confirmation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        tier 3: privileged (requires confirmation)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
 </li>
       
         <li class="md-nav__item">
@@ -2360,6 +3953,45 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="how it works">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#single-machine-with-local-cortex" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        single machine with local Cortex
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#single-machine-fallback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        single machine fallback
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#site-wide-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        site-wide mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2376,10 +4008,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#how-it-works_1" class="md-nav__link">
+  <a href="#flow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        how it works
+        flow
       
     </span>
   </a>
@@ -2387,10 +4019,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-directive" class="md-nav__link">
+  <a href="#directive" class="md-nav__link">
     <span class="md-ellipsis">
       
-        the directive
+        directive
       
     </span>
   </a>
@@ -2424,28 +4056,6 @@
     <span class="md-ellipsis">
       
         guardrails
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#reviewing-autonomous-actions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        reviewing autonomous actions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#escalation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        escalation
       
     </span>
   </a>
@@ -2489,324 +4099,153 @@
 
 
 <h1 id="cortex-ai-chat">cortex (ai chat)<a class="headerlink" href="#cortex-ai-chat" title="Permanent link">&para;</a></h1>
-<p>Cortex is an AI-powered chat interface that lets you interact with your machines through natural language. Ask questions, run diagnostics, manage processes, and execute commands — all through conversation.</p>
+<p>Cortex is the dashboard chat surface for diagnosing and managing machines with an LLM. It supports Anthropic and OpenAI providers, can target either one machine or every online machine in a site, and routes tool calls through the safest available execution path for the current target.</p>
+<p>For the current tool inventory, parameters, tiers, and execution-mode notes, see the <a href="../../reference/cortex-tools/">cortex tools reference</a>.</p>
 <hr />
 <h2 id="overview">overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p>Cortex connects an LLM (Claude or OpenAI) to your machines via 29 specialized tools organized into three tiers:</p>
+<p>Cortex tools are grouped by risk:</p>
 <table>
 <thead>
 <tr>
 <th>tier</th>
 <th>type</th>
 <th>approval</th>
-<th>tools</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><strong>Tier 1</strong></td>
-<td>Read-only</td>
+<td>Read-only diagnostics and site context</td>
 <td>Auto-approved</td>
-<td>13 tools — system info, process lists, logs, metrics, GPU, site logs, presets</td>
 </tr>
 <tr>
 <td><strong>Tier 2</strong></td>
-<td>Process management</td>
+<td>Process and machine management with validated parameters</td>
 <td>Auto-approved</td>
-<td>5 tools — restart, kill, start, set launch mode, screenshot</td>
 </tr>
 <tr>
 <td><strong>Tier 3</strong></td>
-<td>Privileged</td>
+<td>Privileged shell, file, deployment, reboot, and shutdown actions</td>
 <td>Requires confirmation</td>
-<td>11 tools — run commands/scripts, read/write files, deploy software, reboot/shutdown</td>
 </tr>
 </tbody>
 </table>
+<p>The available tier depends on the caller. Site admins and superadmins can use the full tool set. Members are limited to read-only tools. Chat API keys are also capped to read-only tools even if the key owner is an admin.</p>
 <hr />
 <h2 id="setup">setup<a class="headerlink" href="#setup" title="Permanent link">&para;</a></h2>
-<h3 id="configure-an-llm-provider">configure an llm provider<a class="headerlink" href="#configure-an-llm-provider" title="Permanent link">&para;</a></h3>
-<p>Cortex needs an API key from either <strong>Anthropic (Claude)</strong> or <strong>OpenAI</strong>.</p>
-<h4 id="user-level-key">user-level key<a class="headerlink" href="#user-level-key" title="Permanent link">&para;</a></h4>
+<h3 id="user-level-key">user-level key<a class="headerlink" href="#user-level-key" title="Permanent link">&para;</a></h3>
+<p>Cortex can use a personal LLM key from your account settings.</p>
 <ol>
-<li>In the dashboard, open Cortex</li>
-<li>Click the <strong>settings gear</strong> icon</li>
-<li>Select <strong>Provider</strong>: Anthropic or OpenAI</li>
-<li>Enter your <strong>API key</strong></li>
-<li>Optionally select a <strong>model</strong> (defaults to the latest)</li>
-<li>Click <strong>Save</strong></li>
+<li>Open the dashboard account menu.</li>
+<li>Select <strong>account settings</strong>.</li>
+<li>Open the <strong>cortex</strong> section.</li>
+<li>Choose <strong>Anthropic (Claude)</strong> or <strong>OpenAI</strong>.</li>
+<li>Select a model.</li>
+<li>Paste the provider API key and save it.</li>
 </ol>
-<p>Your key is encrypted and stored in Firestore — it's never exposed to the client.</p>
-<h4 id="site-level-key-admin">site-level key (admin)<a class="headerlink" href="#site-level-key-admin" title="Permanent link">&para;</a></h4>
-<p>Admins can set a shared API key for the entire site:</p>
-<ol>
-<li>In the dashboard, open Cortex</li>
-<li>Click the <strong>settings gear</strong> icon</li>
-<li>Switch to the <strong>"Site Key"</strong> tab</li>
-<li>Configure provider and key</li>
-<li>All users on this site can use Cortex without their own key</li>
-</ol>
-<p><strong>Priority</strong>: User key takes precedence over site key.</p>
+<p>The key is encrypted server-side and stored under your user settings. The raw key is not returned to the browser after it is saved.</p>
+<h3 id="site-level-key">site-level key<a class="headerlink" href="#site-level-key" title="Permanent link">&para;</a></h3>
+<p>Cortex also checks for a site-level LLM key at <code>sites/{siteId}/settings/llm</code>. User keys take priority for normal chat, and the site key is the fallback when a user has not configured a personal key.</p>
+<p>Autonomous Cortex uses the site-level key only. The shipped dashboard does not currently include site-level key management; site-level keys are managed through the admin/API surface (<code>/api/settings/site-llm-key</code>) until a dashboard UI is added.</p>
 <hr />
 <h2 id="using-cortex">using cortex<a class="headerlink" href="#using-cortex" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Open Cortex from the dashboard</li>
-<li>Select a <strong>machine</strong> to talk to</li>
-<li>Type a message in natural language</li>
+<li>Open <strong>cortex</strong> from the dashboard header.</li>
+<li>Choose a target from the selector at the top of the chat:</li>
+<li><strong>All Machines</strong> targets every online machine in the selected site.</li>
+<li>An individual machine targets only that machine.</li>
+<li>Type a request in natural language.</li>
 </ol>
+<p>In single-machine mode, Cortex reports and acts on one machine. In <strong>All Machines</strong> mode, tool calls fan out to all online machines in the site and Cortex aggregates per-machine results. If no machines are online, tool calls are not delivered.</p>
 <h3 id="example-conversations">example conversations<a class="headerlink" href="#example-conversations" title="Permanent link">&para;</a></h3>
-<p><strong>Check system health:</strong></p>
+<p><strong>Check site health:</strong></p>
 <blockquote>
-<p>"How's the system doing? Any issues?"</p>
-<p>Cortex calls <code>get_system_info</code> and <code>get_agent_health</code>, then summarizes CPU, memory, disk usage, and connection status.</p>
+<p>"Which machines look unhealthy right now?"</p>
+<p>Cortex can read site logs and fan out diagnostics across online machines, then summarize differences by machine.</p>
 </blockquote>
-<p><strong>Manage processes:</strong></p>
+<p><strong>Manage one process:</strong></p>
 <blockquote>
-<p>"Restart TouchDesigner"</p>
-<p>Cortex calls <code>restart_process</code> with <code>process_name: "TouchDesigner"</code> and reports the result.</p>
+<p>"Restart TouchDesigner on this machine."</p>
+<p>Cortex calls the process-management tool for the selected machine and reports the result.</p>
 </blockquote>
-<p><strong>Diagnose issues:</strong></p>
+<p><strong>Update process configuration:</strong></p>
 <blockquote>
-<p>"Why is the machine running slow?"</p>
-<p>Cortex calls <code>get_system_info</code>, <code>get_running_processes</code>, and <code>get_event_logs</code> to identify resource-heavy processes or recent errors.</p>
+<p>"Fix the TouchDesigner executable path to C:\Program Files\Derivative\TouchDesigner.2025\bin\TouchDesigner.exe."</p>
+<p>Cortex can update configured process fields, add a new process, or delete a process through the same validated server actions used by the dashboard.</p>
 </blockquote>
-<p><strong>Run a command (Tier 3):</strong></p>
+<p><strong>Diagnose a display issue:</strong></p>
 <blockquote>
-<p>"Check the network configuration"</p>
-<p>Cortex requests confirmation to run <code>ipconfig /all</code>, then returns the output.</p>
+<p>"Why is the output frozen?"</p>
+<p>Cortex can inspect process state, logs, GPU usage, and screenshots before suggesting or taking an action.</p>
+</blockquote>
+<p><strong>Run a privileged command:</strong></p>
+<blockquote>
+<p>"Check the detailed network configuration."</p>
+<p>Cortex asks for confirmation before running a privileged shell or PowerShell command.</p>
 </blockquote>
 <hr />
 <h2 id="tool-tiers">tool tiers<a class="headerlink" href="#tool-tiers" title="Permanent link">&para;</a></h2>
-<h3 id="tier-1-read-only-auto-approved">tier 1: read-only (auto-approved)<a class="headerlink" href="#tier-1-read-only-auto-approved" title="Permanent link">&para;</a></h3>
-<p>These tools only read information and never modify anything:</p>
-<table>
-<thead>
-<tr>
-<th>tool</th>
-<th>description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>get_site_logs</code></td>
-<td>Activity logs across all machines in the site (server-side)</td>
-</tr>
-<tr>
-<td><code>get_system_info</code></td>
-<td>CPU, memory, disk, GPU, hostname, OS, uptime, agent version</td>
-</tr>
-<tr>
-<td><code>get_process_list</code></td>
-<td>All owlette-configured processes with status</td>
-</tr>
-<tr>
-<td><code>get_running_processes</code></td>
-<td>All OS processes with CPU/memory usage (filterable)</td>
-</tr>
-<tr>
-<td><code>get_gpu_processes</code></td>
-<td>Per-process GPU/VRAM usage, sorted by consumption</td>
-</tr>
-<tr>
-<td><code>get_network_info</code></td>
-<td>Network interfaces, IP addresses, link status</td>
-</tr>
-<tr>
-<td><code>get_disk_usage</code></td>
-<td>All drives with total/used/free space</td>
-</tr>
-<tr>
-<td><code>get_event_logs</code></td>
-<td>Windows event logs (Application, System, Security)</td>
-</tr>
-<tr>
-<td><code>get_service_status</code></td>
-<td>Status of any Windows service</td>
-</tr>
-<tr>
-<td><code>get_agent_config</code></td>
-<td>owlette agent configuration (tokens stripped)</td>
-</tr>
-<tr>
-<td><code>get_agent_logs</code></td>
-<td>Recent agent log entries (filterable by level)</td>
-</tr>
-<tr>
-<td><code>get_agent_health</code></td>
-<td>Connection state, health probe results</td>
-</tr>
-<tr>
-<td><code>get_system_presets</code></td>
-<td>System presets for software deployments (server-side)</td>
-</tr>
-</tbody>
-</table>
-<h3 id="tier-2-process-management-auto-approved">tier 2: process management (auto-approved)<a class="headerlink" href="#tier-2-process-management-auto-approved" title="Permanent link">&para;</a></h3>
-<p>These wrap existing owlette commands:</p>
-<table>
-<thead>
-<tr>
-<th>tool</th>
-<th>description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>restart_process</code></td>
-<td>Restart an owlette-configured process</td>
-</tr>
-<tr>
-<td><code>kill_process</code></td>
-<td>Kill/stop a process</td>
-</tr>
-<tr>
-<td><code>start_process</code></td>
-<td>Start a stopped process</td>
-</tr>
-<tr>
-<td><code>set_launch_mode</code></td>
-<td>Set launch mode (off, always, scheduled)</td>
-</tr>
-<tr>
-<td><code>capture_screenshot</code></td>
-<td>Capture a screenshot of the machine's desktop</td>
-</tr>
-</tbody>
-</table>
-<h3 id="tier-3-privileged-requires-confirmation">tier 3: privileged (requires confirmation)<a class="headerlink" href="#tier-3-privileged-requires-confirmation" title="Permanent link">&para;</a></h3>
-<p>These tools require you to click <strong>Confirm</strong> before execution:</p>
-<table>
-<thead>
-<tr>
-<th>tool</th>
-<th>description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>run_command</code></td>
-<td>Execute a shell command (allowlist enforced)</td>
-</tr>
-<tr>
-<td><code>run_powershell</code></td>
-<td>Execute a PowerShell command (allowlist enforced)</td>
-</tr>
-<tr>
-<td><code>run_python</code></td>
-<td>Execute a Python script on the machine</td>
-</tr>
-<tr>
-<td><code>execute_script</code></td>
-<td>Execute a PowerShell script with no command restrictions</td>
-</tr>
-<tr>
-<td><code>read_file</code></td>
-<td>Read a file on the machine (max 100KB)</td>
-</tr>
-<tr>
-<td><code>write_file</code></td>
-<td>Write content to a file</td>
-</tr>
-<tr>
-<td><code>list_directory</code></td>
-<td>List directory contents with file sizes and dates</td>
-</tr>
-<tr>
-<td><code>deploy_software</code></td>
-<td>Install or uninstall software using a system preset</td>
-</tr>
-<tr>
-<td><code>reboot_machine</code></td>
-<td>Reboot the Windows machine</td>
-</tr>
-<tr>
-<td><code>shutdown_machine</code></td>
-<td>Shut down the Windows machine</td>
-</tr>
-<tr>
-<td><code>cancel_reboot</code></td>
-<td>Cancel a scheduled reboot or shutdown</td>
-</tr>
-</tbody>
-</table>
-<div class="admonition info">
-<p class="admonition-title">Full tool reference</p>
-<p>See <a href="../../reference/cortex-tools/">Cortex Tools Reference</a> for complete parameter documentation and allowed command lists.</p>
-</div>
+<p>Tier 1 tools read machine or site state, such as system info, logs, process lists, disk usage, GPU state, agent health, and site deployment presets.</p>
+<p>Tier 2 tools perform bounded management actions with validated parameters, such as restarting configured processes, adding/editing/deleting process config, capturing screenshots, managing selected Windows services or update settings, and changing safe machine configuration.</p>
+<p>Tier 3 tools can make broader changes, such as shell execution, file writes, deployment orchestration, reboots, and shutdowns. These require explicit user confirmation from the Cortex UI.</p>
+<p>See the <a href="../../reference/cortex-tools/">cortex tools reference</a> for the current tool list and parameter schemas.</p>
 <hr />
 <h2 id="how-it-works">how it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>User types message
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    │
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    ▼
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>POST /api/cortex (streaming)
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    │
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    ├── Resolve LLM config (user key → site key fallback)
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    ├── Send messages + tool definitions to LLM
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    │
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    ▼
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>LLM decides to call a tool
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    │
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    ├── Tier 1/2: Auto-execute
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    │     │
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>    │     ├── Write command to Firestore pending queue
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    │     ├── Poll for completion (1.5s intervals, 30s timeout)
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    │     └── Return result to LLM
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    │
-</span><span id="__span-0-18"><a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>    └── Tier 3: Request user confirmation
-</span><span id="__span-0-19"><a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>          │
-</span><span id="__span-0-20"><a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>          ├── Dashboard shows confirmation dialog
-</span><span id="__span-0-21"><a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>          ├── User clicks Confirm/Deny
-</span><span id="__span-0-22"><a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>          └── If confirmed: execute and return result
+<p>Cortex has three execution paths.</p>
+<h3 id="single-machine-with-local-cortex">single machine with local Cortex<a class="headerlink" href="#single-machine-with-local-cortex" title="Permanent link">&para;</a></h3>
+<p>When the selected machine is online, local Cortex is healthy, and the caller is a site admin, the dashboard uses the local Cortex path:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>dashboard chat
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  -&gt; POST /api/cortex
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  -&gt; Firestore active-chat pending message
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>  -&gt; local Cortex on the agent runs the LLM and local tools
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>  -&gt; local Cortex writes response updates to Firestore
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>  -&gt; dashboard streams those updates back to the chat
 </span></code></pre></div>
+<p>This keeps the active tool loop close to the machine while still using Firestore as the relay between the web app and agent.</p>
+<h3 id="single-machine-fallback">single machine fallback<a class="headerlink" href="#single-machine-fallback" title="Permanent link">&para;</a></h3>
+<p>If local Cortex is unavailable, or if the caller is not allowed to use the local admin path, the web app runs the LLM request directly:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>dashboard chat
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  -&gt; POST /api/cortex
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  -&gt; resolve user key, then site key fallback
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>  -&gt; web server calls the LLM provider
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>  -&gt; tool calls are relayed to the agent through Firestore commands
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>  -&gt; agent writes completed-command results
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>  -&gt; web server returns the result to the LLM and streams the answer
+</span></code></pre></div>
+<p>Members use this path with a read-only tool tier cap.</p>
+<h3 id="site-wide-mode">site-wide mode<a class="headerlink" href="#site-wide-mode" title="Permanent link">&para;</a></h3>
+<p>When <strong>All Machines</strong> is selected, the web server runs the LLM request directly and fans out tool calls to every online machine in the site:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>dashboard chat
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  -&gt; POST /api/cortex with machineId &quot;__site__&quot;
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  -&gt; web server resolves online machines
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  -&gt; web server calls the LLM provider
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  -&gt; tools either run server-side or fan out through Firestore commands
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  -&gt; per-machine results are aggregated for Cortex
+</span></code></pre></div>
+<p>Server-side tools such as site logs, system presets, deployment orchestration, and process config changes run in the web server instead of routing through a single agent. Process create/update/delete tools call the existing validated process actions directly; the agent applies the resulting config through its normal Firestore listener.</p>
 <hr />
 <h2 id="autonomous-mode">autonomous mode<a class="headerlink" href="#autonomous-mode" title="Permanent link">&para;</a></h2>
-<p>Cortex can operate autonomously as a <strong>cluster manager</strong> — when a process crashes or fails to start, Cortex automatically investigates and attempts remediation without human intervention.</p>
-<h3 id="how-it-works_1">how it works<a class="headerlink" href="#how-it-works_1" title="Permanent link">&para;</a></h3>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Agent detects process crash
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    │
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    ▼
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>POST /api/agent/alert (existing alert system)
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    │
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    ├── Email notifications (existing)
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    ├── Webhook notifications (existing)
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    │
-</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    └── Trigger autonomous Cortex (new)
-</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>          │
-</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>          ▼
-</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    POST /api/cortex/autonomous (internal)
-</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>          │
-</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>          ├── Check: autonomous enabled for site?
-</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>          ├── Check: dedup/cooldown (same crash within 15 min?)
-</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>          ├── Check: concurrency (max 3 active sessions per site)
-</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>          │
-</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>          ▼
-</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>    generateText() with tool calling
-</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>          │
-</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>          ├── Read agent logs → look for errors
-</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>          ├── Check process status → confirm crash
-</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>          ├── Restart process → verify it&#39;s running
-</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>          │
-</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>          ▼
-</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>    Save conversation + update event record
-</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>          │
-</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>          ├── Resolved → logged for review
-</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>          └── Escalated → email admins
+<p>Autonomous Cortex can investigate process crashes or process-start failures without a human starting a chat. It is triggered by the agent alert path, authenticated with <code>CORTEX_INTERNAL_SECRET</code>, and runs against one affected machine.</p>
+<h3 id="flow">flow<a class="headerlink" href="#flow" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>agent alert
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  -&gt; POST /api/agent/alert
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  -&gt; internal POST /api/cortex/autonomous with x-cortex-secret
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  -&gt; check site autonomous settings
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>  -&gt; deduplicate by machine/process cooldown and nonce
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>  -&gt; enforce per-site concurrency
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>  -&gt; run an LLM investigation with tier-capped tools
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>  -&gt; store the event and conversation for review
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>  -&gt; escalate by email when unresolved, offline, or disabled
 </span></code></pre></div>
-<h3 id="the-directive">the directive<a class="headerlink" href="#the-directive" title="Permanent link">&para;</a></h3>
-<p>Every autonomous investigation is guided by a <strong>directive</strong> — a customizable instruction that tells Cortex its mission. The default directive:</p>
-<blockquote>
-<p><em>Keep all configured processes running and machines operational. When a process crashes, check agent logs and system event logs for errors, restart the process. If a restart fails twice, escalate to site admins.</em></p>
-</blockquote>
-<p>Custom directives can be set per-site in Firestore (<code>sites/{siteId}/settings/cortex</code> → <code>directive</code> field).</p>
+<p>Autonomous conversations appear in the Cortex sidebar with an <strong>auto</strong> badge. Event records are stored at <code>sites/{siteId}/cortex-events/</code> with status, summary, tool-call actions, timestamps, and outcomes.</p>
+<h3 id="directive">directive<a class="headerlink" href="#directive" title="Permanent link">&para;</a></h3>
+<p>Every autonomous investigation is guided by a directive. The default mission is to keep configured processes running and machines operational, investigate crashes through logs and process status, restart when appropriate, and escalate if repeated restart attempts fail.</p>
+<p>Custom directives can be set in Firestore at <code>sites/{siteId}/settings/cortex</code> in the <code>directive</code> field.</p>
 <h3 id="enabling-autonomous-mode">enabling autonomous mode<a class="headerlink" href="#enabling-autonomous-mode" title="Permanent link">&para;</a></h3>
 <ol>
-<li><strong>Set the internal secret</strong>: Add <code>CORTEX_INTERNAL_SECRET</code> environment variable in Railway (see <a href="../../setup/environment-variables/">Environment Variables</a>)</li>
-<li><strong>Configure a site-level LLM key</strong>: Autonomous mode uses the site key, not user keys (Cortex Settings → Site Key tab)</li>
-<li><strong>Enable per site</strong> in Firestore Console:<ul>
-<li>Navigate to <code>sites/{your-site-id}/settings/cortex</code></li>
-<li>Set <code>autonomousEnabled</code> to <code>true</code></li>
-</ul>
-</li>
+<li>Set <code>CORTEX_INTERNAL_SECRET</code> in the web runtime environment.</li>
+<li>Configure a site-level LLM key at <code>sites/{siteId}/settings/llm</code>.</li>
+<li>Set <code>sites/{siteId}/settings/cortex.autonomousEnabled</code> to <code>true</code>.</li>
 </ol>
 <h3 id="configuration-options">configuration options<a class="headerlink" href="#configuration-options" title="Permanent link">&para;</a></h3>
 <table>
@@ -2821,75 +4260,56 @@
 <tr>
 <td><code>autonomousEnabled</code></td>
 <td><code>false</code></td>
-<td>Master switch — must be <code>true</code> for autonomous mode</td>
+<td>Master switch for autonomous investigations</td>
 </tr>
 <tr>
 <td><code>directive</code></td>
-<td><em>(see above)</em></td>
-<td>Custom mission text for the AI</td>
+<td>Default directive</td>
+<td>Site-specific mission text for autonomous Cortex</td>
 </tr>
 <tr>
 <td><code>maxTier</code></td>
 <td><code>2</code></td>
-<td>Max tool tier (1=read-only, 2=+process management, 3=+shell commands)</td>
+<td>Maximum tool tier for autonomous investigations</td>
 </tr>
 <tr>
 <td><code>autonomousModel</code></td>
 <td><code>null</code></td>
-<td>Override LLM model (e.g., use a cheaper model for autonomous)</td>
+<td>Optional site-level model override for autonomous work</td>
 </tr>
 <tr>
 <td><code>cooldownMinutes</code></td>
 <td><code>15</code></td>
-<td>Wait time before re-investigating same machine+process</td>
-</tr>
-<tr>
-<td><code>maxEventsPerHour</code></td>
-<td><code>10</code></td>
-<td>Max incoming events processed per hour per site</td>
+<td>Deduplication window for the same machine and process</td>
 </tr>
 <tr>
 <td><code>escalationEmail</code></td>
 <td><code>true</code></td>
-<td>Email site admins when Cortex escalates</td>
+<td>Sends escalation email when Cortex cannot resolve the issue</td>
 </tr>
 </tbody>
 </table>
 <h3 id="guardrails">guardrails<a class="headerlink" href="#guardrails" title="Permanent link">&para;</a></h3>
-<p>Autonomous Cortex has multiple safety layers:</p>
 <ul>
-<li><strong>Opt-in per site</strong> — disabled by default, requires explicit admin action</li>
-<li><strong>Event dedup</strong> — same machine+process won't be investigated again within the cooldown window</li>
-<li><strong>Concurrency cap</strong> — max 3 simultaneous investigations per site</li>
-<li><strong>Step limit</strong> — max 15 tool-calling rounds per investigation</li>
-<li><strong>Restart limit</strong> — system prompt instructs max 2 restart attempts before escalating</li>
-<li><strong>Tier restriction</strong> — default Tier 2 (no shell commands unless admin overrides)</li>
-<li><strong>Offline detection</strong> — if the machine is offline, Cortex immediately escalates instead of wasting LLM calls</li>
+<li>Autonomous mode is opt-in per site.</li>
+<li>Events are deduplicated by machine and process for the configured cooldown window.</li>
+<li>Duplicate nonces are rejected.</li>
+<li>Each site can run only a limited number of active autonomous sessions at once.</li>
+<li>Each investigation has a fixed step limit.</li>
+<li>The default tier cap prevents shell commands unless the site explicitly raises <code>maxTier</code>.</li>
+<li>The per-machine Cortex toggle blocks manual and autonomous tool execution for that machine.</li>
+<li>Offline machines escalate instead of consuming LLM calls.</li>
 </ul>
-<h3 id="reviewing-autonomous-actions">reviewing autonomous actions<a class="headerlink" href="#reviewing-autonomous-actions" title="Permanent link">&para;</a></h3>
-<p>Autonomous conversations appear in the Cortex sidebar with a <strong>⚡ auto</strong> badge. Click to view exactly what Cortex investigated, which tools it called, and what actions it took.</p>
-<p>Event records are stored in Firestore at <code>sites/{siteId}/cortex-events/</code> with full audit trails including tool calls, timestamps, and outcome summaries.</p>
-<h3 id="escalation">escalation<a class="headerlink" href="#escalation" title="Permanent link">&para;</a></h3>
-<p>When Cortex can't resolve an issue (restart fails, unexpected errors, machine offline), it:</p>
-<ol>
-<li>Marks the event as <strong>"escalated"</strong></li>
-<li>Sends an <strong>escalation email</strong> to site admins with:<ul>
-<li>What happened (process name, machine, error)</li>
-<li>What Cortex investigated and attempted</li>
-<li>Why it's escalating</li>
-</ul>
-</li>
-<li>Logs the full conversation for review in the Cortex UI</li>
-</ol>
 <hr />
 <h2 id="security">security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Allowlisted commands</strong>: <code>run_command</code> and <code>run_powershell</code> only allow specific commands (e.g., <code>ipconfig</code>, <code>systeminfo</code>, <code>Get-Process</code>)</li>
-<li><strong>File size limits</strong>: <code>read_file</code> limited to 100KB</li>
-<li><strong>Machine online check</strong>: Cortex verifies the machine is online before executing</li>
-<li><strong>Encrypted API keys</strong>: LLM keys are encrypted at rest in Firestore</li>
-<li><strong>No key exposure</strong>: API keys never leave the server — streaming happens server-side</li>
-<li><strong>Autonomous auth</strong>: Internal endpoint authenticated by shared secret, not exposed to public</li>
+<li>LLM keys are encrypted at rest and resolved only on the server.</li>
+<li>User-level keys are preferred for normal chat; site-level keys are fallback and are required for autonomous mode.</li>
+<li>Tier 3 tools require explicit confirmation in manual chat.</li>
+<li>Server-side Cortex checks site access before every chat request.</li>
+<li>Members and chat-scoped API keys are capped to read-only tools.</li>
+<li>Agent-routed tool calls are delivered through Firestore command documents and return through completed-command records. Server-side tools run in the web process and write their own records or config changes.</li>
+<li>The autonomous endpoint uses <code>x-cortex-secret</code> and is not a public user-session endpoint.</li>
 </ul>
 
 
@@ -2928,7 +4348,7 @@
       <div class="md-copyright">
   
     <div class="md-copyright__highlight">
-      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">AGPL-3.0</a>
+      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">FSL-1.1-Apache-2.0</a>
     </div>
   
   

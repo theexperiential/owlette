@@ -1,0 +1,5813 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Cloud-connected Windows process management and remote deployment system">
+      
+      
+      
+        <link rel="canonical" href="https://theexperiential.github.io/owlette/internal/threat-model/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../owlette.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>roost — threat model - owlette docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="cyan">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#roost-threat-model" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="owlette docs" class="md-header__button md-logo" aria-label="owlette docs" data-md-component="logo">
+      
+  <img src="../../owlette.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            owlette docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              roost — threat model
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="cyan"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="cyan"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/theexperiential/owlette" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    owlette
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  getting started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../agent/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  agent
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../dashboard/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  dashboard
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../api/overview/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  api
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../cli/overview/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  cli
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  architecture
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../troubleshooting/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  troubleshooting
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../changelog/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  changelog
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../setup/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  self-hosting
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="owlette docs" class="md-nav__button md-logo" aria-label="owlette docs" data-md-component="logo">
+      
+  <img src="../../owlette.svg" alt="logo">
+
+    </a>
+    owlette docs
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/theexperiential/owlette" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    owlette
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../agent/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    agent
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    agent
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/process-monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    process monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/system-tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    system tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/remote-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    remote commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/self-update/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    self-update
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../agent/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../dashboard/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    dashboard
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    dashboard
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    getting started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/machine-monitoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    machine monitoring
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/process-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    process management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/deployments/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    deployments
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/roost/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    roost
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/cortex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cortex (ai chat)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/activity-logs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    activity logs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/timezones/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    timezones
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_10" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../dashboard/admin/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    admin
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_10" id="__nav_4_10_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_10">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    admin
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/user-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    user management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/installer-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    installer management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/system-presets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    system presets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/token-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    token management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/email-alerts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    email alerts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../dashboard/admin/webhooks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    webhooks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    api
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    api
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    api reference links
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/developer-preview-checklist/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    developer preview checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/status-uptime/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    status page and uptime
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/load-testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    load testing and SLOs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/distribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SDK and CLI distribution
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/launch-assets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch assets
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/launch-runbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    public launch runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    authentication
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/pagination/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    pagination
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/idempotency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    idempotency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/errors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    errors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/rate-limits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rate limits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/chunks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chunks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/versions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    versions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/cortex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cortex
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/webhooks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    webhooks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_19" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_19" id="__nav_5_19_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdks
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_19_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_19">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    sdks
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sdk-node/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    node
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/sdk-python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    python
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_20" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_20" id="__nav_5_20_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_20_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_20">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/sdk-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    sdk workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/ci-cd-github-actions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ci/cd github actions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/nightly-sync/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    nightly sync
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/bulk-create/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    bulk create
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/examples/auto-rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auto rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cli
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    cli
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/readiness/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    readiness
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/auth/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    auth
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/audit-log/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    audit log
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/chat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    chat
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    deploy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/installer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    installer
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/key/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    key
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/listen/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    listen
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/machine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    machine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/process/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/quota/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    quota
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/rollback/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    rollback
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/roost/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    roost
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/site/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    site
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/trigger/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    trigger
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/user/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    user
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    version
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/webhook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    webhook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../cli/reference/whoami/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    whoami
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/authentication/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    platform authentication internals
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/agent-commands/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    agent commands
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cortex-tools/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    cortex tools
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/firestore-data-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    firestore data model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_11" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../setup/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    self-hosting
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_11" id="__nav_11_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    self-hosting
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/firebase/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    firebase setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/firestore-rules/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    firestore rules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/web-deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    web deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../setup/environment-variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        scope
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="scope">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#in-scope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        in scope
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#out-of-scope-covered-elsewhere" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        out of scope (covered elsewhere)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explicitly-deferred-to-v3-acknowledged-risks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        explicitly deferred to v3 (acknowledged risks)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#threat-actors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        threat actors
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="threat actors">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-this-order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        why this order
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-15-non-negotiable-security-baselines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        the 15 non-negotiable security baselines
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-5-catastrophic-failure-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        the 5 catastrophic failure modes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specific-attack-surfaces-with-mitigations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        specific attack surfaces with mitigations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="specific attack surfaces with mitigations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#zip-bombs-decompression-bombs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        zip bombs / decompression bombs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#touchdesigner-toe-files-embed-python-run-as-system-unless-mitigated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        touchdesigner .toe files embed python (run as system unless mitigated)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#path-traversal-on-assembly-cve-2025-4330-lesson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        path traversal on assembly (cve-2025-4330 lesson)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#hash-collision-on-sha-256" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        hash collision on sha-256
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#manifest-substitution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        manifest substitution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#toctou-between-manifest-check-and-download" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        toctou between manifest check and download
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-tenant-chunk-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cross-tenant chunk read
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ssrf-in-v1-byo-url-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ssrf in v1 byo-url flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tusd-hook-injection-smuggling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tusd hook injection / smuggling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#worker-dispatch-poisoning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        worker dispatch poisoning
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dependency-supply-chain-codecov-2021-npm-sept-2025-worm-axios-2026" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dependency supply chain (codecov 2021, npm sept 2025 worm, axios 2026)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cloudflare-control-plane-outage-cf-nov-2025-archetype" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cloudflare control-plane outage (cf nov 2025 archetype)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compliance-hooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        compliance hooks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="compliance hooks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#gdpr-article-17-right-to-erasure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gdpr article 17 (right to erasure)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#soc-2-cc72-system-monitoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        soc 2 cc7.2 (system monitoring)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#encryption-at-rest" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        encryption at rest
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-residency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        data residency
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#encryption-in-transit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        encryption in transit
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#penetration-testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        penetration testing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="penetration testing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#trigger-thresholds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        trigger thresholds
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#scope_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        scope
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#out-of-scope-cost-containment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        out of scope (cost containment)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#real-precedents-to-internalize" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        real precedents to internalize
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#out-of-scope-for-v2-deferred-to-v3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        out of scope for v2 (deferred to v3)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#change-control-for-this-document" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        change control for this document
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-a-baseline-to-task-crosswalk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        appendix a: baseline-to-task crosswalk
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-b-glossary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        appendix b: glossary
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-c-trust-boundaries-and-data-flows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        appendix c: trust boundaries and data flows
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="appendix c: trust boundaries and data flows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#boundary-1-browser-tusd-cloud-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        boundary 1: browser → tusd (cloud run)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boundary-2-tusd-r2-object-put" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        boundary 2: tusd → r2 (object put)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boundary-3-r2-cloud-function-chunkverify-trigger" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        boundary 3: r2 → cloud function (chunkverify trigger)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boundary-4-web-api-r2-signed-url-issuance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        boundary 4: web api → r2 (signed url issuance)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boundary-5-agent-web-api-download-url-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        boundary 5: agent → web api (download url request)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boundary-6-agent-r2-download-via-signed-url" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        boundary 6: agent → r2 (download via signed url)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boundary-7-agent-local-filesystem-extract-write" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        boundary 7: agent → local filesystem (extract + write)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boundary-8-cloud-functions-firestore-audit-log-writes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        boundary 8: cloud functions → firestore (audit log writes)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boundary-9-agent-firestore-heartbeat-command-poll" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        boundary 9: agent → firestore (heartbeat, command poll)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#boundary-10-cicd-r2-firebase-npm-ev-signing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        boundary 10: ci/cd → r2 + firebase + npm + ev signing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-d-incident-response-runbook-outline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        appendix d: incident response runbook outline
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="appendix d: incident response runbook outline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#severity-ladder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        severity ladder
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#response-time-budget" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        response time budget
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sev-0-sev-1-first-hour-playbook-security-relevant-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sev-0 / sev-1 first-hour playbook (security-relevant only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-triggers-an-incident-vs-an-alert" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        what triggers an incident vs. an alert
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-e-key-secret-rotation-schedule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        appendix e: key + secret rotation schedule
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-f-lessons-that-go-in-this-doc-not-in-code-comments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        appendix f: lessons that go in this doc, not in code comments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-g-threat-actor-playbooks-deep-dive" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        appendix g: threat actor playbooks (deep dive)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="appendix g: threat actor playbooks (deep dive)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#actor-1-opportunistic-firebase-scanner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        actor 1 — opportunistic firebase scanner
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#actor-2-insider-with-stale-owk_" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        actor 2 — insider with stale owk_*
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#actor-3-ransomware-operator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        actor 3 — ransomware operator
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#actor-4-content-defacement-vandal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        actor 4 — content defacement vandal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#actor-5-competitor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        actor 5 — competitor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#actor-6-state-actor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        actor 6 — state actor
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-h-wave-by-wave-security-task-crosswalk" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        appendix h: wave-by-wave security task crosswalk
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="appendix h: wave-by-wave security task crosswalk">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#wave-0-legal-business-infra" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        wave 0 — legal + business + infra
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-1-spikes-foundations-refactor-test-infra" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        wave 1 — spikes + foundations + refactor + test infra
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-2a-server-apis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        wave 2a — server apis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-2b-cloud-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        wave 2b — cloud functions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-3-web-upload-rollback-ui" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        wave 3 — web upload + rollback ui
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-4a-agent-core" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        wave 4a — agent core
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-4b-agent-security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        wave 4b — agent security
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-4c-agent-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        wave 4c — agent tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-5-webhooks-migration-signing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        wave 5 — webhooks + migration + signing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wave-6-beta-cutover" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        wave 6 — beta + cutover
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-i-open-questions-tracked-against-this-doc" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        appendix i: open questions tracked against this doc
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="roost-threat-model">roost — threat model<a class="headerlink" href="#roost-threat-model" title="Permanent link">&para;</a></h1>
+<p><strong>status</strong>: canonical security design constraint for project distribution v2 (roost).
+<strong>created</strong>: 2026-04-19 | <strong>owner</strong>: dylan@roscover.com
+<strong>applies to</strong>: wave 2-5 of <code>dev/active/project-distribution-v2/plan.md</code>. every implementation task in those waves must be implementable against this doc. if a task cannot be implemented without violating a baseline below, the plan is wrong, not this doc.</p>
+<blockquote>
+<p>roost is always lowercase, including in code, docs, and ui. this doc covers the cloud-side (r2, cloud run, cloud functions, firestore) and agent-side (windows service running as <code>nt authority\system</code>) of roost — the content-addressed file sync platform that hosts customer media files.</p>
+</blockquote>
+<hr />
+<h2 id="scope">scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
+<h3 id="in-scope">in scope<a class="headerlink" href="#in-scope" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>customer file storage</strong> — upload, chunking, storage in cloudflare r2, server-side dedup, per-tenant namespace.</li>
+<li><strong>agent download / extract</strong> — windows service pulls chunks, verifies sha-256, assembles files, atomic-swaps into allowlisted destination roots.</li>
+<li><strong>web upload</strong> — drag-and-drop folder upload via uppy + tus + tusd on cloud run; manifest builder web worker.</li>
+<li><strong>api surface</strong> — <code>/api/v2/*</code> next.js routes, cloud functions (<code>chunkVerify</code>, <code>chunkGc</code>, <code>quotaEnforce</code>, <code>distributionFanout</code>, <code>webhookDispatch</code>, <code>auditLog</code>, <code>telemetry</code>), tusd hooks.</li>
+<li><strong>firestore data plane</strong> — pointer documents, distribution records, audit log, manifest metadata.</li>
+<li><strong>r2 control plane</strong> — bucket policies, signed urls, lifecycle rules, per-tenant prefixes.</li>
+<li><strong>identity</strong> — <code>owk_*</code> api keys, firebase id tokens, agent oauth refresh tokens, device pairing phrases.</li>
+<li><strong>build + release pipeline</strong> — installer signing, version pin, checksum publication.</li>
+</ul>
+<h3 id="out-of-scope-covered-elsewhere">out of scope (covered elsewhere)<a class="headerlink" href="#out-of-scope-covered-elsewhere" title="Permanent link">&para;</a></h3>
+<ul>
+<li>v1 single-url distribution security — handled in v1 codebase; ssrf fix tracked separately (see baseline 11).</li>
+<li>agent process supervision (touchdesigner, etc.) — pre-existing; this doc only covers roost surfaces.</li>
+<li>web dashboard non-roost surfaces (metrics, hardware profile, etc.) — pre-existing.</li>
+<li>billing / stripe integration — pci surfaces are stripe-hosted; not in roost scope.</li>
+</ul>
+<h3 id="explicitly-deferred-to-v3-acknowledged-risks">explicitly deferred to v3 (acknowledged risks)<a class="headerlink" href="#explicitly-deferred-to-v3-acknowledged-risks" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>ed25519 / tuf manifest signing</strong> — v2 relies on tls + firebase auth + signed urls + content-addressing for integrity. v3 adds tuf + gcp kms.</li>
+<li><strong>cmek by default</strong> — v2 uses r2 default at-rest encryption. cmek available as enterprise upsell only.</li>
+<li><strong>agent privilege drop below <code>system</code></strong> — v2 agent runs as <code>system</code> for service-control + write-access reasons. v3 splits into a low-priv worker.</li>
+<li><strong>multi-region failover</strong> — single gcp/r2 region in v2.</li>
+</ul>
+<hr />
+<h2 id="threat-actors">threat actors<a class="headerlink" href="#threat-actors" title="Permanent link">&para;</a></h2>
+<p>ordered by <strong>probability</strong>, not severity. mitigations are linked to baselines (<code>B#</code>) and failure modes (<code>F#</code>) below.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>actor</th>
+<th>probability</th>
+<th>motivation</th>
+<th>typical capability</th>
+<th>primary baselines</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>opportunistic firebase scanners</td>
+<td>very high</td>
+<td>mass credential / data harvesting</td>
+<td>scripted scanners against public buckets; gitguardian found 19.8m exposed secrets in misconfigured firebase apps in 2024-2025</td>
+<td>B1, B2, B7, B12, B13</td>
+</tr>
+<tr>
+<td>2</td>
+<td>insider with stale <code>owk_*</code> key</td>
+<td>high</td>
+<td>data exfiltration after offboarding; accidental commit</td>
+<td>possesses a real, unrevoked api key</td>
+<td>B7, B8, B9, B14</td>
+</tr>
+<tr>
+<td>3</td>
+<td>ransomware operators</td>
+<td>high</td>
+<td>bitcoin extortion via signage takedown</td>
+<td>known precedents: bristol airport 2018, atlanta 2018, multiple dooh networks 2023-2025</td>
+<td>B1, B6, B10, F1, F2</td>
+</tr>
+<tr>
+<td>4</td>
+<td>content-defacement vandals</td>
+<td>medium</td>
+<td>shock value, reputational harm to victim</td>
+<td>upload offensive media via stolen creds (union station dc porn-on-billboard 2017 archetype)</td>
+<td>B2, B7, B8, B12</td>
+</tr>
+<tr>
+<td>5</td>
+<td>competitors</td>
+<td>medium</td>
+<td>pre-release ip exfiltration (e.g. unaired campaigns)</td>
+<td>hire ex-employees, social engineer support staff</td>
+<td>B2, B7, B8, B14</td>
+</tr>
+<tr>
+<td>6</td>
+<td>state actors</td>
+<td>low (but tail risk)</td>
+<td>intelligence on critical infra (airport, embassy, doe installs)</td>
+<td>full apt toolkit; supply-chain capable</td>
+<td>B10, B14, F4, plus v3 tuf signing</td>
+</tr>
+</tbody>
+</table>
+<h3 id="why-this-order">why this order<a class="headerlink" href="#why-this-order" title="Permanent link">&para;</a></h3>
+<p>probability is calibrated to <strong>what has actually happened</strong> to comparable saas + signage-network operators in the last 5 years, not to hypothetical sophistication. an opportunistic scanner finding an unauthenticated r2 bucket is orders of magnitude more likely than a state actor pivoting through an installer signing cert. the design must defend against the high-probability cases first, with defense-in-depth covering the tail.</p>
+<hr />
+<h2 id="the-15-non-negotiable-security-baselines">the 15 non-negotiable security baselines<a class="headerlink" href="#the-15-non-negotiable-security-baselines" title="Permanent link">&para;</a></h2>
+<p>every wave 2-5 task must satisfy or extend these. <strong>if a task removes one of these, it is not shippable.</strong> deviations require explicit doc update + sign-off.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>baseline</th>
+<th>threat addressed</th>
+<th>mitigation</th>
+<th>wave / task</th>
+<th>verification test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>B1</td>
+<td>default-deny <code>storage.rules</code> (r2 bucket policy)</td>
+<td>actor 1, 3, 4 — public bucket exposure</td>
+<td>r2 bucket policy denies all unsigned reads + writes by default; only signed urls and worker-bound credentials allowed; ci test runs unauthenticated curl against a known chunk path and asserts http 403</td>
+<td>wave 1.8 (firestore.rules) + wave 1.4 (<code>storage/r2-bucket-policy.json</code>)</td>
+<td><code>tests/storage/test_default_deny.py</code> — fails build if 200/206 returned for unsigned read</td>
+</tr>
+<tr>
+<td>B2</td>
+<td><code>customerId</code> / <code>siteId</code> derived from token claims, never request body</td>
+<td>actors 1, 2, 4, 5 — cross-tenant access via parameter tampering</td>
+<td>every <code>/api/v2/*</code> route resolves tenant ids from <code>requireAdminOrIdToken()</code> claims; request body fields ignored if present; lint rule (<code>web/lint/no-tenant-from-body</code>) fails on <code>req.body.siteId</code> reads</td>
+<td>wave 2a.1-2a.6 (api stubs, already wired)</td>
+<td><code>__tests__/api/v2/tenant-isolation.test.ts</code> — sends mismatched body siteid + token siteid, asserts 403</td>
+</tr>
+<tr>
+<td>B3</td>
+<td>signed-url ttl ≤15min download, ≤60min upload, single-object scope</td>
+<td>actors 1, 2 — leaked url replay window</td>
+<td>r2 presigned urls issued with <code>X-Amz-Expires</code> capped at 900s (download) / 3600s (upload); url scope is single chunk hash, never prefix</td>
+<td>wave 2a.2 (<code>/api/v2/chunks/upload-urls</code>), 2a.3 (<code>/api/v2/chunks/download-urls</code>)</td>
+<td><code>__tests__/api/v2/signed-url-ttl.test.ts</code> — asserts every issued url has <code>X-Amz-Expires ≤ 900/3600</code> and exact-key scope</td>
+</tr>
+<tr>
+<td>B4</td>
+<td>content-addressed chunks; agent re-hashes after download</td>
+<td>actors 1, 3, 6 — chunk substitution at rest, in transit, or mitm of r2 cdn edge</td>
+<td>chunk filename <strong>is</strong> the sha-256 of its bytes; agent re-computes sha-256 after download and rejects mismatched chunks via <code>sync_downloader.py</code></td>
+<td>wave 1.1 spike + wave 4a (<code>agent/src/sync_downloader.py</code>)</td>
+<td><code>agent/tests/test_chunk_verify.py::test_corrupted_chunk_rejected</code> — replaces chunk byte at random offset, asserts download fails</td>
+</tr>
+<tr>
+<td>B5</td>
+<td>cloud-function-validated chunk uploads (server sha-256 verify on storage trigger)</td>
+<td>actor 4 — uploading content under wrong hash to poison dedup pool</td>
+<td><code>functions/src/chunkVerify.ts</code> triggers on r2 put (via cloudflare worker → pubsub bridge), recomputes sha-256, deletes object if mismatch + writes audit entry; chunk filename <strong>must</strong> equal computed hash or the object is purged within 60s</td>
+<td>wave 2b (<code>functions/src/chunkVerify.ts</code>)</td>
+<td><code>functions/__tests__/chunkVerify.test.ts</code> — uploads object named <code>&lt;hashA&gt;</code> containing bytes that hash to <code>&lt;hashB&gt;</code>, asserts deletion within 60s</td>
+</tr>
+<tr>
+<td>B6</td>
+<td>per-file <code>destination_allowlist</code> validation before atomic rename + realpath check + reject symlinks on windows</td>
+<td>actor 3, 4, 6 — path traversal on extract, symlink swap to <code>c:\windows\system32</code></td>
+<td>v2 does <strong>not</strong> unpack archives — there is no <code>tarfile</code> / <code>zipfile</code> call site. instead, <code>agent/src/sync_assembler.py</code> (planned, wave 4a.5/4b.2) does per-file chunked assembly: for every file in the manifest, the destination path is validated against the <code>destination_allowlist</code> module (wave 1.7) <strong>before</strong> any bytes are written; <code>os.path.realpath(target).startswith(allowed_root)</code> is asserted for every file; any <code>os.path.islink()</code> entry is rejected outright on windows (audit entry written); only after all checks pass does the agent write <code>&lt;path&gt;.partial</code>, fsync, and <code>MoveFileEx</code>. installer pins bundled python to ≥3.12 (existing 3.9 floor is a breaking change — user-approved per context.md) for <code>pathlib.Path</code> improvements + general security posture. <strong>lesson from cve-2025-4330</strong>: even mature stdlib path-validation (python's <code>data</code> filter) has been bypassed via crafted member names; defense in depth (multiple independent checks per file) is mandatory, not optional. see <a href="../manifest-format/#validation">manifest-format.md <code>validation</code></a> for the schema-level constraints that complement these runtime checks.</td>
+<td>wave 4b.2 + wave 1.7 (<code>destination_allowlist.py</code>)</td>
+<td><code>agent/tests/test_path_traversal.py</code> — manifest with <code>../../etc/passwd</code> member; manifest with windows symlink; assert both rejected with named exception</td>
+</tr>
+<tr>
+<td>B7</td>
+<td>per-customer storage quotas + per-token signed-url rate limits</td>
+<td>actors 1, 2, 4 + failure mode F1 — runaway r2 bill, quota abuse</td>
+<td>tusd pre-upload hook checks customer quota in firestore before issuing tus session; daily reconcile job recomputes from r2 list; <code>quotaEnforce.ts</code> cloud function emits 50/80/100% alarms; per-<code>owk_*</code>-token signed-url rate limiter (token-bucket, redis or firestore counter) caps url issuance; hard cap returns http 402 + upgrade cta</td>
+<td>wave 2b (<code>functions/src/quotaEnforce.ts</code>) + tusd hook</td>
+<td><code>functions/__tests__/quota.test.ts</code> — burst 100 url requests, assert rate-limit kicks in; upload past hard cap, assert 402</td>
+</tr>
+<tr>
+<td>B8</td>
+<td>append-only audit log of signed-url issuance, distribution starts, <code>owk_*</code> use, manifest pointer changes, gc runs</td>
+<td>actors 2, 3, 4, 5 — investigation + soc 2 cc7.2 evidence</td>
+<td><code>functions/src/auditLog.ts</code> writes immutable entries (firestore subcollection with rules denying update + delete); every signed url issuance, distribution start, <code>owk_*</code> request, manifest pointer compare-and-swap, and gc mark/sweep gets an entry with actor identity, timestamp, action, target</td>
+<td>wave 2b (<code>functions/src/auditLog.ts</code>)</td>
+<td>firestore.rules must reject update/delete on <code>auditLog/{entryId}</code>; <code>firestore.rules.test.ts</code> covers it</td>
+</tr>
+<tr>
+<td>B9</td>
+<td>no tokens in logs — enforced by pre-commit lint rule, not just policy</td>
+<td>actors 1, 2 — credential exfil via log aggregation, support tickets</td>
+<td>pre-commit hook + ci lint rule scans diffs for <code>Bearer</code>, <code>owk_</code>, <code>firebase-id-token</code>, <code>refresh_token</code>, <code>access_token</code> in any <code>*.py</code>, <code>*.ts</code>, <code>*.tsx</code> log/print statement; rule lives in <code>.claude/hooks/no-token-logs.mjs</code></td>
+<td>wave 1 (pre-commit infra) + ongoing</td>
+<td><code>tests/lint/no-token-logs.test.ts</code> — staged file with <code>logger.info(f"token={token}")</code> fails commit</td>
+</tr>
+<tr>
+<td>B10</td>
+<td>authenticode-signed installer; sha-256 published in firestore; ephemeral build vm</td>
+<td>actors 3, 6 — installer trojan via build-server compromise</td>
+<td>ev code-signing cert (6-8 week lead time per plan wave 0.7); installer build runs on ephemeral vm (gcp shielded vm, fresh per release); sha-256 published to <code>installer_metadata/{version}</code> doc and shown in admin ui; <code>add</code> page asserts checksum match before accepting download</td>
+<td>wave 0.7 + wave 5 release flow</td>
+<td>manual: corrupt installer in transit, assert agent-side checksum check rejects</td>
+</tr>
+<tr>
+<td>B11</td>
+<td>ssrf allowlist + metadata-ip denylist + redirect-disable on every customer-url fetcher</td>
+<td>actors 1, 2, 6 — pivot from cloud function into gcp/aws metadata service (169.254.169.254)</td>
+<td>every server-side fetch of a customer-supplied url (v1 byo-url flow, future webhook destinations, manifest-builder edge cases) goes through <code>web/lib/safeFetch.ts</code>: rejects rfc1918 (10/8, 172.16/12, 192.168/16), link-local (169.254/16, fe80::/10), loopback (127/8, ::1), metadata ips (169.254.169.254, 169.254.170.2, fd00:ec2::254), aws/gcp/azure imds; disables http redirects (<code>redirect: 'manual'</code>); enforces https-only for prod; explicit allowlist for known integration hosts</td>
+<td>wave 5 (webhooks) + <strong>v1 hot-fix in parallel</strong> (do not defer to v1 deprecation per plan.md risks)</td>
+<td><code>web/__tests__/lib/safeFetch.test.ts</code> — 200+ malicious url fixtures from ssrf-bible, assert all rejected</td>
+</tr>
+<tr>
+<td>B12</td>
+<td>filename sanitization at upload; safe rendering in dashboard</td>
+<td>actors 4, 5 — stored xss via <code>&lt;img onerror=alert(1)&gt;.toe</code> filename</td>
+<td><code>web/lib/sanitize.ts</code> strips control chars, normalizes unicode (nfkc), rejects path separators, caps length 255; dashboard renders filenames via react text nodes only — <strong>never <code>dangerouslySetInnerHTML</code></strong>; eslint rule <code>react/no-danger</code> set to <code>error</code> repo-wide</td>
+<td>wave 3 (<code>web/lib/sanitize.ts</code>) + lint config</td>
+<td><code>__tests__/lib/sanitize.test.ts</code> — payloads from xss-cheat-sheet; ui snapshot test asserts no html injection in filename column</td>
+</tr>
+<tr>
+<td>B13</td>
+<td><code>X-Frame-Options: DENY</code> + baseline csp</td>
+<td>actors 4 — clickjacking on dashboard, deployment-confirm flows</td>
+<td><code>next.config.js</code> headers block sets <code>X-Frame-Options: DENY</code>, <code>Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://*.firebaseapp.com; connect-src 'self' https://*.googleapis.com https://*.cloudflare.com wss://*; frame-ancestors 'none'</code>; csp tightened iteratively to remove <code>unsafe-inline</code> (tracked separately)</td>
+<td>wave 2a (next.js config)</td>
+<td><code>__tests__/headers.test.ts</code> — assert headers present on every route</td>
+</tr>
+<tr>
+<td>B14</td>
+<td>hardware-backed mfa on every firebase admin / gcp owner / npm publisher / signing-cert holder</td>
+<td>actors 2, 3, 6 — credential reuse (dropbox 2012/2016 archetype)</td>
+<td>yubikey 5 (or equivalent fido2) required for: firebase project owners, gcp project owners, npm <code>@owlette/*</code> publish accounts, ev code-signing cert custodian, cloudflare account, registrar account; sms + totp explicitly disallowed for these accounts; documented in <code>docs/internal/key-custody.md</code> (separate doc, not this one)</td>
+<td>wave 0 ops (key custody)</td>
+<td>quarterly attestation: list account holders, confirm mfa method per account, store screenshot evidence</td>
+</tr>
+<tr>
+<td>B15</td>
+<td>documented deletion sla in dpa</td>
+<td>gdpr art. 17, soc 2, customer trust</td>
+<td>dpa (wave 0.1, lawyer-drafted) commits to: 30-day hard-delete from r2 + firestore; 90-day soft-delete expiry (manifest pointer hidden, chunks marked for gc, full purge after 90d); per-tenant deletion api at <code>/api/v2/customers/{customerId}/data</code> (admin-only)</td>
+<td>wave 0.1 + wave 5 (deletion api)</td>
+<td><code>__tests__/api/v2/data-deletion.test.ts</code> — issue delete, assert manifest pointer hidden in &lt;1min, chunks tombstoned, scheduled purge entry created</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="the-5-catastrophic-failure-modes">the 5 catastrophic failure modes<a class="headerlink" href="#the-5-catastrophic-failure-modes" title="Permanent link">&para;</a></h2>
+<p>these are failure modes that would not be prevented by the baselines above unless explicitly addressed. <strong>each must have a named task in the plan that closes the gap.</strong> if any of these is not a tracked task at wave-start, the plan is incomplete.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>failure mode</th>
+<th>blast radius</th>
+<th>mitigation in plan</th>
+<th>verification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>F1</td>
+<td>per-customer storage / egress quota enforcement does not exist as a task → unbounded r2 bill</td>
+<td>catastrophic financial exposure: a single misconfigured customer or runaway agent could rack up $10k+ in egress in hours; r2 egress is free but put/get and storage are not</td>
+<td>wave 2b <code>quotaEnforce.ts</code> + tusd pre-upload hook + daily reconcile + 50/80/100% alarms (B7) — must exist as a tracked task before wave 3 ui ships, not bolted on later</td>
+<td>load test: 1tb upload from a single token in 1h; assert hard-cap kicks in at tier limit and 402 returned</td>
+</tr>
+<tr>
+<td>F2</td>
+<td>chunk gc is undesigned → first gc run deletes live chunks</td>
+<td>fleet-wide breakage: every agent referencing a deleted chunk fails its next sync; rollback impossible if previous-version chunks are gone</td>
+<td>wave 2b <code>chunkGc.ts</code>: nightly mark-and-sweep, <strong>30-day tombstone</strong> (deleted chunks recoverable for 30d), <strong>dry-run mode for first month in production</strong> (logs what would be deleted but deletes nothing), <strong>pause-during-publish</strong> (gc holds a global lock that publish operations check), per-tenant scope (no cross-tenant gc)</td>
+<td>dry-run validation: 30 consecutive nights of dry-run output reviewed; zero false positives required before enabling delete mode</td>
+</tr>
+<tr>
+<td>F3</td>
+<td>manifest pointer race + no rollback pin → two rapid publishes corrupt fleet state</td>
+<td>partial fleet on v1, partial on v2, partial on a torn intermediate state; no clear "good version" to roll back to</td>
+<td>firestore transaction with compare-and-swap on <code>currentManifestId</code>; atomic write of <code>previousManifestId</code>; agent <strong>pins the manifest revision</strong> at start of download (toctou mitigation — see attack surfaces below) and refuses to switch mid-download; rollback ui (wave 3) flips pointer back to <code>previousManifestId</code> in single transaction</td>
+<td>concurrency test: 100 concurrent publishes against same folder, assert exactly one wins per round, no torn state in firestore</td>
+</tr>
+<tr>
+<td>F4</td>
+<td>allowlist of destination roots has no schema / default / ui / migration → system-level arbitrary file write</td>
+<td>catastrophic: agent runs as <code>system</code>; if allowlist is empty, missing, or accepts <code>*</code>, a malicious manifest writes anywhere on disk (e.g. <code>c:\windows\system32\drivers\evil.sys</code>)</td>
+<td>wave 1.7 <code>agent/src/destination_allowlist.py</code> (already landed): <strong>fail-closed if list is empty or missing</strong>; default at install: <code>[~/Documents/Owlette]</code>; admin ui (<code>web/components/AllowlistEditor.tsx</code>) for explicit additions; migration on agent upgrade preserves existing allowlist; manifest extract checks every member's realpath against allowlist (B6)</td>
+<td><code>agent/tests/test_allowlist.py::test_empty_allowlist_fails_closed</code> + <code>test_realpath_escape_rejected</code></td>
+</tr>
+<tr>
+<td>F5</td>
+<td>wave 0 legal items not hard blockers on customer-facing upload → bmg v. cox class liability ($25m precedent)</td>
+<td>regulatory + civil: dmca repeat-infringer policy not enforced → contributory copyright liability; no insurance → uninsured loss; no tos → no enforceable terms</td>
+<td>plan.md "hard blocks" section: <strong>v2 upload ui cannot be enabled for any external account</strong> until wave 0.1 (tos), 0.2 (dmca + actual repeat-infringer enforcement), 0.3 (cyber insurance) all complete; ui flag gated on firestore feature flag tied to legal-readiness signoff</td>
+<td>manual signoff doc (wave 0 exit criteria); ci check that asserts <code>ENABLE_V2_UPLOAD=false</code> in any environment whose <code>legal_ready=false</code> flag is set</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="specific-attack-surfaces-with-mitigations">specific attack surfaces with mitigations<a class="headerlink" href="#specific-attack-surfaces-with-mitigations" title="Permanent link">&para;</a></h2>
+<h3 id="zip-bombs-decompression-bombs">zip bombs / decompression bombs<a class="headerlink" href="#zip-bombs-decompression-bombs" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>threat</strong>: customer uploads a 1mb file that decompresses to 10tb, exhausting agent disk + crashing service.</li>
+<li><strong>mitigation</strong>: agent enforces decompression-ratio cap of <strong>100:1</strong> during extract (<code>sync_assembler.py</code>); aborts with named error if exceeded; per-file uncompressed-size cap matches tier max-file-size (5gb starter, 10gb pro, 50gb enterprise); manifest-declared total size validated against r2-reported sum before download begins.</li>
+<li><strong>verification</strong>: <code>agent/tests/test_zip_bomb.py</code> — synthetic 100kb gz that expands to 1gb, assert rejected.</li>
+</ul>
+<h3 id="touchdesigner-toe-files-embed-python-run-as-system-unless-mitigated">touchdesigner <code>.toe</code> files embed python (run as system unless mitigated)<a class="headerlink" href="#touchdesigner-toe-files-embed-python-run-as-system-unless-mitigated" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>threat</strong>: opening a <code>.toe</code> file in touchdesigner runs embedded python; agent runs as <code>system</code>; if the agent ever invokes touchdesigner directly on an extracted file (or the supervised process does), an attacker-controlled <code>.toe</code> from a compromised account = full system rce.</li>
+<li><strong>mitigation (v2)</strong>:</li>
+<li>agent <strong>never</strong> invokes touchdesigner — it only writes files; touchdesigner is launched by the supervised process tree, which has its own security boundary.</li>
+<li>optional virustotal scan hook on upload (cloud function <code>virusTotalScan.ts</code> deferred to v3 — tracked).</li>
+<li>customer-level acl: only <code>admin</code> and <code>superadmin</code> roles can publish manifests for a site (gated by <code>isSiteAdmin(siteId)</code>); <code>member</code> role cannot.</li>
+<li>audit log on every manifest publish (B8).</li>
+<li><strong>mitigation (v3)</strong>: drop agent below <code>system</code> (separate low-priv worker process); see "out of scope".</li>
+<li><strong>verification</strong>: code review checklist — no <code>subprocess.run(['touchdesigner.exe', ...])</code> in agent codebase; <code>tests/agent/test_no_touchdesigner_invocation.py</code> greps for it.</li>
+</ul>
+<h3 id="path-traversal-on-assembly-cve-2025-4330-lesson">path traversal on assembly (cve-2025-4330 lesson)<a class="headerlink" href="#path-traversal-on-assembly-cve-2025-4330-lesson" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>threat</strong>: malicious manifest declares a file path <code>../../../windows/system32/drivers/evil.sys</code>. note: v2 does <strong>not</strong> extract archives — there is no <code>tarfile</code>/<code>zipfile</code> call site. assembly is per-file from chunks listed in the manifest, so the attack surface is the manifest-declared path, not an archive member name. cve-2025-4330's lesson still applies: even mature stdlib path-validation (python's <code>data</code> filter) has been bypassed via crafted member names, so a single-layer defense is insufficient.</li>
+<li><strong>mitigation (defense in depth, all three required)</strong>:</li>
+<li><strong>per-file <code>destination_allowlist</code> check</strong> before any bytes are written (wave 1.7 module, enforced in <code>agent/src/sync_assembler.py</code> per B6); fail-closed if the allowlist is empty or missing.</li>
+<li><strong>independent realpath check</strong>: for every file, compute <code>os.path.realpath(target_path)</code> and assert <code>startswith(allowlisted_root)</code> (B6); reject otherwise. catches normalization tricks the allowlist string match might miss.</li>
+<li><strong>reject <code>os.path.islink()</code></strong> outright on windows (windows symlinks require <code>SeCreateSymbolicLinkPrivilege</code>, which agent has as <code>system</code> — a malicious symlink could swap-in arbitrary content after assembly).</li>
+<li><strong>verification</strong>: <code>agent/tests/test_path_traversal.py</code> covers all three layers; manifest fixture with <code>../</code>-laden path stored in <code>agent/tests/fixtures/path_traversal_manifest.json</code>.</li>
+</ul>
+<h3 id="hash-collision-on-sha-256">hash collision on sha-256<a class="headerlink" href="#hash-collision-on-sha-256" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>status</strong>: theoretical only. sha-256 has no known practical collision (as of 2026-04). chosen-prefix collision cost estimate: ~$1.2b in compute. <strong>document this so future engineers do not re-litigate the choice.</strong></li>
+<li><strong>mitigation if it ever materializes</strong>: manifest format includes <code>hash_algorithm</code> field (<code>sha-256</code> today); transition path is to publish new manifest media type with stronger hash and dual-write during cutover. v3 tuf integration will support hash agility natively.</li>
+<li><strong>verification</strong>: none required at v2; tracked as a v4+ contingency.</li>
+</ul>
+<h3 id="manifest-substitution">manifest substitution<a class="headerlink" href="#manifest-substitution" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>threat</strong>: attacker swaps a published manifest's bytes for malicious content while keeping the firestore pointer the same.</li>
+<li><strong>mitigation</strong>: defeated by content-addressing — the chunk hash <strong>is</strong> the storage key. you cannot swap bytes without also changing the key, and the key is recorded in firestore + audit log + agent local sqlite. tampering requires writing to multiple independent stores simultaneously. see <a href="../manifest-format/#hash-constraints">manifest-format.md <code>goals</code> and <code>chunk constraints</code></a> for the content-addressing invariants this defense relies on.</li>
+<li><strong>verification</strong>: <code>tests/integration/test_manifest_substitution.py</code> — replace manifest bytes in r2, assert agent rejects on next sync (sha-256 mismatch).</li>
+</ul>
+<h3 id="toctou-between-manifest-check-and-download">toctou between manifest check and download<a class="headerlink" href="#toctou-between-manifest-check-and-download" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>threat</strong>: agent reads <code>currentManifestId = vN</code> at t0; before agent finishes downloading vN's chunks, a publish moves pointer to vN+1; agent ends up with a torn state (some vN chunks, some vN+1 chunks).</li>
+<li><strong>mitigation</strong>: agent <strong>pins the manifest revision</strong> at the start of a download cycle (<code>sync_state.py</code> records <code>pinned_manifest_id</code> in sqlite wal); refuses to switch mid-download; on completion, checks pointer one more time — if pointer has moved, agent re-runs sync against new pointer (idempotent due to content-addressing). publish operations check the global gc / publish lock to ensure they don't conflict.</li>
+<li><strong>verification</strong>: <code>tests/integration/test_manifest_toctou.py</code> — race a publish against an in-flight download; assert agent finishes pinned revision then re-syncs cleanly.</li>
+</ul>
+<h3 id="cross-tenant-chunk-read">cross-tenant chunk read<a class="headerlink" href="#cross-tenant-chunk-read" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>threat</strong>: tenant a obtains tenant b's chunk hash (e.g. via a leaked manifest or guessing) and requests download.</li>
+<li><strong>mitigation</strong>: per-tenant path prefix <code>project-content/{siteId}/{hash[0:2]}/{hash}</code> — chunks are physically isolated by <code>siteId</code> namespace (not in a shared global pool). r2 bucket policy + signed-url issuance route (B2) ensures <code>siteId</code> in path matches <code>siteId</code> in token claims. dedup is <strong>per-tenant</strong>, not global — a chunk uploaded by tenant a is not automatically reusable by tenant b (eliminates a class of side-channel attacks where reuse confirms presence of specific content).</li>
+<li><strong>verification</strong>: <code>__tests__/api/v2/cross-tenant-read.test.ts</code> — request signed url for <code>siteId=B</code>'s chunk using <code>siteId=A</code>'s token; assert 403.</li>
+</ul>
+<h3 id="ssrf-in-v1-byo-url-flow">ssrf in v1 byo-url flow<a class="headerlink" href="#ssrf-in-v1-byo-url-flow" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>threat</strong>: v1 distribution accepts a customer-supplied url and fetches it server-side; attacker supplies <code>http://169.254.169.254/latest/meta-data/iam/security-credentials/</code> and exfiltrates gcp metadata service tokens.</li>
+<li><strong>mitigation</strong>: B11 (<code>web/lib/safeFetch.ts</code>) <strong>must be patched into v1 in parallel with v2 work</strong> — explicitly called out in plan.md risks: "ssrf in v1 byo-url flow — fix v1 in parallel with v2 (don't wait for deprecation)". v1 is not safe to keep running in production without this patch even though it's being deprecated; deprecation is calendar-months away (wave 6.4).</li>
+<li><strong>verification</strong>: ssrf-bible fixture suite run against v1 byo-url endpoint; assert all malicious urls rejected.</li>
+</ul>
+<h3 id="tusd-hook-injection-smuggling">tusd hook injection / smuggling<a class="headerlink" href="#tusd-hook-injection-smuggling" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>threat</strong>: tusd pre-upload hook receives request from tusd over http; if hook auth is missing or weak, anyone who can reach the hook url can authorize uploads bypassing quota.</li>
+<li><strong>mitigation</strong>: tusd → cloud-function hook secured with hmac-signed body (<code>X-Tusd-Signature: sha256=...</code>); cloud function rejects requests with missing or invalid signature; tusd config + cloud function share the secret via gcp secret manager; secret rotated quarterly.</li>
+<li><strong>verification</strong>: <code>functions/__tests__/tusdHook.test.ts</code> — call hook with missing signature → 401; tampered body → 401; valid signature → 200.</li>
+</ul>
+<h3 id="worker-dispatch-poisoning">worker dispatch poisoning<a class="headerlink" href="#worker-dispatch-poisoning" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>threat</strong>: cloud function <code>distributionFanout.ts</code> reads firestore for a distribution record and triggers agent fan-out; if firestore record is tamperable post-creation, fan-out could be redirected.</li>
+<li><strong>mitigation</strong>: distribution records are write-once via firestore rules (no update allowed except by <code>distributionFanout</code> cloud function via privileged path); agent commands signed with the firestore document path (agent rejects commands not addressed to its own siteId).</li>
+<li><strong>verification</strong>: firestore.rules.test asserts <code>update</code> denied on <code>distributions/{distId}</code> for non-function callers.</li>
+</ul>
+<h3 id="dependency-supply-chain-codecov-2021-npm-sept-2025-worm-axios-2026">dependency supply chain (codecov 2021, npm sept 2025 worm, axios 2026)<a class="headerlink" href="#dependency-supply-chain-codecov-2021-npm-sept-2025-worm-axios-2026" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>threat</strong>: a transitive npm or pip dependency is compromised; ci or production picks up malicious code.</li>
+<li><strong>mitigation</strong>: <code>package-lock.json</code> + <code>requirements.txt</code> pinned exact versions; renovate / dependabot pull requests reviewed by human before merge (no auto-merge); ci runs <code>npm audit --omit=dev</code> and <code>pip-audit</code> and fails on high+ severity; build vm is ephemeral (B10) — even if a dep is compromised post-build, secrets baked into the build vm don't persist; <code>.npmrc</code> set to <code>ignore-scripts=true</code> for ci installs to defang lifecycle script attacks; for <code>@uppy/*</code> packages added in wave 3, audit + pin + defer auto-update.</li>
+<li><strong>verification</strong>: <code>ci/audit.sh</code> runs on every pr; manual audit of any new dep added.</li>
+</ul>
+<h3 id="cloudflare-control-plane-outage-cf-nov-2025-archetype">cloudflare control-plane outage (cf nov 2025 archetype)<a class="headerlink" href="#cloudflare-control-plane-outage-cf-nov-2025-archetype" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>threat</strong>: cloudflare config push without staging takes down r2 access; customer agents can't reach chunks.</li>
+<li><strong>mitigation</strong>: agents have local content store + already-extracted projects → <strong>shows keep playing</strong> (decoupled sla per plan.md: 99.99% local, 99.9% cloud). new deploys queue locally and retry with circuit breaker (<code>agent/src/connection_manager.py</code>). monitoring alerts within 5 min on cf-side errors. byo-bucket enterprise tier provides r2-independence as an upsell.</li>
+<li><strong>verification</strong>: chaos test — simulate r2 unavailability for 2h, assert running shows unaffected, deploys queue + resume on recovery.</li>
+</ul>
+<hr />
+<h2 id="compliance-hooks">compliance hooks<a class="headerlink" href="#compliance-hooks" title="Permanent link">&para;</a></h2>
+<p>each compliance requirement maps to existing baselines and surface-area tasks. this section is the bridge between the threat model and the legal / certification work in wave 0.</p>
+<h3 id="gdpr-article-17-right-to-erasure">gdpr article 17 (right to erasure)<a class="headerlink" href="#gdpr-article-17-right-to-erasure" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>requirement</strong>: data subject can request deletion; controller must comply within 30 days.</li>
+<li><strong>hooks</strong>:</li>
+<li>chunk gc (F2 mitigation) <strong>must include per-tenant deletion path</strong> — when customer is deleted, all their <code>project-content/{siteId}/...</code> chunks are tombstoned immediately and purged within 30 days (B15).</li>
+<li>dashboard exposes "delete my account" flow (wave 5 deletion api).</li>
+<li>manifest history retained for 90 days (soft-delete window, B15) for accidental-deletion recovery; full purge after.</li>
+<li>audit log entries are immutable but pseudonymized after deletion (actor id replaced with <code>deleted-user-{hash}</code>; original mapping destroyed).</li>
+<li><strong>verification</strong>: <code>__tests__/api/v2/gdpr-deletion.test.ts</code> — delete customer, assert all chunks tombstoned within 1min, full purge entry scheduled for t+30d, audit entries pseudonymized.</li>
+</ul>
+<h3 id="soc-2-cc72-system-monitoring">soc 2 cc7.2 (system monitoring)<a class="headerlink" href="#soc-2-cc72-system-monitoring" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>requirement</strong>: monitor system components for anomalies; produce evidence of monitoring + response.</li>
+<li><strong>hooks</strong>:</li>
+<li>append-only audit log (B8) is the primary evidence source.</li>
+<li>opentelemetry traces (per plan.md observability section) cover browser → tusd → cf → agent.</li>
+<li>per-tenant cost attribution + 50/80/100% alarms (B7) double as anomaly detection (sudden quota spike = potential compromise).</li>
+<li>failed-auth alerting on <code>owk_*</code> token misuse (3 failed-auth events in 5min triggers slack alert).</li>
+<li><strong>verification</strong>: quarterly soc 2 evidence pack pulled from audit log + monitoring dashboards.</li>
+</ul>
+<h3 id="encryption-at-rest">encryption at rest<a class="headerlink" href="#encryption-at-rest" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>v2</strong>: r2 default at-rest encryption (aes-256, cloudflare-managed keys) — applies to all chunks + manifests.</li>
+<li><strong>enterprise upsell</strong>: cmek (customer-managed encryption keys) via gcp kms or cloudflare keyless tls — tracked as v3 + enterprise tier feature.</li>
+<li><strong>verification</strong>: r2 bucket settings audit (manual, quarterly).</li>
+</ul>
+<h3 id="data-residency">data residency<a class="headerlink" href="#data-residency" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>requirement</strong>: enterprise customers (eu, uk, australia) require data stored in-region.</li>
+<li><strong>hooks</strong>: r2 supports jurisdiction selection (<code>jurisdiction: 'eu'</code>); per-tier configuration:</li>
+<li>free / starter / pro: us-default (no jurisdiction guarantee).</li>
+<li>enterprise: jurisdiction selectable (eu, uk, fedramp-eligible regions on roadmap).</li>
+<li><strong>implementation</strong>: customer record includes <code>jurisdiction</code> field; r2 client picks bucket per jurisdiction; signed urls issued against the correct regional bucket.</li>
+<li><strong>verification</strong>: integration test — set customer jurisdiction=eu, upload chunk, assert r2 list shows object in eu jurisdiction, not us.</li>
+</ul>
+<h3 id="encryption-in-transit">encryption in transit<a class="headerlink" href="#encryption-in-transit" title="Permanent link">&para;</a></h3>
+<ul>
+<li>tls 1.3 enforced on all endpoints (<code>*.owlette.app</code>, cloud functions, tusd cloud run, r2 endpoints).</li>
+<li>agent rejects non-tls connections (<code>firestore_rest_client.py</code> enforces https-only).</li>
+<li>hsts header on all web responses (<code>Strict-Transport-Security: max-age=63072000; includeSubDomains; preload</code>).</li>
+</ul>
+<hr />
+<h2 id="penetration-testing">penetration testing<a class="headerlink" href="#penetration-testing" title="Permanent link">&para;</a></h2>
+<h3 id="trigger-thresholds">trigger thresholds<a class="headerlink" href="#trigger-thresholds" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>first enterprise contract above ~$25k acv</strong>: full external pentest (web + api + agent) before contract signing. budget ~$15-25k for a 1-2 week engagement with a reputable firm (e.g. trail of bits, ncc group, doyensec).</li>
+<li><strong>before soc 2 type 2 fieldwork</strong>: pentest within the 6-month observation window so audit findings are remediated and re-tested before the report period closes.</li>
+<li><strong>after any catastrophic security incident</strong>: full pentest within 90 days of incident closure.</li>
+<li><strong>annually</strong>: lightweight retest (~$8-12k) to catch regressions in long-stable surfaces.</li>
+</ul>
+<h3 id="scope_1">scope<a class="headerlink" href="#scope_1" title="Permanent link">&para;</a></h3>
+<p>each engagement covers (at minimum):
+- web app authn + authz (focus on cross-tenant access — B2)
+- <code>/api/v2/*</code> surface (focus on rate limiting, signed url issuance, problem+json error info disclosure)
+- agent download + extract (focus on path traversal, symlinks, zip bombs — B6)
+- installer + signing (focus on supply chain — B10)
+- ssrf surfaces (B11)</p>
+<h3 id="out-of-scope-cost-containment">out of scope (cost containment)<a class="headerlink" href="#out-of-scope-cost-containment" title="Permanent link">&para;</a></h3>
+<ul>
+<li>tusd internals (delegated to upstream maintainers; we audit configuration only)</li>
+<li>cloudflare workers + r2 (delegated to cloudflare's own audits; we audit our policies only)</li>
+<li>firebase auth internals (delegated to google)</li>
+</ul>
+<hr />
+<h2 id="real-precedents-to-internalize">real precedents to internalize<a class="headerlink" href="#real-precedents-to-internalize" title="Permanent link">&para;</a></h2>
+<p>short list — each is one line. these are what we are defending against, named so engineers writing code can think "would my change have prevented this?"</p>
+<ul>
+<li><strong>dropbox 2012/2016 employee password reuse</strong> → 68m credentials leaked because an employee reused a password across linkedin + corp; mitigation B14 (hardware mfa) + no shared accounts.</li>
+<li><strong>codecov 2021 supply chain attack</strong> → bash uploader script compromised, exfiltrated env vars from thousands of ci pipelines; mitigation: pinned deps, ephemeral build vm (B10), <code>ignore-scripts=true</code>.</li>
+<li><strong>cloudflare nov 2025 outage</strong> → config push without staging took down significant r2 traffic; mitigation: decoupled slas, agent local content store, byo-bucket upsell.</li>
+<li><strong>firebase 2024-2025 mass exposure</strong> → gitguardian found 19.8m secrets in misconfigured firebase apps; mitigation: B1 default-deny rules + ci test, B2 token-claim-derived tenant ids.</li>
+<li><strong>dooh ransomware (bristol airport 2018, atlanta 2018)</strong> → flight info screens taken down by ransomware; mitigation: agent runs only known-good content, content-addressed integrity (B4), local content store survives cloud outage.</li>
+<li><strong>union station dc 2017</strong> → porn displayed on billboard via stolen creds; mitigation: B14 mfa, B8 audit log, content moderation roadmap (v3).</li>
+<li><strong>bmg v. cox 2019</strong> → $25m verdict against isp for failing to terminate repeat infringers; mitigation: F5 wave 0 legal blockers, real dmca repeat-infringer enforcement (not just policy on paper).</li>
+<li><strong>npm sept 2025 self-replicating worm</strong> → malicious package republished itself through compromised maintainer accounts; mitigation: pinned versions, no auto-merge, <code>ignore-scripts=true</code>, B14 mfa on npm publisher.</li>
+<li><strong>axios 2026 compromise</strong> → core http library compromised, affected millions of downstream apps; mitigation: same as npm 2025; reinforces "pin everything, audit before update".</li>
+</ul>
+<hr />
+<h2 id="out-of-scope-for-v2-deferred-to-v3">out of scope for v2 (deferred to v3)<a class="headerlink" href="#out-of-scope-for-v2-deferred-to-v3" title="Permanent link">&para;</a></h2>
+<p>acknowledged residual risk. each of these is a real gap; the mitigation is "v2 ships without it, v3 adds it, the risk is accepted in writing."</p>
+<table>
+<thead>
+<tr>
+<th>deferred item</th>
+<th>residual risk</th>
+<th>accepted because</th>
+<th>v3 plan</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ed25519 manifest signing via tuf + gcp kms</td>
+<td>manifest integrity rests on tls + firebase auth + signed urls + content-addressing; if all four of those are simultaneously bypassed, manifest forgery is possible</td>
+<td>content-addressing already prevents byte-substitution (chunk hash is key); the four-of-four bypass is implausible in v2 threat model; tuf adds significant ops complexity</td>
+<td>wave v3.1: tuf root + targets + snapshot + timestamp keys, gcp kms backed, key rotation playbook</td>
+</tr>
+<tr>
+<td>cmek by default (customer-managed encryption keys)</td>
+<td>customer keys held by cloudflare; subpoena risk if cloudflare is compelled</td>
+<td>enterprise customers who need cmek can opt in; default tier customers do not</td>
+<td>wave v3.2: gcp kms + cloudflare keyless tls integration; per-tier flag</td>
+</tr>
+<tr>
+<td>agent privilege drop below <code>system</code></td>
+<td>a <code>.toe</code> file with embedded python invoked by supervised process tree could escalate to <code>system</code> if a bug bridges between agent + supervised process</td>
+<td>agent does not invoke touchdesigner directly; allowlist (B6) + path traversal defense (F4) + audit log (B8) bound the blast radius</td>
+<td>wave v3.3: split agent into <code>nt authority\system</code> service-control component + low-priv worker that does i/o</td>
+</tr>
+<tr>
+<td>multi-region failover</td>
+<td>single gcp/r2 region; regional outage delays new deploys</td>
+<td>local content store keeps shows running (decoupled sla); cloud outage = no new deploys, not show-down</td>
+<td>wave v3.4: multi-region r2 + manifest replication + agent fallback url list</td>
+</tr>
+<tr>
+<td>visual diff between manifest versions</td>
+<td>reviewers approve "publish" without easy way to see what changed</td>
+<td>reviewers can compare local manifest text by hand; not a security blocker, just ux</td>
+<td>wave v3.5 (sre features)</td>
+</tr>
+<tr>
+<td>auto-rollback on health regression</td>
+<td>once deployed, bad version stays deployed until human notices</td>
+<td>one-click rollback (wave 3 ui) is fast (&lt;30s); human notice + click is acceptable for v2 customer profile</td>
+<td>wave v3.6</td>
+</tr>
+<tr>
+<td>content moderation / virustotal scan on upload</td>
+<td>uploaded content is not scanned for malware or copyrighted material at upload time</td>
+<td>dmca takedown flow (wave 0.2) handles post-upload reports; virustotal cloud function planned but not v2</td>
+<td>wave v3.7</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="change-control-for-this-document">change control for this document<a class="headerlink" href="#change-control-for-this-document" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>owner</strong>: dylan@roscover.com.</li>
+<li><strong>review cadence</strong>: every wave exit + after any security-relevant incident.</li>
+<li><strong>change process</strong>: pr against this doc; require reviewer signoff from owner; pr description must call out which baseline / failure mode / surface is changing and why.</li>
+<li><strong>never silently relax a baseline.</strong> if a baseline is tightened (more strict), commit + ship. if a baseline is relaxed, the pr description must include risk acceptance signed by the owner.</li>
+<li><strong>link discipline</strong>: when a wave-2-5 task references this doc, link to a specific baseline anchor (e.g. <code>#B6</code>) — not the doc as a whole. that way edits are traceable.</li>
+</ul>
+<hr />
+<h2 id="appendix-a-baseline-to-task-crosswalk">appendix a: baseline-to-task crosswalk<a class="headerlink" href="#appendix-a-baseline-to-task-crosswalk" title="Permanent link">&para;</a></h2>
+<p>quick lookup for plan.md task authors. if your task touches the surface listed, the named baselines apply.</p>
+<table>
+<thead>
+<tr>
+<th>surface</th>
+<th>applicable baselines</th>
+<th>applicable failure modes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>any new <code>/api/v2/*</code> route</td>
+<td>B2, B3, B7, B8, B9, B11, B12, B13</td>
+<td>F1, F3</td>
+</tr>
+<tr>
+<td>any cloud function</td>
+<td>B5, B7, B8, B9, B11</td>
+<td>F1, F2, F3</td>
+</tr>
+<tr>
+<td>any r2 bucket policy or signed-url issuer</td>
+<td>B1, B2, B3, B7</td>
+<td>F1</td>
+</tr>
+<tr>
+<td>any agent file extract or write</td>
+<td>B4, B6</td>
+<td>F4</td>
+</tr>
+<tr>
+<td>any installer build / release</td>
+<td>B10, B14</td>
+<td>—</td>
+</tr>
+<tr>
+<td>any new customer-supplied url fetcher (server-side)</td>
+<td>B11</td>
+<td>—</td>
+</tr>
+<tr>
+<td>any new firestore collection</td>
+<td>B1, B2, B8</td>
+<td>F2, F3</td>
+</tr>
+<tr>
+<td>any new web ui that renders user content</td>
+<td>B12, B13</td>
+<td>—</td>
+</tr>
+<tr>
+<td>any deletion / data-removal flow</td>
+<td>B8, B15</td>
+<td>F2</td>
+</tr>
+<tr>
+<td>any quota / billing change</td>
+<td>B7, B8</td>
+<td>F1</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="appendix-b-glossary">appendix b: glossary<a class="headerlink" href="#appendix-b-glossary" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>chunk</strong>: 4 mib slice of a file, keyed by sha-256 of its bytes.</li>
+<li><strong>manifest</strong>: oci v1.1 derivation listing all chunks for a project; stored in r2; pointer in firestore.</li>
+<li><strong>manifest pointer</strong>: firestore document referencing the current + previous manifest ids for a folder.</li>
+<li><strong>pinned manifest revision</strong>: the manifest id an agent commits to for a single download cycle; used to defeat toctou (see attack surfaces).</li>
+<li><strong>owk_</strong>*: long-lived api key prefix for programmatic api access.</li>
+<li><strong>tusd</strong>: tus protocol server, runs on cloud run.</li>
+<li><strong>uppy</strong>: browser upload library, paired with tus + dashboard plugins.</li>
+<li><strong>content store</strong>: agent-local cache at <code>~/Documents/Owlette/.owlette-content/{hash[0:2]}/{hash}</code>.</li>
+<li><strong>fail-closed</strong>: when input is missing or invalid, deny the operation. opposite of fail-open.</li>
+<li><strong>defense in depth</strong>: multiple independent mitigations for the same threat, so a bypass of one does not bypass all.</li>
+<li><strong>toctou</strong>: time-of-check / time-of-use race condition.</li>
+<li><strong>tuf</strong>: the update framework — signing scheme used for software update integrity. v3 adoption planned.</li>
+<li><strong>cmek</strong>: customer-managed encryption keys.</li>
+<li><strong>dpa</strong>: data processing addendum (gdpr contract artifact).</li>
+<li><strong>acv</strong>: annual contract value.</li>
+</ul>
+<hr />
+<h2 id="appendix-c-trust-boundaries-and-data-flows">appendix c: trust boundaries and data flows<a class="headerlink" href="#appendix-c-trust-boundaries-and-data-flows" title="Permanent link">&para;</a></h2>
+<p>every arrow that crosses a trust boundary is a place where the receiving side must validate input. listing them here so no boundary is implicit.</p>
+<h3 id="boundary-1-browser-tusd-cloud-run">boundary 1: browser → tusd (cloud run)<a class="headerlink" href="#boundary-1-browser-tusd-cloud-run" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>trust delta</strong>: untrusted (browser is on customer device, possibly compromised) → semi-trusted (tusd is our infra but processes customer bytes).</li>
+<li><strong>what crosses</strong>: file bytes, tus upload metadata (filename, mime type, size), firebase id token in <code>Authorization</code> header.</li>
+<li><strong>what tusd must validate</strong>: id token signature + expiry + tenant claim (B2); upload size against per-tenant quota via pre-upload hook (B7); filename sanitization (B12); mime type is informational only (never trusted for security decisions); chunk size matches expected 4 mib boundary (reject malformed tus offsets).</li>
+<li><strong>what tusd must not assume</strong>: that filename is utf-8, that chunk bytes match any client-claimed hash (server recomputes via chunkVerify, B5), that the same browser will resume the upload (resumption may be from a different device, must re-validate token).</li>
+</ul>
+<h3 id="boundary-2-tusd-r2-object-put">boundary 2: tusd → r2 (object put)<a class="headerlink" href="#boundary-2-tusd-r2-object-put" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>trust delta</strong>: semi-trusted (tusd) → trusted (our r2 bucket).</li>
+<li><strong>what crosses</strong>: chunk bytes, object name (= sha-256 hash from chunkVerify), per-tenant prefix.</li>
+<li><strong>what r2 must enforce</strong>: bucket policy denies puts to objects outside <code>project-content/{siteId}/...</code> even from tusd's iam principal (defense in depth — if tusd is compromised, blast radius is limited to one tenant's prefix at a time, gated by the tenant of the request); object lifecycle rule moves stale uploads (<code>uploads/staging/...</code>) to deletion after 24h.</li>
+</ul>
+<h3 id="boundary-3-r2-cloud-function-chunkverify-trigger">boundary 3: r2 → cloud function (chunkverify trigger)<a class="headerlink" href="#boundary-3-r2-cloud-function-chunkverify-trigger" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>trust delta</strong>: trusted (r2) → trusted (cloud function).</li>
+<li><strong>what crosses</strong>: object metadata + bytes (function reads object after trigger fires).</li>
+<li><strong>what function must validate</strong>: re-compute sha-256 of object bytes; if mismatch with object name, delete + audit (B5); if customer's quota is exceeded after this put, mark object for deletion + emit alarm (B7).</li>
+<li><strong>failure mode</strong>: if cloud function execution lags behind upload rate, a poisoned chunk could be visible for a window. mitigation: function p99 latency budget = 60s; alerting on latency breach; signed-url-issuance (boundary 4) does not list a chunk as available until chunkverify has succeeded (chunk is in <code>staging/</code> prefix until verify, then atomically moved to canonical prefix).</li>
+</ul>
+<h3 id="boundary-4-web-api-r2-signed-url-issuance">boundary 4: web api → r2 (signed url issuance)<a class="headerlink" href="#boundary-4-web-api-r2-signed-url-issuance" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>trust delta</strong>: trusted (our api) → trusted (r2), but the url leaves boundary 4 to land in untrusted hands.</li>
+<li><strong>what crosses outbound</strong>: signed url with ttl ≤ 15min (download) or 60min (upload), single-object scope (B3).</li>
+<li><strong>what api must enforce before issuing</strong>: caller's token claims include the <code>siteId</code> in the requested chunk path (B2); rate limit per <code>owk_*</code> token not exceeded (B7); audit entry written before url is returned to caller (B8).</li>
+<li><strong>threat at boundary</strong>: signed url leaks via browser history, ci log, screenshot in support ticket. mitigation: short ttl + single-object scope + url cannot be used to enumerate other chunks.</li>
+</ul>
+<h3 id="boundary-5-agent-web-api-download-url-request">boundary 5: agent → web api (download url request)<a class="headerlink" href="#boundary-5-agent-web-api-download-url-request" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>trust delta</strong>: semi-trusted (agent could be compromised at customer site) → trusted (api).</li>
+<li><strong>what crosses</strong>: agent oauth bearer token (firebase id token, 1h ttl), requested chunk hash list, requested manifest id.</li>
+<li><strong>what api must validate</strong>: token claims include <code>siteId</code>; requested chunks all belong to a manifest the <code>siteId</code> is authorized to deploy (folder ↔ site mapping in firestore); chunk count per request capped (e.g. 100 chunks per call) to bound url-issuance cost; rate limit on per-agent url issuance (B7).</li>
+<li><strong>what api must not assume</strong>: that the agent will actually download the chunks (signed url may be leaked or replayed); audit log every issuance (B8).</li>
+</ul>
+<h3 id="boundary-6-agent-r2-download-via-signed-url">boundary 6: agent → r2 (download via signed url)<a class="headerlink" href="#boundary-6-agent-r2-download-via-signed-url" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>trust delta</strong>: semi-trusted (agent) → trusted (r2).</li>
+<li><strong>what r2 enforces</strong>: signed-url validity (ttl, signature, scope); no other auth needed.</li>
+<li><strong>what agent must validate after download</strong>: sha-256 of downloaded bytes matches the requested hash (B4); reject and re-request (with backoff) if mismatch; circuit-breaker after n consecutive mismatches (suggests upstream poisoning, not transient corruption).</li>
+</ul>
+<h3 id="boundary-7-agent-local-filesystem-extract-write">boundary 7: agent → local filesystem (extract + write)<a class="headerlink" href="#boundary-7-agent-local-filesystem-extract-write" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>trust delta</strong>: trusted (agent has verified all chunk hashes) → trusted (local fs is the agent's own machine).</li>
+<li><strong>what agent must enforce</strong>: every output path's realpath must be inside an allowlisted root (B6, F4); no symlinks accepted (B6); file modes set explicitly to admin+system only (B6 acl requirement); decompression-ratio cap (zip bombs); atomic swap via <code>MoveFileEx(REPLACE_EXISTING|WRITE_THROUGH)</code> after fsync.</li>
+<li><strong>what agent must not assume</strong>: that filenames in manifest are filesystem-safe (sanitize); that destination directory exists (create with secure default acl); that target file is not currently locked by another process (handle gracefully — atomic rename via temp-then-replace pattern handles open files on windows).</li>
+</ul>
+<h3 id="boundary-8-cloud-functions-firestore-audit-log-writes">boundary 8: cloud functions → firestore (audit log writes)<a class="headerlink" href="#boundary-8-cloud-functions-firestore-audit-log-writes" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>trust delta</strong>: trusted → trusted, but tampering risk if any function is compromised.</li>
+<li><strong>what firestore must enforce</strong>: audit log subcollection rules deny <code>update</code> and <code>delete</code> for everyone including admin sdk (B8); only <code>create</code> allowed; immutability is structural, not policy.</li>
+<li><strong>threat</strong>: if attacker compromises a cloud function, they can write false audit entries (but cannot remove real ones). mitigation: append-only structure + correlation-id in every entry + cross-check against opentelemetry traces (different storage) for high-value events (publish, deletion, signing).</li>
+</ul>
+<h3 id="boundary-9-agent-firestore-heartbeat-command-poll">boundary 9: agent → firestore (heartbeat, command poll)<a class="headerlink" href="#boundary-9-agent-firestore-heartbeat-command-poll" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>trust delta</strong>: semi-trusted → trusted.</li>
+<li><strong>what firestore rules enforce</strong>: agent can only read/write documents whose path includes its own <code>siteId</code>; rules check token claims (consistent with B2 web pattern).</li>
+<li><strong>what agent must validate</strong>: commands fetched from firestore include the agent's own <code>siteId</code> (defense in depth — if rules misconfigured, agent ignores commands not addressed to it).</li>
+</ul>
+<h3 id="boundary-10-cicd-r2-firebase-npm-ev-signing">boundary 10: ci/cd → r2 + firebase + npm + ev signing<a class="headerlink" href="#boundary-10-cicd-r2-firebase-npm-ev-signing" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>trust delta</strong>: ci environment → all production trust roots.</li>
+<li><strong>what must be true</strong>: every credential ci touches has hardware-backed mfa for the underlying account (B14); ci uses short-lived oidc tokens (gha → workload identity federation), not long-lived service account keys; no human commits credentials (per-commit secret scanning by gitguardian + pre-commit hook); ephemeral build vm for installer (B10).</li>
+</ul>
+<hr />
+<h2 id="appendix-d-incident-response-runbook-outline">appendix d: incident response runbook outline<a class="headerlink" href="#appendix-d-incident-response-runbook-outline" title="Permanent link">&para;</a></h2>
+<p>this is the contract — a separate <code>docs/internal/incident-response.md</code> (not in scope for this doc) details each step. but the <strong>outline</strong> is part of the threat model because the choices here constrain what can be detected + recovered from.</p>
+<h3 id="severity-ladder">severity ladder<a class="headerlink" href="#severity-ladder" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>sev-0</strong>: customer data exposed publicly, signing cert compromised, fleet-wide deployment failure that takes shows offline.</li>
+<li><strong>sev-1</strong>: cross-tenant data access between specific customers, audit-log tampering attempt detected, single high-value customer fleet down.</li>
+<li><strong>sev-2</strong>: unbounded billing exposure (quota system bypassed), systemic but recoverable bug affecting &lt;10% of fleet, single customer's deployments stuck.</li>
+<li><strong>sev-3</strong>: degraded performance, isolated bugs, false-positive alerts.</li>
+</ul>
+<h3 id="response-time-budget">response time budget<a class="headerlink" href="#response-time-budget" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>sev</th>
+<th>acknowledgement</th>
+<th>initial mitigation</th>
+<th>full resolution</th>
+<th>post-mortem</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>15 min</td>
+<td>1 hr</td>
+<td>24 hr</td>
+<td>7 days</td>
+</tr>
+<tr>
+<td>1</td>
+<td>1 hr</td>
+<td>4 hr</td>
+<td>72 hr</td>
+<td>14 days</td>
+</tr>
+<tr>
+<td>2</td>
+<td>4 hr</td>
+<td>24 hr</td>
+<td>7 days</td>
+<td>30 days</td>
+</tr>
+<tr>
+<td>3</td>
+<td>24 hr</td>
+<td>best effort</td>
+<td>best effort</td>
+<td>optional</td>
+</tr>
+</tbody>
+</table>
+<h3 id="sev-0-sev-1-first-hour-playbook-security-relevant-only">sev-0 / sev-1 first-hour playbook (security-relevant only)<a class="headerlink" href="#sev-0-sev-1-first-hour-playbook-security-relevant-only" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>contain</strong>: rotate the affected credential class immediately (signing cert → revoke + new cert; <code>owk_*</code> token → invalidate via firestore tombstone; firebase admin → rotate via console); if necessary, freeze the affected api route via feature flag (<code>ENABLE_V2_*</code> flag set false in firestore — agents and web both honor it).</li>
+<li><strong>preserve</strong>: snapshot audit log + relevant firestore subtrees + r2 bucket inventory <strong>before</strong> any cleanup; copy to write-once gcs bucket for forensics.</li>
+<li><strong>assess blast radius</strong>: query audit log for all <code>owk_*</code> use within the credential's lifetime; query signed-url issuance log for all urls issued via the credential; cross-check cloudflare access logs for r2 reads.</li>
+<li><strong>notify</strong>: customers affected within 72 hours per gdpr art. 33 obligations (controller notification — for customer-facing incidents we are processor; we notify the controller, they notify subjects); legal in the loop within the first hour for any sev-0.</li>
+<li><strong>remediate</strong>: deploy the structural fix, not just the credential rotation; if the same vulnerability could be hit by a second credential, the bug is the issue, not the credential.</li>
+<li><strong>post-mortem</strong>: blameless, public to the team, action items tracked in plan / next wave.</li>
+</ol>
+<h3 id="what-triggers-an-incident-vs-an-alert">what triggers an incident vs. an alert<a class="headerlink" href="#what-triggers-an-incident-vs-an-alert" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>alert</strong> (no human on-call action required): single signed-url 403, single chunk hash mismatch, single quota warning.</li>
+<li><strong>incident</strong>: pattern of 5+ failed-auth events in 5min for the same <code>owk_*</code>; chunk hash mismatch rate &gt;0.1% over 5min (suggests upstream poisoning, not transient); signed-url issuance from a token outside its normal geo (potential exfil); audit log update / delete attempt (should be impossible per rules — if seen, indicates rules misconfiguration or bypass).</li>
+</ul>
+<hr />
+<h2 id="appendix-e-key-secret-rotation-schedule">appendix e: key + secret rotation schedule<a class="headerlink" href="#appendix-e-key-secret-rotation-schedule" title="Permanent link">&para;</a></h2>
+<p>this section is the <strong>schedule</strong>, not the procedure. procedures live in <code>docs/internal/key-custody.md</code> (separate doc).</p>
+<table>
+<thead>
+<tr>
+<th>key / secret</th>
+<th>rotation cadence</th>
+<th>trigger for emergency rotation</th>
+<th>owner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ev code-signing cert</td>
+<td>every 3 years (cert lifetime)</td>
+<td>suspected compromise; cert custodian role change</td>
+<td>owner</td>
+</tr>
+<tr>
+<td>firebase admin sdk service account</td>
+<td>every 6 months</td>
+<td>any audit-log anomaly involving admin operations</td>
+<td>owner</td>
+</tr>
+<tr>
+<td><code>owk_*</code> api keys (per-customer)</td>
+<td>customer-driven; ui supports rotation</td>
+<td>any failed-auth pattern; offboarding event</td>
+<td>customer + owner</td>
+</tr>
+<tr>
+<td>tusd ↔ cloud function hook hmac secret</td>
+<td>every 3 months</td>
+<td>function deployment with new permissions; suspected leak</td>
+<td>owner</td>
+</tr>
+<tr>
+<td>gcp workload identity federation oidc trust</td>
+<td>annual review</td>
+<td>any github org-level change; ci pipeline change</td>
+<td>owner</td>
+</tr>
+<tr>
+<td>cloudflare api tokens</td>
+<td>every 6 months</td>
+<td>r2 policy change attempt detected; cloudflare account access change</td>
+<td>owner</td>
+</tr>
+<tr>
+<td>encryption key for <code>.tokens.enc</code> (machine-bound fernet)</td>
+<td>per-machine, on first install + on os reinstall detection</td>
+<td>machine ownership change</td>
+<td>agent (automatic)</td>
+</tr>
+<tr>
+<td>device pairing phrase wordlist</td>
+<td>never (must stay in sync between agent + web — see <code>pair_phrases.py</code> / <code>pairPhrases.ts</code>); additions append-only</td>
+<td>n/a</td>
+<td>dev team</td>
+</tr>
+</tbody>
+</table>
+<p>emergency-rotation invariant: <strong>every key class above has a documented procedure that one engineer can execute end-to-end without consulting another engineer.</strong> if a procedure requires two-person knowledge, that is itself a security defect (single-person bus factor on incident response).</p>
+<hr />
+<h2 id="appendix-f-lessons-that-go-in-this-doc-not-in-code-comments">appendix f: lessons that go in this doc, not in code comments<a class="headerlink" href="#appendix-f-lessons-that-go-in-this-doc-not-in-code-comments" title="Permanent link">&para;</a></h2>
+<p>scattered observations from designing v2 that should not be lost in commit messages.</p>
+<ul>
+<li><strong>the moat is the deployment graph, not the bytes.</strong> which version of which project is on which machine is the high-value data. chunk bytes are commodity. design implications: protect manifest pointers + audit log harder than chunk bytes; chunks are content-addressed and tamper-evident, manifest pointers are mutable and need transactional integrity.</li>
+<li><strong>content-addressing is not a substitute for authentication.</strong> a chunk's hash proves the bytes are what was uploaded; it does not prove the uploader was authorized. baselines B1, B2, B3, B7, B8 do the auth work; B4, B5 do the integrity work. both are required.</li>
+<li><strong>audit log is investigative, not preventive.</strong> B8 catches what happened after the fact. it does not stop the attack. preventive controls (B1, B2, B6, B9, B11, B14) are the front line; audit is the second line, used to scope blast radius and remediate.</li>
+<li><strong>fail-closed everywhere, including ux.</strong> allowlist (F4), quota (B7), legal-readiness flag (F5), feature flags (incident response) all default to denying the operation if the underlying check is missing or errors. opening up requires explicit configuration, not the absence of it.</li>
+<li><strong>defense in depth is not optional.</strong> cve-2025-4330 bypassed python's <code>data</code> filter — relying on a single mitigation, even a well-tested one, is brittle. B6 has three independent layers. the same logic applies to every "the platform handles it" assertion.</li>
+<li><strong>never trust bytes from the public internet, even after they touch our servers.</strong> every byte that came from a customer device is suspect at every subsequent boundary (boundaries 2, 3, 4, 6, 7) until it has been verified again at that boundary.</li>
+<li><strong>the agent is on a machine we do not control.</strong> agent-side checks are a safety net, not a security boundary. the security boundary is the cloud — agent compromise must not enable cloud compromise. token claims (B2), per-tenant chunk paths (cross-tenant read mitigation), command addressing (boundary 9) all enforce that agent compromise stays bounded to the compromised site.</li>
+<li><strong>legal blocks are technical blocks.</strong> F5 is in this doc, not just in a contract drawer, because the implementation must enforce the legal precondition. an <code>ENABLE_V2_UPLOAD</code> feature flag tied to a <code>legal_ready</code> flag in firestore is the technical embodiment of the legal block.</li>
+</ul>
+<hr />
+<h2 id="appendix-g-threat-actor-playbooks-deep-dive">appendix g: threat actor playbooks (deep dive)<a class="headerlink" href="#appendix-g-threat-actor-playbooks-deep-dive" title="Permanent link">&para;</a></h2>
+<p>each actor from the top-level table is expanded into a concrete attack-tree sketch. these are not exhaustive — they are the <strong>most-likely</strong> path each actor takes against roost specifically. when reviewing a wave-2-5 design, walk these trees and ask whether the design closes each leaf.</p>
+<h3 id="actor-1-opportunistic-firebase-scanner">actor 1 — opportunistic firebase scanner<a class="headerlink" href="#actor-1-opportunistic-firebase-scanner" title="Permanent link">&para;</a></h3>
+<p><strong>capability profile</strong>: scripted, drive-by, no human-in-the-loop, scans known patterns (firebase project ids, common bucket names, exposed <code>firebaseConfig</code> blobs in spa bundles). converts hits to credential dumps, sells on darknet markets within 24-72h.</p>
+<p><strong>attack tree</strong>:
+1. enumerate <code>*.firebaseapp.com</code> + <code>*.web.app</code> subdomains for <code>firebaseConfig</code> exposure → if <code>apiKey</code> + <code>databaseURL</code> found, attempt unauthenticated firestore reads.
+   - <strong>closed by</strong>: B1 default-deny rules + ci test that asserts unauth read → 403.
+2. enumerate r2 buckets via cloudflare's known endpoints + customer-supplied bucket names from leaked manifests → attempt unauthenticated <code>GET /</code> for object listing.
+   - <strong>closed by</strong>: B1 r2 bucket policy + signed-url-only access pattern.
+3. scan github for <code>OWLETTE_API_KEY=owk_*</code> patterns → attempt api calls with discovered keys.
+   - <strong>closed by</strong>: B9 pre-commit lint rule + gitguardian secondary scan + post-leak rotation procedure (appendix e).
+4. attempt parameter tampering on <code>/api/v2/folders/{folderId}/manifests</code> to read other tenants' folders.
+   - <strong>closed by</strong>: B2 token-derived tenant ids + cross-tenant test (<code>tenant-isolation.test.ts</code>).</p>
+<p><strong>hardest leaf to close</strong>: leaked <code>owk_*</code> from a customer's own ci. mitigation requires customer education + key-rotation ui + rate limits (B7) so a single leaked key has bounded blast radius.</p>
+<h3 id="actor-2-insider-with-stale-owk_">actor 2 — insider with stale <code>owk_*</code><a class="headerlink" href="#actor-2-insider-with-stale-owk_" title="Permanent link">&para;</a></h3>
+<p><strong>capability profile</strong>: knows internal architecture, has historical access, motivated by spite or financial gain, may operate over weeks not minutes. unlike actor 1, willing to go slow to avoid rate-limit detection.</p>
+<p><strong>attack tree</strong>:
+1. retain copy of <code>owk_*</code> from active tenure → use post-offboarding to read manifests + chunks for as-yet-undeployed campaigns.
+   - <strong>closed by</strong>: B7 rate limit makes mass-exfil noisy; B8 audit log catches use after offboarding date; <strong>must add</strong>: ci check that any <code>owk_*</code> not used in 90 days is auto-tombstoned (deferred-revocation pattern); ui for customer admins to see + revoke all keys including ones owned by other team members.
+2. drip-exfiltrate one chunk per hour to evade rate-limit detection.
+   - <strong>partially closed by</strong>: B7 rate limit + B8 audit log pattern detection (anomalous geo, time-of-day patterns); not fully closed — relies on monitoring sophistication. mitigation: per-customer quota on signed-url issuance (separate budget from upload), surfaced to customer admins.
+3. tamper with manifest pointer to publish a deprecated version (e.g. one with a known content moderation issue).
+   - <strong>closed by</strong>: B2 + audit log + manifest-publish rate limits + customer admin notification on every publish.</p>
+<p><strong>hardest leaf to close</strong>: the legitimate-looking publish from a user with retained credentials and a history of normal usage. mitigation requires actor-2-aware behavioral analysis (out of scope for v2; tracked as v3.cortex feature). interim: <code>owk_*</code> cannot publish — only firebase-id-token authenticated humans can publish (api-key-write-restricted pattern). this is a constraint we should bake into v2 from the start.</p>
+<h3 id="actor-3-ransomware-operator">actor 3 — ransomware operator<a class="headerlink" href="#actor-3-ransomware-operator" title="Permanent link">&para;</a></h3>
+<p><strong>capability profile</strong>: highly funded (sometimes nation-state-adjacent), moves fast post-breach (lateral movement in &lt;48h), targets backup + recovery infrastructure first. signage networks are attractive because downtime = pressure to pay.</p>
+<p><strong>attack tree</strong>:
+1. compromise admin endpoint via phishing → use admin to publish corrupted manifests fleet-wide.
+   - <strong>closed by</strong>: B14 hardware mfa on admin accounts + multi-step publish ui (preview + confirm) + B8 audit log for forensic recovery + manifest rollback (F3 mitigation).
+2. compromise installer signing cert → distribute trojan installer to all customers in next release.
+   - <strong>closed by</strong>: B10 ephemeral build vm + B14 hardware mfa on cert custodian + sha-256 publication (customer can verify out-of-band) + auto-update opt-in only (customers control when they upgrade).
+3. compromise r2 admin → bulk-delete chunks across all tenants.
+   - <strong>closed by</strong>: B14 hardware mfa on cloudflare account + r2 versioning + lifecycle rules that retain deleted objects 30 days + offsite manifest backup (manifest in r2 + checksums in firestore = recoverable).
+4. ransom-encrypt local agent storage to take shows offline.
+   - <strong>partially closed by</strong>: agent runs as <code>system</code> and <code>system</code> is what ransomware wants — agent itself is not a hardening point. mitigation: customer host hardening (out of scope); local content store + already-extracted projects survive r2 outage but not local fs encryption. accepted risk; documented for customers.</p>
+<p><strong>hardest leaf to close</strong>: customer-host ransomware that takes down all installations on a single customer's network. accepted as out-of-scope (we are not an edr vendor); roost contributes by enabling fast recovery (re-install agent + re-deploy from manifest = full restoration in &lt;30min for a 100gb project given r2 download speed).</p>
+<h3 id="actor-4-content-defacement-vandal">actor 4 — content defacement vandal<a class="headerlink" href="#actor-4-content-defacement-vandal" title="Permanent link">&para;</a></h3>
+<p><strong>capability profile</strong>: low-skill, high-publicity-seeking. uses stolen credentials or social-engineered access. does not need persistence — single publish event achieves the goal.</p>
+<p><strong>attack tree</strong>:
+1. phish customer admin → publish offensive content.
+   - <strong>closed by</strong>: B14 mfa (mandatory for admin in customer org policy — we support, customers must enable; documented in onboarding); customer-side approval workflow (v3 feature; v2 mitigation is fast rollback, F3).
+2. exploit filename-based xss to deface dashboard for customer's other admins.
+   - <strong>closed by</strong>: B12 sanitization + react text-node rendering only.
+3. upload content under another tenant's <code>siteId</code> via parameter tampering.
+   - <strong>closed by</strong>: B2 token-derived tenant ids.</p>
+<p><strong>hardest leaf to close</strong>: a customer-admin account legitimately publishes defacement (insider variant). mitigation: rapid rollback + audit log enables prosecution; v3 approval workflow is the structural fix.</p>
+<h3 id="actor-5-competitor">actor 5 — competitor<a class="headerlink" href="#actor-5-competitor" title="Permanent link">&para;</a></h3>
+<p><strong>capability profile</strong>: medium-skill, well-funded, time-flexible. hires ex-employees, social engineers support staff, attempts long-term access.</p>
+<p><strong>attack tree</strong>:
+1. plant ex-employee at competitor → ex-employee retains <code>owk_*</code> or admin access.
+   - <strong>closed by</strong>: same controls as actor 2.
+2. social-engineer support staff to manually grant access "for debugging".
+   - <strong>closed by</strong>: documented support access procedure (no support staff has standing access to customer data; access requests require customer-side approval token; tracked in <code>docs/internal/support-access.md</code> — separate doc).
+3. target a known customer's publish flow; intercept manifest in transit (mitm).
+   - <strong>closed by</strong>: tls 1.3 + cert pinning (web is browser-pinned via hsts; agent pins specific certificate authorities); content-addressing makes byte-level tampering detectable but does not protect manifest pointer (actor 5 needs to break tls + firestore auth — implausible for non-state actor).</p>
+<p><strong>hardest leaf to close</strong>: pre-employment exfiltration before offboarding triggers. mitigation: customer-side audit + access reviews (their responsibility); roost provides B8 audit log as the evidence trail.</p>
+<h3 id="actor-6-state-actor">actor 6 — state actor<a class="headerlink" href="#actor-6-state-actor" title="Permanent link">&para;</a></h3>
+<p><strong>capability profile</strong>: full apt toolkit, supply-chain capable, willing to spend years. tail risk for installs at airports, embassies, doe sites.</p>
+<p><strong>attack tree</strong>:
+1. compromise upstream dep (npm, pypi) → poison agent or web build.
+   - <strong>closed by</strong>: pinned versions + <code>ignore-scripts=true</code> + ephemeral build vm (B10) + signed installer (B10). residual: a poisoned dep that survives audit + makes it into a signed release. mitigation: limit dep count (audit <code>package.json</code> + <code>requirements.txt</code> quarterly; remove unused).
+2. compromise cloudflare itself (low probability, high impact).
+   - <strong>partially closed by</strong>: byo-bucket enterprise tier (customer can run on aws s3 instead of r2); tuf manifest signing (v3) limits cloudflare-only compromise to availability impact, not integrity.
+3. compromise gcp itself (low probability, high impact).
+   - <strong>closed by</strong>: nothing in v2; this is the implicit trust assumption. v3 considerations: multi-cloud manifest pointer (cross-write to a non-google datastore as integrity check).
+4. lawful-intercept order against firebase or cloudflare to read customer data.
+   - <strong>closed by</strong>: cmek (v3 enterprise tier) + data residency (jurisdiction selection) + transparency reports.</p>
+<p><strong>hardest leaf to close</strong>: cloudflare or google compromise / lawful-intercept. v2 accepts this risk; v3 cmek + tuf reduces it.</p>
+<hr />
+<h2 id="appendix-h-wave-by-wave-security-task-crosswalk">appendix h: wave-by-wave security task crosswalk<a class="headerlink" href="#appendix-h-wave-by-wave-security-task-crosswalk" title="Permanent link">&para;</a></h2>
+<p>operationalizes this doc against <code>dev/active/project-distribution-v2/plan.md</code> waves. each wave's security-relevant tasks are listed. if a wave is missing a row here that the plan implies, <strong>the plan is incomplete and must be updated</strong>.</p>
+<h3 id="wave-0-legal-business-infra">wave 0 — legal + business + infra<a class="headerlink" href="#wave-0-legal-business-infra" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>task</th>
+<th>security item</th>
+<th>doc reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.1 tos</td>
+<td>F5 (legal blocker on upload), B15 (deletion sla)</td>
+<td>F5, B15</td>
+</tr>
+<tr>
+<td>0.2 dmca + repeat-infringer enforcement</td>
+<td>F5, real precedent: bmg v. cox</td>
+<td>F5, "real precedents"</td>
+</tr>
+<tr>
+<td>0.3 cyber insurance</td>
+<td>F5 (uninsured loss is fatal)</td>
+<td>F5</td>
+</tr>
+<tr>
+<td>0.5 cloudflare r2 setup</td>
+<td>B1, B2, B3, cross-tenant chunk path scheme</td>
+<td>B1-B3, "specific attack surfaces"</td>
+</tr>
+<tr>
+<td>0.6 gcp project setup</td>
+<td>B14 (hardware mfa on owner)</td>
+<td>B14</td>
+</tr>
+<tr>
+<td>0.7 ev cert procurement</td>
+<td>B10</td>
+<td>B10</td>
+</tr>
+<tr>
+<td>ops (key custody)</td>
+<td>B14, appendix e</td>
+<td>B14, appendix e</td>
+</tr>
+</tbody>
+</table>
+<h3 id="wave-1-spikes-foundations-refactor-test-infra">wave 1 — spikes + foundations + refactor + test infra<a class="headerlink" href="#wave-1-spikes-foundations-refactor-test-infra" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>task</th>
+<th>security item</th>
+<th>doc reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1.1 r2 spike</td>
+<td>validate B1, B3, cross-tenant prefix works</td>
+<td>"specific attack surfaces"</td>
+</tr>
+<tr>
+<td>1.5 commandrouter refactor</td>
+<td>boundary 9 (agent ↔ firestore command addressing)</td>
+<td>appendix c</td>
+</tr>
+<tr>
+<td>1.6 test infrastructure</td>
+<td>enables all baseline verification tests</td>
+<td>all baselines</td>
+</tr>
+<tr>
+<td>1.7 destination_allowlist.py</td>
+<td>F4, B6 (allowlist root for realpath check)</td>
+<td>F4, B6</td>
+</tr>
+<tr>
+<td>1.8 firestore rules + storage rules</td>
+<td>B1, B2, B8 (audit log immutability)</td>
+<td>B1, B2, B8</td>
+</tr>
+<tr>
+<td>1.9 manifest format</td>
+<td>content-addressing scheme = mitigation for "manifest substitution"</td>
+<td>"specific attack surfaces"</td>
+</tr>
+<tr>
+<td>1.10 threat model</td>
+<td>this document</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td>1.11 v1-v2 migration</td>
+<td>ssrf in v1 byo-url flow must be patched in parallel (B11)</td>
+<td>B11, plan.md risks</td>
+</tr>
+</tbody>
+</table>
+<h3 id="wave-2a-server-apis">wave 2a — server apis<a class="headerlink" href="#wave-2a-server-apis" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>task</th>
+<th>security item</th>
+<th>doc reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2a.1 chunk check route</td>
+<td>B2, B3, B7 (rate limit), B8 (audit)</td>
+<td>B2, B3, B7, B8</td>
+</tr>
+<tr>
+<td>2a.2 chunk upload-urls route</td>
+<td>B2, B3 (60min cap), B7, B8</td>
+<td>B2, B3, B7, B8</td>
+</tr>
+<tr>
+<td>2a.3 chunk download-urls route</td>
+<td>B2, B3 (15min cap), B7, B8, cross-tenant prefix check</td>
+<td>B2, B3, B7, B8</td>
+</tr>
+<tr>
+<td>2a.4 manifest publish route</td>
+<td>B2, B8, F3 (transaction + pointer race)</td>
+<td>B2, B8, F3</td>
+</tr>
+<tr>
+<td>2a.5 rollback route</td>
+<td>B2, B8, F3 (rollback pin)</td>
+<td>B2, B8, F3</td>
+</tr>
+<tr>
+<td>2a.6 deletion route (wave 5 in plan but security here)</td>
+<td>B8, B15</td>
+<td>B8, B15</td>
+</tr>
+<tr>
+<td>2a.7 next.config.js headers</td>
+<td>B13</td>
+<td>B13</td>
+</tr>
+<tr>
+<td>2a.8 rfc 7807 error middleware</td>
+<td>must not leak token / tenant info in error responses</td>
+<td>B9 (logging pattern), B12 (sanitization)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="wave-2b-cloud-functions">wave 2b — cloud functions<a class="headerlink" href="#wave-2b-cloud-functions" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>task</th>
+<th>security item</th>
+<th>doc reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>chunkVerify.ts</td>
+<td>B5</td>
+<td>B5</td>
+</tr>
+<tr>
+<td>chunkGc.ts</td>
+<td>F2 (gc safety)</td>
+<td>F2</td>
+</tr>
+<tr>
+<td>quotaEnforce.ts</td>
+<td>B7, F1</td>
+<td>B7, F1</td>
+</tr>
+<tr>
+<td>distributionFanout.ts</td>
+<td>boundary 8 (audit log on dispatch), boundary 9 (agent command addressing)</td>
+<td>appendix c</td>
+</tr>
+<tr>
+<td>webhookDispatch.ts</td>
+<td>B11 (ssrf on webhook destination url)</td>
+<td>B11</td>
+</tr>
+<tr>
+<td>auditLog.ts</td>
+<td>B8</td>
+<td>B8</td>
+</tr>
+<tr>
+<td>telemetry.ts</td>
+<td>no token logging in traces (B9); pii handling for trace attributes</td>
+<td>B9</td>
+</tr>
+<tr>
+<td>tusd hook function</td>
+<td>B7 (pre-upload quota), boundary 1 (filename sanitize), tusd hook hmac</td>
+<td>B7, B12, "specific attack surfaces"</td>
+</tr>
+</tbody>
+</table>
+<h3 id="wave-3-web-upload-rollback-ui">wave 3 — web upload + rollback ui<a class="headerlink" href="#wave-3-web-upload-rollback-ui" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>task</th>
+<th>security item</th>
+<th>doc reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>folder upload dropzone</td>
+<td>B12 (sanitize), boundary 1 (browser → tusd)</td>
+<td>B12, appendix c</td>
+</tr>
+<tr>
+<td>pre-upload summary</td>
+<td>quota visibility (B7 ui surface)</td>
+<td>B7</td>
+</tr>
+<tr>
+<td>rollback confirm dialog</td>
+<td>F3 (rollback pin), B8 (audit on rollback)</td>
+<td>F3, B8</td>
+</tr>
+<tr>
+<td>empty-state upload</td>
+<td>n/a directly; ensure no info leak in empty-state messaging</td>
+<td>n/a</td>
+</tr>
+<tr>
+<td>allowlist editor (admin ui)</td>
+<td>F4 ui surface</td>
+<td>F4</td>
+</tr>
+<tr>
+<td>sanitize.ts</td>
+<td>B12</td>
+<td>B12</td>
+</tr>
+<tr>
+<td>upload queue</td>
+<td>resume token storage in localstorage acceptable (no secret data); upload metadata only</td>
+<td>n/a</td>
+</tr>
+</tbody>
+</table>
+<h3 id="wave-4a-agent-core">wave 4a — agent core<a class="headerlink" href="#wave-4a-agent-core" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>task</th>
+<th>security item</th>
+<th>doc reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>sync_commands.py</td>
+<td>boundary 9 (agent ↔ firestore command addressing)</td>
+<td>appendix c</td>
+</tr>
+<tr>
+<td>sync_manifest.py</td>
+<td>content-addressing (B4), manifest pin (toctou mitigation)</td>
+<td>B4, "specific attack surfaces"</td>
+</tr>
+<tr>
+<td>sync_downloader.py</td>
+<td>B4 (re-hash after download), boundary 6</td>
+<td>B4, appendix c</td>
+</tr>
+<tr>
+<td>sync_state.py</td>
+<td>sqlite wal for resume + pin state</td>
+<td>"specific attack surfaces" (toctou)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="wave-4b-agent-security">wave 4b — agent security<a class="headerlink" href="#wave-4b-agent-security" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>task</th>
+<th>security item</th>
+<th>doc reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>4b.1 sync_assembler.py</td>
+<td>B6 (per-file destination_allowlist + realpath + symlink rejection), zip bomb cap, atomic swap</td>
+<td>B6, "specific attack surfaces"</td>
+</tr>
+<tr>
+<td>4b.2 python ≥3.12 pin in installer</td>
+<td>B6 prerequisite (<code>pathlib.Path</code> improvements + general security posture)</td>
+<td>B6</td>
+</tr>
+<tr>
+<td>4b.3 acl on extracted assets</td>
+<td>B6 (admins+system only)</td>
+<td>B6</td>
+</tr>
+<tr>
+<td>4b.4 reject symlinks on windows</td>
+<td>B6, F4</td>
+<td>B6, F4</td>
+</tr>
+<tr>
+<td>4b.5 throttled progress reporting</td>
+<td>no token in heartbeat (B9)</td>
+<td>B9</td>
+</tr>
+</tbody>
+</table>
+<h3 id="wave-4c-agent-tests">wave 4c — agent tests<a class="headerlink" href="#wave-4c-agent-tests" title="Permanent link">&para;</a></h3>
+<p>every test under <code>agent/tests/</code> listed in baseline + failure mode rows is required here. zero exceptions.</p>
+<h3 id="wave-5-webhooks-migration-signing">wave 5 — webhooks + migration + signing<a class="headerlink" href="#wave-5-webhooks-migration-signing" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>task</th>
+<th>security item</th>
+<th>doc reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>5.1 webhook routes</td>
+<td>B8 (audit), B11 (ssrf on customer webhook url), hmac sign outbound</td>
+<td>B8, B11</td>
+</tr>
+<tr>
+<td>5.2 v1 cutover</td>
+<td>F5 (legal must be ready before v1 customers can use v2), B11 (v1 ssrf patched)</td>
+<td>F5, B11</td>
+</tr>
+<tr>
+<td>5.3 deletion api</td>
+<td>B15, F2 (per-tenant gc path), gdpr art. 17</td>
+<td>B15, F2</td>
+</tr>
+</tbody>
+</table>
+<h3 id="wave-6-beta-cutover">wave 6 — beta + cutover<a class="headerlink" href="#wave-6-beta-cutover" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>task</th>
+<th>security item</th>
+<th>doc reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>6.1 beta program</td>
+<td>scoped to internal accounts only until F5 fully resolved</td>
+<td>F5</td>
+</tr>
+<tr>
+<td>6.2 monitoring</td>
+<td>audit log review automation; alarms per appendix d incident response</td>
+<td>B8, appendix d</td>
+</tr>
+<tr>
+<td>6.3 main cutover</td>
+<td>full pentest before contract value &gt; $25k acv</td>
+<td>"penetration testing"</td>
+</tr>
+<tr>
+<td>6.4 v1 code removal</td>
+<td>only after 4 weeks production runtime; B11 v1 patch already shipped</td>
+<td>B11</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="appendix-i-open-questions-tracked-against-this-doc">appendix i: open questions tracked against this doc<a class="headerlink" href="#appendix-i-open-questions-tracked-against-this-doc" title="Permanent link">&para;</a></h2>
+<p>these are items where the threat model is <strong>complete enough to ship v2</strong> but where future engineering work needs to revisit. listed so they don't fall off the radar.</p>
+<ol>
+<li><strong><code>owk_*</code> publish restriction</strong>: should <code>owk_*</code> keys be allowed to publish manifests, or only to read? actor 2 playbook argues for read-only. proposal: v2 ships with <code>owk_*</code> read-only for manifest publish; firebase-id-token-only for publish. tracked for wave 2a.4 design review.</li>
+<li><strong>deferred-revocation for unused <code>owk_*</code></strong>: 90-day auto-tombstone for unused keys. requires tracking last-use timestamp on token doc + nightly sweep. proposal: ship in wave 2b alongside <code>auditLog.ts</code>. tracked.</li>
+<li><strong>per-customer signed-url issuance budget vs. download budget</strong>: B7 covers storage; signed-url issuance count is a separate axis (a token can issue many urls without uploading much). proposal: separate budget surfaced to customer admin. tracked for wave 2b <code>quotaEnforce.ts</code>.</li>
+<li><strong>support staff access procedure</strong>: actor 5 mitigation references <code>docs/internal/support-access.md</code>. that doc does not exist yet; before first hire of support staff, this doc must be written. tracked for whichever wave introduces support hires.</li>
+<li><strong>incident response runbook full text</strong>: appendix d is an outline; full runbook (<code>docs/internal/incident-response.md</code>) needed before first external customer. tracked for wave 0 exit criteria.</li>
+<li><strong>key custody full text</strong>: appendix e is a schedule; full procedures (<code>docs/internal/key-custody.md</code>) needed before first ev cert + first customer onboarding. tracked for wave 0 exit criteria.</li>
+<li><strong>csp <code>unsafe-inline</code> removal</strong>: B13 ships with <code>unsafe-inline</code> in <code>script-src</code> because firebase auth iframe + uppy require it. tracking removal as a separate cleanup task post-v2.</li>
+<li><strong>byo-bucket enterprise tier security review</strong>: enterprise customers can use their own r2 / s3 buckets. the threat model assumes our r2 — when enterprise byo ships, a separate review is required for the customer-bucket trust delta (their iam is now in the loop).</li>
+<li><strong>virustotal scan on upload</strong>: cloud function <code>virusTotalScan.ts</code> is queued for v3 but actor-3 + actor-4 mitigations would benefit from it earlier. proposal: re-evaluate in wave 5; if cheap to bolt on, ship in v2.</li>
+</ol>
+<hr />
+<p><strong>end of threat-model.md.</strong></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      built by <a href="https://tec.design" target="_blank" style="color:var(--md-accent-fg-color)">tec</a> &nbsp;·&nbsp; <a href="https://github.com/theexperiential/owlette/blob/main/LICENSE" target="_blank" style="color:var(--md-accent-fg-color)">FSL-1.1-Apache-2.0</a>
+    </div>
+  
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/theexperiential/owlette" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+        <script src="../../javascripts/docs.js"></script>
+      
+    
+  </body>
+</html>
