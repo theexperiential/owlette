@@ -25,59 +25,49 @@ import pytest
 # ─── helpers ──────────────────────────────────────────────────────────
 
 
-def _make_executor_result(output_dir: str, payload_bytes: bytes, filename: str = 'screenshot.jpg'):
+def _make_executor_result(output_dir: str, payload_bytes: bytes, filename: str = 'screenshot.png'):
     """Stand in for OwletteService.execute_in_user_session — writes
     `payload_bytes` into <output_dir>/<filename> and returns the dict
-    contract the real executor produces (outputDir + files + stdout)."""
+    contract the real executor produces (outputDir + files + stdout).
+
+    The user-session capture now writes only raw PNG (compression moved
+    service-side), so the default filename is screenshot.png."""
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, filename), 'wb') as f:
         f.write(payload_bytes)
     return {
         'outputDir': output_dir,
         'files': [filename],
-        'stdout': f'monitors=2 size={len(payload_bytes)} filename={filename}\n',
+        'stdout': f'monitors=2 size={len(payload_bytes)}\n',
         'stderr': '',
         'exitCode': 0,
         'durationMs': 42,
     }
 
 
-# ─── user-session capture ─────────────────────────────────────────────
+# ─── user-session capture (returns raw PNG; no compression here) ──────
 
 
-def test_capture_in_user_session_reads_jpeg_from_output_dir(tmp_path):
+def test_capture_in_user_session_reads_png_from_output_dir(tmp_path):
     from screenshot_capture import capture_in_user_session
 
     output_dir = str(tmp_path / 'capture')
-    payload = b'\xff\xd8\xff' + b'\x00' * 8192  # JPEG SOI + filler
+    payload = b'\x89PNG\r\n' + b'\x00' * 8192  # PNG signature + filler
 
     def fake_executor(job_type, code, **kwargs):
         assert job_type == 'python'
         assert kwargs.get('trusted') is True  # screenshot must be trusted
         assert 'import mss' in code
-        return _make_executor_result(output_dir, payload, 'screenshot.jpg')
+        # capture code must NOT do PIL/JPEG work in the user session —
+        # that's service-side now.
+        assert 'PIL' not in code
+        return _make_executor_result(output_dir, payload, 'screenshot.png')
 
-    image_bytes, content_type, monitors = capture_in_user_session(fake_executor, monitor=0)
-    assert image_bytes == payload
-    assert content_type == 'image/jpeg'
+    png_bytes, monitors = capture_in_user_session(fake_executor, monitor=0)
+    assert png_bytes == payload
     assert monitors == 2
     # Output dir should be cleaned up so successive captures don't accumulate.
     assert not os.path.exists(output_dir)
-
-
-def test_capture_in_user_session_falls_back_to_png(tmp_path):
-    """PIL missing in the user-session interpreter → screenshot.png produced."""
-    from screenshot_capture import capture_in_user_session
-
-    output_dir = str(tmp_path / 'capture')
-    payload = b'\x89PNG\r\n' + b'\x00' * 8192
-
-    def fake_executor(*_args, **_kwargs):
-        return _make_executor_result(output_dir, payload, 'screenshot.png')
-
-    image_bytes, content_type, _monitors = capture_in_user_session(fake_executor, monitor=0)
-    assert image_bytes == payload
-    assert content_type == 'image/png'
 
 
 def test_capture_in_user_session_surfaces_executor_error():
@@ -94,7 +84,7 @@ def test_capture_in_user_session_missing_output_dir():
     from screenshot_capture import capture_in_user_session, ScreenshotCaptureError
 
     def fake_executor(*_a, **_kw):
-        return {'files': ['screenshot.jpg']}  # no outputDir
+        return {'files': ['screenshot.png']}  # no outputDir
 
     with pytest.raises(ScreenshotCaptureError, match="missing 'outputDir'"):
         capture_in_user_session(fake_executor, monitor=0)
@@ -112,6 +102,49 @@ def test_capture_in_user_session_no_screenshot_file(tmp_path):
 
     with pytest.raises(ScreenshotCaptureError, match='no screenshot file'):
         capture_in_user_session(fake_executor, monitor=0)
+
+
+# ─── service-side JPEG compression ────────────────────────────────────
+
+
+def test_compress_to_jpeg_produces_jpeg_from_real_png():
+    """With Pillow available (service interpreter bundles it), a real PNG
+    compresses to a JPEG body + image/jpeg content-type."""
+    from screenshot_capture import _compress_to_jpeg
+
+    PIL = pytest.importorskip('PIL')  # service env has Pillow; skip if not
+    from PIL import Image
+    import io
+
+    # Build a tiny real PNG so PIL can actually open it.
+    buf = io.BytesIO()
+    Image.new('RGB', (64, 48), (10, 20, 30)).save(buf, format='PNG')
+    png_bytes = buf.getvalue()
+
+    out_bytes, content_type = _compress_to_jpeg(png_bytes)
+    assert content_type == 'image/jpeg'
+    assert out_bytes[:3] == b'\xff\xd8\xff'  # JPEG SOI marker
+
+
+def test_compress_to_jpeg_falls_back_to_png_without_pillow(monkeypatch):
+    """If Pillow can't import in the service interpreter, return the raw
+    PNG + image/png rather than hard-failing the capture."""
+    import builtins
+    from screenshot_capture import _compress_to_jpeg
+
+    real_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name == 'PIL' or name.startswith('PIL.'):
+            raise ImportError('Pillow not installed')
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', blocked_import)
+
+    png = b'\x89PNG\r\n' + b'\x00' * 128
+    out_bytes, content_type = _compress_to_jpeg(png)
+    assert out_bytes == png
+    assert content_type == 'image/png'
 
 
 # ─── upload retry behavior ────────────────────────────────────────────
@@ -309,16 +342,22 @@ def test_finalize_screenshot_raises_on_missing_url():
 
 
 def test_capture_and_upload_full_pipeline_happy_path(tmp_path):
-    """capture (user-session executor) → upload-url → PUT → finalize."""
+    """capture raw PNG (user session) → compress to JPEG (service) →
+    upload-url → PUT → finalize."""
     from screenshot_capture import capture_and_upload
 
     output_dir = str(tmp_path / 'capture-run')
-    payload = b'\xff\xd8\xff' + b'\x00' * 4096
+    raw_png = b'\x89PNG\r\n' + b'\x00' * 4096
 
     def fake_executor(*_a, **_kw):
-        return _make_executor_result(output_dir, payload, 'screenshot.jpg')
+        return _make_executor_result(output_dir, raw_png, 'screenshot.png')
+
+    jpeg_bytes = b'\xff\xd8\xff' + b'\x11' * 2048
 
     with patch(
+        'screenshot_capture._compress_to_jpeg',
+        return_value=(jpeg_bytes, 'image/jpeg'),
+    ) as mock_compress, patch(
         'screenshot_capture.request_upload_url',
         return_value={
             'uploadUrl': 'https://signed.example/write',
@@ -333,7 +372,7 @@ def test_capture_and_upload_full_pipeline_happy_path(tmp_path):
         return_value={
             'url': 'https://storage.googleapis.com/bucket/screenshots/site_a/mach_x/1700-aabb.jpg?t=1700',
             'storagePath': 'screenshots/site_a/mach_x/1700-aabb.jpg',
-            'sizeKB': 4,
+            'sizeKB': 2,
             'monitor': 1,
         },
     ) as mock_finalize:
@@ -350,14 +389,16 @@ def test_capture_and_upload_full_pipeline_happy_path(tmp_path):
     assert result['url'].startswith('https://storage.googleapis.com/')
     assert result['monitor'] == 1
     assert result['monitor_count'] == 2
-    assert result['size_kb'] >= 4
 
-    # Verify the call shapes — content type flows from capture → upload-url
-    # → upload → finalize as image/jpeg (since the executor wrote a .jpg).
+    # Compression got the raw PNG the user session produced.
+    assert mock_compress.call_args.args[0] == raw_png
+    # Content type flows from compress → upload-url → upload → finalize as
+    # image/jpeg, and the UPLOADED bytes are the compressed JPEG (not the
+    # raw PNG the user session wrote).
     assert mock_request_url.call_args.kwargs['content_type'] == 'image/jpeg'
-    upload_args, upload_kwargs = mock_upload.call_args
+    upload_kwargs = mock_upload.call_args.kwargs
     assert upload_kwargs['upload_url'] == 'https://signed.example/write'
-    assert upload_kwargs['image_bytes'] == payload
+    assert upload_kwargs['image_bytes'] == jpeg_bytes
     assert upload_kwargs['content_type'] == 'image/jpeg'
     assert mock_finalize.call_args.kwargs['storage_path'] == 'screenshots/site_a/mach_x/1700-aabb.jpg'
     assert mock_finalize.call_args.kwargs['monitor'] == 1
