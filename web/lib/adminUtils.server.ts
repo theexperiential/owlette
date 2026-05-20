@@ -269,11 +269,22 @@ export async function getSiteAlertEmailsWithCc(
   };
 }
 
+/**
+ * Resolve a machine's local timezone for display in alert emails.
+ *
+ * Returns the IANA name (e.g. "America/New_York") from `machine_timezone_iana`,
+ * which is the only format `Intl.DateTimeFormat({ timeZone })` and Python's
+ * `zoneinfo.ZoneInfo()` accept. The sibling `machine_timezone` field holds the
+ * Windows registry name (e.g. "Eastern Standard Time") and MUST NOT be used —
+ * `Intl` throws a RangeError on it (see emailTimestamp). Agents < 2.6.1 only
+ * reported the Windows name, so this returns undefined for them; callers fall
+ * back to UTC, and the field appears once the agent is upgraded.
+ */
 export async function getMachineTimezone(siteId: string, machineId: string): Promise<string | undefined> {
   try {
     const db = getAdminDb();
     const machineDoc = await db.collection('sites').doc(siteId).collection('machines').doc(machineId).get();
-    return machineDoc.data()?.machine_timezone as string | undefined;
+    return machineDoc.data()?.machine_timezone_iana as string | undefined;
   } catch {
     return undefined;
   }
