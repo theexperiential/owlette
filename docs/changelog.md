@@ -22,6 +22,20 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
   Net result: multi-MB image bodies no longer transit Next.js, dashboard `lastScreenshot` updates immediately via Firestore real-time (no polling), and the signed-URL upload concept ships end-to-end as originally designed by the api-sprint (3027713).
 
+- **Login page hydration fixed (React #418).** The passkey button rendered via `{browserSupportsWebAuthn() && …}` evaluated during render — the server (no `window`) omitted the button, the client included it: a hydration mismatch. It looked harmless (React recovers by discarding the SSR tree and re-rendering client-side) but it threw away `/login`'s server HTML on every load, and in the Playwright E2E harness the in-flight re-render dropped the login click so the suite hung on `/login`. This is why E2E had been red since the 2.12.0 hardening pass — that pass switched the root layout to dynamic rendering (`await headers()` for the CSP nonce), which surfaced the latent mismatch as a thrown error in production builds. Fixed by gating the button on a `mounted` flag: server + first client render agree (no button), button revealed after hydration via `useEffect`. E2E is green again.
+
+- **Alert emails localize timestamps to the machine's IANA timezone.** The alert-email renderer passed a Windows-style zone string ("Pacific Standard Time") to `toLocaleString`, which only accepts IANA names ("America/Los_Angeles") — so every alert email threw `RangeError: Invalid time zone specified` and silently failed to send. Now uses the machine's stored IANA timezone.
+
+### added
+
+- **owlette.app failover origin — Cloudflare Load Balancing (Railway primary, Vercel standby).** Groundwork for surviving a single-provider outage (the failure mode that took prod down on 2026-05-19 when Google Cloud blocked Railway's account):
+  - **`GET /api/health`** — unauthenticated readiness probe (shallow Firestore read, 2.5 s timeout, 200/503) so the load balancer can fail an origin out when it's up but can't reach its backend (the exact "provider lost cloud egress" mode).
+  - **`infra/cloudflare/`** — Terraform module for the load balancer: Railway primary pool + Vercel fallback pool, `/api/health` monitor, and `adaptive_routing { failover_across_pools = true }` for an instant mid-request cross-pool handoff instead of waiting ~60 s for the next health-check cycle. Apply workflow + token scope + origin-hostname gotchas documented in `.claude/skills/cf-load-balancing.md`.
+  - **`scripts/sync-env.mjs` + `scripts/env-manifest.json`** — manifest-driven env-var management across railway-dev / railway-prod / vercel-prod (status / check / diff / sync; values never printed; dry-run by default). Workflow + must-match secret rules in `.claude/skills/env-management.md`.
+  - **Vercel deploy wiring** — `web/vercel.json` removed (the auto-generated `experimentalServices` config put the project in the wrong framework mode); `.vercelignore` + `web/.npmrc` added for a correct monorepo deploy.
+
+  This is groundwork: the load balancer and Vercel deploy aren't live yet, so `/api/health` ships and sits inert until failover is provisioned.
+
 ## [2.12.2] - 2026-05-19 [superseded by 2.12.3]
 
 > The screenshot fix in 2.12.2 used a temporary delegation to the
