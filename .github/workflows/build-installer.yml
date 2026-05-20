@@ -74,7 +74,18 @@ jobs:
 
       - name: install Inno Setup 6
         shell: pwsh
-        run: choco install innosetup --version=6.2.2 -y --no-progress
+        run: |
+          # The windows-latest image now ships Inno Setup pre-installed (6.7.x),
+          # so `choco install innosetup --version=6.2.2` fails with "a newer
+          # version is already installed" (exit 1). build_installer_full.bat
+          # locates ISCC at the standard path / PATH and works with any 6.x, so:
+          # skip when already present, otherwise install the current version.
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if ((Test-Path $iscc) -or (Get-Command iscc.exe -ErrorAction SilentlyContinue)) {
+            Write-Host "Inno Setup 6 already present — skipping choco install"
+          } else {
+            choco install innosetup -y --no-progress
+          }
 
       - name: pin Python toolchain version
         uses: actions/setup-python@v5
