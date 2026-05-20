@@ -200,7 +200,10 @@ jobs:
     steps:
       - name: install slsa-verifier
         run: |
-          VERIFIER_VERSION=v2.6.0
+          # v2.7.0+ is required: the v2.1.0 generator records a `dsse:0.0.1`
+          # Rekor tlog entry, which v2.6.0 rejects ("expected intoto:0.0.2, got
+          # dsse:0.0.1"). v2.7.0 is also what the generator uses internally.
+          VERIFIER_VERSION=v2.7.0
           curl -sSL \
             "https://github.com/slsa-framework/slsa-verifier/releases/download/${VERIFIER_VERSION}/slsa-verifier-linux-amd64" \
             -o /usr/local/bin/slsa-verifier
@@ -214,7 +217,10 @@ jobs:
 
       - name: download provenance attestation from release
         run: |
+          # This job has no checkout, so `gh release download` can't infer the
+          # repo from git context ("fatal: not a git repository"). Pass it with -R.
           gh release download "${GITHUB_REF_NAME}" \
+            -R "${GITHUB_REPOSITORY}" \
             --pattern 'owlette-installer.intoto.jsonl' \
             --dir .
         env:
