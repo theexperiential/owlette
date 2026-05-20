@@ -1,0 +1,33 @@
+# Vercel deploys only web/ (project Root Directory = web). Everything else at
+# the repo root is excluded — it's not part of the build, and some of it must
+# never be uploaded:
+#   - .claude holds an un-gitignored .env.local.bak (secrets)
+#   - sdks/python has permission-locked pytest temp dirs that break the scan
+#
+# NOTE: this is a DENYLIST on purpose. Vercel's uploader prunes ignored
+# directories, so an allowlist (`/*` + `!/web`) prunes web/ and fails with
+# "Root Directory web does not exist". Don't "simplify" it back to a negation.
+/.claude
+/.firebase-config
+/.firebaserc
+/.github
+/.pytest_cache
+/agent
+/api-test
+/cli
+/dev
+/docs
+/examples
+/functions
+/icons
+/infra
+/load-tests
+/monitoring
+/scripts
+/sdks
+/site
+/storage
+/test-infra
+/test-results
+*.log
+/nul

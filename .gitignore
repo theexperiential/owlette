@@ -3,6 +3,9 @@
 .env.local
 .env*.local
 
+# Vercel CLI link metadata
+.vercel
+
 # Python
 __pycache__/
 *.py[cod]
