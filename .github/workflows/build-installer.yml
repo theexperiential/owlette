@@ -42,7 +42,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       artifact-name: ${{ steps.build.outputs.artifact-name }}
-      artifact-sha256: ${{ steps.digest.outputs.sha256 }}
+      artifact-subjects: ${{ steps.digest.outputs.subjects-b64 }}
       version: ${{ steps.version.outputs.version }}
     permissions:
       contents: read
@@ -107,26 +107,31 @@ jobs:
           :: output artifact name for downstream jobs
           echo artifact-name=Owlette-Installer-v%OWLETTE_VERSION%.exe>> %GITHUB_OUTPUT%
 
-      - name: compute artifact SHA-256 (base64) for SLSA subject
+      - name: compute base64-subjects for SLSA generator
         id: digest
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
-          $path = "agent/build/installer_output/Owlette-Installer-v$version.exe"
+          $fileName = "Owlette-Installer-v$version.exe"
+          $path = "agent/build/installer_output/$fileName"
           if (!(Test-Path $path)) {
             throw "installer not found at $path — build step did not produce expected artifact"
           }
-          # Output BOTH lowercase hex (what slsa-verifier CLI wants) and
-          # base64 (what the generator input expects). Hex in summary;
-          # base64 into GITHUB_OUTPUT.
+          # The slsa-github-generator `base64-subjects` input is the base64
+          # encoding of a `sha256sum` line — "<hex>␣␣<filename>\n" — NOT the raw
+          # hex and NOT the base64 of the digest bytes. The generator's `attest`
+          # command base64-DECODES this value, so passing raw hex fails with
+          # "illegal base64 data at input byte 64" (the space after the 64-char
+          # hash). Build the exact sha256sum line and base64 it.
           $bytes = [IO.File]::ReadAllBytes($path)
           $sha = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
           $hex = ([BitConverter]::ToString($sha) -replace '-', '').ToLower()
-          $b64 = [Convert]::ToBase64String($sha)
+          $subjectsLine = "$hex  $fileName`n"
+          $subjectsB64 = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes($subjectsLine))
           Write-Host "sha256 (hex):    $hex"
-          Write-Host "sha256 (base64): $b64"
-          "sha256=$hex" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "sha256-b64=$b64" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "subjects line:   $($subjectsLine.Trim())"
+          Write-Host "base64-subjects: $subjectsB64"
+          "subjects-b64=$subjectsB64" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: upload installer artifact
         uses: actions/upload-artifact@v4
@@ -151,7 +156,9 @@ jobs:
       actions: read         # reusable workflow metadata
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
-      base64-subjects: "${{ needs.build.outputs.artifact-sha256 }} ${{ needs.build.outputs.artifact-name }}"
+      # base64-encoded `sha256sum` line for the installer (built in the digest
+      # step). The generator base64-decodes this, so it must NOT be raw hex.
+      base64-subjects: "${{ needs.build.outputs.artifact-subjects }}"
       # upload the signed .intoto.jsonl provenance next to the artifact
       # on the release page. requires `contents: write` above.
       upload-assets: ${{ startsWith(github.ref, 'refs/tags/v') }}
