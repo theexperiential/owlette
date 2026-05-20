@@ -97,6 +97,8 @@ Agents authenticate via a device code flow — no browser login on the target ma
 
 **Env vars** (Railway dev/prod + Vercel prod): managed via `scripts/env-manifest.json` (canonical key registry — keys + metadata, never values) and `node scripts/sync-env.mjs` (`status` / `check` / `diff` / `sync <target>`). Full workflow + the `must-match` secret rules + the Vercel read-back caveat: `.claude/skills/env-management.md`.
 
+**Failover load balancer**: `owlette.app` is fronted by a Cloudflare LB (Railway primary, Vercel standby) defined as Terraform in `infra/cloudflare/`. Health probe is `/api/health`. Apply workflow, token scope, and the origin-hostname gotchas: `.claude/skills/cf-load-balancing.md`.
+
 **IMPORTANT: Always version up AND update the changelog BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
 
 **IMPORTANT: `docs/changelog.md` MUST be updated before every installer build.** Add a new `## [X.Y.Z] - YYYY-MM-DD` section summarising all changes since the last release. Never build or upload an installer without a matching changelog entry.
