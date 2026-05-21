@@ -3,6 +3,9 @@
   "version": "2.12.3",
   "private": true,
   "packageManager": "npm@10.9.0",
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "fumadocs-mdx && next build",
