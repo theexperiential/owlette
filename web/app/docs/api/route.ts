@@ -35,10 +35,13 @@ const CUSTOM_CSS = `
   background: url('/owlette-eye.svg') left center / 22px 22px no-repeat;
 }
 
-/* larger page title (the info.title heading in the introduction) */
+/* larger page title (the info.title heading in the introduction); the
+ * margin-top opens a gap from the version/OpenAPI badge row (a flex row of
+ * .badge pills) that renders directly above it with no spacing of its own */
 .scalar-app .introduction-section .section-header {
   font-size: 36px;
   line-height: 1.15;
+  margin-top: 12px;
 }
 
 /* stronger hierarchy: keep headings at full strength, dim body copy */

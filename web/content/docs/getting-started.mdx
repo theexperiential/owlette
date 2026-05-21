@@ -22,14 +22,20 @@ Sites organize your machines — think of them as locations, departments, or pro
 3. Enter a **Site ID** (e.g., `nyc-gallery`) — this is permanent
 4. Click **Create**
 
+![create site dialog](/docs-screens/create-site-dialog.png)
+
 ---
 
 ## step 3: install the agent
 
 ### download
 
-1. Click the **download button** in the dashboard header to get the latest agent installer
-2. Transfer the installer to the Windows machine you want to monitor
+The dashboard header has two installer buttons side by side — pick the one that matches where you are:
+
+- **download** — if you're already working **on the machine you want to monitor**, click this to download the latest installer directly.
+- **copy link** — if you're **remoting into** the machine, click this to copy the installer link, then paste it into a browser on that machine to download it there — no file transfer needed.
+
+![the download and copy-link buttons in the dashboard header](/docs-screens/getting-started-install-buttons.png)
 
 ### install & connect
 
@@ -51,6 +57,8 @@ For deploying to many machines, use the `/ADD=` flag with a pre-authorized phras
 
 Within 30 seconds of installation, your machine should appear in the dashboard:
 
+![online machine card](/docs-screens/machine-card.png)
+
 | check | what to look for |
 |-------|-----------------|
 | **Machine visible** | Machine card appears in your site with a green "Online" indicator |
@@ -69,6 +77,8 @@ Now that your machine is connected, tell owlette which applications to watch:
 4. Give it a **name** (e.g., "TouchDesigner")
 5. Enable **Autolaunch** to auto-start and auto-restart on crash
 6. Click **Save**
+
+![add process dialog](/docs-screens/add-process-dialog.png)
 
 The agent immediately begins monitoring the process. If it crashes, owlette restarts it within 10 seconds.
 
