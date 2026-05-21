@@ -1,0 +1,10 @@
+{
+  "title": "self-hosting",
+  "pages": [
+    "index",
+    "firebase",
+    "firestore-rules",
+    "web-deployment",
+    "environment-variables"
+  ]
+}

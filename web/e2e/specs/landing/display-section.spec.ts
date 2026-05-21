@@ -34,9 +34,11 @@ test.describe('landing — display section', () => {
     expect(body).toContain('mosaic-aware');
     expect(body).not.toContain('applies mosaic');
 
-    // Footer link to the display api reference
+    // Footer link to the display api reference. Points at the scalar reference
+    // root (/docs/api) — the prior #display-layout anchor was dropped because it
+    // does not resolve in the scalar-rendered reference.
     await expect(
       section.getByRole('link', { name: 'read the display api reference' }),
-    ).toHaveAttribute('href', '/docs/api#display-layout');
+    ).toHaveAttribute('href', '/docs/api');
   });
 });

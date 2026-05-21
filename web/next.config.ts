@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { withSentryConfig } from "@sentry/nextjs";
+import { createMDX } from "fumadocs-mdx/next";
 import { version } from "./package.json";
 
 const e2eDistDir = process.env.OWLETTE_NEXT_DIST_DIR;
@@ -17,6 +18,70 @@ const nextConfig: NextConfig = {
   allowedDevOrigins,
   images: {
     formats: ['image/avif', 'image/webp'],
+  },
+  async redirects() {
+    return [
+      {
+        source: '/owlette/api/developer-preview-checklist',
+        destination: '/docs/api',
+        permanent: true,
+      },
+      {
+        source: '/owlette/api/status-uptime',
+        destination: '/docs/api',
+        permanent: true,
+      },
+      {
+        source: '/owlette/api/load-testing',
+        destination: '/docs/api',
+        permanent: true,
+      },
+      {
+        source: '/owlette/api/launch-assets',
+        destination: '/docs/api',
+        permanent: true,
+      },
+      {
+        source: '/owlette/api/launch-runbook',
+        destination: '/docs/api',
+        permanent: true,
+      },
+      {
+        source: '/docs/api/developer-preview-checklist',
+        destination: '/docs/api',
+        permanent: true,
+      },
+      {
+        source: '/docs/api/status-uptime',
+        destination: '/docs/api',
+        permanent: true,
+      },
+      {
+        source: '/docs/api/load-testing',
+        destination: '/docs/api',
+        permanent: true,
+      },
+      {
+        source: '/docs/api/launch-assets',
+        destination: '/docs/api',
+        permanent: true,
+      },
+      {
+        source: '/docs/api/launch-runbook',
+        destination: '/docs/api',
+        permanent: true,
+      },
+      {
+        source: '/owlette',
+        destination: '/docs',
+        permanent: true,
+      },
+      {
+        source: '/owlette/:path*',
+        destination: '/docs/:path*',
+        permanent: true,
+      },
+    ];
   },
   async headers() {
     return [
@@ -78,7 +143,9 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withSentryConfig(nextConfig, {
+const withMDX = createMDX();
+
+export default withSentryConfig(withMDX(nextConfig), {
   // Suppress source map upload logs during build
   silent: true,
   // Built-in tunnel route (bypasses ad-blockers)

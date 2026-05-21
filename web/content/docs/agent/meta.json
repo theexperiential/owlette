@@ -1,0 +1,13 @@
+{
+  "title": "agent",
+  "pages": [
+    "index",
+    "installation",
+    "configuration",
+    "process-monitoring",
+    "system-tray",
+    "remote-commands",
+    "self-update",
+    "troubleshooting"
+  ]
+}

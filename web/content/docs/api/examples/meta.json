@@ -1,0 +1,10 @@
+{
+  "title": "examples",
+  "pages": [
+    "sdk-workflows",
+    "ci-cd-github-actions",
+    "nightly-sync",
+    "bulk-create",
+    "auto-rollback"
+  ]
+}

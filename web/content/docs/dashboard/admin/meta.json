@@ -1,0 +1,12 @@
+{
+  "title": "admin",
+  "pages": [
+    "index",
+    "user-management",
+    "installer-management",
+    "system-presets",
+    "token-management",
+    "email-alerts",
+    "webhooks"
+  ]
+}

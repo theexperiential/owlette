@@ -1217,7 +1217,7 @@ class OwletteConfigApp:
         """Map status to Unicode dot indicator"""
         if status == 'INACTIVE':
             return '○'  # Hollow dot for inactive
-        return '●'      # Solid dot for all active states
+        return '\u25cf'  # Solid dot for all active states
 
     def map_status_to_config(self, status_data, config_data):
         id_to_status = {}
@@ -1690,7 +1690,7 @@ class OwletteConfigApp:
             scrollbar.grid_configure(padx=(0, 8))
 
     def on_select(self, process_name):
-        # Remove status dot indicator "● " or "○ " from the beginning
+        # Remove status dot indicator from the beginning
         if process_name and len(process_name) >= 2 and process_name[1] == ' ':
             process_name = process_name[2:]
         process_id = shared_utils.fetch_process_id_by_name(process_name, self.config)
@@ -2285,7 +2285,7 @@ class OwletteConfigApp:
     def _open_docs(self):
         """Open the owlette documentation in the default browser."""
         import webbrowser
-        webbrowser.open("https://theexperiential.github.io/owlette/")
+        webbrowser.open("https://owlette.app/docs")
         logging.info("Opened documentation URL")
 
     def _open_feedback_dialog(self):

@@ -1,0 +1,133 @@
+---
+title: "installer"
+description: "superadmin only. Installer commands require a superadmin user session or an API key with installer=*:read for list/latest, installer=*:write for upload, and installer=*:admin for set-latest/delete."
+---
+
+Agent installer binary management for the platform-wide catalog of `Owlette-Installer-vX.Y.Z.exe` binaries that new agents pull during pairing. This is not the per-site classic deploy surface; see [`deploy`](/docs/cli/reference/deploy).
+
+Soft-delete is gated by a `min-active-versions >= 2` floor and the current latest version cannot be deleted until another active version is promoted.
+
+---
+
+## list
+
+List uploaded installer versions, newest first. Cursor-paged.
+
+**synopsis** - `owlette installer list [--include-deleted] [--limit <n>] [--cursor <token>] [--json]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--include-deleted` | no | include soft-deleted versions in the listing |
+| `--limit <n>` | no | page size, 1..100 (default 20) |
+| `--cursor <token>` | no | opaque `page_token` returned by a previous list call |
+
+```bash
+owlette installer list
+owlette installer list --include-deleted --limit 50
+owlette installer list --json | jq '.versions[] | select(.deletedAt == null) | .version'
+```
+
+**backing endpoint**: `GET /api/installer`
+
+---
+
+## latest
+
+Show the current latest installer metadata.
+
+**synopsis** - `owlette installer latest [--json]`
+
+```bash
+owlette installer latest
+owlette installer latest --json
+```
+
+**backing endpoint**: `GET /api/installer/latest`
+
+---
+
+## upload
+
+Upload a new installer binary. The CLI orchestrates the full three-step flow:
+
+1. `POST /api/installer/upload` requests a signed URL and reserves the version/storage path.
+2. `PUT <signedUrl>` uploads the bytes directly to Storage.
+3. `PUT /api/installer/upload` finalizes the upload, verifies the stored object checksum, writes installer metadata, and flips the `latest` pointer unless the API request explicitly opts out.
+
+The same `Idempotency-Key` is sent on both server-side calls, so retries of the request/finalize API calls replay cleanly while the signed upload URL is still valid. The CLI computes local SHA-256 and the server recomputes SHA-256 from Storage before publishing metadata.
+
+**synopsis** - `owlette installer upload <file> --version <semver> [--release-notes <text>] [--set-latest] [--idempotency-key <key>]`
+
+| flag | required | purpose |
+|---|---|---|
+| `<file>` | yes | path to the installer exe to upload |
+| `--version <semver>` | yes | semver of the installer being uploaded (`X.Y.Z`) |
+| `--release-notes <text>` | no | release notes shown on the dashboard |
+| `--set-latest` | no | mark this version as the new `latest` after upload; this is the default behavior |
+| `--idempotency-key <key>` | no | pin the `Idempotency-Key` used on both server calls |
+
+`--set-latest` defaults to `true`: omitting the flag leaves `setAsLatest` unset, and the upload API treats that as `true`. The current CLI does not accept `--no-set-latest` or `--set-latest=false`, so there is no direct CLI opt-out; use the upload API with `setAsLatest: false` if you need to upload without moving the `latest` pointer.
+
+```bash
+owlette installer upload ./Owlette-Installer-v2.11.0.exe \
+  --version 2.11.0 \
+  --release-notes "fixes display-manager flicker" \
+  --set-latest
+```
+
+**backing endpoints**:
+
+- `POST /api/installer/upload`
+- `PUT <signedUrl>`
+- `PUT /api/installer/upload`
+
+---
+
+## set-latest
+
+Promote a previously uploaded, active version as the new `latest` pointer.
+
+**synopsis** - `owlette installer set-latest <version> [--yes] [--idempotency-key <key>]`
+
+| flag | required | purpose |
+|---|---|---|
+| `<version>` | yes | semver to promote |
+| `--yes` | no | skip the confirmation prompt |
+| `--idempotency-key <key>` | no | pin an `Idempotency-Key` |
+
+```bash
+owlette installer set-latest 2.11.0
+owlette installer set-latest 2.11.0 --yes --json
+```
+
+**backing endpoint**: `POST /api/installer/{version}/set-latest`
+
+---
+
+## delete
+
+Soft-delete an installer version. Existing agents that already pulled it keep it; new agents and installer lists will not see it. Delete refuses the current latest version and refuses to drop below two active versions.
+
+**synopsis** - `owlette installer delete <version> [--yes] [--idempotency-key <key>]`
+
+| flag | required | purpose |
+|---|---|---|
+| `<version>` | yes | semver to soft-delete |
+| `--yes` | no | skip the confirmation prompt |
+| `--idempotency-key <key>` | no | pin an `Idempotency-Key` |
+
+```bash
+owlette installer delete 2.9.0
+owlette installer delete 2.9.0 --yes
+```
+
+**backing endpoint**: `DELETE /api/installer/{version}`
+
+---
+
+## notes
+
+- **scope**: platform-wide; superadmin only. `installer=*:read` for `list`/`latest`, `installer=*:write` for `upload`, `installer=*:admin` for `set-latest`/`delete`.
+- **idempotency**: upload and set-latest require `Idempotency-Key`; delete is true-idempotent and the CLI still sends a key.
+- **common errors**: `scope_insufficient`, `checksum_mismatch`, `latest_version_protected`, `min_versions_violated`, and shared idempotency errors.
+- **related**: [`deploy`](/docs/cli/reference/deploy) for fanning an installer binary out to a fleet.

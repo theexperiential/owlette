@@ -1,0 +1,99 @@
+@import "tailwindcss";
+@source "../../node_modules/fumadocs-ui/dist/**/*.js";
+@source inline("sm:ms-4");
+@import "fumadocs-ui/css/shadcn.css";
+@import "fumadocs-ui/css/preset.css";
+
+:root,
+.dark {
+  color-scheme: dark;
+  --color-fd-background: var(--background);
+  --color-fd-foreground: var(--foreground);
+  --color-fd-muted: var(--muted);
+  --color-fd-muted-foreground: var(--muted-foreground);
+  --color-fd-popover: var(--popover);
+  --color-fd-popover-foreground: var(--popover-foreground);
+  --color-fd-card: var(--card);
+  --color-fd-card-foreground: var(--card-foreground);
+  --color-fd-border: var(--border);
+  --color-fd-primary: var(--accent-cyan);
+  --color-fd-primary-foreground: var(--primary-foreground);
+  --color-fd-secondary: var(--secondary);
+  --color-fd-secondary-foreground: var(--secondary-foreground);
+  --color-fd-accent: var(--sidebar-accent);
+  --color-fd-accent-foreground: var(--sidebar-accent-foreground);
+  --color-fd-ring: var(--accent-cyan);
+  --color-fd-overlay: color-mix(in oklab, var(--background) 72%, transparent);
+  --color-fd-info: var(--accent-cyan);
+  --color-fd-warning: var(--accent-warm);
+  --color-fd-error: var(--accent-coral);
+  --color-fd-success: var(--accent-cyan-hover);
+  --color-fd-idea: var(--accent-warm);
+}
+
+#nd-docs-layout {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist), sans-serif;
+}
+
+#nd-sidebar {
+  background: var(--sidebar);
+  border-color: var(--sidebar-border);
+  color: var(--sidebar-foreground);
+  --color-fd-accent: var(--sidebar-accent);
+  --color-fd-accent-foreground: var(--sidebar-accent-foreground);
+  --color-fd-primary: var(--accent-cyan);
+  --color-fd-primary-foreground: var(--primary-foreground);
+  --color-fd-ring: var(--accent-cyan);
+}
+
+#nd-subnav {
+  background: color-mix(in oklab, var(--background) 86%, var(--card));
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+#nd-page {
+  font-family: var(--font-geist), sans-serif;
+  /* the global site footer (components/Footer.tsx) is position:fixed and
+     floats over the bottom of every page; give the article extra bottom room
+     so the prev/next pagination cards clear it instead of rendering beneath. */
+  padding-bottom: 8rem;
+}
+
+#nd-page a,
+#nd-toc a {
+  text-decoration-color: var(--accent-cyan-muted);
+  text-underline-offset: 0.18em;
+}
+
+#nd-page a:hover,
+#nd-toc a:hover {
+  color: var(--accent-cyan);
+  text-decoration-color: var(--accent-cyan);
+}
+
+#nd-page :where(pre, code, kbd),
+[data-search-full] kbd {
+  font-family: var(--font-geist-mono), monospace;
+}
+
+/* callouts (Fumadocs <Callout>) — the container is the only element that sets
+   --callout-color, so scope the looser leading to it. Body text runs a touch
+   tight by default; give it more breathing room without affecting prose
+   line-height elsewhere on the page. */
+#nd-page [style*="--callout-color"] :where(p, li) {
+  line-height: 1.9;
+}
+
+.docs-nav-title {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.5rem;
+}
+
+.docs-nav-title img {
+  height: 1.25rem;
+  width: 1.25rem;
+}

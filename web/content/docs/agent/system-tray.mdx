@@ -1,0 +1,93 @@
+---
+title: "system tray"
+description: "The owlette system tray icon provides at-a-glance status and quick access to common actions. It runs as a separate process from the service, using pystray for the tray icon and owlette_tray.py for logic."
+---
+
+---
+
+## tray icon
+
+The tray icon appears in the Windows notification area (system tray). It's a HAL 9000-inspired owl eye — a warm radial glow whose color reflects the agent's health at a glance:
+
+![the owlette icon in the Windows system tray](/tray-icon.png)
+
+| state | how it looks | what it means |
+|-------|--------------|---------------|
+| **connected** | normal icon with a white center dot | service running and connected to the cloud — everything healthy |
+| **connection issues** | warning/disconnected orange-dot icon | service running but not reaching the cloud (offline, or still starting up) |
+| **error** | flashing red error icon | service stopped/crashed or the health probe reports a failure. Disabled cloud/site configuration appears as a warning/disabled state. |
+
+The warm center and dark rim keep the icon legible on both light and dark taskbars.
+
+---
+
+## right-click menu
+
+Right-clicking the tray icon shows:
+
+![the owlette tray right-click menu](/docs-screens/agent-right-click.png)
+
+| menu item | description |
+|-----------|-------------|
+| **owlette v&lt;version&gt;** | Current owlette version (read-only) |
+| **hostname: &lt;host&gt;** | Current machine hostname (read-only) |
+| **service status** | Current lowercased service status (read-only) |
+| **status: &lt;cloud status&gt;** | Current cloud status (read-only) |
+| **open owlette** | Launch the configuration GUI |
+| **start on login** | Toggle whether owlette starts on user login |
+| **restart** | Restart the OwletteService |
+| **exit** | Stop the Owlette service (triggers a UAC prompt). Also closes the GUI and the tray icon. |
+
+---
+
+## ipc communication
+
+The tray icon communicates with the service through an **IPC status file**:
+
+```
+C:\ProgramData\Owlette\tmp\service_status.json
+```
+
+The service attempts status updates from its main loop, but writes are throttled. It updates the file when service, Firebase, or health state changes, when the service is shutting down, or when unchanged content has reached the 30-second refresh floor. Unchanged content inside that floor is skipped.
+
+### status file contents
+
+```json
+{
+  "service": {
+    "running": true,
+    "last_update": 1777053600,
+    "version": "2.3.1"
+  },
+  "firebase": {
+    "enabled": true,
+    "connected": true,
+    "site_id": "my-site",
+    "last_heartbeat": 1777053595
+  },
+  "health": {
+    "status": "ok",
+    "error_code": null,
+    "error_message": null,
+    "checked_at": 1777053580,
+    "probe_results": {
+      "config_readable": true,
+      "firebase_section_present": true,
+      "token_store_accessible": true,
+      "network_reachable": true
+    }
+  }
+}
+```
+
+---
+
+## launching the tray
+
+The service launches the tray icon automatically during startup using the logged-in user's session:
+
+1. Service detects the active user session via `WTSQueryUserToken`
+2. Launches `owlette_tray.py` under the user's account (so the icon appears in their tray)
+3. Uses the embedded Python interpreter at `C:\ProgramData\Owlette\python\pythonw.exe`
+
+The tray process is independent — if it crashes, the service continues running. The service re-launches the tray on its next status check if it's not running.

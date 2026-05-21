@@ -1,0 +1,43 @@
+---
+title: "rollback"
+description: "roll a roost back to a previous version from the top-level owlette rollback helper. this command is site-scoped and route-backed."
+---
+
+**synopsis** - `owlette rollback <roostId> --site <siteId> [--to <versionRef>] [--yes] [--json]`
+
+| flag | required | purpose |
+|---|---|---|
+| `--site <siteId>` | yes | site id that owns the roost |
+| `--to <versionRef>` | no | target version id, number, `#N`, `vN`, `current`, `previous`, or `first`; defaults to the roost's previous version |
+| `--yes` | no | skip the interactive confirmation; required when stdin is not a tty |
+
+```bash
+owlette rollback rst_my_project --site site-1
+owlette rollback rst_my_project --site site-1 --to v3 --yes
+owlette --json rollback rst_my_project --site site-1 --to previous --yes
+```
+
+**backing endpoints**:
+
+- `GET /api/roosts/{roostId}?siteId=<siteId>`
+- `GET /api/roosts/{roostId}/versions/{versionRef}/diff?siteId=<siteId>&against=<currentVersionId>`
+- `POST /api/roosts/{roostId}/rollback`
+
+The CLI always previews the diff before firing the mutation. In human mode it prompts `[y/N]`; in non-tty contexts pass `--yes` so scripts cannot roll back silently.
+
+---
+
+## exit codes
+
+- `0` - rollback succeeded, or the operator declined the confirmation prompt
+- `1` - api call failed or the rollback target resolves to the current version
+- `2` - usage/auth problem, no rollback target, or non-tty execution without `--yes`
+
+---
+
+## notes
+
+- **scope**: `roost=<id>:rollback` or a broader site/admin scope that includes rollback.
+- **version refs**: the server resolves ids, numbers, `#N`, `vN`, and aliases; the CLI forwards the operator's raw `--to` value.
+- **eventing**: the rollback route flips `currentVersionId`; rollout/event fanout is handled by server-side follow-up workers, not by the CLI.
+- **see also**: [roost](/docs/cli/reference/roost), [overview](/docs/cli/overview), and [readiness matrix](/docs/cli/readiness).

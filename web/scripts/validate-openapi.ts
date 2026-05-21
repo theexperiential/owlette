@@ -45,6 +45,7 @@ const INTERNAL_ROUTES = new Set([
   '/api/agent/generate-installer',
   '/api/alerts/trigger',
   '/api/bug-report',
+  '/api/cortex',
   '/api/cortex/autonomous',
   '/api/cortex/categorize',
   '/api/cortex/escalation',

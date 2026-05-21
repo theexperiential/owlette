@@ -1,0 +1,113 @@
+---
+title: "quota"
+description: "quota inspects a site's storage + bandwidth usage against its tier limit. site-scoped: both verbs require --site . read-only — quotas are managed server-side by the billing layer. tier: [ready] for both verbs."
+---
+
+verbs:
+
+- [`quota show`](#quota-show) — current storage snapshot for a site, with alarms
+- [`quota history`](#quota-history) — daily usage rollup over the requested window
+
+---
+
+## quota show
+
+prints the current storage snapshot for a site: tier, committed + pending bytes, the limit (or "unlimited" for byo-bucket plans), the most recent reconciliation timestamp, and any active alarm firings. human mode renders an ascii progress bar; `--json` returns the full snapshot for scripting.
+
+```bash
+owlette quota show --site <siteId> [--json]
+```
+
+| flag | type | required | description |
+|---|---|---|---|
+| `--site <siteId>` | string | yes | site id to fetch quota for |
+
+### examples
+
+```bash
+# human-readable snapshot
+owlette quota show --site site-1
+# site       site-1
+# tier       pro
+#
+# storage: 12.4 GiB / 50.0 GiB (25%) [#####...............]
+#   pending: 240 MiB (in-flight uploads, not yet committed)
+#   reconciled at 2026-04-26T03:00:00Z
+```
+
+```bash
+# extract the fraction used for a billing alert script
+owlette --json quota show --site site-1 | jq '.fractionUsed'
+```
+
+```bash
+# warn if any alarm has fired in the last reconciliation window
+owlette --json quota show --site site-1 \
+  | jq -e '.alarms | length > 0' && echo "alarm active"
+```
+
+the human-mode bar follows this exact format (20 hash-characters wide):
+
+```
+storage: <used> / <limit> (NN%) [#####...............]
+```
+
+unlimited / byo-bucket sites print `<committed> used (unlimited — byo bucket)` in place of the bar.
+
+backing: `GET /api/sites/{siteId}/quota`.
+
+---
+
+## quota history
+
+prints a daily rollup of storage average, class-a + class-b operations, and egress bytes over the requested window. one row per UTC day in the period. defaults to `30d`.
+
+```bash
+owlette quota history --site <siteId> [--period <window>] [--json]
+```
+
+| flag | type | required | description |
+|---|---|---|---|
+| `--site <siteId>` | string | yes | site id to fetch usage history for |
+| `--period <window>` | enum | no | time window: `7d`, `14d`, `30d`, `60d`, or `90d` (default `30d`) |
+
+valid `--period` values are exactly `7d`, `14d`, `30d`, `60d`, `90d` — anything else exits `2` with a usage error.
+
+### examples
+
+```bash
+# default 30-day rollup
+owlette quota history --site site-1
+```
+
+```bash
+# tighter 7-day window
+owlette quota history --site site-1 --period 7d
+```
+
+```bash
+# total egress over the last 90 days
+owlette --json quota history --site site-1 --period 90d \
+  | jq '[.daily[].egressBytes] | add'
+```
+
+backing: `GET /api/sites/{siteId}/quota/history?period=<window>`.
+
+---
+
+## exit codes
+
+- `0` — success (snapshot printed or history table emitted)
+- `1` — network failure or non-2xx api response (e.g. `403` if you lack access to the site), invalid `--period` value, or a missing `--site` (a commander usage error)
+- `2` — no token configured for the active profile
+
+---
+
+## notes
+
+- **scope**: site-scoped — `--site <siteId>` is required on both verbs
+- **tier**: `[ready]` — both endpoints are fully public
+- **alarms**: `quota show` surfaces the rolling list of alarm firings (each with timestamp + threshold percentage). billing-managed; the cli is read-only here
+- **pending vs committed**: `pendingBytes` are in-flight uploads that haven't been finalized yet. only `committedBytes` count toward the tier limit
+- **history granularity**: one bucket per UTC day. partial days at the head of the window are included with whatever has been recorded so far
+- **related**: [overview](/docs/cli/overview) (json envelope), [site](/docs/cli/reference/site) (find your site ids), [roost](/docs/cli/reference/roost) (the main thing eating your storage)

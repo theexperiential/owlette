@@ -1,0 +1,16 @@
+{
+  "title": "docs",
+  "pages": [
+    "index",
+    "getting-started",
+    "agent",
+    "dashboard",
+    "api",
+    "cli",
+    "reference",
+    "architecture",
+    "troubleshooting",
+    "changelog",
+    "setup"
+  ]
+}

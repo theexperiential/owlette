@@ -1,0 +1,366 @@
+---
+title: "nightly directory sync"
+description: "a raw REST node script that runs nightly on a build box, walks a local directory, diffs against the roost's currently published version, and publishes a new version only if something actually changed. most nights nothing has changed — the script must not publish empty versions or burn quota. on quota_exceeded it sends an optional webhook alert; structured logs go to stdout for systemd journald / windows event log capture."
+---
+
+## required env vars
+
+- `OWLETTE_TOKEN` — api key with `roost=<id>:read,write` and `site=<id>:write` scopes.
+- `ROOST_ID` — target roost id.
+- `ROOST_SITE_ID` — site id hosting the roost.
+- `WATCH_DIR` — absolute path to the local tree to sync (e.g. `/mnt/creative/latest`).
+
+## optional env vars
+
+- `OWLETTE_API_URL` — defaults to `https://owlette.app`.
+- `ALERT_WEBHOOK` — optional webhook endpoint for the quota alert.
+
+## `nightly-sync.mjs` raw REST variant
+
+the shipped python sdk example is `sdks/python/examples/nightly_sync.py`; this node listing is a raw REST variant of the same `roosts.get()` followed by `roosts.push()` flow.
+
+```js
+#!/usr/bin/env node
+// nightly-sync.mjs — node >=20
+// usage: node nightly-sync.mjs
+// exits: 0 = ok (published or no-op), 1 = recoverable failure, 2 = quota exceeded
+
+import { readdir, readFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import path from 'node:path';
+
+const {
+  OWLETTE_TOKEN, OWLETTE_API_URL, ROOST_ID, ROOST_SITE_ID, WATCH_DIR,
+  ALERT_WEBHOOK,
+} = process.env;
+
+for (const k of ['OWLETTE_TOKEN', 'ROOST_ID', 'ROOST_SITE_ID', 'WATCH_DIR']) {
+  if (!process.env[k]) { log('fatal', 'missing env var', { var: k }); process.exit(1); }
+}
+
+const API_URL = OWLETTE_API_URL || 'https://owlette.app';
+const CHUNK_SIZE = 4 * 1024 * 1024;
+const CHECK_BATCH_SIZE = 900;
+const ROOST_VERSION = '2026-04-22';
+const H = {
+  authorization: `Bearer ${OWLETTE_TOKEN}`,
+  'roost-version': ROOST_VERSION,
+  'content-type': 'application/json',
+};
+
+function log(level, msg, extra = {}) {
+  // structured one-line json for journald / event-log ingestion
+  process.stdout.write(JSON.stringify({
+    ts: new Date().toISOString(), level, msg,
+    component: 'nightly-sync', roostId: ROOST_ID, ...extra,
+  }) + '\n');
+}
+
+async function api(pathAndQuery, init = {}) {
+  const res = await fetch(`${API_URL}${pathAndQuery}`, {
+    ...init,
+    headers: { ...H, ...(init.headers || {}) },
+  });
+  const bodyText = await res.text();
+  const body = bodyText ? JSON.parse(bodyText) : {};
+  if (!res.ok) {
+    const err = new Error(`${res.status} ${body.code || res.statusText}`);
+    err.status = res.status;
+    err.code = body.code;
+    err.detail = body.detail;
+    err.body = body;
+    throw err;
+  }
+  return body;
+}
+
+async function walk(dir) {
+  const out = [];
+  for (const ent of await readdir(dir, { withFileTypes: true })) {
+    const p = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      out.push(...await walk(p));
+    } else if (ent.isFile()) {
+      const buf = await readFile(p);
+      if (buf.length === 0) continue;
+      const chunks = [];
+      for (let offset = 0; offset < buf.length; offset += CHUNK_SIZE) {
+        const chunk = buf.subarray(offset, offset + CHUNK_SIZE);
+        chunks.push({
+          hash: createHash('sha256').update(chunk).digest('hex'),
+          size: chunk.length,
+          offset,
+        });
+      }
+      out.push({
+        path: path.relative(WATCH_DIR, p).replaceAll(path.sep, '/'),
+        size: buf.length,
+        chunks,
+        abs: p,
+      });
+    }
+  }
+  return out;
+}
+
+async function webhookAlert(subject, body) {
+  if (!ALERT_WEBHOOK) {
+    log('warn', 'alert webhook not configured, cannot send alert', { subject });
+    return;
+  }
+  try {
+    await fetch(ALERT_WEBHOOK, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        subject, text: body,
+      }),
+    });
+    log('info', 'alert webhook sent', { subject });
+  } catch (e) {
+    log('error', 'alert webhook failed', { error: String(e) });
+  }
+}
+
+function buildOciVersion(files) {
+  const configBody = JSON.stringify({ syncedAt: new Date().toISOString(), source: WATCH_DIR });
+  const configDigest = createHash('sha256').update(configBody).digest('hex');
+  return {
+    schemaVersion: 2,
+    mediaType: 'application/vnd.owlette.version.v1+json',
+    config: {
+      mediaType: 'application/vnd.owlette.roost.config.v1+json',
+      digest: configDigest,
+      size: Buffer.byteLength(configBody),
+    },
+    files: files.map(f => ({
+      path: f.path,
+      size: f.size,
+      chunks: f.chunks.map(c => ({ hash: c.hash, size: c.size })),
+    })),
+  };
+}
+
+function fileSignature(file) {
+  return `${file.size}:${(file.chunks || []).map(c => `${c.hash}:${c.size}`).join(',')}`;
+}
+
+async function main() {
+  log('info', 'nightly sync started', { watchDir: WATCH_DIR });
+
+  // 1. fetch current roost head
+  const siteQuery = `siteId=${encodeURIComponent(ROOST_SITE_ID)}`;
+  const roost = await api(`/api/roosts/${ROOST_ID}?${siteQuery}`);
+  const currentVersionId = roost.currentVersionId;
+
+  // 2. fetch current version file list (paginated) — use the "current" alias
+  //    so the resolver picks up the head we just read.
+  const currentMap = new Map();
+  if (currentVersionId) {
+    let pageToken = '';
+    do {
+      const url = `/api/roosts/${ROOST_ID}/versions/current/files?${siteQuery}&page_size=500${pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : ''}`;
+      const page = await api(url);
+      for (const f of page.files ?? page.items ?? []) currentMap.set(f.path, fileSignature(f));
+      pageToken = page.next_page_token;
+    } while (pageToken);
+  }
+
+  // 3. walk local tree + compute diff
+  const local = await walk(WATCH_DIR);
+  const localPaths = new Set(local.map(f => f.path));
+  const changed = local.filter(f => currentMap.get(f.path) !== fileSignature(f));
+  const removed = [...currentMap.keys()].filter(p => !localPaths.has(p));
+
+  if (local.length === 0 && currentMap.size > 0) {
+    log('error', 'local tree is empty; refusing to publish an empty version', {
+      currentFiles: currentMap.size,
+    });
+    process.exit(1);
+  }
+
+  if (changed.length === 0 && removed.length === 0) {
+    log('info', 'no changes, skipping publish', {
+      localFiles: local.length, currentFiles: currentMap.size,
+    });
+    process.exit(0);
+  }
+  log('info', 'diff computed', {
+    changed: changed.length, removed: removed.length, totalLocal: local.length,
+  });
+
+  // 4. dedup-check changed chunks (batches of 900)
+  const changedHashes = [...new Set(changed.flatMap(c => c.chunks.map(chunk => chunk.hash)))];
+  const missing = [];
+  for (let i = 0; i < changedHashes.length; i += CHECK_BATCH_SIZE) {
+    const batch = changedHashes.slice(i, i + CHECK_BATCH_SIZE);
+    const { missing: batchMissing } = await api('/api/chunks/check', {
+      method: 'POST',
+      body: JSON.stringify({ siteId: ROOST_SITE_ID, hashes: batch }),
+    });
+    missing.push(...batchMissing);
+  }
+  log('info', 'dedup check', {
+    changedHashes: changedHashes.length, missing: missing.length,
+  });
+
+  // 5. upload missing chunks
+  if (missing.length) {
+    for (let i = 0; i < missing.length; i += CHECK_BATCH_SIZE) {
+      const batch = missing.slice(i, i + CHECK_BATCH_SIZE);
+      const { urls } = await api('/api/chunks/upload-urls', {
+        method: 'POST',
+        body: JSON.stringify({ siteId: ROOST_SITE_ID, hashes: batch }),
+      });
+      for (const h of batch) {
+        const file = changed.find(c => c.chunks.some(chunk => chunk.hash === h));
+        const chunk = file?.chunks.find(chunk => chunk.hash === h);
+        if (!file || !chunk) throw new Error(`missing local chunk body for ${h}`);
+        const buf = await readFile(file.abs);
+        const put = await fetch(urls[h], {
+          method: 'PUT',
+          headers: { 'content-type': 'application/octet-stream' },
+          body: buf.subarray(chunk.offset, chunk.offset + chunk.size),
+        });
+        if (!put.ok) throw new Error(`r2 put failed for ${h}: ${put.status}`);
+      }
+      log('info', 'uploaded batch', { count: batch.length });
+    }
+  }
+
+  // 6. publish new version (cas-guarded via expectedCurrentVersionId)
+  const version = buildOciVersion(local);
+  const description = `nightly sync: +${changed.length} changed, -${removed.length} removed`;
+  const publish = await api(`/api/roosts/${ROOST_ID}/versions`, {
+    method: 'POST',
+    headers: {
+      'idempotency-key': randomUUID(),
+    },
+    body: JSON.stringify({
+      siteId: ROOST_SITE_ID,
+      version,
+      description,
+      ...(currentVersionId ? { expectedCurrentVersionId: currentVersionId } : {}),
+    }),
+  });
+  log('info', 'version published', {
+    versionId: publish.versionId,
+    versionNumber: publish.versionNumber,
+    totalFiles: local.length,
+    changed: changed.length,
+    removed: removed.length,
+  });
+}
+
+try {
+  await main();
+  process.exit(0);
+} catch (e) {
+  if (e.code === 'quota_exceeded') {
+    log('error', 'quota exceeded', { detail: e.detail });
+    await webhookAlert(
+      `[roost] quota exceeded on ${ROOST_SITE_ID}`,
+      `the nightly sync for roost ${ROOST_ID} hit a storage/bandwidth quota limit.\n\n` +
+      `detail: ${e.detail}\nsite: ${ROOST_SITE_ID}\n\nsee ${API_URL}/sites/${ROOST_SITE_ID}/quota`,
+    );
+    process.exit(2);
+  }
+  log('error', 'sync failed', { status: e.status, code: e.code, detail: e.detail });
+  process.exit(1);
+}
+```
+
+the shipped python sdk flow reads the current roost with `roosts.get()`, then calls `roosts.push()`, which performs chunking, dedup-check, upload, and publish internally. this raw REST variant expands those steps explicitly: files are split into 4 MiB SHA-256 chunks, zero-byte files are skipped, and chunk checks/upload-url requests are batched in groups of 900. every step emits a structured json log line with `ts`, `level`, `msg`, and relevant metadata, so journald's default json detector indexes each field for `journalctl -o json -u roost-nightly-sync.service`-style queries. a no-op night logs two lines (`started`, `no changes`) and exits 0 — cheap enough to run without rate-limit worries.
+
+## systemd timer (linux)
+
+drop these two unit files under `/etc/systemd/system/` and enable with `sudo systemctl enable --now roost-nightly-sync.timer`.
+
+### `/etc/systemd/system/roost-nightly-sync.service`
+
+```ini
+[Unit]
+Description=roost nightly sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=roost
+WorkingDirectory=/opt/roost-sync
+EnvironmentFile=/etc/roost-sync.env
+ExecStart=/usr/bin/node /opt/roost-sync/nightly-sync.mjs
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=30min
+```
+
+### `/etc/systemd/system/roost-nightly-sync.timer`
+
+```ini
+[Unit]
+Description=run roost nightly sync at 03:00 local time
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=15min
+Persistent=true
+Unit=roost-nightly-sync.service
+
+[Install]
+WantedBy=timers.target
+```
+
+`EnvironmentFile=/etc/roost-sync.env` holds the `OWLETTE_TOKEN=...` etc. lock that file down to `chmod 0600`. `RandomizedDelaySec=15min` spreads load for operators running this on many boxes.
+
+## windows scheduled task (alternative)
+
+save as `roost-nightly-sync.xml` and import with `schtasks /create /tn "roost nightly sync" /xml roost-nightly-sync.xml`.
+
+```xml
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>roost nightly sync</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2026-04-22T03:00:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+      <RandomDelay>PT15M</RandomDelay>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-18</UserId>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <ExecutionTimeLimit>PT30M</ExecutionTimeLimit>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>C:\Program Files\nodejs\node.exe</Command>
+      <Arguments>C:\roost-sync\nightly-sync.mjs</Arguments>
+      <WorkingDirectory>C:\roost-sync</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+```
+
+set the env vars machine-wide via `setx /M` or inject them through a small wrapper `.cmd` if you prefer keeping secrets out of the registry. task scheduler captures stdout/stderr to the event log when you run under `S-1-5-18` (local system) — the json lines are searchable via `Get-WinEvent -LogName "Microsoft-Windows-TaskScheduler/Operational"`.
+
+## error handling summary
+
+- `quota_exceeded` (402) — script sends an optional `ALERT_WEBHOOK` alert with a direct link to the quota dashboard. exit code 2 is distinct from 1 so an operator's `OnFailure=` unit can escalate differently.
+- other api errors, including `precondition_failed` / `version_stale`, are logged and exit 1; the next scheduled run tries again against the latest head.
+- `rate_limited` (429) — not specially handled in this raw REST variant. for fleets syncing hundreds of roosts from one host, add a `Retry-After`-aware retry loop around `api()`.
+- `chunk_not_found` during a later download (not this script's concern) — gc ran on an orphan; safe because the next nightly run re-uploads missing chunks.

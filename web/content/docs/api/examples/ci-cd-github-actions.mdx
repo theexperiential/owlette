@@ -1,0 +1,161 @@
+---
+title: "CI/CD with GitHub Actions"
+description: "Use GitHub Actions to build a project, publish the output directory as an Owlette roost version, and deploy that exact version to the target fleet."
+---
+
+The recommended launch path is the reusable Owlette roost deploy action in `.github/actions/owlette-roost-deploy`. It uses the public `owlette` CLI instead of embedding raw chunk/upload API calls in every consumer repository.
+
+This is a Wave 5.4 launch asset. It becomes externally runnable after the Wave 5.3 `@owlette/cli@rc` publish gate is complete.
+
+---
+
+## secrets and variables
+
+Configure these in the consumer repository under **Settings -> Secrets and variables -> Actions**.
+
+| name | type | purpose |
+|---|---|---|
+| `OWLETTE_TOKEN` | secret | scoped Owlette API key |
+| `OWLETTE_SITE_ID` | variable | site id that owns the roost |
+| `OWLETTE_ROOST_ID` | variable | roost id to publish into |
+| `OWLETTE_API_URL` | variable | optional, defaults to `https://owlette.app` |
+
+Recommended key scope:
+
+- `site=<site-id>:write`
+- `roost=<roost-id>:write,deploy`
+
+Use a dedicated key per repository so audit logs and rate-limit signals remain attributable.
+
+---
+
+## reusable action
+
+```yaml
+name: deploy with owlette
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      OWLETTE_API_URL: ${{ vars.OWLETTE_API_URL || 'https://owlette.app' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build artifact
+        run: npm run build
+
+      - name: Publish and deploy with Owlette
+        uses: theexperiential/owlette/.github/actions/owlette-roost-deploy@main
+        with:
+          token: ${{ secrets.OWLETTE_TOKEN }}
+          api-url: ${{ env.OWLETTE_API_URL }}
+          site-id: ${{ vars.OWLETTE_SITE_ID }}
+          roost-id: ${{ vars.OWLETTE_ROOST_ID }}
+          path: dist
+          description: ${{ github.ref_name }}
+```
+
+A copyable template lives at `examples/github-actions/roost-deploy.yml`.
+
+---
+
+## direct CLI workflow
+
+Use this form when you do not want to depend on the reusable action yet.
+
+```yaml
+name: deploy with owlette cli
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      OWLETTE_TOKEN: ${{ secrets.OWLETTE_TOKEN }}
+      OWLETTE_API_URL: ${{ vars.OWLETTE_API_URL || 'https://owlette.app' }}
+      OWLETTE_SITE_ID: ${{ vars.OWLETTE_SITE_ID }}
+      OWLETTE_ROOST_ID: ${{ vars.OWLETTE_ROOST_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Install owlette CLI
+        run: npm install -g @owlette/cli@rc
+
+      - name: Verify API compatibility
+        run: owlette version
+
+      - name: Publish version
+        id: publish
+        run: |
+          PUSH_JSON="$(owlette --json roost push dist \
+            --to "$OWLETTE_ROOST_ID" \
+            --site "$OWLETTE_SITE_ID" \
+            --description "$GITHUB_REF_NAME")"
+          VERSION_ID="$(node -e "const fs = require('fs'); const body = JSON.parse(fs.readFileSync(0, 'utf8')); if (!body.versionId) throw new Error('missing versionId'); console.log(body.versionId);" <<< "$PUSH_JSON")"
+          echo "version_id=$VERSION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy
+        run: owlette roost deploy "$OWLETTE_ROOST_ID" --site "$OWLETTE_SITE_ID" --version "${{ steps.publish.outputs.version_id }}"
+```
+
+---
+
+## publish without deploy
+
+Set `deploy: false` on the action when CI should publish a version for manual approval in the dashboard:
+
+```yaml
+- uses: theexperiential/owlette/.github/actions/owlette-roost-deploy@main
+  with:
+    token: ${{ secrets.OWLETTE_TOKEN }}
+    site-id: ${{ vars.OWLETTE_SITE_ID }}
+    roost-id: ${{ vars.OWLETTE_ROOST_ID }}
+    path: dist
+    deploy: false
+```
+
+The key can then omit roost `deploy`, but still needs `site=<site-id>:write` and `roost=<roost-id>:write`.
+
+---
+
+## launch verification
+
+Before linking this workflow from public launch material:
+
+- confirm `@owlette/cli@rc` installs on a clean GitHub-hosted Ubuntu runner
+- run the workflow against a dev or staging roost fixture
+- confirm the published version appears in the roost version history with the Git tag as its description
+- confirm deployment either queues successfully or is deliberately disabled with `deploy: false`
+- confirm failures include the Owlette `requestId` and problem `code` in the job log
+
+Do not publish consumer examples that require undocumented helper scripts or raw R2 credentials. The CLI handles chunking, dedup, signed upload URLs, version publish, and deploy through the public API.

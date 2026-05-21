@@ -1,0 +1,204 @@
+---
+title: "rate limits and quotas"
+description: "owlette enforces request rate limits and quota limits for public API callers."
+---
+
+**Last updated**: 2026-05-01
+
+- **Quota**: slower plan limits such as storage, bandwidth, daily publishes, webhook deliveries, active keys, or deployment targets.
+- **Rate limits**: faster request or concurrency limits that protect the API and fleet control plane.
+
+A correct client handles both. Being below storage quota does not guarantee a bursty script can ignore `429`, and being below request rate does not guarantee a publish can exceed the site's plan quota.
+
+---
+
+## quota vs rate limit
+
+| dimension | quota | rate limit |
+|---|---|---|
+| common status | `402 quota_exceeded` | `429 rate_limited` |
+| time scale | monthly, daily, or resource lifecycle | seconds, minutes, or active concurrency |
+| fix | reduce usage, wait for reset, or upgrade tier | back off, reduce concurrency, or shard independent traffic |
+| stable signal | problem `code` and quota fields | `RateLimit-*`, `Retry-After`, and reason headers when available |
+
+Quota refusals do not change state. Rate-limit refusals do not mean the key is banned; they mean the caller should slow down for the bucket that tripped.
+
+---
+
+## rate-limit headers
+
+Responses that pass through a public rate limiter include these headers when the active limiter can report counters:
+
+| header | meaning |
+|---|---|
+| `RateLimit-Limit` | Window limit for the active bucket. |
+| `RateLimit-Remaining` | Requests remaining in the current window. |
+| `RateLimit-Reset` | Seconds until the window resets. |
+
+For compatibility, some routes also emit `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`.
+
+On `429`, responses include:
+
+| header | meaning |
+|---|---|
+| `Retry-After` | Seconds to wait before retrying. Prefer this over client-side guesses. |
+| `Roost-Rate-Limited-Reason` | Bucket class that tripped. |
+
+Valid `Roost-Rate-Limited-Reason` values:
+
+| value | meaning | response |
+|---|---|---|
+| `global-rate` | Shared global or tenant-level burst protection. | Back off globally. |
+| `endpoint-rate` | Endpoint, route family, or IP bucket exhausted. | Reduce concurrency for that route family. |
+| `key-rate` | API-key bucket exhausted. | Slow this integration or split independent workloads across separate scoped keys. |
+| `site-concurrency` | Site-level concurrent work limit reached. | Wait for in-flight rollout, command, or deployment work to finish. |
+
+Some streaming, compatibility, and internal routes may omit rate-limit headers. Treat them as useful signals when present, not as fields guaranteed on every response.
+
+---
+
+## shipped buckets
+
+Owlette has two rate-limit layers. Routes wrapped with `withRateLimit()` use the public wrapper buckets below. Authenticated dashboard/API actions that go through the capability boundary also consume a per-capability bucket.
+
+### public wrapper buckets
+
+These limits come from `web/lib/rateLimit.ts` and `web/lib/withRateLimit.ts`.
+
+| strategy | shipped limit | subject |
+|---|---:|---|
+| `auth` | 10/minute | client IP |
+| `tokenExchange` | 60/hour in prod, 200/hour in dev | client IP |
+| `tokenRefresh` | 120/hour | client IP |
+| `user` | 60/hour | user id when available, otherwise client IP |
+| `agentAlert` | 5/hour | client IP |
+| `upload` | 5/hour in prod, 30/hour in dev | client IP |
+| `api` | 300/hour | API key id when an `owk_...` credential resolves, otherwise client IP |
+
+If Redis is not configured or errors, these wrapper buckets fall back to a per-process in-memory limiter of 15 requests per minute per identifier. That fallback is local to one server process; it is a guardrail, not a distributed quota.
+
+### capability buckets
+
+Capability-protected actions use 60-second windows keyed by actor bucket, subject, site, and capability. User sessions and API keys share the user bucket; system actors use the separate system bucket.
+
+| capability | user bucket | system bucket |
+|---|---:|---:|
+| `MACHINE_EXEC_COMMAND` | 60/minute | 300/minute |
+| `MACHINE_CONFIG_WRITE` | 30/minute | 150/minute |
+| `MACHINE_REMOVE` | 5/minute | 25/minute |
+| `DEPLOYMENT_MANAGE` | 30/minute | 150/minute |
+| `DISTRIBUTION_MANAGE` | 30/minute | 150/minute |
+| `UNINSTALL_TRIGGER` | 30/minute | 150/minute |
+| `PRESET_MANAGE` | 60/minute | 300/minute |
+| `SITE_MEMBER_MANAGE` | 30/minute | 150/minute |
+| `WEBHOOK_MANAGE` | 30/minute | 150/minute |
+| `SITE_LOGS_MANAGE` | 30/minute | 150/minute |
+| `USER_ROLE_MANAGE` | 10/minute | 50/minute |
+| `USER_DELETE` | 5/minute | 25/minute |
+| `SYSTEM_PRESET_MANAGE` | 30/minute | 150/minute |
+| `INSTALLER_MANAGE` | 10/minute | 50/minute |
+| `GLOBAL_SETTINGS_WRITE` | 10/minute | 50/minute |
+| `USER_SELF_PREFS` | 120/minute | 600/minute |
+| `USER_SELF_DELETE` | 1/minute | 5/minute |
+
+The capability limiter first applies a per-process token bucket, then checks the authoritative Firestore sharded counter. A single response reports the active bucket that rejected the request.
+
+---
+
+## example 429
+
+```http
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/problem+json
+RateLimit-Limit: 300
+RateLimit-Remaining: 0
+RateLimit-Reset: 47
+Retry-After: 47
+Roost-Rate-Limited-Reason: key-rate
+
+{
+  "type": "https://owlette.app/problems/rate-limited",
+  "title": "rate limited",
+  "detail": "Too many requests. Please try again in 47 seconds.",
+  "code": "rate_limited",
+  "retryAfter": 47
+}
+```
+
+Clients should read `Retry-After` from the header first. For rate-limit handling, rely on `code`/`type`, the `Retry-After` header, and body `retryAfter`; treat `detail` as display text. Some `withRateLimit()` responses may include extra legacy body fields for compatibility; treat them as non-contractual.
+
+---
+
+## retry guidance
+
+Retry:
+
+- `429 rate_limited`, honoring `Retry-After`.
+- `500`, `502`, `503`, and `504` with exponential backoff and jitter.
+- Network failures and client timeouts when the original request included an `Idempotency-Key`.
+
+Do not blindly retry:
+
+- `400`, `401`, `403`, `404`, `409`, `412`, or `422`.
+- `402 quota_exceeded` unless usage changed or the plan was upgraded.
+- `422 idempotency_key_mismatch`; fix the key/body mismatch first.
+
+Recommended fallback when `Retry-After` is absent:
+
+```text
+delay_ms = min(60000, 500 * 2 ** attempt) * random(0.5, 1.0)
+```
+
+Use at most 6 attempts for interactive requests. Background jobs can retry longer, but should log `requestId`, status, `code`, and the rate-limit headers for each attempt.
+
+---
+
+## idempotency and retries
+
+Every retried mutation should include an `Idempotency-Key`. Many public mutating endpoints require it. Reusing the same key for an identical retry lets Owlette return the original successful response instead of executing the side effect again.
+
+See [idempotency.md](/docs/api/idempotency) for the 24-hour replay window, mismatch behavior, and `Idempotent-Replayed` header.
+
+---
+
+## quota checks
+
+Use quota endpoints before large writes when you can:
+
+```http
+GET /api/sites/{siteId}/quota HTTP/1.1
+Authorization: Bearer owk_live_...
+```
+
+Typical quota snapshots include:
+
+```json
+{
+  "siteId": "kiosk-fleet-01",
+  "tier": "pro",
+  "usedBytes": 23456789012,
+  "pendingBytes": 104857600,
+  "limitBytes": 107374182400
+}
+```
+
+The API compares committed and pending usage against the active plan limit. In-flight upload reservations may count as pending usage until they are finalized or expire.
+
+---
+
+## client rules
+
+- Use one scoped key per integration so rate-limit and audit signals are attributable.
+- Pace bulk writes with a small concurrency limit before raising it.
+- Prefer fewer, larger batch requests where endpoints support batching.
+- Keep `page_size` at or below the documented maximum when exporting collections.
+- Log `X-Request-Id` and problem `requestId` for failed requests.
+
+---
+
+## see also
+
+- [errors.md](/docs/api/errors) for `rate_limited` and `quota_exceeded`.
+- [idempotency.md](/docs/api/idempotency) for safe mutation retries.
+- [pagination.md](/docs/api/pagination) for collection traversal.
+- The rendered reference at [`/docs/api`](/docs/api) for operation-level response headers.

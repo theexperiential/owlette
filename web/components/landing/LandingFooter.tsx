@@ -37,6 +37,9 @@ export function LandingFooter() {
 
           {/* Links */}
           <div className="flex flex-wrap justify-center gap-4 sm:gap-8 text-xs sm:text-sm">
+            <Link href="/docs" className="text-muted-foreground hover:text-foreground transition-colors">
+              docs
+            </Link>
             <Link href="/privacy" className="text-muted-foreground hover:text-foreground transition-colors">
               privacy policy
             </Link>

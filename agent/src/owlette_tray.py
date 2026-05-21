@@ -99,13 +99,15 @@ def is_windows_dark_theme():
 # Function to load icon image from file
 def load_icon(status='normal'):
     """
-    Load universal tray icon (white lines on dark grey background).
+    Load the tray icon image for the given status.
 
-    Single icon design that works on both light and dark taskbars.
-    Status indicated by center dot color:
-    - normal: White dot (everything OK, connected)
-    - warning: Orange dot (Firebase connection issues)
-    - error: Red dot (service stopped/disconnected)
+    The icon is a HAL 9000-inspired owl eye whose warm radial glow encodes
+    status; each status has its own multi-resolution .ico (with a .png
+    fallback). The whole eye is recolored — there is no separate indicator dot:
+    - normal: steady amber glow (everything OK, connected)
+    - disconnected: dim, muted glow (running but not reaching the cloud)
+    - error: red glow (service stopped/crashed or a health-probe failure)
+    The warm center and dark rim keep it legible on both light and dark taskbars.
     """
     # Use .ico files for better Windows HiDPI support
     # .ico files contain multiple resolutions (16x16 to 256x256) that Windows
@@ -204,7 +206,7 @@ def determine_status():
     Determine overall system status using IPC status file from service.
 
     Returns tuple of (status_code, service_msg, firebase_msg) where:
-    - status_code: 'error' (red), 'warning' (orange), 'normal' (white)
+    - status_code: 'error' (red), 'warning' (dim), 'normal' (amber)
     - service_msg: "Service: Running" or "Service: Stopped"
     - firebase_msg: "Connected", "Connecting", "Disconnected", "Disabled", "Unknown"
     """
@@ -246,13 +248,13 @@ def determine_status():
         return 'error', 'Service: Stopped', firebase_msg
 
     if not firebase_enabled or not site_id:
-        # Firebase disabled = red dot (not monitoring)
+        # Firebase disabled = error/red glow (not monitoring)
         return 'error', 'Service: Running', firebase_msg
     elif firebase_connected:
-        # Connected = white dot (all good)
+        # Connected = normal/amber glow (all good)
         return 'normal', 'Service: Running', firebase_msg
     else:
-        # Not connected = orange dot (connection issues)
+        # Not connected = warning/dim glow (connection issues)
         return 'warning', 'Service: Running', firebase_msg
 
 # Function to check if process is running

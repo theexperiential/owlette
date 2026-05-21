@@ -322,4 +322,16 @@ describe('proxy — CSP header', () => {
     const response = await proxy(makeRequest('/api/sites'));
     expect(response.headers.get('Content-Security-Policy')).not.toBeNull();
   });
+
+  it('limits Scalar CSP allowances to the API reference shell', async () => {
+    const scalar = await proxy(makeRequest('/docs/api'));
+    const scalarCsp = scalar.headers.get('Content-Security-Policy') ?? '';
+    expect(scalarCsp).toContain('https://fonts.scalar.com');
+    expect(scalarCsp).toContain('https://api.scalar.com');
+
+    const migratedPage = await proxy(makeRequest('/docs/api/authentication'));
+    const migratedCsp = migratedPage.headers.get('Content-Security-Policy') ?? '';
+    expect(migratedCsp).not.toContain('https://fonts.scalar.com');
+    expect(migratedCsp).not.toContain('https://api.scalar.com');
+  });
 });

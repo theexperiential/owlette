@@ -95,11 +95,11 @@ export async function POST(request: NextRequest) {
             <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">2.</span> <a href="https://owlette.app/download" style="${linkStyle}">download</a> and install the owlette agent on your machines
           </td></tr>
           <tr><td style="padding:8px 0;color:${EMAIL_COLORS.text};font-size:14px;">
-            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">3.</span> <a href="https://theexperiential.github.io/owlette/agent/process-monitoring/" style="${linkStyle}">configure processes</a> to monitor
+            <span style="color:${EMAIL_COLORS.cyan};font-weight:700;margin-right:8px;">3.</span> <a href="https://owlette.app/docs/agent/process-monitoring" style="${linkStyle}">configure processes</a> to monitor
           </td></tr>
         </table>
 
-        <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">need help? check the <a href="https://theexperiential.github.io/owlette/" style="${linkStyle}">docs</a> or reach out to our support team.</p>
+        <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">need help? check the <a href="https://owlette.app/docs" style="${linkStyle}">docs</a> or reach out to our support team.</p>
       `;
 
       welcomeEmailResult = await resendClient.emails.send({

@@ -96,90 +96,94 @@ security:
   - firebaseIdToken: []
 
 tags:
+  # One Title-Case tag per resource. Each operation's `tags:` value must match
+  # one of these names exactly (case-sensitive) — an unmatched value spawns a
+  # description-less group, and a name with no operations renders as an empty
+  # section. Keep this list and the operation tags in sync.
   - name: Sites
-    description: List sites accessible to your account
+    description: List, create, and manage sites, and issue or revoke agent enrollment tokens.
   - name: Machines
-    description: Monitor and manage machines in your fleet
+    description: Monitor and manage machines in your fleet — inventory, commands, display layout, reboot schedules, and uninstall.
   - name: Processes
-    description: Configure and control monitored processes
-  - name: Commands
-    description: Send commands to machines (restart, reboot, etc.)
-  - name: Deployments
-    description: Deploy software to machines
-  - name: Presets
-    description: Manage site-scoped schedule, reboot, and installer template presets
-  - name: Webhooks
-    description: Subscribe to events via HTTP callbacks
-  - name: API Keys
-    description: Manage your API keys
-  - name: Logs
-    description: Query activity logs
-  - name: Alerts
-    description: Manage alert rules
+    description: Configure and control monitored processes.
   - name: Screenshots
-    description: Manage machine screenshots
-  - name: Software Inventory
-    description: Query installed software on machines
+    description: |
+      Capture, retrieve, and delete machine screenshots. To capture, send
+      `type: capture_screenshot` to the machine commands endpoint
+      (`POST .../machines/{machineId}/commands`), then poll the returned
+      command for a signed `result.screenshot_url`.
+  - name: Deployments
+    description: Deploy installers and project distributions to machines; track, retry, and cancel rollouts.
+  - name: Presets
+    description: Manage site-scoped schedule, reboot, distribution, and deployment-template presets.
+  - name: Alerts
+    description: Manage alert rules.
+  - name: Logs
+    description: Query activity logs.
+  - name: Audit Log
+    description: |
+      Tamper-evident, hash-chained log of every mutating operation
+      performed against a site's roost resources.
+  - name: Quotas
+    description: Storage and bandwidth usage against plan limits.
+  - name: Webhooks
+    description: |
+      HTTP-callback subscriptions for roost events (publish, rollback,
+      deploy, quota, etc.). See [webhooks.md](/docs/api/webhooks).
+  - name: API Keys
+    description: |
+      Self-service api key management. Scoped, expiring bearer tokens
+      (`owk_live_*` / `owk_test_*`) used to authenticate every public
+      roost request. See [authentication.md](/docs/api/authentication).
   - name: Installer
-    description: Agent installer version information
-  - name: Tools
-    description: Execute MCP tools on machines
+    description: Agent installer versions, platform system presets, and TouchDesigner builds.
   - name: Cortex
-    description: AI-powered chat and tool execution
+    description: AI-powered chat and tool execution.
+  - name: Users
+    description: Manage platform users — roles, site assignments, and account provisioning.
+  - name: Site Members
+    description: Manage per-site membership and member roles.
   - name: Roost
     description: |
       Content-addressed project sync (v2). Upload folders once,
       fan out atomic deploys to the fleet, roll back instantly.
       All roost endpoints use RFC 7807 `application/problem+json`
       error envelopes (see the `ProblemDetails` schema).
-
-  # Public API tags: granular grouping per resource.
-  # existing `Roost` tag above covers the first batch of live endpoints.
-  # New tags below group the developer-preview public API surface.
-  - name: api-keys
+  - name: Versions
     description: |
-      Self-service api key management. Scoped, expiring bearer tokens
-      (`owk_live_*` / `owk_test_*`) used to authenticate every public
-      roost request. See [authentication.md](/docs/api/authentication).
-  - name: roosts
-    description: |
-      Roosts — named, versioned, content-addressed bundles of files
-      deployed to a set of machines. Renamed from `folders`.
-  - name: versions
-    description: |
-      Immutable oci-style versions. Every publish creates a new
+      Immutable oci-style roost versions. Every publish creates a new
       version; rollback is a pointer flip. See [versions.md](/docs/api/versions).
-  - name: chunks
+  - name: Chunks
     description: |
-      Content-addressed blob layer. Dedup lookup, signed upload/download
-      urls, cross-roost mount. See [chunks.md](/docs/api/chunks).
-  - name: deployments
-    description: |
-      Targeted rollouts — canary, scheduled, dry-run. Publishing a
-      version auto-fans-out to targets; the deploy endpoint adds
-      explicit control.
-  - name: sites
-    description: Read-only site metadata for the authenticated caller.
-  - name: machines
-    description: Read-only fleet inventory scoped to a site.
-  - name: quotas
-    description: Storage + bandwidth usage against plan limits.
-  - name: audit-log
-    description: |
-      Tamper-evident, hash-chained log of every mutating operation
-      performed against a site's roost resources.
-  - name: webhooks
-    description: |
-      HTTP-callback subscriptions for roost events (publish, rollback,
-      deploy, quota, etc.). See [webhooks.md](/docs/api/webhooks).
-  - name: utility
-    description: Identity, version, and live event-stream endpoints.
+      Content-addressed blob layer for roost. Dedup lookup, signed
+      upload/download urls, cross-roost mount. See [chunks.md](/docs/api/chunks).
+  - name: Utility
+    description: Identity, version, live event stream, and platform diagnostics.
+
+# Sidebar grouping (Scalar / Redocly `x-tagGroups`). NOTE: every tag declared
+# above must appear in exactly one group — Scalar hides any tag that is not in
+# a group. Keep this in sync when adding or renaming tags.
+x-tagGroups:
+  - name: fleet
+    tags: [Sites, Machines, Processes, Screenshots]
+  - name: deployment
+    tags: [Deployments, Presets, Installer]
+  - name: roost
+    tags: [Roost, Versions, Chunks, Audit Log]
+  - name: cortex
+    tags: [Cortex]
+  - name: monitoring
+    tags: [Logs, Alerts, Quotas]
+  - name: access & identity
+    tags: [Users, Site Members, API Keys]
+  - name: platform
+    tags: [Webhooks, Utility]
 
 paths:
   /api/account/api-keys:
     get:
       operationId: listAccountApiKeys
-      tags: [api-keys]
+      tags: [API Keys]
       summary: List account API keys
       description: Lists API key metadata for the authenticated superadmin account. Raw keys and hashes are never returned.
       security:
@@ -204,7 +208,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     post:
       operationId: createAccountApiKey
-      tags: [api-keys]
+      tags: [API Keys]
       summary: Create account API key
       description: |
         Creates a superadmin account API key and returns the raw key once.
@@ -232,7 +236,7 @@ paths:
         schema: { type: string }
     delete:
       operationId: revokeAccountApiKey
-      tags: [api-keys]
+      tags: [API Keys]
       summary: Revoke account API key
       description: Deletes an API key owned by the authenticated superadmin account.
       security:
@@ -258,7 +262,7 @@ paths:
   /api/platform/email/config:
     get:
       operationId: getPlatformEmailConfig
-      tags: [utility]
+      tags: [Utility]
       summary: Get platform email configuration
       description: Returns platform email provider configuration for superadmin diagnostics.
       security:
@@ -272,7 +276,7 @@ paths:
   /api/platform/security/kill-switch:
     post:
       operationId: updateSecurityKillSwitch
-      tags: [utility]
+      tags: [Utility]
       summary: Update security migration kill switch
       description: Flips capability or rate-limit enforcement for a bounded period. Superadmin only.
       security:
@@ -1069,85 +1073,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
-  # Tools
-  # ──────────────────────────────────────────────────────────────────────
-  /api/cortex:
-    post:
-      operationId: cortexChat
-      tags: [Cortex]
-      deprecated: true
-      summary: Legacy direct Cortex stream
-      description: |
-        Legacy dashboard/direct streaming endpoint. Public integrations should use
-        `/api/cortex/conversations` and
-        `/api/cortex/conversations/{conversationId}` instead.
-
-        **Modes:**
-        - **Single-machine mode**: Set `machineId` to a specific machine ID. If a local
-          Cortex agent is running on that machine, it handles the request locally.
-        - **Site-wide mode**: Set `machineId` to `__site__` to query across all machines
-          in the site using server-side LLM.
-
-        The response is streamed as AI-SDK line-prefixed frames using
-        `text/plain; charset=utf-8` and `X-Vercel-AI-Data-Stream: v1`.
-      security:
-        - apiKey: []
-        - bearerApiKey: []
-        - firebaseIdToken: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [messages, siteId, chatId]
-              properties:
-                messages:
-                  type: array
-                  description: Conversation history in OpenAI-compatible format
-                  items:
-                    type: object
-                    required: [role, content]
-                    properties:
-                      role:
-                        type: string
-                        enum: [user, assistant, system]
-                      content:
-                        description: Message content (string or array of text/image parts)
-                siteId:
-                  type: string
-                machineId:
-                  type: string
-                  description: Target machine ID, or `__site__` for site-wide mode
-                machineName:
-                  type: string
-                  description: Display name of the target machine
-                chatId:
-                  type: string
-                  description: Unique chat session ID
-            example:
-              messages:
-                - role: user
-                  content: "How's the system doing?"
-              siteId: nyc-office
-              machineId: DESKTOP-ABC123
-              machineName: Gallery PC 1
-              chatId: chat-123
-      responses:
-        '200':
-          description: AI-SDK text stream with assistant response
-          content:
-            text/plain:
-              schema:
-                type: string
-                description: AI-SDK line-prefixed text stream.
-        '400':
-          description: Missing required fields
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
   # ──────────────────────────────────────────────────────────────────────
   # Roost (project distribution v2) — content-addressed sync
   # ──────────────────────────────────────────────────────────────────────
@@ -1390,7 +1315,7 @@ paths:
   /api/chunks/check:
     post:
       operationId: checkChunks
-      tags: [Roost]
+      tags: [Chunks]
       summary: Check which chunks are already uploaded
       description: |
         Given a list of SHA-256 chunk hashes, returns the subset that are
@@ -1448,7 +1373,7 @@ paths:
   /api/chunks/upload-urls:
     post:
       operationId: getChunkUploadUrls
-      tags: [Roost]
+      tags: [Chunks]
       summary: Get signed upload URLs for chunks
       description: |
         Returns signed PUT URLs (≤60 min TTL) for uploading each chunk
@@ -1504,7 +1429,7 @@ paths:
   /api/chunks/download-urls:
     get:
       operationId: getChunkDownloadUrls
-      tags: [Roost]
+      tags: [Chunks]
       summary: Get signed download URLs for chunks
       description: |
         Returns signed GET URLs (≤15 min TTL) for downloading a batch of
@@ -1550,7 +1475,7 @@ paths:
   /api/roosts/{roostId}/versions:
     get:
       operationId: listRoostVersions
-      tags: [Roost]
+      tags: [Versions]
       summary: List versions for rollback UI
       description: |
         Returns the immutable version history for a roost, newest
@@ -1598,7 +1523,7 @@ paths:
           $ref: '#/components/responses/Problem501'
     post:
       operationId: finalizeVersion
-      tags: [Roost]
+      tags: [Versions]
       summary: Finalize a new version (atomic CAS)
       description: |
         Validates the version, confirms every referenced chunk exists in
@@ -1676,7 +1601,7 @@ paths:
   /api/roosts/{roostId}/version-url:
     post:
       operationId: mintRoostVersionUrl
-      tags: [Roost]
+      tags: [Versions]
       summary: Mint a fresh signed GET URL for a version body
       description: |
         Issues a short-lived (≤15 min) signed R2 URL for fetching a
@@ -1799,7 +1724,7 @@ paths:
   /api/keys:
     get:
       operationId: listUserApiKeys
-      tags: [api-keys]
+      tags: [API Keys]
       summary: list api keys
       description: |
         Lists the caller's own api keys (raw `key` is never included).
@@ -1832,7 +1757,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     post:
       operationId: createUserApiKey
-      tags: [api-keys]
+      tags: [API Keys]
       summary: create scoped api key
       description: |
         Creates a scoped api key. The raw `key` value is returned
@@ -1869,7 +1794,7 @@ paths:
       - $ref: '#/components/parameters/KeyIdPath'
     delete:
       operationId: revokeUserApiKey
-      tags: [api-keys]
+      tags: [API Keys]
       summary: revoke api key
       description: |
         Permanently revokes a key. Effective within 60s across all
@@ -1898,7 +1823,7 @@ paths:
       - $ref: '#/components/parameters/KeyIdPath'
     post:
       operationId: rotateUserApiKey
-      tags: [api-keys]
+      tags: [API Keys]
       summary: rotate api key
       description: |
         Mints a new raw key value; the old key remains valid for a
@@ -1936,7 +1861,7 @@ paths:
     x-stub: true
     get:
       operationId: listRoosts
-      tags: [roosts]
+      tags: [Roost]
       summary: list roosts in a site
       description: |
         Lists roosts the caller has access to within a site.
@@ -1988,7 +1913,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     post:
       operationId: createRoost
-      tags: [roosts]
+      tags: [Roost]
       summary: create roost
       description: |
         Creates a new empty roost. Publish a version to populate it.
@@ -2026,7 +1951,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: getRoost
-      tags: [roosts]
+      tags: [Roost]
       summary: fetch roost detail
       description: |
         Returns the roost's current state including `currentVersionId`
@@ -2055,7 +1980,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     patch:
       operationId: patchRoost
-      tags: [roosts]
+      tags: [Roost]
       summary: rename roost or change target machines
       description: |
         Updates the roost's name and/or target machine list. Does not
@@ -2089,7 +2014,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     delete:
       operationId: deleteRoost
-      tags: [roosts]
+      tags: [Roost]
       summary: soft-delete roost
       description: |
         Deletes the roost doc + versions subcollection. Content chunks
@@ -2133,7 +2058,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     post:
       operationId: rollbackRoost
-      tags: [roosts]
+      tags: [Roost]
       summary: flip currentVersionId to a previously-published version
       description: |
         Rolls a roost back by flipping its `currentVersionId` pointer to
@@ -2235,7 +2160,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: getVersion
-      tags: [versions]
+      tags: [Versions]
       summary: fetch full version body
       description: |
         Returns the full oci version body.
@@ -2258,7 +2183,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     patch:
       operationId: updateVersionDescription
-      tags: [versions]
+      tags: [Versions]
       summary: edit a published version's description
       description: |
         Edits the `description` field on an already-published version.
@@ -2317,7 +2242,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: listVersionFiles
-      tags: [versions]
+      tags: [Versions]
       summary: paginated flat file list for a version
       description: |
         Flat, cursor-paginated list of files in a version. Avoids
@@ -2364,7 +2289,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: diffVersions
-      tags: [versions]
+      tags: [Versions]
       summary: file-level diff between two versions
       description: |
         Returns the `added`, `removed`, and `modified` file sets
@@ -2406,7 +2331,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     post:
       operationId: mountChunk
-      tags: [chunks]
+      tags: [Chunks]
       summary: cross-roost chunk mount (zero-byte dedup)
       description: |
         Copies the chunk's virtual reference from `from` (source roost)
@@ -2463,7 +2388,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: listChunkReferrers
-      tags: [chunks]
+      tags: [Chunks]
       summary: list versions referencing a chunk
       description: |
         Lists versions currently referencing a chunk. Used by ops
@@ -2506,7 +2431,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     post:
       operationId: deployRoost
-      tags: [deployments]
+      tags: [Roost]
       summary: trigger targeted rollout
       description: |
         Triggers fan-out of a specific version to a subset of the
@@ -2547,7 +2472,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: listRoostDeployments
-      tags: [deployments]
+      tags: [Roost]
       summary: list rollout history for a roost
       description: |
         Cursor-paginated rollout history (deploys + rollbacks),
@@ -2595,7 +2520,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: getRoostDeployment
-      tags: [deployments]
+      tags: [Roost]
       summary: fetch rollout detail (per-machine state)
       description: |
         Per-machine state machine snapshot for one rollout (canary →
@@ -2624,7 +2549,7 @@ paths:
   /api/sites:
     get:
       operationId: listAccessibleSites
-      tags: [sites]
+      tags: [Sites]
       summary: list sites accessible to the caller
       description: |
         Lists sites visible to the caller. Session and Firebase ID-token
@@ -2657,7 +2582,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     post:
       operationId: createSite
-      tags: [sites]
+      tags: [Sites]
       summary: create a site
       description: |
         Creates a top-level site owned by the caller. Requires a
@@ -2710,7 +2635,7 @@ paths:
       - $ref: '#/components/parameters/SiteIdPath'
     get:
       operationId: getSite
-      tags: [sites]
+      tags: [Sites]
       summary: fetch site detail
       description: |
         Returns site metadata. Requires `site=<siteId>:read`.
@@ -2731,7 +2656,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     patch:
       operationId: updateSite
-      tags: [sites]
+      tags: [Sites]
       summary: update site settings
       description: |
         Updates mutable site settings. Requires `site=<siteId>:admin`.
@@ -2773,7 +2698,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     delete:
       operationId: deleteSite
-      tags: [sites]
+      tags: [Sites]
       summary: delete a site
       description: |
         Deletes the top-level site document. Requires
@@ -2811,7 +2736,7 @@ paths:
       - $ref: '#/components/parameters/SiteIdPath'
     get:
       operationId: listSiteMachines
-      tags: [machines]
+      tags: [Machines]
       summary: list machines in a site
       description: |
         Machine inventory with online state and current roost summaries.
@@ -2845,7 +2770,7 @@ paths:
       - $ref: '#/components/parameters/MachineIdSitePath'
     get:
       operationId: getSiteMachine
-      tags: [machines]
+      tags: [Machines]
       summary: fetch machine detail
       description: |
         Full detail for a single machine: inventory fields, heartbeat,
@@ -2867,7 +2792,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     delete:
       operationId: deleteSiteMachine
-      tags: [machines]
+      tags: [Machines]
       summary: remove a machine from a site
       description: |
         Hard-deletes the machine document, its config document, and the
@@ -2905,7 +2830,7 @@ paths:
       - $ref: '#/components/parameters/MachineIdSitePath'
     get:
       operationId: listMachineDeployments
-      tags: [machines]
+      tags: [Machines]
       summary: per-machine deployment history
       description: |
         Lists the current per-roost deployment state for roosts that target
@@ -3715,7 +3640,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: getSiteQuota
-      tags: [quotas]
+      tags: [Quotas]
       summary: current usage vs plan limits
       description: |
         Returns current storage + bandwidth usage against plan limits
@@ -3743,7 +3668,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: getSiteQuotaHistory
-      tags: [quotas]
+      tags: [Quotas]
       summary: daily usage trend for charting
       description: |
         Daily storage + bandwidth usage series. Default 30 days.
@@ -3794,7 +3719,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: listAuditRecords
-      tags: [audit-log]
+      tags: [Audit Log]
       summary: list audit records for a site
       description: |
         Paginated hash-chained audit log. Requires `site:X:read`
@@ -3877,7 +3802,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: getAuditRecord
-      tags: [audit-log]
+      tags: [Audit Log]
       summary: fetch single audit record + verify chain
       description: |
         Returns a single audit record and the hash-chain verification
@@ -3908,7 +3833,7 @@ paths:
   /api/webhooks:
     get:
       operationId: listWebhookSubscriptions
-      tags: [webhooks]
+      tags: [Webhooks]
       summary: list webhook subscriptions
       description: |
         Lists webhook subscriptions on a site.
@@ -3948,7 +3873,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     post:
       operationId: createWebhookSubscription
-      tags: [webhooks]
+      tags: [Webhooks]
       summary: create webhook subscription
       description: |
         Creates a webhook subscription. The `signingSecret` is returned
@@ -3987,7 +3912,7 @@ paths:
       - $ref: '#/components/parameters/SiteIdQuery'
     get:
       operationId: getWebhookSubscription
-      tags: [webhooks]
+      tags: [Webhooks]
       summary: fetch webhook detail
       description: |
         Returns a webhook subscription. The signing secret is never
@@ -4009,7 +3934,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     patch:
       operationId: patchWebhookSubscription
-      tags: [webhooks]
+      tags: [Webhooks]
       summary: update webhook url / events / paused state
       description: |
         Partial update — any subset of `url`, `events`, `description`,
@@ -4041,7 +3966,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     delete:
       operationId: deleteWebhookSubscription
-      tags: [webhooks]
+      tags: [Webhooks]
       summary: delete webhook subscription
       description: |
         Soft-deletes a subscription and pauses future delivery. Delivery
@@ -4078,7 +4003,7 @@ paths:
       - $ref: '#/components/parameters/SiteIdQuery'
     post:
       operationId: rotateWebhookSecret
-      tags: [webhooks]
+      tags: [Webhooks]
       summary: rotate webhook hmac signing secret
       description: |
         Mints a new hmac signing secret. The previous secret is retained
@@ -4109,7 +4034,7 @@ paths:
       - $ref: '#/components/parameters/RoostVersionHeader'
     get:
       operationId: listWebhookDeliveries
-      tags: [webhooks]
+      tags: [Webhooks]
       summary: list webhook delivery history
       description: |
         Paginated delivery history, newest first. Use `page_size` and
@@ -4155,7 +4080,7 @@ paths:
       - $ref: '#/components/parameters/SiteIdQuery'
     get:
       operationId: getWebhookDelivery
-      tags: [webhooks]
+      tags: [Webhooks]
       summary: fetch single delivery detail
       description: |
         Full delivery detail — request headers, payload, response
@@ -4184,7 +4109,7 @@ paths:
       - $ref: '#/components/parameters/SiteIdQuery'
     post:
       operationId: retryWebhookDelivery
-      tags: [webhooks]
+      tags: [Webhooks]
       summary: manually redeliver a past event
       description: |
         Redelivers the same payload with a fresh signature timestamp
@@ -4225,7 +4150,7 @@ paths:
   /api/webhooks/probe:
     post:
       operationId: probeWebhookUrl
-      tags: [webhooks]
+      tags: [Webhooks]
       summary: synthetic webhook probe
       description: |
         Fires a signed synthetic payload for a chosen webhook event at
@@ -4280,7 +4205,7 @@ paths:
     x-stub: true
     get:
       operationId: whoami
-      tags: [utility]
+      tags: [Utility]
       summary: resolve caller identity + scopes + rate-limit + quota
       description: |
         Echoes back the resolved auth context. Useful for sdk/cli
@@ -4305,7 +4230,7 @@ paths:
     x-stub: true
     get:
       operationId: getApiVersion
-      tags: [utility]
+      tags: [Utility]
       summary: supported api versions + current default
       description: |
         Publicly readable — no auth required. Lists the current dated
@@ -4324,7 +4249,7 @@ paths:
   /api/events/stream:
     get:
       operationId: streamEvents
-      tags: [utility]
+      tags: [Utility]
       summary: server-sent-events scoped event transport
       description: |
         Scoped SSE transport for local-dev tooling. The MVP stream emits
@@ -4374,7 +4299,7 @@ paths:
       - $ref: '#/components/parameters/MachineIdSitePath'
     post:
       operationId: dispatchMachineCommand
-      tags: [machines]
+      tags: [Machines, Screenshots]
       summary: queue a command on a machine
       description: |
         Canonical site-scoped command endpoint. Restricted to an
@@ -4500,7 +4425,7 @@ paths:
         description: Command id returned by the dispatch endpoint.
     get:
       operationId: getMachineCommandStatus
-      tags: [machines]
+      tags: [Machines, Screenshots]
       summary: poll command status
       description: |
         Returns the current status of a queued command. For completed
@@ -4557,7 +4482,7 @@ paths:
       - $ref: '#/components/parameters/MachineIdSitePath'
     post:
       operationId: issueScreenshotUploadUrl
-      tags: [machines]
+      tags: [Machines]
       summary: mint a 5-minute signed write url for screenshot upload
       description: |
         Agent-internal helper invoked during a `capture_screenshot`
@@ -4613,7 +4538,7 @@ paths:
   /api/cli/device-code:
     post:
       operationId: createCliDeviceCode
-      tags: [api-keys]
+      tags: [API Keys]
       summary: start CLI device-code login
       description: |
         Starts a short-lived CLI pairing flow. The CLI displays the
@@ -4647,7 +4572,7 @@ paths:
   /api/cli/device-code/authorize:
     post:
       operationId: authorizeCliDeviceCode
-      tags: [api-keys]
+      tags: [API Keys]
       summary: authorize CLI device-code login
       description: |
         Browser-side approval step for CLI pairing. Requires a signed-in
@@ -4701,7 +4626,7 @@ paths:
   /api/cli/device-code/poll:
     post:
       operationId: pollCliDeviceCode
-      tags: [api-keys]
+      tags: [API Keys]
       summary: poll CLI device-code login
       description: |
         CLI polling endpoint for the device-code flow. The device code is
@@ -4751,7 +4676,7 @@ paths:
       - $ref: '#/components/parameters/MachineIdSitePath'
     patch:
       operationId: setMachineCortexEnabled
-      tags: [machines]
+      tags: [Machines]
       summary: toggle Cortex tool dispatch for a machine
       description: Requires `machine=<machineId>:write`.
       security:
@@ -4781,7 +4706,7 @@ paths:
       - $ref: '#/components/parameters/MachineIdSitePath'
     put:
       operationId: setMachineDisplayLayout
-      tags: [machines]
+      tags: [Machines]
       summary: capture or configure a machine display layout
       description: |
         Machine-level display configuration surface. This stores the
@@ -4845,7 +4770,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     delete:
       operationId: clearMachineDisplayLayout
-      tags: [machines]
+      tags: [Machines]
       summary: clear the assigned display layout
       description: |
         Clears `displays.assigned` while preserving sibling display
@@ -4939,7 +4864,7 @@ paths:
       - $ref: '#/components/parameters/MachineIdSitePath'
     put:
       operationId: setMachineRebootSchedule
-      tags: [machines]
+      tags: [Machines]
       summary: update a machine reboot schedule
       description: Requires `machine=<machineId>:write`.
       security:
@@ -4977,7 +4902,7 @@ paths:
       - $ref: '#/components/parameters/MachineIdSitePath'
     post:
       operationId: triggerMachineUninstall
-      tags: [machines]
+      tags: [Machines]
       summary: queue software uninstall on a machine
       description: Requires `UNINSTALL_TRIGGER` and site write scope.
       security:
@@ -5007,7 +4932,7 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
     delete:
       operationId: cancelMachineUninstall
-      tags: [machines]
+      tags: [Machines]
       summary: queue cancellation for an in-flight software uninstall
       description: Requires `UNINSTALL_TRIGGER` and site write scope.
       security:
@@ -5274,7 +5199,7 @@ paths:
   /api/users/me:
     delete:
       operationId: deleteCurrentUser
-      tags: [users]
+      tags: [Users]
       summary: delete the authenticated user's own account
       description: |
         Self-delete cascade for the current user. Requires a session or
@@ -5752,251 +5677,6 @@ paths:
         '500': { $ref: '#/components/responses/Problem500' }
 
   # ──────────────────────────────────────────────────────────────────────
-  # Chat (cortex-api / api-sprint wave 3 — track 3A)
-  # ──────────────────────────────────────────────────────────────────────
-
-  /api/chat:
-    get:
-      tags: [Chat]
-      deprecated: true
-      summary: Deprecated alias for listing Cortex conversations
-      description: |
-        Compatibility alias for `GET /api/cortex/conversations`.
-        New clients should use the canonical Cortex route.
-      security:
-        - apiKey: []
-        - bearerApiKey: []
-        - firebaseIdToken: []
-      parameters:
-        - name: page_size
-          in: query
-          required: false
-          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
-        - name: page_token
-          in: query
-          required: false
-          schema: { type: string }
-        - name: includeDeleted
-          in: query
-          required: false
-          schema: { type: boolean, default: false }
-        - name: owner
-          in: query
-          required: false
-          description: Set to `me` to filter to conversations the caller owns.
-          schema: { type: string, enum: [me] }
-      responses:
-        '200':
-          description: List of conversations
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean }
-                  data:
-                    type: object
-                    properties:
-                      conversations:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            conversationId: { type: string }
-                            title: { type: string }
-                            siteId: { type: string }
-                            machineId: { type: string }
-                            ownerUid: { type: string }
-                            createdAt: { type: string, format: date-time }
-                            updatedAt: { type: string, format: date-time }
-                            deletedAt: { type: string, format: date-time }
-                            messageCount: { type: integer }
-                      nextPageToken: { type: string }
-        '401': { description: Unauthorized }
-
-  /api/chat/new:
-    post:
-      tags: [Chat]
-      deprecated: true
-      summary: Deprecated alias for creating a Cortex conversation
-      description: |
-        Compatibility alias for `POST /api/cortex/conversations`.
-        New clients should use the canonical Cortex route.
-      security:
-        - apiKey: []
-        - bearerApiKey: []
-        - firebaseIdToken: []
-      parameters:
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [siteId]
-              properties:
-                siteId: { type: string }
-                machineId: { type: string }
-                title: { type: string, maxLength: 100 }
-                initial_message:
-                  type: object
-                  required: [role, content]
-                  properties:
-                    role: { type: string, enum: [user] }
-                    content: { type: string }
-      responses:
-        '201':
-          description: Conversation created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean }
-                  data:
-                    type: object
-                    properties:
-                      conversationId: { type: string }
-                      title: { type: string }
-                      siteId: { type: string }
-                      machineId: { type: string }
-                      ownerUid: { type: string }
-                      createdAt: { type: string, format: date-time }
-                      updatedAt: { type: string, format: date-time }
-                      messages:
-                        type: array
-                        items:
-                          type: object
-                          properties:
-                            role: { type: string, enum: [user, assistant, system] }
-                            content: { type: string }
-                            timestamp: { type: string, format: date-time }
-                      messageCount: { type: integer }
-        '400': { description: Validation failed }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
-
-  /api/chat/{conversationId}:
-    parameters:
-      - name: conversationId
-        in: path
-        required: true
-        schema: { type: string }
-    post:
-      tags: [Chat]
-      deprecated: true
-      summary: Deprecated alias for sending a Cortex message
-      description: |
-        Compatibility alias for `POST /api/cortex/conversations/{conversationId}`.
-        New clients should use the canonical Cortex route.
-      security:
-        - apiKey: []
-        - bearerApiKey: []
-        - firebaseIdToken: []
-      parameters:
-        - name: Idempotency-Key
-          in: header
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [role, content]
-              properties:
-                role: { type: string, enum: [user] }
-                content: { type: string }
-      responses:
-        '200':
-          description: Streaming response (text/plain, AI-SDK frames)
-          content:
-            text/plain:
-              schema: { type: string }
-        '400': { description: Validation failed }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
-        '404': { description: Conversation not found }
-        '503': { description: Cortex / target machine unavailable }
-    patch:
-      tags: [Chat]
-      deprecated: true
-      summary: Deprecated alias for renaming a Cortex conversation
-      description: |
-        Update the conversation title. Other fields are rejected with
-        400 `forbidden_field`. Requires `chat=<siteId>:write`. Idempotent.
-      security:
-        - apiKey: []
-        - bearerApiKey: []
-        - firebaseIdToken: []
-      parameters:
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [title]
-              properties:
-                title: { type: string, maxLength: 100 }
-      responses:
-        '200':
-          description: Renamed
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean }
-                  data:
-                    type: object
-                    properties:
-                      conversationId: { type: string }
-                      title: { type: string }
-        '400': { description: Validation failed / forbidden_field }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
-        '404': { description: Conversation not found }
-    delete:
-      tags: [Chat]
-      deprecated: true
-      summary: Deprecated alias for soft-deleting a Cortex conversation
-      description: |
-        True-idempotent: a second DELETE on the same conversationId returns
-        200 with `alreadyDeleted: true` and the original deletedAt. Requires
-        `chat=<siteId>:write`.
-      security:
-        - apiKey: []
-        - bearerApiKey: []
-        - firebaseIdToken: []
-      responses:
-        '200':
-          description: Soft-deleted (or already absent)
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean }
-                  data:
-                    type: object
-                    properties:
-                      conversationId: { type: string }
-                      alreadyDeleted: { type: boolean }
-        '401': { description: Unauthorized }
-        '403': { description: Scope insufficient }
-        '404': { description: Conversation never existed }
-
-  # ──────────────────────────────────────────────────────────────────────
   # Users (users-api / api-sprint wave 3 — track 3B)
   # ──────────────────────────────────────────────────────────────────────
 
@@ -6353,7 +6033,7 @@ paths:
         required: true
         schema: { type: string }
     get:
-      tags: [SiteMembers]
+      tags: [Site Members]
       summary: list site members with derived per-site role
       description: |
         Membership lives only on `users/{uid}.sites[]` (per the api-sprint
@@ -6395,7 +6075,7 @@ paths:
         '403': { description: Forbidden (not site admin) }
         '404': { description: Site not found or no access }
     post:
-      tags: [SiteMembers]
+      tags: [Site Members]
       summary: add a member to a site
       description: |
         Adds siteId to the target user's `users/{uid}.sites[]` via
@@ -6448,7 +6128,7 @@ paths:
         required: false
         schema: { type: string }
     delete:
-      tags: [SiteMembers]
+      tags: [Site Members]
       summary: remove a member from a site
       description: |
         Removes siteId from the target user's `users/{uid}.sites[]` via
@@ -6835,6 +6515,7 @@ components:
 
   schemas:
     SuccessResponse:
+      description: Generic success envelope returned by simple mutating endpoints that have no resource body to send back.
       type: object
       properties:
         success:
@@ -6842,6 +6523,7 @@ components:
           example: true
 
     ErrorResponse:
+      description: Legacy error envelope. Public endpoints return RFC 7807 `application/problem+json` (see `ProblemDetails`); this shape only remains on a few compatibility routes.
       type: object
       properties:
         error:
@@ -6850,6 +6532,7 @@ components:
         error: Description of what went wrong
 
     CortexConversationSummary:
+      description: Metadata for a single Cortex conversation, without its message history.
       type: object
       properties:
         conversationId: { type: string }
@@ -6863,6 +6546,7 @@ components:
         messageCount: { type: integer }
 
     CortexConversation:
+      description: A Cortex conversation including its full message history.
       allOf:
         - $ref: '#/components/schemas/CortexConversationSummary'
         - type: object
@@ -6877,6 +6561,7 @@ components:
                   timestamp: { type: string, format: date-time, nullable: true }
 
     Site:
+      description: A site — a logical grouping of machines in your fleet.
       type: object
       properties:
         id:
@@ -6887,6 +6572,7 @@ components:
           type: integer
 
     Machine:
+      description: A machine (agent install) registered to a site, with its live online and heartbeat state.
       type: object
       properties:
         id:
@@ -6904,6 +6590,7 @@ components:
           type: string
 
     Process:
+      description: A monitored process configured on a machine — launch mode, schedule, and live runtime status.
       type: object
       required: [processId, name, exe_path, launch_mode, status]
       properties:
@@ -6961,6 +6648,7 @@ components:
             - type: number
 
     ProcessScheduleBlock:
+      description: One scheduled on/off block for a process — which days and time ranges it should be running.
       type: object
       required: [days, ranges]
       properties:
@@ -6981,6 +6669,7 @@ components:
               stop: { type: string }
 
     Schedule:
+      description: A recurring weekly schedule expressed as days plus a start and end time.
       type: object
       properties:
         days:
@@ -6998,6 +6687,7 @@ components:
           example: "18:00"
 
     ScheduleTimeRange:
+      description: A single start/end time range within a schedule.
       type: object
       required: [start, end]
       properties:
