@@ -103,11 +103,14 @@ Click on a machine to view detailed historical metrics:
 
 ### time ranges
 
-| range | resolution | data points |
-|-------|-----------|-------------|
-| **24 hours** | 1 minute | ~1,440 points |
-| **7 days** | 15 minutes | ~672 points |
-| **30 days** | 1 hour | ~720 points |
+| range |
+|-------|
+| **hour** |
+| **day** |
+| **week** |
+| **month** |
+| **year** |
+| **all** |
 
 ### charts
 
@@ -134,8 +137,8 @@ Each machine card shows its configured processes with status badges:
 | Green | RUNNING | Process is alive and responding |
 | Yellow | STALLED | Process exists but not responding |
 | Red | KILLED | Process was terminated |
-| Grey | STOPPED | Process not running because launch mode is `off` or scheduled mode is outside its window |
-| Grey (dim) | INACTIVE | Executable not found |
+| Red | STOPPED | Process not running because launch mode is `off` or scheduled mode is outside its window |
+| Grey | INACTIVE | Executable not found |
 
 Click a process to open the [Process Dialog](/docs/dashboard/process-management) for management and configuration.
 

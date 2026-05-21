@@ -37,7 +37,7 @@ Public API paths are rooted at `/api`. The rendered endpoint reference is availa
 ## shared conventions
 
 - **Authentication** uses scoped `owk_live_*` and `owk_test_*` API keys in `Authorization: Bearer ...`; dashboard and setup flows may use Firebase ID tokens or sessions. See [authentication](/docs/api/authentication).
-- **Errors** use `application/problem+json` with stable `code`, `docsUrl`, and `requestId` fields. See [errors](/docs/api/errors).
+- **Errors**: Most public errors use `application/problem+json`; routes using the shared problem helper include stable `code`, `docsUrl`, and `requestId` fields, but some compatibility routes still return a smaller problem body. See [errors](/docs/api/errors).
 - **Pagination** uses `page_size`, `page_token`, and `next_page_token`, with documented compatibility aliases on older routes. See [pagination](/docs/api/pagination).
 - **Idempotency** uses `Idempotency-Key` for safe retries of mutating requests. See [idempotency](/docs/api/idempotency).
 - **Rate limits** use `RateLimit-*`, `Retry-After`, and `Roost-Rate-Limited-Reason` headers where the active limiter can report them. See [rate limits](/docs/api/rate-limits).
