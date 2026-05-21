@@ -64,6 +64,13 @@ export function Footer() {
         </p>
         <p className="text-center text-xs text-muted-foreground mt-2 flex items-center justify-center gap-2">
           <Link
+            href="/docs"
+            className="hover:text-muted-foreground transition-colors"
+          >
+            docs
+          </Link>
+          <span>&middot;</span>
+          <Link
             href="/privacy"
             className="hover:text-muted-foreground transition-colors"
           >

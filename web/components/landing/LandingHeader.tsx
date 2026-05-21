@@ -17,7 +17,7 @@ const SECTION_LINKS: NavLinkDef[] = [
 
 // External / account links.
 const UTIL_LINKS: NavLinkDef[] = [
-  { label: 'docs', href: 'https://theexperiential.github.io/owlette/', external: true },
+  { label: 'docs', href: '/docs' },
   { label: 'download', href: '/download', prefetch: false },
   { label: 'sign in', href: '/login' },
 ];

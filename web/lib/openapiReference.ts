@@ -34,7 +34,11 @@ Mutating endpoints that can trigger side effects require or accept \`Idempotency
 
 ## Rate limits
 
-Responses may include \`RateLimit-Limit\`, \`RateLimit-Remaining\`, \`RateLimit-Reset\`, and \`Retry-After\`. API-key traffic is bucketed by key id where available. See the docs pages for authentication, pagination, idempotency, errors, and rate limits at \`/docs/api\`.`;
+Responses may include \`RateLimit-Limit\`, \`RateLimit-Remaining\`, \`RateLimit-Reset\`, and \`Retry-After\`. API-key traffic is bucketed by key id where available. See the docs pages for authentication, pagination, idempotency, errors, and rate limits at \`/docs/api\`.
+
+## Models
+
+The **Models** section at the end of this reference documents the reusable object shapes the API is built from — \`Site\`, \`Machine\`, \`Process\`, \`CortexConversation\`, and so on. These are reference definitions, not endpoints: every operation that returns a machine returns the \`Machine\` shape, every operation that returns a site returns the \`Site\` shape, and so on. Browse them to understand the fields you will send in request bodies and receive in responses.`;
 
 export interface OpenApiOperation {
   path: string;
@@ -51,6 +55,7 @@ interface AuthScopeNotes {
 export function renderOpenApiReference(rawSpec: JsonRecord): JsonRecord {
   const spec = cloneRecord(rawSpec);
   const info = ensureRecord(spec, 'info');
+  lowercaseOpenApiDisplayLabels(spec);
   info.description = REFERENCE_DESCRIPTION;
 
   const externalDocs = ensureRecord(spec, 'externalDocs');
@@ -78,6 +83,59 @@ export function renderOpenApiReference(rawSpec: JsonRecord): JsonRecord {
   }
 
   return spec;
+}
+
+function lowercaseOpenApiDisplayLabels(spec: JsonRecord): void {
+  const tagNameMap = new Map<string, string>();
+  const lowerDisplayLabel = (value: string): string => value.toLowerCase();
+  const lowerTagName = (value: string): string => {
+    const existing = tagNameMap.get(value);
+    if (existing) return existing;
+    const lowercased = lowerDisplayLabel(value);
+    tagNameMap.set(value, lowercased);
+    return lowercased;
+  };
+
+  const info = asRecord(spec.info);
+  if (typeof info?.title === 'string') {
+    info.title = lowerDisplayLabel(info.title);
+  }
+
+  if (Array.isArray(spec.tags)) {
+    for (const tag of spec.tags) {
+      const tagRecord = asRecord(tag);
+      if (typeof tagRecord?.name === 'string') {
+        tagRecord.name = lowerTagName(tagRecord.name);
+      }
+    }
+  }
+
+  const tagGroups = spec['x-tagGroups'];
+  if (Array.isArray(tagGroups)) {
+    for (const group of tagGroups) {
+      const groupRecord = asRecord(group);
+      if (!groupRecord) continue;
+      if (typeof groupRecord.name === 'string') {
+        groupRecord.name = lowerDisplayLabel(groupRecord.name);
+      }
+      if (Array.isArray(groupRecord.tags)) {
+        groupRecord.tags = groupRecord.tags.map((tag) => (
+          typeof tag === 'string' ? lowerTagName(tag) : tag
+        ));
+      }
+    }
+  }
+
+  for (const { operation } of getOpenApiOperations(spec)) {
+    if (Array.isArray(operation.tags)) {
+      operation.tags = operation.tags.map((tag) => (
+        typeof tag === 'string' ? lowerTagName(tag) : tag
+      ));
+    }
+    if (typeof operation.summary === 'string') {
+      operation.summary = lowerDisplayLabel(operation.summary);
+    }
+  }
 }
 
 export function getOpenApiOperations(spec: JsonRecord): OpenApiOperation[] {
@@ -171,7 +229,7 @@ function inferAuthScopeNotes(path: string, method: string, operation: JsonRecord
     return protectedNotes(['device-code:pairing'], 'Device-code creation and polling are public pairing steps; authorization requires an authenticated user session.');
   }
 
-  if (path.startsWith('/api/cortex') || path.startsWith('/api/chat')) {
+  if (path.startsWith('/api/cortex')) {
     return protectedNotes([`chat=<siteId>:${permission}`], 'API-key Cortex access is site-scoped; write access can send messages but server-side tools remain capability limited.');
   }
 

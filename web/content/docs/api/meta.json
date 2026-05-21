@@ -1,0 +1,23 @@
+{
+  "title": "api",
+  "pages": [
+    "overview",
+    "[api reference](/docs/api)",
+    "reference",
+    "quickstart",
+    "distribution",
+    "authentication",
+    "pagination",
+    "idempotency",
+    "errors",
+    "rate-limits",
+    "chunks",
+    "versions",
+    "cortex",
+    "webhooks",
+    "---sdks---",
+    "sdk-node",
+    "sdk-python",
+    "examples"
+  ]
+}

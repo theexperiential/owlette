@@ -1,0 +1,15 @@
+{
+  "title": "dashboard",
+  "pages": [
+    "index",
+    "getting-started",
+    "machine-monitoring",
+    "process-management",
+    "deployments",
+    "roost",
+    "cortex",
+    "activity-logs",
+    "timezones",
+    "admin"
+  ]
+}

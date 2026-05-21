@@ -1,0 +1,68 @@
+---
+title: "self-hosting"
+description: "owlette is available as a hosted service at owlette.app - no setup required. If you run your own instance, this section covers the Firebase, storage, web runtime, and agent pieces you need to operate the full stack."
+---
+
+---
+
+## why self-host?
+
+- **Data sovereignty** - Keep app data in your own Firebase project and object storage in your own Cloudflare R2 bucket
+- **Custom domain** - Run the dashboard on your own URL
+- **Full control** - Modify the codebase, add features, integrate with your infrastructure
+- **Development** - Contribute to owlette or build on top of it
+
+---
+
+## license and self-hosting use
+
+<Callout type="info" title={"license terms"}>
+
+owlette is licensed under [FSL-1.1-Apache-2.0](https://github.com/theexperiential/owlette/blob/main/LICENSE). The license grants use, copying, modification, derivative works, public performance, public display, and redistribution for any "Permitted Purpose", which means any purpose other than a "Competing Use".
+
+Self-hosting owlette for your own internal use and access, including internal business operations, is a permitted purpose. The FSL does not allow "Competing Use": making owlette available to others in a commercial product or service that substitutes for owlette, substitutes for another product or service the licensor offers using owlette as of the date the release is made available, or offers the same or substantially similar functionality.
+
+Each release also receives a future Apache License, Version 2.0 grant on the second anniversary of the date that release is made available. Read the linked LICENSE for the authoritative terms.
+
+</Callout>
+
+---
+
+## what you'll need
+
+| requirement | purpose |
+|-------------|---------|
+| **Firebase project** | Authentication, Firestore, Admin SDK credentials, and Firebase Storage for installer/screenshot flows |
+| **Cloudflare R2 bucket** | Object storage for roost chunk uploads, signed URLs, and version assembly |
+| **Railway account** (or any Node.js 20 host) | Web dashboard hosting for the Next.js app |
+| **Node.js 20+** | Local development, web builds, and Firebase Functions compatibility |
+| **GitHub repository** | Source code and CI/CD |
+| **Upstash Redis** | API rate limiting |
+| **Email provider** | Alert and welcome email delivery |
+| **Cron scheduler** | Machine offline detection and optional public status-page pings |
+| **Windows 10+ machine** | Agent installation target |
+
+---
+
+## setup sequence
+
+1. [Firebase Setup](/docs/setup/firebase) - create the Firebase project, enable Authentication, Firestore, and Firebase Storage, then generate service-account credentials.
+2. [Environment Variables](/docs/setup/environment-variables) - collect Firebase client/admin values, session secrets, Upstash Redis, email, cron, and Cloudflare R2 credentials before deployment.
+3. [Firestore Rules](/docs/setup/firestore-rules) - deploy the repository's Firestore rules and indexes so users and agents can access only their scoped data.
+4. [Web Deployment](/docs/setup/web-deployment) - deploy the Next.js dashboard to Railway or another Node.js 20 host and attach the required environment variables.
+5. First admin account - register through the deployed dashboard, then promote the initial operator in Firestore.
+6. [Agent Installation](/docs/agent/installation) - install the Windows agent on target machines and pair it with your self-hosted dashboard.
+
+---
+
+## storage responsibilities
+
+Firebase and R2 serve different parts of the self-hosted system:
+
+| storage service | used for |
+|-----------------|----------|
+| **Firestore** | Sites, users, machines, commands, settings, audit/activity data, and agent state |
+| **Firebase Storage** | Installer binaries and screenshot-backed workflows |
+| **Cloudflare R2** | roost content chunks, signed upload/download URLs, immutable versions, and rollback assembly |
+
+For the complete variable inventory, use [Environment Variables](/docs/setup/environment-variables). For deploy-time runtime requirements and host configuration, use [Web Deployment](/docs/setup/web-deployment).

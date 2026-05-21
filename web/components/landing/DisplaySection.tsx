@@ -196,7 +196,7 @@ export function DisplaySection({ nonce }: DisplaySectionProps) {
         {/* Footer link */}
         <div className="text-center">
           <Link
-            href="/docs/api#display-layout"
+            href="/docs/api"
             className="inline-flex items-center gap-1.5 text-base text-accent-cyan hover:text-accent-cyan-hover transition-colors group"
           >
             read the display api reference

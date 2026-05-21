@@ -1,0 +1,10 @@
+{
+  "title": "reference",
+  "pages": [
+    "index",
+    "authentication",
+    "agent-commands",
+    "cortex-tools",
+    "firestore-data-model"
+  ]
+}

@@ -1,0 +1,96 @@
+---
+title: "getting started"
+description: "Get your first machine monitored in under 5 minutes."
+---
+
+---
+
+## step 1: create an account
+
+1. Go to [owlette.app](https://owlette.app)
+2. Click **Register** and create an account with email/password or Google sign-in
+3. Optionally set up **two-factor authentication** or register a **passkey** for fast biometric login
+
+---
+
+## step 2: create a site
+
+Sites organize your machines — think of them as locations, departments, or projects.
+
+1. Click **"Create Site"** in the dashboard
+2. Enter a **Site Name** (e.g., "NYC Gallery", "Main Office")
+3. Enter a **Site ID** (e.g., `nyc-gallery`) — this is permanent
+4. Click **Create**
+
+---
+
+## step 3: install the agent
+
+### download
+
+1. Click the **download button** in the dashboard header to get the latest agent installer
+2. Transfer the installer to the Windows machine you want to monitor
+
+### install & connect
+
+1. Run the installer **as Administrator** on your target machine
+2. Follow the setup wizard
+3. A console window displays a **pairing phrase** (3 random words), the authorization URL, and the prompt **"open browser on this machine? [y/N]"**
+4. Enter `y` to open the local browser, then select a site and click **"Authorize"**
+5. Press Enter or choose `n` to authorize from a phone or another computer by opening the displayed URL and entering the pairing phrase
+6. The agent receives credentials and connects — done
+
+<Callout type="idea" title={"Bulk deployment"}>
+
+For deploying to many machines, use the `/ADD=` flag with a pre-authorized phrase from the dashboard. See [Installation → Silent Install](/docs/agent/installation#method-2-silent-install-with-add-bulk-deployment).
+
+</Callout>
+---
+
+## step 4: verify
+
+Within 30 seconds of installation, your machine should appear in the dashboard:
+
+| check | what to look for |
+|-------|-----------------|
+| **Machine visible** | Machine card appears in your site with a green "Online" indicator |
+| **Metrics flowing** | CPU, memory, disk percentages updating |
+| **System tray** | Owl icon visible in the Windows notification area |
+
+---
+
+## step 5: add processes to monitor
+
+Now that your machine is connected, tell owlette which applications to watch:
+
+1. Click on your machine in the dashboard
+2. Click **"Add Process"**
+3. Enter the **executable path** (e.g., `C:\Program Files\Derivative\TouchDesigner\bin\TouchDesigner.exe`)
+4. Give it a **name** (e.g., "TouchDesigner")
+5. Enable **Autolaunch** to auto-start and auto-restart on crash
+6. Click **Save**
+
+The agent immediately begins monitoring the process. If it crashes, owlette restarts it within 10 seconds.
+
+---
+
+## what's next?
+
+You're up and running. Here's what else you can do:
+
+- [**Configure process settings**](/docs/dashboard/process-management) — Priority, visibility, launch delay, crash limits
+- [**Deploy software remotely**](/docs/dashboard/deployments) — Push installers to machines without physical access
+- [**Sync files with roost**](/docs/dashboard/roost) — Publish versioned files and sync them to target machines
+- [**Chat with your machines**](/docs/dashboard/cortex) — Use Cortex AI to query and control machines via natural language
+- [**Set up email alerts**](/docs/dashboard/admin/email-alerts) — Get notified when machines go offline or processes crash
+- [**Add more machines**](/docs/agent/installation) — Scale out to your full fleet
+- [**Invite team members**](/docs/dashboard/admin/user-management) — Add users with role-based site access
+
+---
+
+## need help?
+
+- Check the [Troubleshooting](/docs/troubleshooting) guide for common issues
+- Review [Agent Troubleshooting](/docs/agent/troubleshooting) for agent-specific problems
+- Open an issue on [GitHub](https://github.com/theexperiential/owlette/issues)
+- Email us at [support@owlette.app](mailto:support@owlette.app)

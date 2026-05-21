@@ -1,0 +1,110 @@
+---
+title: "self-update"
+description: "The owlette agent can update itself remotely without physical access to the machine."
+---
+
+---
+
+## how it works
+
+The self-update is handled by the service command handler in `owlette_service.py`:
+
+1. Receives an `update_owlette` command from Firestore.
+2. Requires `installer_url` and `checksum_sha256`; reads `target_version` when provided and otherwise tries to infer `vX.Y.Z` from the installer URL.
+3. Rejects the command if another update marker is less than 10 minutes old.
+4. Checks for at least 500 MB of free disk space.
+5. Downloads the installer to `%ProgramData%\owlette\tmp\owlette-Update.exe` with retry/backoff.
+6. Verifies the file looks like a Windows executable and matches the supplied SHA-256 checksum.
+7. Writes `%ProgramData%\owlette\logs\update_in_progress.json` so the next service start can report the update result.
+8. Creates and runs an `OwletteUpdate_*` scheduled task as `SYSTEM` with highest privileges. The task launches the installer with `/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS /LOG="<path>"`.
+9. Creates an `OwletteRecovery_*` scheduled task that waits about five minutes, checks whether `OwletteService` is running, and starts it if needed.
+10. On the next service start, checks the update marker, compares `agent/VERSION` with the target version, reports success or failure to Firestore, and removes stale update/recovery tasks.
+
+The service does not stop itself and run the installer inline. Task Scheduler owns the installer process so it can continue after the service stops.
+
+---
+
+## triggering an update
+
+### from the dashboard
+
+1. Navigate to the machine in the dashboard.
+2. Click **Update owlette**.
+3. Select the target version or latest release.
+4. Confirm the update.
+
+The dashboard sends an `update_owlette` command with the installer URL, expected SHA-256 checksum, and target version.
+
+### what gets preserved
+
+| preserved | replaced |
+|-----------|----------|
+| ProgramData configuration | Agent application files |
+| Encrypted OAuth tokens | Bundled Python packages |
+| Log files | Service wrapper files installed by the package |
+| Cache and temporary data directories | Installer executable used for the update |
+
+The installer upgrades in place and avoids deleting the ProgramData configuration, token, log, cache, and temp directories. It does not perform a separate config backup/restore step.
+
+---
+
+## update command payload
+
+```json
+{
+  "type": "update_owlette",
+  "installer_url": "https://firebasestorage.googleapis.com/.../Owlette-Installer-v2.1.8.exe",
+  "target_version": "2.1.8",
+  "checksum_sha256": "2f4c2f0e6d8f0c2f2a4f6f7a8b9c0d1e2f3a4b5c6d7e8f90123456789abcdef0",
+  "deployment_id": "deploy_abc123"
+}
+```
+
+Required fields:
+
+| field | required | notes |
+|-------|----------|-------|
+| `installer_url` | yes | Download URL for the Windows installer. |
+| `checksum_sha256` | yes | The command is refused without a checksum. |
+| `target_version` | recommended | Used for post-restart verification. If omitted, the agent tries to infer it from `vX.Y.Z` in the URL or records `unknown`. |
+| `deployment_id` | no | Passed through when updating command progress and completion. |
+
+---
+
+## version verification
+
+After the update completes:
+
+1. The service starts and reads the installed version from `agent/VERSION`.
+2. The startup check reads `%ProgramData%\owlette\logs\update_in_progress.json`.
+3. The agent compares the installed version with `target_version`.
+4. The command is marked completed or failed in Firestore.
+5. The next heartbeat reports `agent_version`.
+
+---
+
+## troubleshooting updates
+
+### update stuck
+
+If the machine goes offline and does not come back:
+
+1. Check the machine physically if remote access is unavailable.
+2. Check `%ProgramData%\owlette\logs\service.log`.
+3. Check `%ProgramData%\owlette\logs\installer_update.log`.
+4. Check `%ProgramData%\owlette\logs\update_in_progress.json` for the old version, target version, command ID, and deployment ID.
+5. Check for leftover `OwletteUpdate_*` or `OwletteRecovery_*` scheduled tasks.
+6. Start the service manually with `net start OwletteService`.
+
+### version did not change
+
+If the agent reports the same version after update:
+
+1. Review `%ProgramData%\owlette\logs\installer_update.log` for installer failures.
+2. Confirm the installer URL was reachable from the target machine.
+3. Confirm the `checksum_sha256` value matches the exact installer binary.
+4. Confirm `target_version` matches the version embedded in the installer.
+
+### rollback
+
+To roll back to a previous version, trigger another `update_owlette` command that points to the older installer and includes that installer's SHA-256 checksum.

@@ -1,0 +1,215 @@
+---
+title: "troubleshooting"
+description: "Cross-cutting troubleshooting guide for common issues across the entire owlette system."
+---
+
+---
+
+## agent won't connect to cloud
+
+**Symptoms**: Machine shows offline in dashboard, agent logs show connection errors.
+
+**Check**:
+
+1. Verify internet connectivity on the agent machine
+2. Check firewall rules — outbound HTTPS (port 443) must be allowed to `owlette.app`, `dev.owlette.app`, `*.googleapis.com`, `*.firebaseio.com`, and the Cloudflare R2 endpoint used for roost chunks (usually `*.r2.cloudflarestorage.com`)
+3. Check `C:\ProgramData\Owlette\logs\service.log` for specific errors
+4. Verify `firebase.enabled` is `true` in config.json
+5. Verify `firebase.site_id` matches a site that exists in Firestore
+
+**Common errors**:
+
+| log message | cause | fix |
+|-------------|-------|-----|
+| "Agent not authenticated" | Missing or corrupt tokens | Re-register with a new code |
+| "HTTP error 403" | Firestore rules blocking access | Verify security rules are deployed |
+| "Token expired" | Refresh failed | Check refresh token in logs, re-register if needed |
+| "Connection refused" | Firewall or proxy | Allow outbound HTTPS |
+
+---
+
+## dashboard shows machine offline
+
+**Symptoms**: Agent is running but dashboard shows offline.
+
+1. **Check heartbeat age** — If last seen was recently, the machine may be experiencing intermittent connectivity
+2. **Check agent service**: `sc query OwletteService` (should show RUNNING)
+3. **Check ConnectionManager state** in logs — look for BACKOFF or DISCONNECTED
+4. **Verify site_id** — Agent and dashboard must be looking at the same site
+5. **Check Firestore directly** — Go to Firebase Console → Firestore → `sites/{siteId}/machines/{machineId}` → check the machine document fields `online`, `lastHeartbeat`, `agent_version`, and `metrics`
+
+---
+
+## processes not auto-restarting
+
+1. Verify `launch_mode` is `always`, or `scheduled` with the current time inside a configured schedule window
+2. Check if `relaunch_attempts` limit was reached (reboot prompt should appear)
+3. Verify `exe_path` exists on the machine (`INACTIVE` state means file not found)
+4. Check agent logs for launch errors
+5. Verify the service is running and the main loop is executing (look for periodic log entries)
+
+---
+
+## process won't launch after an app upgrade
+
+**Symptoms**: A managed process shows `INACTIVE`, or the dashboard shows an executable-missing toast after software was upgraded or installed side-by-side.
+
+1. Open the dashboard toast or activity log entry with action `exe_missing`.
+2. Review the suggested paths. The agent scans nearby sibling directories for executables with the same filename.
+3. Use the toast's **use path** action, or open the process edit dialog manually and update **executable path**.
+4. Save the process. If launch mode is `always`, the agent should launch it on the next monitoring pass. If launch mode is `scheduled`, it launches when the next matching schedule window opens.
+5. If no suggestion appears, browse the machine for the new executable path and update the process manually.
+
+---
+
+## oauth token issues
+
+### "agent not authenticated - no refresh token found"
+
+The encrypted token file is missing or unreadable.
+
+**Fix**: Re-pair the agent:
+
+1. Delete the token file: `del C:\ProgramData\Owlette\.tokens.enc`
+2. Run the pairing flow: `C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py`
+3. Authorize on the web page that opens, then restart the service
+
+### token refresh failing
+
+Check `service.log` for refresh errors. Common causes:
+
+- **Machine ID mismatch** — The machine was renamed since registration
+- **Token revoked** — An admin revoked the token from the dashboard
+- **Network issue** — Can't reach the refresh endpoint
+
+---
+
+## deployment stuck
+
+**Symptoms**: Deployment shows "downloading" or "installing" indefinitely.
+
+1. Check agent logs for download/install progress
+2. Verify the installer URL is accessible from the agent machine (test in browser)
+3. Check if the installation timed out (default: 40 minutes)
+4. For large installers on slow connections, the download may simply be slow
+5. Try cancelling and re-deploying
+
+---
+
+## roost sync failed
+
+1. **R2 configuration failed** — Check web runtime logs for missing `R2_S3_ENDPOINT`, `R2_S3_ACCESS_KEY_ID`, or `R2_S3_SECRET_ACCESS_KEY`. The endpoint should be reachable from the web app and agents over HTTPS.
+2. **Chunk upload or verification failed** — Retry the upload from the roost page and confirm the agent machine can reach signed R2 URLs. A publish can fail if the version references chunks that were not uploaded or were rejected after hash verification.
+3. **Target fanout stalled** — Check `sites/{siteId}/roosts/{roostId}/target_state/{machineId}`. Current target states include `pending`, `downloading`, `assembling`, `committed`, `failed`, and `cancelled`.
+4. **`sync_pull` stuck or failed** — Check `service.log` on the target machine for `sync_pull` errors. If no target-state document appears, confirm the machine is online and has a pending command in `sites/{siteId}/machines/{machineId}/commands/pending`.
+5. **Permission denied** — The configured extract root may not be writable or may be outside the agent's allowed extract roots.
+
+---
+
+## mfa issues
+
+### lost authenticator
+
+Use one of your **backup codes** at the MFA prompt. Each code can only be used once.
+
+### no backup codes
+
+Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `mfaSecret`, and `mfaBackupCodes` fields in your Firestore user document.
+
+### code not working
+
+- Ensure your device's clock is synchronized (TOTP is time-based)
+- Codes expire every 30 seconds — enter the current one
+- Verify you're using the correct account in your authenticator app
+
+---
+
+## cortex not responding
+
+1. **No LLM key configured** — Check Cortex settings for API key
+2. **Invalid API key** — Verify the key is correct and has credits
+3. **Machine offline** — Cortex checks machine status before executing tools
+4. **Tool timeout** — Some tools may take longer than 30 seconds; try again
+5. **Rate limited** — The API may be rate-limiting requests
+
+---
+
+## email alerts not working
+
+1. Verify `RESEND_API_KEY` environment variable is set in Railway
+2. Check that the Resend API key is valid
+3. Verify `CRON_SECRET` is configured for health check cron
+4. Check Railway cron schedule is set: `*/5 * * * *`
+5. Send a test email from Admin Panel → Email Test
+6. Check spam/junk folders
+
+---
+
+## dashboard performance issues
+
+### slow loading
+
+- **Cold starts** (Railway Hobby plan) — Upgrade to Pro for no cold starts
+- **Large dataset** — Many machines/processes increase Firestore reads
+- **Bundle size** — Check `.next/static` output during build
+
+### real-time updates not working
+
+- Check browser console for Firestore listener errors
+- Verify Firebase config is correct
+- Try hard refresh (Ctrl+Shift+R)
+- Check if the Firestore quota has been exceeded
+
+---
+
+## log locations
+
+### agent logs
+
+| log | path |
+|-----|------|
+| Service | `C:\ProgramData\Owlette\logs\service.log` |
+| GUI | `C:\ProgramData\Owlette\logs\gui.log` |
+| Tray | `C:\ProgramData\Owlette\logs\tray.log` |
+| Pairing | `C:\ProgramData\Owlette\logs\pairing_debug.log` |
+| Self-update installer | `C:\ProgramData\Owlette\logs\installer_update.log` |
+| Interactive installer | Only where Inno Setup is launched with `/LOG=<path>`; use `/LOG="C:\ProgramData\Owlette\logs\setup.log"` to write a setup log there |
+
+### dashboard logs
+
+| log | location |
+|-----|----------|
+| Build logs | Railway → Deployments → [deployment] → Logs |
+| Runtime logs | Railway → Deployments → [latest] → Logs |
+| Client errors | Browser → F12 → Console |
+
+### firestore logs
+
+| log | location |
+|-----|----------|
+| Rule evaluations | Firebase Console → Firestore → Rules → Monitoring |
+| Usage metrics | Firebase Console → Firestore → Usage |
+| Auth events | Firebase Console → Authentication → Users |
+
+---
+
+## debug mode
+
+Run the agent in debug mode for detailed console output:
+
+```bash
+cd C:\ProgramData\Owlette\agent\src
+python owlette_service.py debug
+```
+
+Requires an elevated (Administrator) command prompt. Shows real-time logging of all service operations.
+
+---
+
+## getting help
+
+1. Check the relevant section of this documentation
+2. Review agent logs and browser console for specific error messages
+3. Check the [Firestore Data Model](/docs/reference/firestore-data-model) to verify data structure
+4. Open an issue on [GitHub](https://github.com/theexperiential/owlette/issues)
+5. Email us at [support@owlette.app](mailto:support@owlette.app)

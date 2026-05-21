@@ -48,7 +48,15 @@ function createCspNonce() {
   return btoa(String.fromCharCode(...bytes));
 }
 
-function buildContentSecurityPolicy(nonce: string) {
+function isScalarApiReferencePath(pathname: string) {
+  return pathname === '/docs/api' || pathname === '/docs/api/';
+}
+
+function buildContentSecurityPolicy(nonce: string, pathname: string) {
+  const scalarApiReference = isScalarApiReferencePath(pathname);
+  const scalarFontSource = scalarApiReference ? ' https://fonts.scalar.com' : '';
+  const scalarConnectSource = scalarApiReference ? ' https://api.scalar.com' : '';
+
   return [
     "default-src 'self'",
     // Next.js reads this request CSP before render and applies the nonce to
@@ -71,8 +79,8 @@ function buildContentSecurityPolicy(nonce: string) {
     "style-src-elem 'self' 'unsafe-inline'",
     "style-src-attr 'unsafe-inline'",
     `img-src 'self' data: blob: https:${isEmulatorBuild ? ' http://127.0.0.1:*' : ''}`,
-    "font-src 'self' data:",
-    `connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com https://*.ingest.sentry.io https://*.r2.cloudflarestorage.com${isEmulatorBuild ? ' http://127.0.0.1:* ws://127.0.0.1:*' : ''}`,
+    `font-src 'self' data:${scalarFontSource}`,
+    `connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com https://*.ingest.sentry.io https://*.r2.cloudflarestorage.com${scalarConnectSource}${isEmulatorBuild ? ' http://127.0.0.1:* ws://127.0.0.1:*' : ''}`,
     "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
@@ -112,7 +120,7 @@ function redirectWithCsp(url: URL, csp: string, status?: number) {
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const nonce = createCspNonce();
-  const csp = buildContentSecurityPolicy(nonce);
+  const csp = buildContentSecurityPolicy(nonce, pathname);
 
   // Legacy redirect: /api/folders/* → /api/roosts/* (folders→roosts rename).
   // Remove 30 days after external users migrated (added 2026-04-22).

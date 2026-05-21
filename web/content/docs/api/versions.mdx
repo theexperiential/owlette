@@ -1,0 +1,552 @@
+---
+title: "roost versions"
+description: "A version is an immutable JSON body that lists the files in a roost publish and the chunk hashes needed to reconstruct each file. The public routes use that body to publish history, resolve version refs, list files, compute diffs, roll back the current pointer, and trigger deployments."
+---
+
+This page documents the current server contract in
+`web/app/api/roosts/[roostId]/versions/**`, `rollback`, and `deploy`.
+
+## version body
+
+`POST /api/roosts/{roostId}/versions` requires a `version` object with this
+shape:
+
+```json
+{
+  "schemaVersion": 2,
+  "mediaType": "application/vnd.owlette.version.v1+json",
+  "config": {
+    "producer": "owlette-cli",
+    "cliVersion": "1.0.0-rc.1",
+    "createdAt": "2026-04-22T15:30:00.000Z",
+    "hostname": "build-runner-01",
+    "platform": "linux"
+  },
+  "files": [
+    {
+      "path": "main.toe",
+      "size": 5242880,
+      "chunks": [
+        {
+          "hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "size": 4194304
+        },
+        {
+          "hash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+          "size": 1048576
+        }
+      ]
+    }
+  ]
+}
+```
+
+Top-level fields:
+
+| field | required | server validation |
+|---|---:|---|
+| `schemaVersion` | yes | Must be exactly `2`. |
+| `mediaType` | yes | Must be exactly `application/vnd.owlette.version.v1+json`. |
+| `config` | yes | Must be a JSON object. The server does not require specific config keys. |
+| `files` | yes | Must be a non-empty array. An empty roost publish is rejected. |
+
+The CLI and SDKs currently emit these `config` keys: `producer`,
+`cliVersion`, `createdAt`, `hostname`, and `platform`. They are metadata, not
+server-required fields. Extra keys in the version body are stored and included
+in the computed version id, but current routes do not interpret them.
+
+Each `files[]` entry:
+
+| field | required | server validation |
+|---|---:|---|
+| `path` | yes | Must be a non-empty string. Use forward-slash relative paths. |
+| `size` | yes | Must be a non-negative number. |
+| `chunks` | yes | Must be an array. |
+
+Each listed chunk must have a lowercase bare SHA-256 hex `hash` exactly 64
+characters long and a positive numeric `size`. Do not include a `sha256:`
+prefix in version bodies.
+
+## version ids and refs
+
+The server computes the `versionId` as the SHA-256 hex digest of the canonical
+JSON version body. Current publish responses return the bare 64-character hex
+id. The resolver also accepts legacy `vrs_<hex>` ids for older clients.
+
+Routes that take `{versionRef}` accept:
+
+| form | examples |
+|---|---|
+| stable id | `8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92`, legacy `vrs_8d969eef...` |
+| version number | `3`, `#3`, `v3`, `V3` |
+| alias | `current`, `previous`, `first` |
+
+In URLs, a literal `#` starts a fragment in most clients. Prefer bare `3` or
+`v3`; if you use the hash form in a path segment, encode it as `%233`.
+
+Examples:
+
+```bash
+curl -fsS "$OWLETTE_API_URL/api/roosts/$ROOST_ID/versions/3?siteId=$SITE_ID" \
+  -H "Authorization: Bearer $OWLETTE_API_KEY"
+
+curl -fsS "$OWLETTE_API_URL/api/roosts/$ROOST_ID/versions/v3?siteId=$SITE_ID" \
+  -H "Authorization: Bearer $OWLETTE_API_KEY"
+
+curl -fsS "$OWLETTE_API_URL/api/roosts/$ROOST_ID/versions/%233?siteId=$SITE_ID" \
+  -H "Authorization: Bearer $OWLETTE_API_KEY"
+```
+
+## publish
+
+High-level clients should use the chunk-aware push API. It builds the version
+body, checks missing chunks, uploads missing bytes, and posts the version.
+
+Node:
+
+```ts
+const result = await owlette.roosts.push("./dist", "rst_lobby", {
+  siteId: "site_kiosk_fleet",
+  description: "fixed lobby video"
+});
+```
+
+Python:
+
+```python
+from roost import PushOptions
+
+result = await client.roosts.push(
+    "./dist",
+    "rst_lobby",
+    PushOptions(site_id="site_kiosk_fleet", description="fixed lobby video"),
+)
+```
+
+Low-level HTTP publish:
+
+```http
+POST /api/roosts/{roostId}/versions
+Authorization: Bearer owk_live_...
+Idempotency-Key: 3f7b9c2a-8e14-4f1c-9d6e-2c8a5b0e9f4d
+Content-Type: application/json
+
+{
+  "siteId": "site_kiosk_fleet",
+  "version": {
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.owlette.version.v1+json",
+    "config": {
+      "producer": "custom-uploader",
+      "createdAt": "2026-04-22T15:30:00.000Z"
+    },
+    "files": [
+      {
+        "path": "main.toe",
+        "size": 5242880,
+        "chunks": [
+          {
+            "hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "size": 4194304
+          },
+          {
+            "hash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+            "size": 1048576
+          }
+        ]
+      }
+    ]
+  },
+  "description": "fixed lobby video",
+  "expectedCurrentVersionId": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+}
+```
+
+Request body fields:
+
+| field | required | notes |
+|---|---:|---|
+| `siteId` | yes | Site that owns the roost. |
+| `version` | yes | Full version body. `files[]` must be non-empty. |
+| `description` | no | Plaintext metadata, max 500 characters. Empty strings are stored as `null`. |
+| `expectedCurrentVersionId` | no | Optional compare-and-swap guard for publish only. |
+| `name` | no | Optional roost display name update. |
+| `targets` | no | Optional target machine id list. |
+| `extractPath` | no | Optional agent extract root. |
+
+Before publishing, every chunk hash referenced by `version.files[].chunks[]`
+must already exist in R2 for the same site. Missing chunks fail with
+`412 precondition_failed`; upload them through the chunk routes first.
+
+Publish concurrency is expressed only by the body field
+`expectedCurrentVersionId`. If it is present and does not match the roost's
+current pointer inside the transaction, the server returns `412 version_stale`.
+If it is omitted, publish advances the pointer unconditionally.
+
+Successful response (`201 Created`):
+
+```json
+{
+  "versionId": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  "versionNumber": 3,
+  "currentVersionId": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  "previousVersionId": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+}
+```
+
+The publish response does not include `description`, `publishedAt`, or the full
+version body. Fetch the version or list history for metadata.
+
+## edit description
+
+Only `description` is mutable after publish. The patch body must include
+`siteId` and `description`; any other body field is rejected with
+`version_content_immutable`.
+
+```http
+PATCH /api/roosts/{roostId}/versions/{versionRef}
+Authorization: Bearer owk_live_...
+Content-Type: application/json
+
+{
+  "siteId": "site_kiosk_fleet",
+  "description": "operator note corrected after publish"
+}
+```
+
+Response (`200 OK`):
+
+```json
+{
+  "versionId": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  "versionNumber": 3,
+  "description": "operator note corrected after publish",
+  "roostId": "rst_lobby",
+  "siteId": "site_kiosk_fleet",
+  "versionUrl": "https://...",
+  "createdAt": "2026-04-22T15:30:00.000Z",
+  "updatedAt": "2026-04-22T16:10:00.000Z",
+  "createdBy": "uid_123",
+  "totalSize": 5242880,
+  "totalFiles": 1,
+  "parentVersionId": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+}
+```
+
+## list and fetch
+
+### list versions
+
+```http
+GET /api/roosts/{roostId}/versions?siteId=site_kiosk_fleet&page_size=25&page_token=...
+```
+
+`siteId` is required. `page_size` defaults to 20 and is capped at 100.
+`page_token` is opaque. The route also accepts legacy `limit` and `cursor`
+aliases, but new clients should use `page_size` and `page_token`.
+
+Response:
+
+```json
+{
+  "versions": [
+    {
+      "versionId": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+      "versionNumber": 3,
+      "description": "fixed lobby video",
+      "versionUrl": "https://...",
+      "createdAt": "2026-04-22T15:30:00.000Z",
+      "createdBy": "uid_123",
+      "totalSize": 5242880,
+      "totalFiles": 1,
+      "parentVersionId": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+    }
+  ],
+  "nextCursor": null,
+  "next_page_token": "",
+  "nextPageToken": ""
+}
+```
+
+The list response uses `versions`, `createdAt`, and `createdBy`. It does not
+include `items`, `publishedAt`, `publishedBy`, or `isCurrent`.
+
+### fetch one version
+
+```http
+GET /api/roosts/{roostId}/versions/{versionRef}?siteId=site_kiosk_fleet
+```
+
+`siteId` is required. Response:
+
+```json
+{
+  "versionId": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  "versionNumber": 3,
+  "description": "fixed lobby video",
+  "roostId": "rst_lobby",
+  "siteId": "site_kiosk_fleet",
+  "version": {
+    "schemaVersion": 2,
+    "mediaType": "application/vnd.owlette.version.v1+json",
+    "config": {
+      "producer": "owlette-cli",
+      "cliVersion": "1.0.0-rc.1",
+      "createdAt": "2026-04-22T15:30:00.000Z",
+      "hostname": "build-runner-01",
+      "platform": "linux"
+    },
+    "files": [
+      {
+        "path": "main.toe",
+        "size": 5242880,
+        "chunks": [
+          {
+            "hash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "size": 4194304
+          },
+          {
+            "hash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+            "size": 1048576
+          }
+        ]
+      }
+    ]
+  },
+  "metadata": {
+    "versionUrl": "https://...",
+    "createdAt": "2026-04-22T15:30:00.000Z",
+    "createdBy": "uid_123",
+    "totalSize": 5242880,
+    "totalFiles": 1,
+    "parentVersionId": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+  }
+}
+```
+
+The `version` member is the stored version body. Route metadata is returned in
+sibling fields and under `metadata`.
+
+### list files in a version
+
+```http
+GET /api/roosts/{roostId}/versions/{versionRef}/files?siteId=site_kiosk_fleet&prefix=assets/&page_size=100&page_token=...
+```
+
+`siteId` is required. `prefix` is optional. `page_size` defaults to 100 and is
+capped at 500. `page_token` is an opaque offset token for this route.
+
+Response:
+
+```json
+{
+  "versionId": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  "roostId": "rst_lobby",
+  "siteId": "site_kiosk_fleet",
+  "total": 1,
+  "files": [
+    {
+      "path": "assets/logo.png",
+      "size": 524288,
+      "chunks": [
+        {
+          "hash": "18ac3e7343f016890c510e93f935261169d9e3f565436429830faf0934f4f8e4",
+          "size": 524288
+        }
+      ]
+    }
+  ],
+  "items": [
+    {
+      "path": "assets/logo.png",
+      "size": 524288,
+      "chunks": [
+        {
+          "hash": "18ac3e7343f016890c510e93f935261169d9e3f565436429830faf0934f4f8e4",
+          "size": 524288
+        }
+      ]
+    }
+  ],
+  "next_page_token": "",
+  "nextPageToken": ""
+}
+```
+
+File entries include `path`, `size`, and `chunks`; there is no file-level
+`digest` field.
+
+### diff two versions
+
+```http
+GET /api/roosts/{roostId}/versions/{versionRef}/diff?siteId=site_kiosk_fleet&against=current
+```
+
+`siteId` and `against` are required. `{versionRef}` is the target version and
+`against` is the version to compare from.
+
+Response:
+
+```json
+{
+  "versionId": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  "fromVersion": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "toVersion": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  "against": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "roostId": "rst_lobby",
+  "siteId": "site_kiosk_fleet",
+  "summary": {
+    "added": 1,
+    "removed": 1,
+    "changed": 1,
+    "unchanged": 12,
+    "hasChanges": true,
+    "netBytesDelta": 523776
+  },
+  "added": [
+    {
+      "path": "assets/new_logo.png",
+      "size": 524288,
+      "reason": "added",
+      "chunks": 1
+    }
+  ],
+  "removed": [
+    {
+      "path": "assets/old_logo.png",
+      "size": 512,
+      "reason": "removed",
+      "chunks": 1
+    }
+  ],
+  "modified": [
+    {
+      "path": "main.toe",
+      "fromSize": 4194304,
+      "toSize": 5242880,
+      "reason": "modified",
+      "fromChunks": 1,
+      "toChunks": 2
+    }
+  ]
+}
+```
+
+Diffs compare ordered chunk hash sequences. `summary.changed` counts the files
+returned in `modified`.
+
+## rollback
+
+Rollback moves the roost's current pointer to an existing version. It does not
+create a new version and it does not upload bytes.
+
+```http
+POST /api/roosts/{roostId}/rollback
+Authorization: Bearer owk_live_...
+Idempotency-Key: 3f7b9c2a-8e14-4f1c-9d6e-2c8a5b0e9f4d
+Content-Type: application/json
+
+{
+  "siteId": "site_kiosk_fleet",
+  "targetVersion": "previous"
+}
+```
+
+`siteId` is required. `targetVersion` is optional and defaults to `previous`.
+When present, it may be any supported version ref form.
+
+Response (`200 OK`):
+
+```json
+{
+  "ok": true,
+  "roostId": "rst_lobby",
+  "siteId": "site_kiosk_fleet",
+  "currentVersionId": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+  "currentVersionNumber": 2,
+  "previousVersionId": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92"
+}
+```
+
+Rollback does not implement a current-pointer compare-and-swap guard. A target
+that resolves to the already-current version returns `400 rollback_no_op`.
+
+## deploy
+
+Deploy queues a rollout for an existing version. `versionId` is a concrete
+stable id; omit it to deploy the roost's current version.
+
+```http
+POST /api/roosts/{roostId}/deploy
+Authorization: Bearer owk_live_...
+Idempotency-Key: 3f7b9c2a-8e14-4f1c-9d6e-2c8a5b0e9f4d
+Content-Type: application/json
+
+{
+  "siteId": "site_kiosk_fleet",
+  "versionId": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  "machines": ["mac-mini-01", "mac-mini-02"],
+  "scheduleAt": "2026-04-22T16:00:00.000Z",
+  "dryRun": false
+}
+```
+
+Request body fields:
+
+| field | required | notes |
+|---|---:|---|
+| `siteId` | yes | Site that owns the roost. |
+| `versionId` | no | Concrete version id. Defaults to current. |
+| `machines` | no | Non-empty machine id list. Defaults to the roost's `targets[]`. |
+| `scheduleAt` | no | ISO-8601 timestamp. Future scheduling is stored but not auto-fired yet. |
+| `dryRun` | no | If `true`, returns the rollout shape without writing. |
+
+Normal response (`202 Accepted`):
+
+```json
+{
+  "rolloutId": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  "versionId": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+  "siteId": "site_kiosk_fleet",
+  "roostId": "rst_lobby",
+  "stage": "canary",
+  "canary": ["mac-mini-01"],
+  "fleet": ["mac-mini-02"],
+  "extractRoot": "~/Documents/Owlette",
+  "versionUrl": "https://..."
+}
+```
+
+If a non-terminal rollout already exists for the same version id, the response
+returns the existing rollout fields plus `alreadyRunning: true`. A dry run
+returns the same planning fields with `dryRun: true` and does not write.
+
+Deploy does not implement a current-pointer compare-and-swap guard.
+
+## error codes
+
+All errors use `application/problem+json`.
+
+| code | HTTP | meaning |
+|---|---:|---|
+| `validation_failed` | 400 | Missing `siteId`, invalid pagination, invalid body shape, invalid `description`, invalid `machines`, or malformed request fields. |
+| `version_ref_malformed` | 400 | A `{versionRef}` or `targetVersion` string is not one of the accepted forms. |
+| `version_content_immutable` | 400 | PATCH tried to edit a field other than `siteId` or `description`. |
+| `rollback_no_op` | 400 | Rollback target resolves to the current version. |
+| `not_found` | 404 / 410 | The roost does not exist, or a stored version body is gone. |
+| `version_not_found` | 404 | A version ref did not resolve within this roost history. |
+| `precondition_failed` | 412 | Publish references chunks that are not present in R2 for the site. The response includes up to 20 `missingChunks`. |
+| `version_stale` | 412 | Publish included `expectedCurrentVersionId`, but the roost current pointer moved before the transaction committed. |
+| `conflict` | 409 | Deploy cannot proceed because the roost is deleted or the target version has no URL. |
+| `idempotency_key_mismatch` | 422 | The same `Idempotency-Key` was reused with a different request body. |
+
+For a stale publish, fetch the current roost with
+`GET /api/roosts/{roostId}?siteId=...`, decide whether to rebuild or abort,
+then retry with the new `expectedCurrentVersionId` if you still want a guarded
+publish.
+
+## see also
+
+- [chunks.md](/docs/api/chunks) - check, upload, and download content-addressed chunks.
+- [errors.md](/docs/api/errors) - shared problem envelope and recovery guidance.
+- [sdk-node.md](/docs/api/sdk-node) and [sdk-python.md](/docs/api/sdk-python) - high-level `roosts.push()` workflows.

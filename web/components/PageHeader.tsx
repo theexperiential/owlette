@@ -243,10 +243,10 @@ export function PageHeader({
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className={`w-56 ${MENU_SURFACE}`}>
                 <DropdownMenuItem asChild className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer">
-                  <a href="https://theexperiential.github.io/owlette/" target="_blank" rel="noopener noreferrer">
+                  <Link href="/docs">
                     <BookOpen className="mr-2 h-4 w-4" />
                     docs
-                  </a>
+                  </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => setReportBugOpen(true)}

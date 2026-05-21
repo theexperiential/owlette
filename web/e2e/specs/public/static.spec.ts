@@ -65,9 +65,24 @@ test.describe('public routes', () => {
     await expect(page.locator('table')).toBeVisible();
   });
 
-  test('API docs route loads the Scalar shell', async ({ page }) => {
-    await page.goto('/docs/api');
-    await expect(page).toHaveTitle(/Scalar API Reference|owlette API Reference/i);
+  test('docs routes resolve to Fumadocs and Scalar surfaces', async ({ request }) => {
+    const docs = await request.get('/docs');
+    expect(docs.status()).toBe(200);
+    const docsHtml = await docs.text();
+    expect(docsHtml).toContain('id="nd-docs-layout"');
+    expect(docsHtml).toContain('owlette docs');
+
+    const scalar = await request.get('/docs/api');
+    expect(scalar.status()).toBe(200);
+    const scalarHtml = await scalar.text();
+    expect(scalarHtml).toContain('Scalar.createApiReference');
+    expect(scalarHtml).toContain('"url": "/api/openapi"');
+
+    const authentication = await request.get('/docs/api/authentication');
+    expect(authentication.status()).toBe(200);
+    const authenticationHtml = await authentication.text();
+    expect(authenticationHtml).toContain('id="nd-docs-layout"');
+    expect(authenticationHtml).toContain('authentication');
   });
 
   test('download permalink redirects to latest installer and falls back when empty', async ({ request }) => {

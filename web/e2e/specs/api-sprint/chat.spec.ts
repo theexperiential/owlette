@@ -4,11 +4,11 @@
  * Hits the chat conversation endpoints with a `chat=<siteId>:write` api key.
  *
  * Verbs covered (≥1 happy-path each):
- *   - GET    /api/chat
- *   - POST   /api/chat/new
- *   - PATCH  /api/chat/{conversationId}
- *   - DELETE /api/chat/{conversationId}
- *   - POST   /api/chat/{conversationId}    (SSE stream — see notes)
+ *   - GET    /api/cortex/conversations
+ *   - POST   /api/cortex/conversations
+ *   - PATCH  /api/cortex/conversations/{conversationId}
+ *   - DELETE /api/cortex/conversations/{conversationId}
+ *   - POST   /api/cortex/conversations/{conversationId}    (SSE stream — see notes)
  *
  * Notes on the streaming case:
  *   The send endpoint funnels through `runCortexStream`, which returns 503
@@ -69,8 +69,8 @@ test.beforeEach(async () => {
   await clearConversations();
 });
 
-test('POST /api/chat/new — creates a conversation', async ({ request }) => {
-  const res = await request.post('/api/chat/new', {
+test('POST /api/cortex/conversations — creates a conversation', async ({ request }) => {
+  const res = await request.post('/api/cortex/conversations', {
     headers: authHeaders(writeKey),
     data: { siteId: SITE_ID, title: `e2e-${SUFFIX}` },
   });
@@ -89,7 +89,7 @@ test('POST /api/chat/new — creates a conversation', async ({ request }) => {
   expect(docSnap.exists).toBe(true);
 });
 
-test('GET /api/chat — lists conversations the caller can access', async ({ request }) => {
+test('GET /api/cortex/conversations — lists conversations the caller can access', async ({ request }) => {
   // Seed a couple of conversations directly.
   const db = getAdminDb();
   const now = Date.now();
@@ -110,7 +110,7 @@ test('GET /api/chat — lists conversations the caller can access', async ({ req
     ),
   );
 
-  const res = await request.get(`/api/chat?page_size=50`, {
+  const res = await request.get(`/api/cortex/conversations?page_size=50`, {
     headers: authHeaders(writeKey, false),
   });
   expect(res.status()).toBe(200);
@@ -122,14 +122,14 @@ test('GET /api/chat — lists conversations the caller can access', async ({ req
   expect(ids).toEqual(expect.arrayContaining([`conv_${SUFFIX}_1`, `conv_${SUFFIX}_2`]));
 });
 
-test('PATCH /api/chat/{conversationId} — renames title', async ({ request }) => {
-  const create = await request.post('/api/chat/new', {
+test('PATCH /api/cortex/conversations/{conversationId} — renames title', async ({ request }) => {
+  const create = await request.post('/api/cortex/conversations', {
     headers: authHeaders(writeKey),
     data: { siteId: SITE_ID, title: 'before' },
   });
   const { data: { conversationId } } = await create.json();
 
-  const res = await request.patch(`/api/chat/${conversationId}`, {
+  const res = await request.patch(`/api/cortex/conversations/${conversationId}`, {
     headers: authHeaders(writeKey),
     data: { title: 'after' },
   });
@@ -139,14 +139,14 @@ test('PATCH /api/chat/{conversationId} — renames title', async ({ request }) =
   expect(body.data.title).toBe('after');
 });
 
-test('DELETE /api/chat/{conversationId} — soft deletes', async ({ request }) => {
-  const create = await request.post('/api/chat/new', {
+test('DELETE /api/cortex/conversations/{conversationId} — soft deletes', async ({ request }) => {
+  const create = await request.post('/api/cortex/conversations', {
     headers: authHeaders(writeKey),
     data: { siteId: SITE_ID, title: 'doomed' },
   });
   const { data: { conversationId } } = await create.json();
 
-  const res = await request.delete(`/api/chat/${conversationId}`, {
+  const res = await request.delete(`/api/cortex/conversations/${conversationId}`, {
     headers: authHeaders(writeKey, false),
   });
   expect(res.status()).toBe(200);
@@ -159,15 +159,15 @@ test('DELETE /api/chat/{conversationId} — soft deletes', async ({ request }) =
   expect(typeof docSnap.data()?.deletedAt !== 'undefined').toBe(true);
 });
 
-test('POST /api/chat/{conversationId} — SSE response when streaming, problem+json when upstream unavailable', async ({ request }) => {
-  const create = await request.post('/api/chat/new', {
+test('POST /api/cortex/conversations/{conversationId} — SSE response when streaming, problem+json when upstream unavailable', async ({ request }) => {
+  const create = await request.post('/api/cortex/conversations', {
     headers: authHeaders(writeKey),
     data: { siteId: SITE_ID, machineId: MACHINE_ID, title: 'send-test' },
   });
   expect(create.status()).toBe(201);
   const { data: { conversationId } } = await create.json();
 
-  const res = await request.post(`/api/chat/${conversationId}`, {
+  const res = await request.post(`/api/cortex/conversations/${conversationId}`, {
     headers: authHeaders(writeKey),
     data: { role: 'user', content: 'hello, are you online?' },
   });

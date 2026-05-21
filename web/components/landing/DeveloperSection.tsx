@@ -130,7 +130,7 @@ export function DeveloperSection() {
             href="/docs/api"
             className="inline-flex items-center gap-1.5 text-base text-accent-cyan hover:text-accent-cyan-hover transition-colors group"
           >
-            read the API reference
+            read the api reference
             <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
           </Link>
           <Link
@@ -139,7 +139,7 @@ export function DeveloperSection() {
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 text-base text-muted-foreground hover:text-foreground transition-colors group"
           >
-            install the CLI
+            install the cli
             <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
           </Link>
         </div>
