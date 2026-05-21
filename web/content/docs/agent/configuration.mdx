@@ -3,7 +3,7 @@ title: "configuration"
 description: "The agent can be configured locally via the GUI, remotely from the web dashboard, or by editing config.json directly. The local source file is C:\\ProgramData\\Owlette\\config\\config.json."
 ---
 
-Changes from the GUI, service, and dashboard sync through Firestore within roughly 1-2 seconds.
+GUI/dashboard writes apply immediately; the agent picks up config changes on a polling listener with a 2-10 second interval.
 
 When the GUI is open, launch mode and schedule labels refresh from external dashboard or service changes. Text fields that are actively focused defer remote refresh until focus leaves.
 
@@ -13,8 +13,8 @@ When the GUI is open, launch mode and schedule labels refresh from external dash
 
 The GUI is a CustomTkinter application that runs as a separate process from the service. Launch it from:
 
-- **System tray** -> Right-click -> "Open GUI"
-- **Start Menu** -> owlette
+- **System tray** -> Right-click -> `open owlette`
+- **Start Menu** -> `Owlette Configuration`
 - **Directly**: `C:\ProgramData\Owlette\python\pythonw.exe C:\ProgramData\Owlette\agent\src\owlette_gui.py`
 
 ### gui features
@@ -24,7 +24,7 @@ The GUI is a CustomTkinter application that runs as a separate process from the 
 | **Site Connection** | Join/leave site, connection status, site ID |
 | **Processes** | Add, edit, remove monitored processes |
 | **Process Settings** | Executable path, file path or arguments, working directory, priority, visibility, delays, launch mode, relaunch attempts |
-| **Footer** | Config button that opens `config.json`, logs button, version info |
+| **Footer** | `join site` button, overflow `...` menu (config, logs, docs, feedback/bug), and version info |
 
 ---
 
@@ -114,7 +114,29 @@ If the agent regenerates a config and an existing `firebase` section is present,
 
 ## process configuration
 
-Each process in the `processes` array uses the current process keys. The generator creates an empty array; this is the shape written by the GUI and dashboard when a process is added:
+Each process in the `processes` array uses the current process keys. The generator creates an empty array; GUI-created and dashboard-created entries share most fields but are not identical.
+
+GUI-created entry:
+
+```json
+{
+    "id": "b8f1a4d2-8b1e-4df9-b7ff-7d4c3c10f9f1",
+    "name": "TouchDesigner",
+    "exe_path": "C:\\Program Files\\Derivative\\TouchDesigner\\bin\\TouchDesigner.exe",
+    "file_path": "C:\\Projects\\MyProject.toe",
+    "cwd": "C:\\Projects",
+    "priority": "Normal",
+    "visibility": "Show",
+    "time_delay": "0",
+    "time_to_init": "10",
+    "relaunch_attempts": "5",
+    "launch_mode": "off",
+    "autolaunch": false,
+    "schedules": null
+}
+```
+
+Dashboard-created entry:
 
 ```json
 {
@@ -128,13 +150,14 @@ Each process in the `processes` array uses the current process keys. The generat
     "visibility": "Normal",
     "time_delay": "0",
     "time_to_init": "10",
-    "relaunch_attempts": "5",
-    "launch_mode": "always",
-    "autolaunch": true,
-    "schedules": null,
-    "schedulePresetId": null
+    "relaunch_attempts": 3,
+    "launch_mode": "off",
+    "autolaunch": false,
+    "schedules": null
 }
 ```
+
+Dashboard writes include `schedulePresetId` only when a schedule preset is supplied.
 
 ### process fields
 
@@ -150,7 +173,7 @@ Each process in the `processes` array uses the current process keys. The generat
 | `visibility` | string | Window state used by the launcher. See accepted values below. |
 | `time_delay` | string or number | Seconds to wait before launching this process during startup or scheduled activation. |
 | `time_to_init` | string or number | Seconds to wait after launch before monitoring responsiveness. |
-| `relaunch_attempts` | string or number | Restart-attempt budget. `0` means unlimited relaunch attempts. |
+| `relaunch_attempts` | string or number | Restart-attempt budget. `0` (or missing) falls back to the default budget of 3; positive values set the restart budget. |
 | `launch_mode` | string | `off`, `always`, or `scheduled`. |
 | `autolaunch` | boolean | Backward-compatible flag derived from `launch_mode`. Keep it aligned with `launch_mode != "off"`. |
 | `schedules` | array or null | Schedule blocks for `launch_mode: "scheduled"`. Null means no schedule is configured. |
@@ -168,7 +191,7 @@ The local GUI exposes `Normal` and `Hidden`. The launcher also accepts `Minimize
 | `"Minimized"` | Visible window starts minimized. |
 | `"Maximized"` | Visible window starts maximized. |
 
-Legacy `Show` and `Hide` values are normalized by the service to `Normal` and `Hidden`.
+`Show` and `Hide` values are normalized by the service to `Normal` and `Hidden`.
 
 ---
 
@@ -177,9 +200,9 @@ Legacy `Show` and `Hide` values are normalized by the service to `Normal` and `H
 From the dashboard, you can edit process settings remotely:
 
 1. Click on a machine in the dashboard.
-2. Click on a process to open the process dialog.
+2. Click the process row's pencil/edit button.
 3. Edit settings such as name, paths, priority, visibility, delays, launch mode, and schedules.
-4. Click **Save**.
+4. Click `save changes`.
 
 The dashboard writes process updates to Firestore. The agent listener applies the new configuration locally and writes the updated config file without requiring a service restart.
 
@@ -187,14 +210,12 @@ The dashboard writes process updates to Firestore. The agent listener applies th
 
 ## configuration sync
 
-```text
-                  Cloud Firestore
-             config and machine state
-                         |
-          +--------------+--------------+
-          |              |              |
-      local GUI       service       dashboard
-      config.json    config.json    web writes
+```mermaid
+flowchart TD
+    FS["Cloud Firestore<br/>config + machine state"]
+    FS --> GUI["local GUI<br/>config.json"]
+    FS --> SVC["service<br/>config.json"]
+    FS --> DASH["dashboard<br/>web writes"]
 ```
 
 - **GUI -> service**: The GUI writes to `config.json`; the service detects the file change.

@@ -11,22 +11,18 @@ Owlette uses four authentication mechanisms: user auth (Firebase Auth), agent au
 
 ### sign-in flow
 
-```
-Browser                     Firebase Auth              Dashboard API
-  │                              │                          │
-  │── signInWithEmail ──────────▶│                          │
-  │   or signInWithGoogle        │                          │
-  │                              │                          │
-  │◀── Firebase ID Token ────────│                          │
-  │                              │                          │
-  │── POST /api/auth/session ───────────────────────────────▶│
-  │   {idToken}                                             │
-  │                                                         │── Verify ID token
-  │                                                         │── Create iron-session
-  │◀── Set-Cookie: session=... ─────────────────────────────│
-  │   (HTTPOnly, encrypted)                                 │
-  │                                                         │
-  │── Subsequent requests use cookie ───────────────────────▶│
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant F as Firebase Auth
+    participant D as Dashboard API
+    B->>F: signInWithEmail / signInWithGoogle
+    F-->>B: Firebase ID Token
+    B->>D: POST /api/auth/session {idToken}
+    D->>D: Verify ID token
+    D->>D: Create iron-session
+    D-->>B: Set-Cookie: __session=... (HTTPOnly, encrypted)
+    B->>D: Subsequent requests use cookie
 ```
 
 ### session management
@@ -35,10 +31,10 @@ Sessions use [iron-session](https://github.com/vvo/iron-session) — encrypted, 
 
 | property | value |
 |----------|-------|
-| **Cookie name** | `session` |
+| **Cookie name** | `__session` |
 | **HTTPOnly** | Yes (not accessible from JavaScript) |
 | **Secure** | Yes (HTTPS only in production) |
-| **Encryption** | AES-256-GCM via `SECRET_COOKIE_PASSWORD` |
+| **Encryption** | AES-256-GCM via `SESSION_SECRET` |
 
 ### sign-out
 
@@ -60,14 +56,19 @@ Agents authenticate using a device code flow with a two-token system. No Firebas
 2. User authorizes (POST /api/agent/auth/device-code/authorize)
    ├── Via browser auto-opened on the machine (owlette.app/add)
    ├── Via dashboard "+" button → "Enter Code" tab
-   └── Via /ADD=phrase installer flag (pre-authorized, no interaction)
-
-3. Agent polls for authorization (POST /api/agent/auth/device-code/poll)
+   ├── Via /ADD=phrase installer flag (pre-authorized, no interaction)
    ├── Server creates Firebase custom token with claims:
    │     {role: "agent", site_id: "...", machine_id: "..."}
    ├── Server exchanges custom token for ID token (Firebase Auth REST)
    ├── Server generates refresh token (random, hashed in Firestore)
-   └── Returns: accessToken + refreshToken + siteId
+   └── Stores the prepared credential bundle in the device_codes doc
+       (encrypted blob for interactive pairing, plaintext for pre-authorized)
+
+3. Agent polls for authorization (POST /api/agent/auth/device-code/poll)
+   ├── Server reads the stored credential bundle from the device_codes doc
+   ├── Returns it (encrypted blob for interactive pairing, plaintext
+   │     accessToken + refreshToken + siteId for pre-authorized codes)
+   └── Deletes the device-code doc
 
 4. Agent stores tokens
    ├── Access token: used for Firestore REST API calls (1-hour expiry)
@@ -99,17 +100,17 @@ Both tabs work only while the viewer has write access to the currently-selected 
 
 ### token refresh flow
 
-```
-Agent detects token nearing expiry (~5 min before)
-  │
-  POST /api/agent/auth/refresh
-  │  {refreshToken, machineId}
-  │
-  ├── Server validates: token hash exists in Firestore
-  ├── Server validates: machineId matches token record
-  ├── Server generates new custom token + ID token
-  ├── Server updates lastUsed timestamp
-  └── Returns: new customToken + idToken
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant S as Refresh API
+    Note over A: Token nearing expiry (~5 min before)
+    A->>S: POST /api/agent/auth/refresh {refreshToken, machineId}
+    S->>S: Validate token hash exists in Firestore
+    S->>S: Validate machineId matches token record
+    S->>S: Generate new custom token + ID token
+    S->>S: Update lastUsed timestamp
+    S-->>A: new idToken (accessToken) + optional rotated refreshToken
 ```
 
 ### token security
@@ -196,7 +197,7 @@ Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passke
 | **Challenge lifetime** | 10 minutes, single-use, deleted after verification |
 | **Clone detection** | Counter validation — rejects if response counter ≤ stored counter |
 | **Credential storage** | Public key in `users/{userId}/passkeys/` subcollection |
-| **User verification** | `preferred` (allows both biometric and PIN) |
+| **User verification** | `required` (PIN or biometric mandatory) |
 | **Discoverable credentials** | `residentKey: preferred` (no email needed to start login) |
 
 ---
@@ -220,7 +221,7 @@ Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entire
    └── POST /api/mfa/verify-setup
        ├── Verify code against secret
        ├── Encrypt secret → store in users/{userId}
-       ├── Generate backup codes → hash and store
+       ├── Receive client-generated backup codes → hash and store
        └── Delete mfa_pending document
 
 4. MFA is now active for this user
@@ -232,7 +233,7 @@ Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entire
 
 ```
 1. User logs in normally (email/password or Google)
-2. Dashboard detects mfaEnabled: true on user document
+2. Dashboard detects mfaEnrolled: true on user document
 3. Prompt for TOTP code
 4. POST /api/mfa/verify-login {code}
    ├── Decrypt secret from user document
@@ -243,7 +244,7 @@ Optional TOTP-based two-factor authentication. Passkey login bypasses MFA entire
 
 ### backup codes
 
-- 8 backup codes generated during setup
+- 10 backup codes generated during setup
 - Each is single-use
 - Stored as hashed values in Firestore
 - Used when authenticator device is unavailable
@@ -271,43 +272,30 @@ New users default to `member`. Superadmins promote members to `admin` or `supera
 2. **API Route Middleware** — Server-side helpers resolve sessions, Firebase ID tokens, and `owk_*` API keys. Public API routes use resource-scoped helpers such as `requireSiteAuthAndScope`, `requireMachineAuthAndScope`, `requireChatAuthAndScope`, and lower-level `resolveAuth`/`requireScope`; roost-specific routes use the same scoped-auth pattern. `requireAdminOrIdToken` is reserved for legacy or superadmin-gated platform routes.
 3. **React Components** — `RequireSuperadmin` for platform-scoped routes; `useAuth().isSiteAdmin(siteId)` for site-scoped UI gates.
 
-### backwards-compatibility notes
-
-- `isAdmin()` in `firestore.rules` is a **deprecated alias** for `isSuperadmin()` during the three-role rollout window. It will be removed in a future release; do not use in new code.
-- `useAuth().isAdmin` is JSDoc-deprecated for the same reason — use `useAuth().isSuperadmin` (platform god-mode) or `useAuth().isSiteAdmin(siteId)` (site-scoped elevated writes) instead.
-
 ### how role is determined
 
 ```
 User logs in → Firebase Auth ID token
   │
-  POST /api/auth/session → Server fetches users/{uid} from Firestore
+  POST /api/auth/session → Server creates the iron-session cookie
+  │     (userId + MFA state only — the cookie does NOT carry role)
   │
-  └── role field → stored in session → available in AuthContext
+  └── AuthContext separately subscribes to users/{uid} in Firestore
+        via onSnapshot → reads the live role field there
 ```
 
 ---
 
 ## security architecture
 
-```
-                          ┌─────────────┐
-                          │  Firebase    │
-                          │  Auth        │
-                          └──────┬──────┘
-                                 │
-       ┌─────────────────────────┼─────────────────────────┐
-       │                  │                  │              │
-┌──────┴──────┐  ┌──────┴──────┐  ┌──────┴──────┐  ┌─────┴───────┐
-│ User Auth    │  │ Agent Auth   │  │ MFA          │  │ Passkeys     │
-│              │  │              │  │              │  │              │
-│ Email/Google │  │ Custom Token │  │ TOTP         │  │ WebAuthn     │
-│ → ID Token   │  │ + Refresh    │  │ + Backup     │  │ → Custom Tok │
-│ → Session    │  │ → ID Token   │  │   Codes      │  │ → Session    │
-└─────────────┘  └─────────────┘  └──────────────┘  └──────────────┘
-       │                  │                                │
-       ▼                  ▼                                ▼
-       ┌───────────────────────────────────────────────────┐
-       │  Firestore Security Rules (site-scoped, role-based)│
-       └───────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    FA[Firebase Auth]
+    FA --> UA["User Auth<br/>Email/Google → ID Token → Session"]
+    FA --> AA["Agent Auth<br/>Custom Token + Refresh → ID Token"]
+    FA --> MFA["MFA<br/>TOTP + Backup Codes"]
+    FA --> PK["Passkeys<br/>WebAuthn → Custom Token → Session"]
+    UA --> FS["Firestore Security Rules<br/>(site-scoped, role-based)"]
+    AA --> FS
+    PK --> FS
 ```

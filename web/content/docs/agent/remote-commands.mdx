@@ -7,15 +7,16 @@ description: "The agent listens for commands from the web dashboard via Firestor
 
 ## command lifecycle
 
-```
-Dashboard                      Firestore                         Agent
-  |                               |                                |
-  |-- merge command id ---------->|                                |
-  |   into commands/pending       |-- listener detects ----------->|
-  |                               |                                |-- execute
-  |                               |                                |
-  |                               |<-- merge result/progress ------|
-  |<-- listener updates UI -------|   into commands/completed      |
+```mermaid
+sequenceDiagram
+    participant D as Dashboard
+    participant F as Firestore
+    participant A as Agent
+    D->>F: merge command id into commands/pending
+    F->>A: listener detects
+    A->>A: execute
+    A->>F: merge result/progress into commands/completed
+    F->>D: listener updates UI
 ```
 
 Each machine has two command documents:
@@ -152,14 +153,9 @@ Progress updates are also merged into the completed document under the same comm
 
 ## command polling (dashboard)
 
-When the dashboard sends a command with `wait: true`, it polls for completion:
+When the web API queues a command, `POST /api/sites/{siteId}/machines/{machineId}/commands` accepts `type`, `params`, and optional `timeout_seconds`, then returns `202` with `{commandId, status: "pending"}`.
 
-1. Merge the command into the pending map document.
-2. Poll the completed map document for the command ID every 1.5 seconds.
-3. Timeout after 30-120 seconds, depending on the caller.
-4. Return the completed, failed, cancelled, or timeout result.
-
-This is used by the Admin API (`/api/admin/commands/send`) and Cortex tool execution.
+Poll `GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}` for the command result. The status route returns `pending`, `in_progress`, `completed`, `failed`, or a 404/timeout. Cortex tool execution polls completion internally about every 1.5 seconds.
 
 ---
 

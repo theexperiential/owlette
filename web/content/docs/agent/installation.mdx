@@ -35,6 +35,8 @@ Pairing phrases expire after 10 minutes. Credentials are stored encrypted at `C:
 
 Use this path for bulk deployment when an admin has already generated and authorized a pairing phrase.
 
+![add machine modal](/docs-screens/add-machine-modal.png)
+
 ### steps
 
 1. In the dashboard, click the `+` button next to the view toggle.
@@ -104,7 +106,7 @@ Example command payload:
 }
 ```
 
-In the dashboard deployment flow, provide the same installer URL, silent flags, checksum, optional verify path, and target machines before starting the deployment.
+In the dashboard deployment flow, provide the installer URL, silent flags, optional verify path from a preset/template when available, and target machines. For remote installs, ensure the command includes `sha256_checksum`; the current deployment dialog does not collect it directly.
 
 ---
 
@@ -153,31 +155,17 @@ Do not run `agent\scripts\install.bat` directly from a raw clone unless you have
 
 The installer runs `configure_site.py` after copying files and before installing the service, unless an existing valid site configuration is already present.
 
-```text
-Installer runs configure_site.py
-  |
-  v
-Agent requests a device code from the API
-  |
-  v
-Console displays the pairing phrase, authorization URL, and 10-minute expiry
-  |
-  v
-Prompt: open browser on this machine? [y/N]
-  |
-  +-- y: browser opens locally; select a site and authorize
-  |
-  +-- Enter: enter the phrase from another device
-  |
-  v
-Agent polls until authorization completes or expires
-  |
-  v
-Server returns access token, refresh token, and site ID
-  |
-  v
-Tokens are encrypted at C:\ProgramData\Owlette\.tokens.enc
-Config is written to C:\ProgramData\Owlette\config\config.json
+```mermaid
+flowchart TD
+    A["installer runs configure_site.py"] --> B["agent requests a device code from the API"]
+    B --> C["console shows the pairing phrase,<br/>authorization URL, and 10-minute expiry"]
+    C --> D{"open browser<br/>on this machine?"}
+    D -->|y| E["browser opens locally;<br/>select a site and authorize"]
+    D -->|Enter| F["enter the phrase from another device"]
+    E --> G["agent polls until authorization<br/>completes or expires"]
+    F --> G
+    G --> H["server returns access token,<br/>refresh token, and site ID"]
+    H --> I["tokens encrypted to .tokens.enc,<br/>config written to config.json"]
 ```
 
 Authorization options:
@@ -212,9 +200,11 @@ C:\ProgramData\Owlette\logs\pairing_debug.log
 Useful startup lines include:
 
 ```text
-INFO: owlette service started successfully
-INFO: Firebase client initialized for site: your_site_id
-INFO: Firebase client started successfully
+OWLETTE AGENT STARTING - v<version>
+STARTUP COMPLETE
+Firebase client initialized for site: <site_id>
+Firebase client started successfully
+owlette initialized
 ```
 
 ### check dashboard
