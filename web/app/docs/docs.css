@@ -56,6 +56,10 @@
 
 #nd-page {
   font-family: var(--font-geist), sans-serif;
+  /* the global site footer (components/Footer.tsx) is position:fixed and
+     floats over the bottom of every page; give the article extra bottom room
+     so the prev/next pagination cards clear it instead of rendering beneath. */
+  padding-bottom: 8rem;
 }
 
 #nd-page a,
@@ -73,6 +77,14 @@
 #nd-page :where(pre, code, kbd),
 [data-search-full] kbd {
   font-family: var(--font-geist-mono), monospace;
+}
+
+/* callouts (Fumadocs <Callout>) — the container is the only element that sets
+   --callout-color, so scope the looser leading to it. Body text runs a touch
+   tight by default; give it more breathing room without affecting prose
+   line-height elsewhere on the page. */
+#nd-page [style*="--callout-color"] :where(p, li) {
+  line-height: 1.9;
 }
 
 .docs-nav-title {
