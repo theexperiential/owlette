@@ -2,55 +2,40 @@
 
 ## Universal Icon System
 
-Owlette uses universal tray icons designed to work well on both light and dark Windows themes.
+Owlette uses a single owl-eye icon, recolored per status, designed to read well on both light and dark Windows themes.
 
 ### Directory Structure
 
 ```
 icons/
-├── normal.ico           # Installer icon (ICO format, multi-resolution)
-├── normal.png           # Normal status - system tray icon
-├── warning.png          # Warning status - orange dot indicator
-└── error.png            # Error status - red dot indicator
+├── normal.ico / normal.png              # connected / healthy
+├── disconnected.ico / disconnected.png  # running but not reaching the cloud
+├── warning.ico / warning.png            # reserved (see note under Icon Design)
+└── error.ico / error.png                # service stopped/crashed or health error
 ```
+
+ICO files are multi-resolution (16x16–256x256) so Windows can pick the right size per DPI; the PNGs are the fallback when an ICO is missing.
 
 ### Icon Usage
 
-- **normal.ico** - Used by Inno Setup installer for the installer window icon
-- **normal.png** - Used by system tray, Start Menu shortcuts, and GUI window
-- **warning.png** - Displayed in tray when Firebase connection issues occur
-- **error.png** - Displayed in tray when service is stopped or crashed
+- **normal** — system tray when connected/healthy; `normal.ico` is also the Inno Setup installer window icon
+- **disconnected** — shown in the tray when the service is running but can't reach the cloud (offline, or still starting up)
+- **error** — shown (flashing) when the service is stopped/crashed or a health probe fails
+- **warning** — present for completeness, but the tray currently displays the `disconnected` glow for connection-issue states
 
 ### Icon Design
 
-All icons follow the HAL 9000 eye design:
+All icons are a HAL 9000-inspired owl eye: a warm radial glow — a bright cream center fading through amber to a near-black rim — with a soft catch-light highlight. There is no separate indicator dot; the **whole eye is recolored** to signal status:
 
-- **Grey circular fill**: `RGB(60, 60, 60)` - Background circle
-- **Outer circle**: Pure white `RGB(255, 255, 255)` with thicker stroke (width 4px)
-- **Center dot** (pupil): Status-dependent color (small size)
-  - Pure white `RGB(255, 255, 255)`: Normal status (everything OK, connected)
-  - Orange `RGB(255, 153, 0)`: Warning (Firebase connection issues)
-  - Red `RGB(232, 65, 24)`: Error (service stopped/crashed)
+- **normal** — warm amber/coral glow (everything OK, connected)
+- **disconnected** — dim, muted glow (running but offline)
+- **error** — red glow (stopped/crashed or health error)
+
+The warm center against the dark rim keeps the icon legible on both light and dark taskbars.
 
 ### Regenerating Icons
 
-To regenerate all icons (if you need to change colors or design):
-
-```bash
-cd agent
-python create_theme_icons.py
-```
-
-This script will:
-1. Create PNG icons for tray (64x64, white circle with thicker stroke)
-2. Generate multi-resolution ICO file for Inno Setup installer
-
-### Color Palette
-
-- **Dark Grey**: `RGB(60, 60, 60)` - Background circular fill
-- **Pure White**: `RGB(255, 255, 255)` - Outer circle stroke and normal/connected status center dot
-- **Orange** (warning): `RGB(255, 153, 0)` - Warning status center dot
-- **Red** (error): `RGB(232, 65, 24)` - Error status center dot
+> **Note:** the legacy scripts in this folder (`create_theme_icons.py`, `create_hidpi_icons.py`, `create_sharp_ico.py`, `redraw_icons_hidpi.py`) draw the *older* white-ring-and-center-dot design and do **not** reproduce the current owl-eye glow. Don't run them against the shipped icons — they'll overwrite them with the deprecated look. They're kept for reference only.
 
 ### Build Integration
 

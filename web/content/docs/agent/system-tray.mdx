@@ -7,12 +7,17 @@ description: "The owlette system tray icon provides at-a-glance status and quick
 
 ## tray icon
 
-The tray icon appears in the Windows notification area (system tray). It uses a HAL 9000-inspired owl eye design:
+The tray icon appears in the Windows notification area (system tray). It's a HAL 9000-inspired owl eye — a warm radial glow whose color reflects the agent's health at a glance:
 
-- **Connected**: Icon is visible and responsive
-- **Disconnected**: Icon may show different state
+![the owlette icon in the Windows system tray](/tray-icon.png)
 
-The icon is pure white with a grey background, designed for visibility in both light and dark Windows themes.
+| state | how it looks | what it means |
+|-------|--------------|---------------|
+| **connected** | steady amber glow | service running and connected to the cloud — everything healthy |
+| **connection issues** | dim, muted glow | service running but not reaching the cloud (offline, or still starting up) |
+| **error** | pulsing red | service stopped or crashed, a health-probe failure, or monitoring disabled |
+
+The warm center and dark rim keep the icon legible on both light and dark taskbars.
 
 ---
 
