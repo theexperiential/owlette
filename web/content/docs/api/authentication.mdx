@@ -184,7 +184,7 @@ Self-service lifecycle endpoints require a signed-in user session or Firebase ID
 | status | code | meaning |
 |---|---|---|
 | 401 | `unauthorized` | Missing, malformed, unknown, or unsupported credential. |
-| 401 | `token_expired` | API key expired or rotated value is past its grace window. |
+| 401 | `token_expired` | The API key's `expiresAt` has passed. A rotated old key after its grace window is treated as `401 unauthorized` / invalid API key. |
 | 403 | `scope_insufficient` | Credential is valid but lacks the exact resource/id/permission needed. |
 | 403 | `forbidden` | Caller lacks the required role, site membership, or platform capability. |
 | 404 | `not_found` | Resource is absent or intentionally hidden from this caller. |

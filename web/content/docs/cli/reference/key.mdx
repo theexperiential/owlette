@@ -119,8 +119,8 @@ owlette key revoke k_abc123 --yes --json
 ## exit codes
 
 - `0` — success
-- `1` — generic error (network, api 5xx, unexpected response shape)
-- `2` — usage error (missing required flag, both `--scope` and `--preset` passed, bad scope spec, invalid `--ttl-days`, invalid `--environment`, refusing to revoke without `--yes` from a non-tty)
+- `1` — generic error (network, api 5xx, unexpected response shape) and all usage errors (missing required flag, both `--scope` and `--preset` passed, bad scope spec, invalid `--ttl-days`, invalid `--environment`, refusing to revoke without `--yes` from a non-tty)
+- `2` — no token configured for the active profile
 
 `key` has no stub verbs and no exit-3 paths.
 
@@ -132,5 +132,5 @@ owlette key revoke k_abc123 --yes --json
 - **raw key emission**: `create` and `rotate` are the **only** commands that ever return the raw `owk_*` value. `list` returns `keyPrefix` (first ~12 chars) and metadata only. lose the raw key, rotate or revoke it.
 - **rotation grace**: 24h hard-coded server-side. plan your roll-out window accordingly — at hour 24 the old key returns `token_expired`.
 - **mutual exclusion**: `--scope` and `--preset` are exclusive on `create`. `rotate` cannot change scopes — if you need different scopes, `create` a new key and `revoke` the old one.
-- **ttl bounds**: `--ttl-days` must be an integer between 1 and 365 inclusive. anything outside that range fails with exit 2 before the http call.
+- **ttl bounds**: `--ttl-days` must be an integer between 1 and 365 inclusive. anything outside that range fails with exit 1 before the http call.
 - see [overview](/docs/cli/overview) for global flags, config precedence, and the json envelope schema.

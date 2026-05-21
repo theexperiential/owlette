@@ -13,9 +13,9 @@ The tray icon appears in the Windows notification area (system tray). It's a HAL
 
 | state | how it looks | what it means |
 |-------|--------------|---------------|
-| **connected** | steady amber glow | service running and connected to the cloud — everything healthy |
-| **connection issues** | dim, muted glow | service running but not reaching the cloud (offline, or still starting up) |
-| **error** | pulsing red | service stopped or crashed, a health-probe failure, or monitoring disabled |
+| **connected** | normal icon with a white center dot | service running and connected to the cloud — everything healthy |
+| **connection issues** | warning/disconnected orange-dot icon | service running but not reaching the cloud (offline, or still starting up) |
+| **error** | flashing red error icon | service stopped/crashed or the health probe reports a failure. Disabled cloud/site configuration appears as a warning/disabled state. |
 
 The warm center and dark rim keep the icon legible on both light and dark taskbars.
 
@@ -27,11 +27,14 @@ Right-clicking the tray icon shows:
 
 | menu item | description |
 |-----------|-------------|
-| **Service: Running/Stopped** | Current service status (read-only) |
-| **Firebase: Connected/Disconnected** | Current cloud connection status (read-only) |
-| **Open GUI** | Launch the configuration GUI |
-| **Restart Service** | Stop and restart the OwletteService |
-| **Exit** | Stop the Owlette service (triggers a UAC prompt). Also closes the GUI and the tray icon. |
+| **owlette v&lt;version&gt;** | Current owlette version (read-only) |
+| **hostname: &lt;host&gt;** | Current machine hostname (read-only) |
+| **service status** | Current lowercased service status (read-only) |
+| **status: &lt;cloud status&gt;** | Current cloud status (read-only) |
+| **open owlette** | Launch the configuration GUI |
+| **start on login** | Toggle whether owlette starts on user login |
+| **restart** | Restart the OwletteService |
+| **exit** | Stop the Owlette service (triggers a UAC prompt). Also closes the GUI and the tray icon. |
 
 ---
 

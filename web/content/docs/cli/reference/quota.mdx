@@ -98,8 +98,8 @@ backing: `GET /api/sites/{siteId}/quota/history?period=<window>`.
 ## exit codes
 
 - `0` — success (snapshot printed or history table emitted)
-- `1` — network failure or non-2xx api response (e.g. `403` if you lack access to the site)
-- `2` — usage error: missing `--site`, invalid `--period` value, or no token configured for the active profile
+- `1` — network failure or non-2xx api response (e.g. `403` if you lack access to the site), invalid `--period` value, or a missing `--site` (a commander usage error)
+- `2` — no token configured for the active profile
 
 ---
 

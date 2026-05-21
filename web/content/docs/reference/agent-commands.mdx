@@ -200,7 +200,7 @@ admin actions.
 | type | fields | behavior |
 |------|--------|----------|
 | `install_software` | `installer_url`, optional `installer_name`, optional `silent_flags`, required `sha256_checksum`, optional `verify_path`, optional `timeout_seconds`, optional `deployment_id`, optional `parallel_install`, optional `close_processes`, optional `suppress_projects` | Download, checksum-verify, and run an installer in the interactive user session. Default timeout is 2400 seconds. |
-| `cancel_installation` | `installer_name`, optional `deployment_id` | Cancel an active installer process tree and mark the command `cancelled`. |
+| `cancel_installation` | `installer_name` | Cancel an active installer process tree and mark the command `cancelled`. |
 | `uninstall_software` | `software_name`, `uninstall_command`, optional `silent_flags`, optional `installer_type`, optional `verify_paths`, optional `timeout_seconds`, optional `deployment_id` | Run an uninstall command, auto-detect silent flags when omitted, and verify registry/file cleanup. Default timeout is 1200 seconds. |
 | `cancel_uninstall` | `software_name` | Cancel an active uninstall tracked as `uninstall_<software_name>`. |
 | `refresh_software_inventory` | none | Force an immediate installed-software inventory sync. |

@@ -5,7 +5,7 @@ description: "a node script that reads a csv of siteId,roostName,targets rows an
 
 ## required env vars
 
-- `OWLETTE_TOKEN` - api key with `site:<id>:write` scope on every site referenced in the csv.
+- `OWLETTE_TOKEN` - api key with `site=<site-id>:write` plus `roost=<roost-id>:read` for each deterministic roost id, or `roost=*:read` if the operator accepts wildcard roost read for the user's accessible sites.
 - `OWLETTE_API_URL` - `https://owlette.app` or `https://dev.owlette.app`.
 
 ## sample input - `roosts.csv`

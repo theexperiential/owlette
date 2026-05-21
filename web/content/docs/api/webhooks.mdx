@@ -3,7 +3,7 @@ title: "Owlette API webhooks"
 description: "webhooks are how roost tells your systems that something happened — a new version published, a deploy failed, a machine dropped offline, a quota alarm tripped. instead of polling the api on a timer, you subscribe a url once and roost posts a signed json event to it when a matching event is dispatched."
 ---
 
-**developer preview status**: subscription management, delivery history, manual retry, and `POST /api/webhooks/probe` are public. automatic production event dispatch and SSE event fanout are still deferred; `owlette listen` is a scoped liveness stream for now. The cloud-function dispatcher that exists today still uses a legacy event catalog and a legacy subscription store, so it is not yet aligned with subscriptions created by the public webhook api. Receiver signature verification and probe flows are stable.
+**developer preview status**: subscription management, delivery history, manual retry, and `POST /api/webhooks/probe` are public. automatic production event dispatch and SSE event fanout are still deferred; `owlette listen` is a scoped liveness stream for now. The cloud-function dispatcher that exists today still uses a legacy event catalog and is not fully aligned with public webhook records because its subscription schema expects legacy fields (`secret`/`disabled`) instead of public fields (`signingSecret`/`paused`). Receiver signature verification and probe flows are stable.
 
 ---
 
@@ -48,7 +48,7 @@ The current Cloud Functions dispatcher accepts and stores a different envelope:
 }
 ```
 
-This dispatcher envelope has no top-level `id`. Delivery idempotency is carried by the `Roost-Delivery` header instead. The dispatcher also reads legacy subscription records from `sites/{siteId}/webhook_subscriptions`, while the public api creates subscriptions at `sites/{siteId}/webhooks`; automatic production dispatch to public api-created subscriptions is therefore deferred until those stores are aligned.
+This dispatcher envelope has no top-level `id`. Delivery idempotency is carried by the `Roost-Delivery` header instead. The dispatcher now collection-group queries `webhooks`, while the public api creates subscriptions at `sites/{siteId}/webhooks/{webhookId}`; automatic production dispatch to public api-created subscriptions is therefore deferred until the dispatcher's legacy subscription schema (`secret`/`disabled`) is aligned with public webhook records (`signingSecret`/`paused`).
 
 ---
 
@@ -138,10 +138,10 @@ These lifecycle events are planned and are not accepted by the current developer
       "siteId": "kiosk-fleet-01",
       "versionId": "vrs_8d969eef6ecad3c29a3a629280e686cf",
       "versionNumber": 7,
-      "previousVersionId": "vrs_2c26b46b68ffc68ff99b453c1d304134",
       "description": "fixed broken lobby video",
       "totalFiles": 342,
-      "totalSize": 2147483648
+      "totalSize": 2147483648,
+      "createdBy": "user_01HYA7R3K2N9P1Q5S6T8V0W4X"
     }
   }
   ```
@@ -158,7 +158,7 @@ These lifecycle events are planned and are not accepted by the current developer
       "siteId": "kiosk-fleet-01",
       "fromVersion": "vrs_8d969eef6ecad3c29a3a629280e686cf",
       "toVersion": "vrs_2c26b46b68ffc68ff99b453c1d304134",
-      "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W3"
+      "triggeredBy": "user_01HYA7R3K2N9P1Q5S6T8V0W4X"
     }
   }
   ```
@@ -176,10 +176,7 @@ These lifecycle events are planned and are not accepted by the current developer
       "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W2",
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
-      "versionId": "vrs_8d969eef6ecad3c29a3a629280e686cf",
-      "versionNumber": 7,
-      "strategy": "canary-then-fleet",
-      "machineCount": 2
+      "stage": "started"
     }
   }
   ```
@@ -195,12 +192,9 @@ These lifecycle events are planned and are not accepted by the current developer
       "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W2",
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
-      "versionId": "vrs_8d969eef6ecad3c29a3a629280e686cf",
-      "versionNumber": 7,
-      "machineCount": 2,
-      "successCount": 2,
-      "failureCount": 0,
-      "durationMs": 252000
+      "stage": "completed",
+      "succeeded": 2,
+      "failed": 0
     }
   }
   ```
@@ -216,11 +210,10 @@ These lifecycle events are planned and are not accepted by the current developer
       "rolloutId": "rollout_01HYA8K3R2N7P9Q1S5T6U8V0W2",
       "roostId": "roost_lobby_td",
       "siteId": "kiosk-fleet-01",
-      "versionId": "vrs_8d969eef6ecad3c29a3a629280e686cf",
-      "versionNumber": 7,
-      "failedMachines": [
-        { "machineId": "machine-b2c1", "error": "chunk_verify_failed", "digest": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce" }
-      ]
+      "stage": "failed",
+      "abortReason": "chunk_verify_failed",
+      "succeeded": 1,
+      "failed": 1
     }
   }
   ```
@@ -237,9 +230,7 @@ These lifecycle events are planned and are not accepted by the current developer
     "data": {
       "machineId": "machine-a7f3",
       "siteId": "kiosk-fleet-01",
-      "name": "lobby-display-01",
-      "lastHeartbeat": "2026-04-22T15:29:58Z",
-      "offlineSince": "2026-04-22T14:02:12Z"
+      "lastHeartbeat": "2026-04-22T15:29:58Z"
     }
   }
   ```
@@ -254,7 +245,6 @@ These lifecycle events are planned and are not accepted by the current developer
     "data": {
       "machineId": "machine-a7f3",
       "siteId": "kiosk-fleet-01",
-      "name": "lobby-display-01",
       "lastHeartbeat": "2026-04-22T13:57:00Z"
     }
   }
@@ -270,10 +260,9 @@ These lifecycle events are planned and are not accepted by the current developer
     "occurredAt": "2026-04-22T03:00:00Z",
     "siteId": "kiosk-fleet-01",
     "data": {
-      "digest": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
       "siteId": "kiosk-fleet-01",
-      "sizeBytes": 4194304,
-      "unreferencedSince": "2026-03-22T03:00:00Z"
+      "hash": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+      "sizeBytes": 4194304
     }
   }
   ```
@@ -286,11 +275,10 @@ These lifecycle events are planned and are not accepted by the current developer
     "occurredAt": "2026-04-22T04:15:00Z",
     "siteId": "kiosk-fleet-01",
     "data": {
-      "digest": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
       "siteId": "kiosk-fleet-01",
+      "hash": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
       "expectedDigest": "sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
-      "actualDigest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
-      "affectedVersions": ["vrs_8d969eef6ecad3c29a3a629280e686cf"]
+      "actualDigest": "sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
     }
   }
   ```
@@ -324,10 +312,8 @@ These lifecycle events are planned and are not accepted by the current developer
     "data": {
       "siteId": "kiosk-fleet-01",
       "tier": "pro",
-      "resource": "storage",
       "usedBytes": 107374182400,
-      "limitBytes": 107374182400,
-      "periodResetsAt": "2026-05-01T00:00:00Z"
+      "limitBytes": 107374182400
     }
   }
   ```
@@ -386,7 +372,7 @@ verification has three steps, all mandatory:
 2. reject if `|now - t| > 300` (5-minute replay tolerance). this is what stops a stolen payload from being replayed an hour later.
 3. be idempotent on `Roost-Delivery` — if you've already processed that delivery id, respond `200` without reprocessing.
 
-the `v1=` prefix leaves room for a future `v2=` algorithm. verifiers should iterate every `v*=` pair in the header and accept if any matches, ignoring unknown schemes.
+the `v1=` prefix leaves room for a future `v2=` algorithm. verifiers should accept any matching `v1=` value and ignore unknown scheme prefixes until a new algorithm is explicitly supported.
 
 ---
 
@@ -417,7 +403,7 @@ app.post(
       // { toleranceSeconds: 300 } — default; override only if you must.
     );
     if (!verdict.ok) {
-      // possible reasons: missing_header | malformed | outside_tolerance | bad_signature
+      // possible reasons: missing_header | malformed_header | missing_timestamp | missing_v1 | timestamp_out_of_tolerance | bad_signature
       return res.status(401).json({ error: verdict.reason });
     }
 
@@ -452,7 +438,7 @@ async def webhook(request: Request):
     sig = request.headers.get("roost-signature")
     verdict = verify_signature(sig, raw, secret=SECRET)
     if not verdict.ok:
-        # reason: "missing_header" | "malformed" | "outside_tolerance" | "bad_signature"
+        # reason: "missing_header" | "malformed_header" | "missing_timestamp" | "missing_v1" | "timestamp_out_of_tolerance" | "bad_signature"
         raise HTTPException(status_code=401, detail=verdict.reason or "bad_signature")
 
     delivery_id = request.headers.get("roost-delivery", "")
@@ -540,7 +526,7 @@ The guarantees below describe the current Cloud Functions dispatcher and manual 
 - **response handling.** `2xx` succeeds. network errors, `5xx`, `408`, `425`, and `429` are retried. other `4xx` responses are treated as permanent receiver failures and are not retried.
 - **retries.** retried deliveries use exponential backoff with 5s base delay, factor 3, 1h maximum delay, 20% jitter, and 10 total attempts. without jitter the retry delays after failed attempts are roughly 5s, 15s, 45s, 2m15s, 6m45s, 20m15s, then 1h until the attempt budget is exhausted. each attempt gets a fresh `Roost-Signature` timestamp but the same `Roost-Delivery` id.
 - **dead letter.** after the 10th failed attempt the delivery is marked `failed`. the dispatcher does not currently auto-pause or auto-disable the subscription from `attemptDelivery`; operators can still update `paused` explicitly via `PATCH /api/webhooks/{id}` on public webhook subscriptions.
-- **retention.** delivery history (request + response transcript) is retained for 30 days and is available via `GET /api/webhooks/{id}/deliveries`.
+- **retention.** `GET /api/webhooks/{id}/deliveries` lists 30 days of delivery summaries. `GET /api/webhooks/{id}/deliveries/{deliveryId}` returns stored request details plus the captured response status.
 - **ordering.** deliveries are not globally ordered. if you need to reason about order, use `occurredAt` in the payload; do not rely on the order deliveries arrive.
 
 ---
@@ -564,10 +550,10 @@ scopes: list/detail/deliveries require `site=<id>:read`; create/update/delete/ro
 
 ## local development
 
-`owlette listen` opens the scoped server-sent-events transport at `GET /api/events/stream?siteId=<id>`. in the current developer preview the stream is a liveness channel: it emits `connected` and `keepalive` events so clients can validate auth, filters, and forwarding plumbing. production event fanout is deferred to a follow-up wave; do not rely on the stream for live webhook delivery yet.
+`owlette listen` opens the scoped server-sent-events transport at `GET /api/events/stream?siteId=<id>`. in the current developer preview the stream is a liveness channel: the server emits `connected` and `keepalive` events, but `owlette listen` currently consumes them internally and does not forward them to the receiver. production event fanout is deferred to a follow-up wave; do not rely on the stream for live webhook delivery yet.
 
 ```bash
-# 1. log in once per machine (stores an api token in ~/.config/owlette/config.toml)
+# 1. log in once per machine (stores an API key in the OS keychain when available, otherwise ~/.config/owlette/credentials.json; profile metadata lives in ~/.config/owlette/config.toml)
 owlette auth login
 
 # 2. start your receiver on :8080, using a throwaway test secret
@@ -581,18 +567,18 @@ owlette listen \
   --signing-secret "$ROOST_WEBHOOK_SECRET" \
   --events version.published,deployment.failed
 
-# currently emits connected/keepalive only. Ctrl-C to stop.
+# currently consumes connected/keepalive internally. Ctrl-C to stop.
 ```
 
-a stream open currently looks like:
+a stream open currently logs liveness locally rather than forwarding it:
 
 ```
-event connected -> http://localhost:8080/webhooks/roost  200 OK  (34 ms)
-event keepalive -> http://localhost:8080/webhooks/roost  200 OK  (28 ms)
+stream connected
+keepalive
 ```
 
 common local-dev patterns:
 
 - **verifying a new integration without touching prod.** `owlette trigger version.published --site kiosk-fleet-01 --to http://localhost:8080/webhooks/roost --signing-secret "$ROOST_WEBHOOK_SECRET"` fires a single canned event locally. no tunnel, no subscription, no network.
 - **smoke-testing a public receiver before subscribing.** `POST /api/webhooks/probe?siteId=<id>` (or `owlette trigger <event> --site <id> --to <url> --via-api`) fires a one-shot signed payload at any https url and returns the request body + signature so you can confirm your receiver accepts the signature before you create a real subscription.
-- **debugging a stuck delivery.** `GET /api/webhooks/{id}/deliveries` lists the last 30 days of attempts with full request/response transcripts; `POST /api/webhooks/{id}/deliveries/{deliveryId}/retry` queues the same payload for redelivery with a fresh `Roost-Signature` timestamp so it slides back inside the 5-minute tolerance window.
+- **debugging a stuck delivery.** `GET /api/webhooks/{id}/deliveries` lists the last 30 days of delivery summaries; `GET /api/webhooks/{id}/deliveries/{deliveryId}` returns stored request details plus the captured response status. `POST /api/webhooks/{id}/deliveries/{deliveryId}/retry` queues the same payload for redelivery with a fresh `Roost-Signature` timestamp so it slides back inside the 5-minute tolerance window.

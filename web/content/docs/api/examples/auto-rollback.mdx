@@ -5,7 +5,7 @@ description: "a small node/express webhook receiver that listens for deployment.
 
 ## required env vars
 
-- `OWLETTE_TOKEN` — api key with `roost:<id>:rollback` scope. if you want this receiver to cover every roost in a site, use `site:<id>:write` or a wildcard roost scope.
+- `OWLETTE_TOKEN` — api key with `roost=<roost-id>:rollback` for rollback calls. For probe testing, also grant `site=<site-id>:write` or use a separate probe token. To cover multiple roosts, grant per-roost rollback scopes or `roost=*:rollback`; `site=<site-id>:write` is not a rollback substitute.
 - `OWLETTE_API_URL` — `https://owlette.app` or `https://dev.owlette.app`.
 - `WEBHOOK_SIGNING_SECRET` — a 32+ character secret shared with `POST /api/webhooks/probe` while testing. when automatic dispatch is enabled, use the `signingSecret` returned from `POST /api/webhooks`. store it once; never logged.
 - `SLACK_WEBHOOK_URL` — incoming-webhook url from a slack app (`https://hooks.slack.com/services/...`).

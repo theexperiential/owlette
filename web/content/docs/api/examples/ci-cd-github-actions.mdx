@@ -22,8 +22,8 @@ Configure these in the consumer repository under **Settings -> Secrets and varia
 
 Recommended key scope:
 
-- `site:<site-id>:read`
-- `roost:<roost-id>:write,deploy`
+- `site=<site-id>:write`
+- `roost=<roost-id>:write,deploy`
 
 Use a dedicated key per repository so audit logs and rate-limit signals remain attributable.
 
@@ -144,7 +144,7 @@ Set `deploy: false` on the action when CI should publish a version for manual ap
     deploy: false
 ```
 
-The key can then omit `deploy` and use `roost:<roost-id>:write` only.
+The key can then omit roost `deploy`, but still needs `site=<site-id>:write` and `roost=<roost-id>:write`.
 
 ---
 

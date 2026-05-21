@@ -86,12 +86,12 @@ every top-level noun is a resource class hung off the client. all methods are `a
 | `client.versions`    | `list`, `list_page`, `get`, `patch`, `files`, `diff`                                               |
 | `client.deployments` | `list`, `list_page`, `get`                                                                         |
 | `client.keys`        | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke`                            |
-| `client.webhooks`    | `subscribe`, `list`, `get`, `update`, `remove`, `rotate_secret`, `probe`                           |
+| `client.webhooks`    | `subscribe`, `list`, `get`, `update`, `remove`, `rotate_secret`, `deliveries`, `delivery`, `retry_delivery`, `probe` |
 | `client.sites`       | `list`, `get`                                                                                      |
 | `client.machines`    | `list`, `get`, `deployments`, `dispatch_command`, `get_command`, `capture_screenshot`              |
 | `client.installer_deployments` | `list`, `get`, `create`, `retry`, `cancel`, `uninstall`, `delete`                         |
 | `client.installer`   | `list`, `latest`, `upload`, `set_latest`, `delete`                                                 |
-| `client.processes(site_id, machine_id)` | `list`, `create`, `update`, `start`, `stop`, `restart`, `schedule`, `remove`    |
+| `client.processes(site_id, machine_id)` | `list`, `get`, `create`, `update`, `delete`, `kill`, `start`, `stop`, `schedule` |
 | `client.chat`        | `new`, `list`, `send`, `rename`, `delete`                                                          |
 | `client.users`       | `list`, `get`, `promote`, `demote`, `assign_sites`, `remove_sites`, `delete`                       |
 | `client.members(site_id)` | `list`, `add`, `remove`                                                                       |
@@ -307,9 +307,9 @@ machine = await client.machines.get("site-1", "machine-a7f3")
 deploys = await client.machines.deployments("site-1", "machine-a7f3")
 
 quota = await client.quotas.current("site-1")
-print(quota.storage_bytes_used, "/", quota.storage_bytes_limit)
+print(quota.used_bytes, "/", quota.limit_bytes)
 
-history = await client.quotas.history("site-1", days=30)
+history = await client.quotas.history("site-1", period="30d")
 ```
 
 ### webhooks
@@ -349,10 +349,11 @@ await client.webhooks.probe(
 
 ## push progress
 
-`client.roosts.push()` accepts an `on_progress` callback (sync or async) and invokes it once per phase transition plus on every chunk upload.
+`client.roosts.push()` accepts an `on_progress` callback (sync or async). progress includes discovery/hash events, one check-missing event, upload events every 4 chunks or on completion, and publish events only on retry attempts.
 
 ```python
-from roost import PushOptions, PushProgressEvent
+from roost import PushOptions
+from roost.resources.roosts import PushProgressEvent
 
 async def handle(evt: PushProgressEvent) -> None:
     if evt.phase == "discover":
@@ -449,7 +450,7 @@ never pass parsed json — json stringification is not byte-stable across librar
 
 ## errors
 
-every non-2xx response raises `RoostApiError` with structured fields pulled from the rfc 7807 problem+json body:
+every 4xx/5xx response raises `RoostApiError` with structured fields pulled from the rfc 7807 problem+json body:
 
 ```python
 from roost import RoostApiError
@@ -490,7 +491,7 @@ async with asyncio.timeout(30):
     rows = [r async for r in client.roosts.list(site_id="site-1")]
 ```
 
-for `push()`, raising any exception inside the `on_progress` callback stops the upload queue — in-flight PUTs complete, pending ones are dropped, and the coroutine re-raises your exception.
+for `push()`, exceptions from awaited `on_progress` callbacks can propagate from `push()`.
 
 ---
 
@@ -501,9 +502,10 @@ the package ships a `py.typed` marker; mypy strict mode + pyright both resolve e
 ```python
 from roost import (
     RoostSummary, RoostDetail, VersionSummary,
-    PushOptions, PushProgressEvent, PushResult,
+    PushOptions, PushResult,
     ApiKeyScope, WebhookSubscription,
 )
+from roost.resources.roosts import PushProgressEvent
 ```
 
 ---

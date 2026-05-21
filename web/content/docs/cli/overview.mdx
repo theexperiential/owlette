@@ -91,14 +91,20 @@ That's the loop. `owlette roost diff <roostId> --against <versionRef>` shows wha
 
 ## config precedence
 
-Every config field follows the same first-wins ladder:
+Config resolution is first-wins, but the credential store and the config profile swap positions depending on the field:
 
 ```
-1. cli flag           (--api-url, --profile)
-2. env var            (OWLETTE_API_URL, OWLETTE_PROFILE, OWLETTE_TOKEN, OWLETTE_ENVIRONMENT)
-3. credential store   (OS keychain, then ~/.config/owlette/credentials.json)
-4. profile in config  (~/.config/owlette/config.toml — selected by --profile or OWLETTE_PROFILE)
-5. built-in default   (api_url=https://owlette.app)
+token (auth):
+1. cli flag / env var  (OWLETTE_TOKEN)
+2. credential store    (OS keychain, then ~/.config/owlette/credentials.json)
+3. profile in config   (legacy token in ~/.config/owlette/config.toml)
+4. built-in default    (none)
+
+api_url / environment:
+1. cli flag / env var  (--api-url, OWLETTE_API_URL, OWLETTE_PROFILE, OWLETTE_ENVIRONMENT)
+2. profile in config   (~/.config/owlette/config.toml — selected by --profile or OWLETTE_PROFILE)
+3. credential store    (OS keychain, then ~/.config/owlette/credentials.json)
+4. built-in default    (api_url=https://owlette.app)
 ```
 
 ### config file schema

@@ -37,7 +37,7 @@ owlette chat list --site <siteId> [--limit <n>] [--cursor <token>]
 | flag | required | purpose |
 |---|---|---|
 | `--site <siteId>` | yes | site to list conversations for |
-| `--limit <n>` | no | page size, integer 1–100 (default 20) |
+| `--limit <n>` | no | page size, integer 1–100 (default 25) |
 | `--cursor <token>` | no | opaque `page_token` from a prior response |
 
 backing endpoint: `GET /api/cortex/conversations?siteId=&page_size=&page_token=`. tabular output renders `conversationId | title | machine | messages | updatedAt`; `--json` emits `{ conversations, nextPageToken }`.
@@ -81,8 +81,8 @@ backing endpoint: `PATCH /api/cortex/conversations/{conversationId}` with body `
 ## exit codes
 
 - `0` — success
-- `1` — generic error (network, 5xx, malformed stream, upstream cortex error)
-- `2` — usage error (bad `--limit`, missing required flag, no token, non-tty without `--yes`)
+- `1` — generic error (network, 5xx, malformed stream, upstream cortex error, bad `--limit`, missing required flag, non-tty without `--yes`)
+- `2` — usage error (no token)
 
 ---
 

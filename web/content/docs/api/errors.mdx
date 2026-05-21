@@ -20,7 +20,7 @@ description: "Public API errors use application/problem+json. Clients should bra
     "query.page_size": ["must be a positive integer <= 100"]
   },
   "docsUrl": "https://owlette.app/docs/api/errors#validation_failed",
-  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
+  "requestId": "5d7f7c5b-2ed6-4a56-9b2c-47dd7c84f957"
 }
 ```
 
@@ -32,7 +32,7 @@ description: "Public API errors use application/problem+json. Clients should bra
 | `detail` | Occurrence-specific explanation. Safe to show, but not stable for parsing. |
 | `code` | Stable machine-readable error code. Use this for client branching. |
 | `docsUrl` | Documentation anchor for the code. |
-| `requestId` | Correlation id. Also emitted as `X-Request-Id` on problem responses. |
+| `requestId` | Correlation id on canonical public API helper responses. Also emitted as `X-Request-Id` by those responses. |
 | `param` | Optional offending header, query parameter, path parameter, or body field. Many validation responses omit it. |
 | `errors` | Optional field-level validation map keyed by dotted path. This is the common validation shape. |
 
@@ -201,7 +201,7 @@ For mutating retries, reuse the same `Idempotency-Key` only when the request met
 
 ## request ids
 
-Problem responses include `requestId` in the body and `X-Request-Id` in the response headers. Log both the status/code and request id for failed requests.
+Canonical public API helper responses include `requestId` in the body and `X-Request-Id` in the response headers. Some machine/process compatibility routes currently omit them until migrated. Log both the status/code and request id when present.
 
 Each retry attempt can have a different request id. If an idempotent retry replays a cached success, the response also includes `Idempotent-Replayed: true`.
 
@@ -224,7 +224,7 @@ Each retry attempt can have a different request id. If an idempotent retry repla
     "permission": "write"
   },
   "docsUrl": "https://owlette.app/docs/api/errors#scope_insufficient",
-  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
+  "requestId": "5d7f7c5b-2ed6-4a56-9b2c-47dd7c84f957"
 }
 ```
 
@@ -238,7 +238,7 @@ Each retry attempt can have a different request id. If an idempotent retry repla
   "detail": "Idempotency-Key '7c55c5de-7ec6-4c63-a1c8-94e13c56f962' was previously used with a different request body; reuse requires the identical body",
   "code": "idempotency_key_mismatch",
   "docsUrl": "https://owlette.app/docs/api/errors#idempotency_key_mismatch",
-  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
+  "requestId": "5d7f7c5b-2ed6-4a56-9b2c-47dd7c84f957"
 }
 ```
 
@@ -260,7 +260,7 @@ Content-Type: application/problem+json
   "code": "rate_limited",
   "retryAfter": 17,
   "docsUrl": "https://owlette.app/docs/api/errors#rate_limited",
-  "requestId": "req_01HYCAM5T4P9R1S3U7V8W0X2Y4"
+  "requestId": "5d7f7c5b-2ed6-4a56-9b2c-47dd7c84f957"
 }
 ```
 

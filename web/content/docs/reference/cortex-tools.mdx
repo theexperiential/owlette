@@ -546,7 +546,9 @@ Execute a shell command on the remote machine.
 
 **Allowed commands** (first word must be one of):
 
-`ipconfig`, `systeminfo`, `tasklist`, `netstat`, `ping`, `tracert`, `nslookup`, `hostname`, `whoami`, `wmic`, `sc`, `net`, `route`, `arp`, `getmac`, `vol`, `ver`, `set`, `type`, `dir`, `where`, `certutil`, `sfc`, `dism`, `chkdsk`, `nvidia-smi`
+`ipconfig`, `systeminfo`, `hostname`, `whoami`, `tasklist`, `netstat`, `ping`, `tracert`, `nslookup`, `dir`, `type`, `echo`, `set`, `ver`, `wmic`, `sc`, `net`, `reg`, `nvidia-smi`, `dxdiag`
+
+This is the default set (`DEFAULT_ALLOWED_COMMANDS`); it is overridable via `config.mcp.allowed_commands`.
 
 ---
 
@@ -556,14 +558,12 @@ Execute a PowerShell command on the remote machine.
 
 | parameter | type | required | description |
 |-----------|------|----------|-------------|
-| `script` | string | **Yes** | First cmdlet must be in the allow-list |
+| `script` | string | **Yes** | PowerShell script to execute |
 | `user_session` | boolean | No | Run in the logged-in user's desktop session |
 
 **Returns**: stdout, stderr, exit code.
 
-**Allowed cmdlets** (first cmdlet must be one of):
-
-`Get-Process`, `Get-Service`, `Get-EventLog`, `Get-WmiObject`, `Get-CimInstance`, `Get-NetAdapter`, `Get-NetIPAddress`, `Get-Volume`, `Get-Disk`, `Get-PSDrive`, `Get-ChildItem`, `Get-Content`, `Get-ItemProperty`, `Test-Connection`, `Test-NetConnection`, `Resolve-DnsName`, `Get-HotFix`, `Get-ComputerInfo`
+No command restrictions — every invocation is audit-logged to the site events feed and the local `[MCP-AUDIT]` log. Fixed 25-second timeout; for long-running work use `execute_script`.
 
 ---
 
@@ -718,7 +718,7 @@ LLM decides to call a tool
 
 ### command allowlists
 
-Tier 3 tools (`run_command`, `run_powershell`) enforce allowlists on the **agent side**. Even if a command is sent via Firestore, the agent rejects it if the first command/cmdlet isn't in the allowlist. `run_python` similarly enforces its sandbox on the agent side — the LLM cannot override the import gate or restore blocked builtins.
+`run_command` enforces an allowlist on the **agent side**. Even if a command is sent via Firestore, the agent rejects it if the first command isn't in the allowlist. `run_powershell` has **no** allow-list — it accepts arbitrary PowerShell, with accountability provided by mandatory audit logging (site events feed + local `[MCP-AUDIT]` log). `run_python` enforces its sandbox on the agent side — the LLM cannot override the import gate or restore blocked builtins.
 
 ### tier 2 blocklists
 

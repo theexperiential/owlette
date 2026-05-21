@@ -10,7 +10,7 @@ description: "The owlette agent is a Python Windows service that runs in the bac
 | function | frequency | description |
 |----------|-----------|-------------|
 | **Process monitoring** | Every 5s | Checks if configured processes are running, detects crashes and stalls |
-| **Auto-restart** | On crash | Restarts crashed processes using Task Scheduler or CreateProcessAsUser |
+| **Auto-restart** | On crash | Restarts crashed processes by launching a helper in the interactive user session with `CreateProcessAsUser`; the helper starts visible apps with `ShellExecuteEx` and hidden processes with `subprocess.Popen`. |
 | **Heartbeat + metrics** | Adaptive: ~5s with GUI open, 30s while processes are active, 120s idle | Marks the machine online and reports CPU, memory, disk, and GPU usage |
 | **Commands** | Event-driven | Listens for and executes commands from the dashboard |
 | **Config sync** | Event-driven | Syncs configuration changes between GUI, service, and cloud |
@@ -85,7 +85,7 @@ The classifier depends only on `shared_utils` and stdlib — no Firebase, no log
 
 1. Check all configured processes — detect crashes, stalls, exits
 2. Auto-restart crashed processes when launch mode is active
-3. Process any pending commands from Firestore
+3. Firestore commands are processed by the Firebase command listener; the 5-second service loop handles process monitoring, Cortex IPC, Firebase enable/disable checks, and periodic maintenance
 4. Ensure Cortex is running (if enabled)
 5. Process Cortex IPC commands (Tier 2 tool calls)
 6. Check for Firebase state changes (enable/disable)

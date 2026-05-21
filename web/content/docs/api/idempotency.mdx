@@ -10,7 +10,7 @@ description: "Mutating public API routes that opt into idempotency use an Idempo
 The `Idempotency-Key` header is honored only on routes that explicitly say so in the endpoint reference. It is ignored on `POST /api/roosts`, `POST /api/keys`, `POST /api/keys/{id}/rotate`, `DELETE /api/keys/{id}`, and `POST /api/chunks/upload-urls`.
 
 </Callout>
-The endpoint reference is the source of truth for whether the header is honored, optional, or required on a specific operation. Sending the header to an unsupported route does not make that route replay-safe.
+Treat the route implementation as authoritative until OpenAPI is corrected; `POST /api/chunks/upload-urls` currently ignores `Idempotency-Key`. Sending the header to an unsupported route does not make that route replay-safe.
 
 ---
 
@@ -50,7 +50,7 @@ For supported routes, if the same key is reused with the same method, path, quer
 Idempotent-Replayed: true
 ```
 
-Error responses are not cached. Streaming responses, including SSE and streamed Cortex responses, are not cached.
+Error responses are not cached. Streaming SSE/x-ndjson/chunked responses are not cached. Current Cortex `text/plain` streams are not excluded unless the helper is updated to detect them.
 
 ---
 
@@ -63,7 +63,7 @@ The API requires `Idempotency-Key` for mutations where a retry could double-trig
 - installer upload, finalize, set-latest, and protected delete operations
 - site, user, member, process, and display-layout mutations
 - roost publish, deploy, rollback, and other side-effecting roost mutations where marked in the reference
-- Cortex conversation create, send, rename, and delete compatibility routes
+- Cortex conversation create and send require `Idempotency-Key`; rename and delete accept it optionally.
 
 Some routes are naturally idempotent, read-only, or do not implement idempotency and ignore the header. The rendered endpoint reference marks required headers operation by operation.
 

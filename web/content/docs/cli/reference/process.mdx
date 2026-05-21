@@ -143,7 +143,7 @@ owlette process start   pr_main_td --site site-1 --machine m_abc123
 owlette process stop    pr_main_td --site site-1 --machine m_abc123
 owlette process restart pr_main_td --site site-1 --machine m_abc123
 owlette process kill    pr_main_td --site site-1 --machine m_abc123 --json
-# → { "commandId": "cmd_xyz", "status": "queued" }
+# → { "commandId": "cmd_xyz", "status": "pending" }
 ```
 
 **backing endpoints**:
@@ -182,8 +182,8 @@ owlette process schedule pr_main_td --site site-1 --machine m_abc123 \
 ## exit codes
 
 - `0` — success
-- `1` — generic error (network, api 5xx, 409 `duplicate_process_name`, 404 `process_not_found`, 403 `scope_insufficient`, agent-side failure on a queued command)
-- `2` — usage error (missing `--site` / `--machine`, no field flags on `update`, bad `--mode` or `--launch-mode` value, malformed `--blocks` json, refusal to delete on a non-tty without `--yes`, no token configured)
+- `1` — generic error (network, api 5xx, 409 `duplicate_process_name`, 404 `process_not_found`, 403 `scope_insufficient`, agent-side failure on a queued command, missing `--site` / `--machine`, no field flags on `update`, bad `--mode` or `--launch-mode` value, malformed `--blocks` json, refusal to delete on a non-tty without `--yes`)
+- `2` — usage error (no token configured)
 
 stable problem+json codes surfaced with hints: `duplicate_process_name`, `process_not_found`, `forbidden_field`, `scope_insufficient`, `machine_offline`, `unsupported_command_type`.
 

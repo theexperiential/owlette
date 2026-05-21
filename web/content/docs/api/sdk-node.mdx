@@ -43,7 +43,7 @@ that's the whole flow: walk `./dist`, sha-256 chunk it, dedup-check against r2, 
 
 ## authentication
 
-every request needs an `owk_live_*` or `owk_test_*` key. mint one from the dashboard (`settings → api keys → new key`) or via the account key route. the sdk reads the token from the constructor — it never touches the filesystem.
+every request needs an `owk_live_*` or `owk_test_*` key. mint one from the dashboard (`settings -> api keys -> create key`) or via the account key route. the sdk reads the token from the constructor — it never touches the filesystem.
 
 ```ts
 const owlette = new Owlette({
@@ -74,14 +74,14 @@ every top-level noun is a resource class hung off the client.
 | `owlette.versions`     | `list`, `get`, `patch`, `files`, `diff`                                                         |
 | `owlette.deployments`  | `list`, `get`                                                                                   |
 | `owlette.keys`         | legacy session/ID-token key admin: `create`, `list`, `rotate`, `revoke`                         |
-| `owlette.webhooks`     | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe`                         |
+| `owlette.webhooks`     | `subscribe`, `list`, `get`, `update`, `remove`, `rotateSecret`, `probe`, `deliveries`, `delivery`, `retryDelivery` |
 | `owlette.sites`        | `list`, `get`                                                                                   |
 | `owlette.machines`     | `list`, `get`, `deployments`, `dispatchCommand`, `getCommand`, `captureScreenshot`              |
 | `owlette.installerDeployments` | `list`, `get`, `create`, `retry`, `cancel`, `uninstall`, `delete`                       |
 | `owlette.installer`    | `list`, `latest`, `upload`, `setLatest`, `delete`                                               |
-| `owlette.processes(siteId, machineId)` | `list`, `create`, `update`, `start`, `stop`, `restart`, `schedule`, `remove`  |
+| `owlette.processes(siteId, machineId)` | `list`, `get`, `create`, `update`, `start`, `stop`, `restart`, `kill`, `schedule`, `delete` |
 | `owlette.chat`         | `new`, `list`, `send`, `rename`, `delete`                                                       |
-| `owlette.users`        | `list`, `promote`, `demote`, `assignSites`, `removeSites`, `delete`                             |
+| `owlette.users`        | `list`, `get`, `promote`, `demote`, `assignSites`, `removeSites`, `delete`                      |
 | `owlette.members(siteId)` | `list`, `add`, `remove`                                                                      |
 | `owlette.quotas`       | `current`, `history`                                                                            |
 | `owlette.events`       | `verifySignature`, `isSignatureValid`, `signBody`                                               |
@@ -445,19 +445,19 @@ setTimeout(() => ctl.abort(), 30_000);
 await owlette.http.request('/api/sites', { signal: ctl.signal });
 ```
 
-high-level resource methods don't yet surface the signal parameter — wrap the promise in `Promise.race()` against a timeout if you need to bound list/get calls. for `push()`, throwing inside the `onProgress` callback is the current cooperative-cancel mechanism.
+most list/get helpers do not accept `AbortSignal`, but `chat.send()`, `machines.captureScreenshot()`, and `owlette.http.request()` do. for `push()`, throwing inside the `onProgress` callback is the current cooperative-cancel mechanism.
 
 ---
 
 ## typescript
 
-the package is written in typescript and ships `.d.ts` for every public export. strict mode + `exactOptionalPropertyTypes` clean. all request/response shapes are typed from the same contract the api surface uses — no hand-rolled types to drift.
+the package is written in typescript and ships `.d.ts` for every public export. strict mode + `exactOptionalPropertyTypes` clean. request/response interfaces are defined in the sdk resource files.
 
 ```ts
 import type {
   RoostSummary, RoostDetail, VersionSummary, VersionDetail,
   PushOptions, PushProgressEvent, PushResult,
-  ApiKeyScope, WebhookEvent, VersionRef,
+  ApiKeyScope,
 } from '@owlette/sdk';
 ```
 

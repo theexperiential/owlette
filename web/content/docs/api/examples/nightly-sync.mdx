@@ -1,20 +1,23 @@
 ---
 title: "nightly directory sync"
-description: "a node script that runs nightly on a build box, walks a local directory, diffs against the roost's currently published version, and publishes a new version only if something actually changed. most nights nothing has changed — the script must not publish empty versions or burn quota. on quota_exceeded it emails an alert; structured logs go to stdout for systemd journald / windows event log capture."
+description: "a raw REST node script that runs nightly on a build box, walks a local directory, diffs against the roost's currently published version, and publishes a new version only if something actually changed. most nights nothing has changed — the script must not publish empty versions or burn quota. on quota_exceeded it sends an optional webhook alert; structured logs go to stdout for systemd journald / windows event log capture."
 ---
 
 ## required env vars
 
 - `OWLETTE_TOKEN` — api key with `roost=<id>:read,write` and `site=<id>:write` scopes.
-- `OWLETTE_API_URL` — `https://owlette.app` (prod) or `https://dev.owlette.app`.
 - `ROOST_ID` — target roost id.
 - `ROOST_SITE_ID` — site id hosting the roost.
 - `WATCH_DIR` — absolute path to the local tree to sync (e.g. `/mnt/creative/latest`).
-- `ALERT_EMAIL_TO` — comma-separated recipients for the quota alert.
-- `ALERT_EMAIL_FROM` — sender address configured in your mail relay.
-- `MAIL_RELAY_URL` — http endpoint of your internal mail service (e.g. `https://mail.internal/send`).
 
-## `nightly-sync.mjs`
+## optional env vars
+
+- `OWLETTE_API_URL` — defaults to `https://owlette.app`.
+- `ALERT_WEBHOOK` — optional webhook endpoint for the quota alert.
+
+## `nightly-sync.mjs` raw REST variant
+
+the shipped python sdk example is `sdks/python/examples/nightly_sync.py`; this node listing is a raw REST variant of the same `roosts.get()` followed by `roosts.push()` flow.
 
 ```js
 #!/usr/bin/env node
@@ -28,13 +31,16 @@ import path from 'node:path';
 
 const {
   OWLETTE_TOKEN, OWLETTE_API_URL, ROOST_ID, ROOST_SITE_ID, WATCH_DIR,
-  ALERT_EMAIL_TO, ALERT_EMAIL_FROM, MAIL_RELAY_URL,
+  ALERT_WEBHOOK,
 } = process.env;
 
-for (const k of ['OWLETTE_TOKEN', 'OWLETTE_API_URL', 'ROOST_ID', 'ROOST_SITE_ID', 'WATCH_DIR']) {
+for (const k of ['OWLETTE_TOKEN', 'ROOST_ID', 'ROOST_SITE_ID', 'WATCH_DIR']) {
   if (!process.env[k]) { log('fatal', 'missing env var', { var: k }); process.exit(1); }
 }
 
+const API_URL = OWLETTE_API_URL || 'https://owlette.app';
+const CHUNK_SIZE = 4 * 1024 * 1024;
+const CHECK_BATCH_SIZE = 900;
 const ROOST_VERSION = '2026-04-22';
 const H = {
   authorization: `Bearer ${OWLETTE_TOKEN}`,
@@ -51,7 +57,7 @@ function log(level, msg, extra = {}) {
 }
 
 async function api(pathAndQuery, init = {}) {
-  const res = await fetch(`${OWLETTE_API_URL}${pathAndQuery}`, {
+  const res = await fetch(`${API_URL}${pathAndQuery}`, {
     ...init,
     headers: { ...H, ...(init.headers || {}) },
   });
@@ -76,13 +82,20 @@ async function walk(dir) {
       out.push(...await walk(p));
     } else if (ent.isFile()) {
       const buf = await readFile(p);
-      const hash = createHash('sha256').update(buf).digest('hex');
-      const size = buf.length;
+      if (buf.length === 0) continue;
+      const chunks = [];
+      for (let offset = 0; offset < buf.length; offset += CHUNK_SIZE) {
+        const chunk = buf.subarray(offset, offset + CHUNK_SIZE);
+        chunks.push({
+          hash: createHash('sha256').update(chunk).digest('hex'),
+          size: chunk.length,
+          offset,
+        });
+      }
       out.push({
         path: path.relative(WATCH_DIR, p).replaceAll(path.sep, '/'),
-        hash,
-        size,
-        chunks: size > 0 ? [{ hash, size }] : [],
+        size: buf.length,
+        chunks,
         abs: p,
       });
     }
@@ -90,24 +103,22 @@ async function walk(dir) {
   return out;
 }
 
-async function emailAlert(subject, body) {
-  if (!MAIL_RELAY_URL || !ALERT_EMAIL_TO) {
-    log('warn', 'mail relay not configured, cannot send alert', { subject });
+async function webhookAlert(subject, body) {
+  if (!ALERT_WEBHOOK) {
+    log('warn', 'alert webhook not configured, cannot send alert', { subject });
     return;
   }
   try {
-    await fetch(MAIL_RELAY_URL, {
+    await fetch(ALERT_WEBHOOK, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        from: ALERT_EMAIL_FROM,
-        to: ALERT_EMAIL_TO.split(',').map(s => s.trim()),
         subject, text: body,
       }),
     });
-    log('info', 'alert email sent', { subject });
+    log('info', 'alert webhook sent', { subject });
   } catch (e) {
-    log('error', 'alert email failed', { error: String(e) });
+    log('error', 'alert webhook failed', { error: String(e) });
   }
 }
 
@@ -178,11 +189,11 @@ async function main() {
     changed: changed.length, removed: removed.length, totalLocal: local.length,
   });
 
-  // 4. dedup-check changed chunks (batches of 1000)
+  // 4. dedup-check changed chunks (batches of 900)
   const changedHashes = [...new Set(changed.flatMap(c => c.chunks.map(chunk => chunk.hash)))];
   const missing = [];
-  for (let i = 0; i < changedHashes.length; i += 1000) {
-    const batch = changedHashes.slice(i, i + 1000);
+  for (let i = 0; i < changedHashes.length; i += CHECK_BATCH_SIZE) {
+    const batch = changedHashes.slice(i, i + CHECK_BATCH_SIZE);
     const { missing: batchMissing } = await api('/api/chunks/check', {
       method: 'POST',
       body: JSON.stringify({ siteId: ROOST_SITE_ID, hashes: batch }),
@@ -195,18 +206,21 @@ async function main() {
 
   // 5. upload missing chunks
   if (missing.length) {
-    for (let i = 0; i < missing.length; i += 1000) {
-      const batch = missing.slice(i, i + 1000);
+    for (let i = 0; i < missing.length; i += CHECK_BATCH_SIZE) {
+      const batch = missing.slice(i, i + CHECK_BATCH_SIZE);
       const { urls } = await api('/api/chunks/upload-urls', {
         method: 'POST',
         body: JSON.stringify({ siteId: ROOST_SITE_ID, hashes: batch }),
       });
       for (const h of batch) {
         const file = changed.find(c => c.chunks.some(chunk => chunk.hash === h));
+        const chunk = file?.chunks.find(chunk => chunk.hash === h);
+        if (!file || !chunk) throw new Error(`missing local chunk body for ${h}`);
+        const buf = await readFile(file.abs);
         const put = await fetch(urls[h], {
           method: 'PUT',
           headers: { 'content-type': 'application/octet-stream' },
-          body: await readFile(file.abs),
+          body: buf.subarray(chunk.offset, chunk.offset + chunk.size),
         });
         if (!put.ok) throw new Error(`r2 put failed for ${h}: ${put.status}`);
       }
@@ -244,23 +258,19 @@ try {
 } catch (e) {
   if (e.code === 'quota_exceeded') {
     log('error', 'quota exceeded', { detail: e.detail });
-    await emailAlert(
+    await webhookAlert(
       `[roost] quota exceeded on ${ROOST_SITE_ID}`,
       `the nightly sync for roost ${ROOST_ID} hit a storage/bandwidth quota limit.\n\n` +
-      `detail: ${e.detail}\nsite: ${ROOST_SITE_ID}\n\nsee ${OWLETTE_API_URL}/sites/${ROOST_SITE_ID}/quota`,
+      `detail: ${e.detail}\nsite: ${ROOST_SITE_ID}\n\nsee ${API_URL}/sites/${ROOST_SITE_ID}/quota`,
     );
     process.exit(2);
-  }
-  if (e.code === 'precondition_failed' || e.code === 'version_stale') {
-    log('warn', 'cas miss — another publish happened concurrently, will retry tomorrow', { detail: e.detail });
-    process.exit(1);
   }
   log('error', 'sync failed', { status: e.status, code: e.code, detail: e.detail });
   process.exit(1);
 }
 ```
 
-the script is structured as six sequential api interactions: read roost head, enumerate current version, walk local, dedup-check, upload missing, publish. every step emits a structured json log line with `ts`, `level`, `msg`, and relevant metadata, so journald's default json detector indexes each field for `journalctl -o json -u roost-nightly-sync.service`-style queries. a no-op night logs two lines (`started`, `no changes`) and exits 0 — cheap enough to run without rate-limit worries.
+the shipped python sdk flow reads the current roost with `roosts.get()`, then calls `roosts.push()`, which performs chunking, dedup-check, upload, and publish internally. this raw REST variant expands those steps explicitly: files are split into 4 MiB SHA-256 chunks, zero-byte files are skipped, and chunk checks/upload-url requests are batched in groups of 900. every step emits a structured json log line with `ts`, `level`, `msg`, and relevant metadata, so journald's default json detector indexes each field for `journalctl -o json -u roost-nightly-sync.service`-style queries. a no-op night logs two lines (`started`, `no changes`) and exits 0 — cheap enough to run without rate-limit worries.
 
 ## systemd timer (linux)
 
@@ -350,7 +360,7 @@ set the env vars machine-wide via `setx /M` or inject them through a small wrapp
 
 ## error handling summary
 
-- `precondition_failed` / `version_stale` (412) on publish — someone else published between the `GET /api/roosts/{id}` and the `POST .../versions`. script exits 1, the operator's alerting picks up the failed unit, next night's run tries again against the new head.
-- `quota_exceeded` (402) — script emails ops with a direct link to the quota dashboard. exit code 2 is distinct from 1 so an operator's `OnFailure=` unit can escalate differently.
-- `rate_limited` (429) — not explicitly handled; at this endpoint volume (1 roost/night) it won't trigger. for fleets syncing hundreds of roosts from one host, add a `Retry-After`-aware retry loop around `api()`.
+- `quota_exceeded` (402) — script sends an optional `ALERT_WEBHOOK` alert with a direct link to the quota dashboard. exit code 2 is distinct from 1 so an operator's `OnFailure=` unit can escalate differently.
+- other api errors, including `precondition_failed` / `version_stale`, are logged and exit 1; the next scheduled run tries again against the latest head.
+- `rate_limited` (429) — not specially handled in this raw REST variant. for fleets syncing hundreds of roosts from one host, add a `Retry-After`-aware retry loop around `api()`.
 - `chunk_not_found` during a later download (not this script's concern) — gc ran on an orphan; safe because the next nightly run re-uploads missing chunks.

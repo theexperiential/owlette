@@ -8,7 +8,7 @@ description: "the interactive endpoint reference is rendered from the OpenAPI co
 - raw json: `/api/openapi`
 - source contract: [`web/openapi.yaml`](../../web/openapi.yaml)
 
-the rendered reference includes every developer-preview public operation, request/response examples, operation-level authentication, and a scope note for API-key callers.
+the rendered reference is generated from `web/openapi.yaml` and includes examples, operation-level authentication, and scope notes for documented operations; compatibility routes not present in the spec are omitted.
 
 Use the shared convention pages for behavior that applies across operations:
 [authentication](/docs/api/authentication), [pagination](/docs/api/pagination),

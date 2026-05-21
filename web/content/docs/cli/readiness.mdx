@@ -18,7 +18,7 @@ Legend:
 |---|---|---|---|
 | `owlette auth login` | ready | [auth](/docs/cli/reference/auth) | `POST /api/cli/device-code`, then `POST /api/cli/device-code/poll` |
 | `owlette auth status` | ready | [auth](/docs/cli/reference/auth) | alias of `owlette whoami`; `GET /api/whoami` |
-| `owlette auth logout` | local | [auth](/docs/cli/reference/auth) | clears the active profile token in `~/.config/owlette/config.toml`; no API call |
+| `owlette auth logout` | local | [auth](/docs/cli/reference/auth) | clears the active profile's stored credential (OS keychain / `credentials.json`) and any legacy `config.toml` token; no API call |
 | `owlette whoami` | ready | [whoami](/docs/cli/reference/whoami) | `GET /api/whoami` |
 | `owlette version` | ready | [version](/docs/cli/reference/version) | `GET /api/version` |
 | `owlette rollback <roostId>` | ready | [rollback](/docs/cli/reference/rollback) | `GET /api/roosts/{roostId}`, `GET /api/roosts/{roostId}/versions/{versionRef}/diff`, `POST /api/roosts/{roostId}/rollback` |

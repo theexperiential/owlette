@@ -29,11 +29,11 @@ The service does not stop itself and run the installer inline. Task Scheduler ow
 ### from the dashboard
 
 1. Navigate to the machine in the dashboard.
-2. Click **Update owlette**.
-3. Select the target version or latest release.
+2. Click **update owlette**.
+3. Select the machines to update.
 4. Confirm the update.
 
-The dashboard sends an `update_owlette` command with the installer URL, expected SHA-256 checksum, and target version.
+The dashboard uses the current latest installer metadata automatically and sends an `update_owlette` command with the installer URL, expected SHA-256 checksum, and target version.
 
 ### what gets preserved
 

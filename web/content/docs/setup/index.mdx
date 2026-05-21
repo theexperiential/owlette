@@ -34,8 +34,8 @@ Each release also receives a future Apache License, Version 2.0 grant on the sec
 |-------------|---------|
 | **Firebase project** | Authentication, Firestore, Admin SDK credentials, and Firebase Storage for installer/screenshot flows |
 | **Cloudflare R2 bucket** | Object storage for roost chunk uploads, signed URLs, and version assembly |
-| **Railway account** (or any Node.js 20 host) | Web dashboard hosting for the Next.js app |
-| **Node.js 20+** | Local development, web builds, and Firebase Functions compatibility |
+| **Railway account** (or any Node.js 22 host) | Web dashboard hosting for the Next.js app |
+| **Node.js 22.x** | Web builds (`web/package.json` `engines` pin); Node 20+ covers local development and Firebase Functions compatibility |
 | **GitHub repository** | Source code and CI/CD |
 | **Upstash Redis** | API rate limiting |
 | **Email provider** | Alert and welcome email delivery |
@@ -49,7 +49,7 @@ Each release also receives a future Apache License, Version 2.0 grant on the sec
 1. [Firebase Setup](/docs/setup/firebase) - create the Firebase project, enable Authentication, Firestore, and Firebase Storage, then generate service-account credentials.
 2. [Environment Variables](/docs/setup/environment-variables) - collect Firebase client/admin values, session secrets, Upstash Redis, email, cron, and Cloudflare R2 credentials before deployment.
 3. [Firestore Rules](/docs/setup/firestore-rules) - deploy the repository's Firestore rules and indexes so users and agents can access only their scoped data.
-4. [Web Deployment](/docs/setup/web-deployment) - deploy the Next.js dashboard to Railway or another Node.js 20 host and attach the required environment variables.
+4. [Web Deployment](/docs/setup/web-deployment) - deploy the Next.js dashboard to Railway or another Node.js 22 host and attach the required environment variables.
 5. First admin account - register through the deployed dashboard, then promote the initial operator in Firestore.
 6. [Agent Installation](/docs/agent/installation) - install the Windows agent on target machines and pair it with your self-hosted dashboard.
 

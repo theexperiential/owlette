@@ -210,7 +210,7 @@ successful mounts return `201`:
 
 ## 7. referrer query
 
-`GET /api/chunks/{digest}/referrers` returns recorded referrers of a chunk. today this surfaces entries written by mount; version-publish referrers may be added by future work.
+`GET /api/chunks/{digest}/referrers` returns recorded mount and version-publish referrers for a chunk.
 
 ```
 GET /api/chunks/2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6/referrers?siteId=kiosk-fleet-01&page_size=25
@@ -367,7 +367,7 @@ notes applicable to both implementations:
 - read buffers must be at least 4 MiB, or the reader must accumulate smaller reads until it has a full chunk.
 - the final chunk is whatever remains at eof.
 - hashing and i/o must not be interleaved with other writers on the same file; take a read lock or copy the file first.
-- the version's `files[].size` must equal `sum(chunks[].size)`. the publish validator rejects mismatches with `validation_failed`.
+- the version's `files[].size` should equal `sum(chunks[].size)`. current agents reject mismatches when parsing versions, but the publish API does not currently enforce this invariant.
 
 ## 10. error taxonomy
 

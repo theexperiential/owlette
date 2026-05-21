@@ -18,7 +18,7 @@ description: "Public collection endpoints use cursor pagination. Cursors are opa
 
 If both canonical and compatibility names are present, the canonical name wins.
 
-Invalid page sizes return `400 validation_failed`. Page sizes must be positive integers and cannot exceed the endpoint's maximum.
+Routes using the shared pagination helper return `400 validation_failed` for invalid `page_size`; `/api/cortex/conversations` and `/api/chat` currently clamp or default invalid values, so clients should consult the endpoint reference for validation behavior.
 
 ---
 

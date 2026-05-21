@@ -156,8 +156,8 @@ owlette machine live-view m_abc123 --site site-1
 ## exit codes
 
 - `0` — success
-- `1` — generic error (network, api 5xx, unexpected response shape, screenshot poll timeout, agent reported failure)
-- `2` — usage error (missing `--site`, bad `--monitor` value, negative `--delay-seconds`, no token configured)
+- `1` — generic error (network, api 5xx, unexpected response shape, screenshot poll timeout, agent reported failure, missing `--site`, bad `--monitor` value, negative `--delay-seconds`)
+- `2` — usage error (no token configured)
 - `3` — stub (only `machine live-view`)
 
 stable problem+json codes surfaced with a hint: `machine_offline`, `unsupported_command_type`, `scope_insufficient`.

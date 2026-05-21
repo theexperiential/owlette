@@ -18,7 +18,7 @@ description: "Common issues and how to resolve them."
 | **Self-update installer** | `C:\ProgramData\Owlette\logs\installer_update.log` | Inno Setup log written during remote agent updates |
 | **Interactive installer** | Path passed with `/LOG=...` | Inno Setup log for manual installs; no fixed ProgramData installer log is written by default |
 
-Logs use rotating file handlers: 10 MB per file, 5 backups. Old logs are auto-deleted after 90 days by default.
+Main shared-logger files use rotating file handlers: 10 MB per file, 5 backups. `tmp/status_writer.log` rotates at 100 KB with 2 backups, and `pairing_debug.log` uses plain writes. Old main logs are auto-deleted after 90 days by default.
 
 ---
 
@@ -122,10 +122,10 @@ If pairing fails before authorization completes, check `C:\ProgramData\Owlette\l
 
 **Common causes**:
 
-- **Executable not found**: Process shows as INACTIVE.
+- **Executable not found**: Launch fails, `process_launch_failed` is logged, and an `exe_missing` alert may be sent.
 - **Relaunch limit reached**: The reboot prompt should have appeared.
 - **Permission error**: Service may not have access to the executable path.
-- **Task Scheduler issues**: The agent falls back to CreateProcessAsUser when possible.
+- **User-session launch issues**: Managed launches use `CreateProcessAsUser` and `process_launcher.py`; check service/session token errors in `service.log`.
 
 When the executable is missing, the service logs `process_launch_failed` and sends an `exe_missing` alert with suggested sibling paths when it can find likely replacements. The dashboard toast can open the process edit dialog with a suggested path pre-filled.
 
@@ -142,7 +142,9 @@ The agent's connection to Firestore follows a state machine. Check `service.log`
 | `CONNECTED` | Online and syncing | Normal operation |
 | `RECONNECTING` | Lost connection, retrying | Automatic retry |
 | `BACKOFF` | Too many failures, waiting | Exponential backoff, up to 1 hour |
-| `FATAL_ERROR` | Unrecoverable auth or site-access error | Re-pair the machine or restore site access |
+| `FATAL_ERROR` | Fatal-ish auth or site-access error with long-backoff retry | Restore site access or re-pair if credentials/site membership are invalid |
+
+Fatal-ish errors are not a permanent terminal state; the connection manager keeps retrying with long backoff while you restore access or re-pair.
 
 If stuck in `BACKOFF`:
 
@@ -169,7 +171,7 @@ If stuck in `BACKOFF`:
 
 ### gui won't open
 
-**Symptoms**: Clicking "Open GUI" from tray does nothing, or GUI crashes immediately.
+**Symptoms**: Clicking `open owlette` from tray does nothing, or GUI crashes immediately.
 
 **Check**:
 

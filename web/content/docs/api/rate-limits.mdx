@@ -120,11 +120,12 @@ Roost-Rate-Limited-Reason: key-rate
   "type": "https://owlette.app/problems/rate-limited",
   "title": "rate limited",
   "detail": "Too many requests. Please try again in 47 seconds.",
+  "code": "rate_limited",
   "retryAfter": 47
 }
 ```
 
-Clients should read `Retry-After` from the header first. For rate-limit handling, rely on the problem body's stable `type`, `title`, `detail`, and `retryAfter` fields. Some `withRateLimit()` responses may include extra legacy body fields for compatibility; treat them as non-contractual.
+Clients should read `Retry-After` from the header first. For rate-limit handling, rely on `code`/`type`, the `Retry-After` header, and body `retryAfter`; treat `detail` as display text. Some `withRateLimit()` responses may include extra legacy body fields for compatibility; treat them as non-contractual.
 
 ---
 

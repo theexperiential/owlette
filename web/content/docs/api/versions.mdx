@@ -498,7 +498,7 @@ Request body fields:
 | `siteId` | yes | Site that owns the roost. |
 | `versionId` | no | Concrete version id. Defaults to current. |
 | `machines` | no | Non-empty machine id list. Defaults to the roost's `targets[]`. |
-| `scheduleAt` | no | ISO-8601 timestamp. Future scheduling is stored but not auto-fired yet. |
+| `scheduleAt` | no | ISO-8601 timestamp. Values more than 60 seconds in the future are stored as scheduled rollouts, but the scheduler does not auto-fire them yet; past or near-future values deploy immediately. |
 | `dryRun` | no | If `true`, returns the rollout shape without writing. |
 
 Normal response (`202 Accepted`):

@@ -108,8 +108,8 @@ backing endpoint: `DELETE /api/users/{uid}?successorUid=`. on `409 orphan_sites`
 ## exit codes
 
 - `0` — success (including `alreadyDeleted: true`)
-- `1` — generic error (network, 5xx, conflict not specifically handled)
-- `2` — usage error (bad `--role`, missing `--sites`, no token, non-tty without `--yes`)
+- `1` — generic error (network, 5xx, conflict not specifically handled, bad `--role`, missing `--sites`, non-tty without `--yes`)
+- `2` — usage error (no token)
 
 ---
 

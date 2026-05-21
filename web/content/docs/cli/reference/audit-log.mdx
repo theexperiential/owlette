@@ -75,8 +75,8 @@ a verification with `ok: true` means the record's content hashes to its claimed 
 ## exit codes
 
 - `0` — success
-- `1` — generic error (network, api 5xx, unexpected response shape)
-- `2` — usage error (missing `--site`, unparseable `--since` / `--until`, no token configured)
+- `1` — generic error (network, api 5xx, unexpected response shape, missing `--site`, unparseable `--since` / `--until`)
+- `2` — usage error (no token configured)
 
 `audit-log` has no stub verbs and no exit-3 paths.
 
