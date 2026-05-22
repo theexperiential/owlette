@@ -53,7 +53,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           url: "/docs",
         }}
         themeSwitch={{ enabled: false }}
-        sidebar={{ defaultOpenLevel: 1 }}
+        sidebar={{ defaultOpenLevel: 0 }}
       >
         {children}
       </DocsLayout>
