@@ -272,6 +272,22 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       deployDescription = trimmed.length > 0 ? trimmed : null;
     }
 
+    const hasExpectedHead = Object.prototype.hasOwnProperty.call(
+      body,
+      'expectedCurrentVersionId',
+    );
+    let expectedHead: string | null | undefined;
+    if (typeof body.expectedCurrentVersionId === 'string') {
+      expectedHead = body.expectedCurrentVersionId;
+    } else if (hasExpectedHead && body.expectedCurrentVersionId === null) {
+      expectedHead = null;
+    } else if (hasExpectedHead && body.expectedCurrentVersionId !== undefined) {
+      return problemValidation(
+        'expectedCurrentVersionId must be a string or null when provided',
+        { 'body.expectedCurrentVersionId': ['must be a string or null'] },
+      );
+    }
+
     // Verify every referenced chunk exists in R2. Missing chunks = caller
     // didn't finish uploading; reject with a listing of missing hashes so
     // the client can retry the missing set via /chunks/upload-urls.
@@ -317,17 +333,41 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       .doc(site.siteId)
       .collection('roosts')
       .doc(roostId);
+    const versionDocRef = roostRef.collection('versions').doc(versionId);
 
     const totalSize = m.files.reduce((n, f) => n + f.size, 0);
-    const expectedHead =
-      typeof body.expectedCurrentVersionId === 'string'
-        ? body.expectedCurrentVersionId
-        : undefined;
 
     const result = await db.runTransaction(async (tx) => {
-      const roostSnap = await tx.get(roostRef);
+      const [roostSnap, versionSnap] = await Promise.all([
+        tx.get(roostRef),
+        tx.get(versionDocRef),
+      ]);
       const existing = roostSnap.exists ? roostSnap.data() ?? {} : {};
       const currentId = (existing.currentVersionId as string | undefined) ?? null;
+
+      // Content-addressed no-op: publishing bytes that are already the
+      // current head must not advance versionCounter or overwrite the same
+      // version doc with a new versionNumber.
+      if (currentId === versionId) {
+        const existingNumber =
+          typeof existing.currentVersionNumber === 'number'
+            ? existing.currentVersionNumber
+            : typeof existing.versionCounter === 'number'
+              ? existing.versionCounter
+              : 0;
+        const previousVersionId =
+          typeof existing.previousVersionId === 'string'
+            ? existing.previousVersionId
+            : null;
+        return {
+          conflict: false as const,
+          outcome: 'noop' as const,
+          versionId,
+          versionNumber: existingNumber,
+          currentVersionId: versionId,
+          previousVersionId,
+        };
+      }
 
       // optimistic concurrency: if the client passed an expected head
       // and the current head doesn't match, 412. Prevents two operators
@@ -338,31 +378,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         return { conflict: true as const, currentId };
       }
 
-      // Monotonic 1-indexed version number per roost. starts at 0 (new
-      // roost, no versions yet) so the first publish lands as v1. The
-      // counter only advances inside a successful tx — if the tx retries
-      // due to a contending publish, the retried read picks up the new
-      // counter and we get v(N+1) cleanly, no ties.
-      const currentCounter =
-        typeof existing.versionCounter === 'number' ? existing.versionCounter : 0;
-      const nextNumber = currentCounter + 1;
-
-      const versionDocRef = roostRef.collection('versions').doc(versionId);
-      tx.set(versionDocRef, {
-        versionId,
-        versionNumber: nextNumber,
-        description: deployDescription,
-        versionUrl,
-        createdAt: FieldValue.serverTimestamp(),
-        createdBy: auth.userId,
-        totalSize,
-        totalFiles: m.files.length,
-        parentVersionId: currentId,
-      });
-
       // Always overwrite name/targets/extractPath when the client provides
       // them (each deploy is an explicit re-statement of intent). If the
-      // client omits them, retain existing values — this lets a rollback
+      // client omits them, retain existing values - this lets a rollback
       // or version-only republish keep the prior config.
       const nameField =
         deployName !== undefined
@@ -378,6 +396,89 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             : { targets: [] };
       const extractPathField =
         deployExtractPath !== undefined ? { extractPath: deployExtractPath } : {};
+
+      // Content-addressed promote: the requested content already exists in
+      // history but is not the current head. Move only the roost pointer and
+      // denormalised current-version summary; keep the historical version doc
+      // immutable and do not advance versionCounter.
+      if (versionSnap.exists) {
+        const existingVersion = versionSnap.data() ?? {};
+        const existingVersionNumber =
+          typeof existingVersion.versionNumber === 'number'
+            ? existingVersion.versionNumber
+            : 0;
+        const existingDescription =
+          typeof existingVersion.description === 'string'
+            ? existingVersion.description
+            : null;
+        const existingVersionUrl =
+          typeof existingVersion.versionUrl === 'string'
+            ? existingVersion.versionUrl
+            : versionUrl;
+        const existingTotalFiles =
+          typeof existingVersion.totalFiles === 'number'
+            ? existingVersion.totalFiles
+            : m.files.length;
+        const existingTotalSize =
+          typeof existingVersion.totalSize === 'number'
+            ? existingVersion.totalSize
+            : totalSize;
+
+        tx.set(
+          roostRef,
+          {
+            schemaVersion: 2,
+            currentVersionId: versionId,
+            currentVersionNumber: existingVersionNumber,
+            currentVersionDescription: existingDescription,
+            previousVersionId: currentId,
+            versionUrl: existingVersionUrl,
+            totalFiles: existingTotalFiles,
+            totalSize: existingTotalSize,
+            updatedAt: FieldValue.serverTimestamp(),
+            ...nameField,
+            ...targetsField,
+            ...extractPathField,
+            ...(roostSnap.exists
+              ? {}
+              : {
+                  createdAt: FieldValue.serverTimestamp(),
+                  createdBy: auth.userId,
+                }),
+          },
+          { merge: true },
+        );
+
+        return {
+          conflict: false as const,
+          outcome: 'promote' as const,
+          versionId,
+          versionNumber: existingVersionNumber,
+          currentVersionId: versionId,
+          previousVersionId: currentId,
+        };
+      }
+
+      // Monotonic 1-indexed version number per roost. starts at 0 (new
+      // roost, no versions yet) so the first publish lands as v1. The
+      // counter only advances inside a successful tx — if the tx retries
+      // due to a contending publish, the retried read picks up the new
+      // counter and we get v(N+1) cleanly, no ties.
+      const currentCounter =
+        typeof existing.versionCounter === 'number' ? existing.versionCounter : 0;
+      const nextNumber = currentCounter + 1;
+
+      tx.set(versionDocRef, {
+        versionId,
+        versionNumber: nextNumber,
+        description: deployDescription,
+        versionUrl,
+        createdAt: FieldValue.serverTimestamp(),
+        createdBy: auth.userId,
+        totalSize,
+        totalFiles: m.files.length,
+        parentVersionId: currentId,
+      });
 
       tx.set(
         roostRef,
@@ -413,6 +514,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
       return {
         conflict: false as const,
+        outcome: 'create' as const,
         versionId,
         versionNumber: nextNumber,
         currentVersionId: versionId,
@@ -433,15 +535,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    await writeVersionChunkReferrers(
-      db,
-      site.siteId,
-      roostId,
-      result.versionId,
-      result.versionNumber,
-      auth.userId,
-      chunkReferrers,
-    );
+    if (result.outcome === 'create') {
+      await writeVersionChunkReferrers(
+        db,
+        site.siteId,
+        roostId,
+        result.versionId,
+        result.versionNumber,
+        auth.userId,
+        chunkReferrers,
+      );
+    }
 
     const response = applyAuthDeprecations(
       NextResponse.json(
@@ -451,28 +555,33 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           currentVersionId: result.currentVersionId,
           previousVersionId: result.previousVersionId,
         },
-        { status: 201 },
+        { status: result.outcome === 'create' ? 201 : 200 },
       ),
       auth.scopeCheck,
     );
     if (idem.mode === 'proceed') await saveIdempotency(idem.token, response);
-    emitMutation({
-      kind: 'roost_mutated',
-      siteId: site.siteId,
-      actor: auditActorIdentifier(auth.auth),
-      targetId: result.versionId,
-      attributes: {
-        verb: 'version_publish',
-        endpoint: request.nextUrl.pathname,
-        method: request.method,
-        roostId,
-        versionNumber: result.versionNumber,
-        previousVersionId: result.previousVersionId,
-        totalFiles: m.files.length,
-        totalSize,
-        hasDescription: deployDescription !== null,
-      },
-    });
+    if (result.outcome !== 'noop') {
+      emitMutation({
+        kind: 'roost_mutated',
+        siteId: site.siteId,
+        actor: auditActorIdentifier(auth.auth),
+        targetId: result.versionId,
+        attributes: {
+          verb:
+            result.outcome === 'promote'
+              ? 'version_promote'
+              : 'version_publish',
+          endpoint: request.nextUrl.pathname,
+          method: request.method,
+          roostId,
+          versionNumber: result.versionNumber,
+          previousVersionId: result.previousVersionId,
+          totalFiles: m.files.length,
+          totalSize,
+          hasDescription: deployDescription !== null,
+        },
+      });
+    }
     return response;
   } catch (err) {
     return problemFromError(err, 'v2/roosts/[roostId]/versions (POST)');
