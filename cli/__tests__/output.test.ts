@@ -4,6 +4,8 @@ import {
   isJson,
   renderTable,
   truncate,
+  unconfirmedMutationFatal,
+  usageFatal,
 } from '../src/lib/output';
 
 describe('humanBytes', () => {
@@ -59,5 +61,41 @@ describe('isJson', () => {
     program.option('--json', 'flag');
     program.parse(['--json'], { from: 'user' });
     expect(isJson(program)).toBe(true);
+  });
+});
+
+describe('fatal helpers', () => {
+  beforeEach(() => {
+    process.exitCode = 0;
+    jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    process.exitCode = 0;
+    jest.restoreAllMocks();
+  });
+
+  it('usageFatal writes stderr and exits 2', () => {
+    usageFatal('bad flag');
+    expect(process.stderr.write).toHaveBeenCalledWith('owlette: bad flag\n');
+    expect(process.exitCode).toBe(2);
+  });
+
+  it('unconfirmedMutationFatal prints the key and append-only retry guidance', () => {
+    unconfirmedMutationFatal({
+      operation: 'POST /x',
+      idempotencyKey: 'k-1',
+      cause: new Error('timeout'),
+    });
+    const out = (process.stderr.write as unknown as jest.Mock).mock.calls
+      .map((call) => String(call[0]))
+      .join('');
+    expect(out).toContain('Idempotency-Key: k-1');
+    expect(out).toContain('may or may not have completed');
+    expect(out).toContain(
+      're-run your original command with `--idempotency-key k-1` appended',
+    );
+    expect(out).not.toContain('owlette x --idempotency-key');
+    expect(process.exitCode).toBe(1);
   });
 });

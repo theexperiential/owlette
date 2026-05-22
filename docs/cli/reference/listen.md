@@ -100,8 +100,8 @@ owlette: listener stopped. connected=1 events=3 forwarded=3 forwardErrors=0 keep
 
 ## exit codes
 
-- `0` - clean shutdown with `Ctrl-C`; also used when the stream ends without a connection-level error
-- `1` - failed to open the stream, non-2xx stream response, or stream parser/read error
+- `0` - clean shutdown with `Ctrl-C`
+- `1` - failed to open the stream, non-2xx stream response, stream parser/read error, or the server stream ending cleanly
 - `2` - no token configured for the active profile or an invalid `--forward-to` URL
 
 ---

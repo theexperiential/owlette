@@ -56,6 +56,7 @@ beforeEach(() => {
   process.env.OWLETTE_TOKEN = 'owk_live_testtoken';
   process.env.OWLETTE_API_URL = 'https://dev.test';
   process.env.OWLETTE_PROFILE = 'default';
+  process.exitCode = 0;
   jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
   jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
 });
@@ -64,6 +65,7 @@ afterEach(() => {
   delete process.env.OWLETTE_TOKEN;
   delete process.env.OWLETTE_API_URL;
   delete process.env.OWLETTE_PROFILE;
+  process.exitCode = 0;
   jest.restoreAllMocks();
 });
 
@@ -138,6 +140,14 @@ describe('owlette user list', () => {
     };
     expect(parsed.users).toEqual(users);
     expect(parsed.nextPageToken).toBe('tok-next');
+  });
+
+  it('rejects an invalid --limit with exit 2 before firing fetch', async () => {
+    const calls = installFetchStub({});
+    const program = buildProgram();
+    await program.parseAsync(['user', 'list', '--limit', 'banana'], { from: 'user' });
+    expect(calls).toHaveLength(0);
+    expect(process.exitCode).toBe(2);
   });
 });
 
@@ -221,8 +231,7 @@ describe('owlette user promote', () => {
       { from: 'user' },
     );
     expect(calls).toHaveLength(0);
-    expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
+    expect(process.exitCode).toBe(2);
   });
 });
 
@@ -313,6 +322,17 @@ describe('owlette user assign-sites', () => {
     });
   });
 
+  it('rejects empty --sites with exit 2 before firing fetch', async () => {
+    const calls = installFetchStub({});
+    const program = buildProgram();
+    await program.parseAsync(
+      ['user', 'assign-sites', 'u_1', '--sites', ' , , '],
+      { from: 'user' },
+    );
+    expect(calls).toHaveLength(0);
+    expect(process.exitCode).toBe(2);
+  });
+
   it('surfaces 400 unknown_site clearly with the offending sites listed', async () => {
     installFetchStub(
       {
@@ -374,8 +394,7 @@ describe('owlette user remove-sites', () => {
       { from: 'user' },
     );
     expect(calls).toHaveLength(0);
-    expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
+    expect(process.exitCode).toBe(2);
   });
 });
 
@@ -450,5 +469,19 @@ describe('owlette user delete', () => {
     expect(err).toContain('--successor');
     expect(process.exitCode).toBe(1);
     process.exitCode = 0;
+  });
+
+  it('refuses non-tty delete without --yes using exit 2 before firing fetch', async () => {
+    const calls = installFetchStub({});
+    const isTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
+    try {
+      const program = buildProgram();
+      await program.parseAsync(['user', 'delete', 'u_1'], { from: 'user' });
+      expect(calls).toHaveLength(0);
+      expect(process.exitCode).toBe(2);
+    } finally {
+      if (isTTY) Object.defineProperty(process.stdin, 'isTTY', isTTY);
+    }
   });
 });

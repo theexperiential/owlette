@@ -87,6 +87,7 @@ beforeEach(() => {
   process.env.OWLETTE_TOKEN = 'owk_live_testtoken';
   process.env.OWLETTE_API_URL = 'https://dev.test';
   process.env.OWLETTE_PROFILE = 'default';
+  process.exitCode = 0;
   jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
   jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
   // The screenshot polling loop sleeps between attempts. Replace
@@ -106,6 +107,7 @@ afterEach(() => {
   delete process.env.OWLETTE_TOKEN;
   delete process.env.OWLETTE_API_URL;
   delete process.env.OWLETTE_PROFILE;
+  process.exitCode = 0;
   jest.restoreAllMocks();
 });
 
@@ -245,7 +247,7 @@ describe('owlette machine screenshot', () => {
         '--site',
         'site-1',
         '--monitor',
-        'primary',
+        '1',
         '--output',
         outPath,
       ],
@@ -259,7 +261,7 @@ describe('owlette machine screenshot', () => {
     const queueBody = JSON.parse(String(calls[0]!.init.body));
     expect(queueBody).toEqual({
       type: 'capture_screenshot',
-      params: { monitor: 'primary' },
+      params: { monitor: 1 },
     });
     expect(calls[1]!.url).toBe(`${COMMANDS_URL}/cmd_xyz`);
     expect((calls[1]!.init.method ?? 'GET').toUpperCase()).toBe('GET');
@@ -415,6 +417,36 @@ describe('owlette machine screenshot', () => {
     process.exitCode = 0;
   });
 
+  it('surfaces screenshot read+write scope hint on scope_insufficient', async () => {
+    installFetchStub(() => ({
+      status: 403,
+      payload: {
+        type: 'about:blank',
+        title: 'scope_insufficient',
+        status: 403,
+        code: 'scope_insufficient',
+        detail: 'API key is missing machine=m-1:write scope',
+      },
+    }));
+    const stderr: string[] = [];
+    (process.stderr.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
+      stderr.push(chunk);
+      return true;
+    });
+    const program = buildProgram();
+
+    await program.parseAsync(
+      ['machine', 'screenshot', 'm-1', '--site', 'site-1'],
+      { from: 'user' },
+    );
+
+    const errOut = stderr.join('');
+    expect(errOut).toContain('code=scope_insufficient');
+    expect(errOut).toContain('screenshot requires both machine=<id>:write and machine=<id>:read scopes');
+    expect(process.exitCode).toBe(1);
+    process.exitCode = 0;
+  });
+
   it('times out and exits 1 after MAX_ATTEMPTS poll attempts of pending status', async () => {
     const calls = installFetchStub((call, idx) => {
       if (idx === 0) {
@@ -471,8 +503,31 @@ describe('owlette machine screenshot', () => {
     );
 
     expect(calls).toHaveLength(0);
-    expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
+    expect(process.exitCode).toBe(2);
+  });
+
+  it('rejects named --monitor values before issuing http', async () => {
+    const calls = installFetchStub(() => ({
+      status: 202,
+      payload: { ok: true, data: { commandId: 'cmd_xyz', status: 'pending' } },
+    }));
+    const program = buildProgram();
+
+    await program.parseAsync(
+      [
+        'machine',
+        'screenshot',
+        'm-1',
+        '--site',
+        'site-1',
+        '--monitor',
+        'primary',
+      ],
+      { from: 'user' },
+    );
+
+    expect(calls).toHaveLength(0);
+    expect(process.exitCode).toBe(2);
   });
 });
 
@@ -481,9 +536,9 @@ describe('owlette machine screenshot', () => {
 /* -------------------------------------------------------------------- */
 
 describe('machine helpers', () => {
-  it('parseMonitorOpt accepts all|primary|integer and rejects bad input', () => {
-    expect(machineInternals.parseMonitorOpt('all')).toBe('all');
-    expect(machineInternals.parseMonitorOpt('primary')).toBe('primary');
+  it('parseMonitorOpt accepts non-negative integers and rejects named values', () => {
+    expect(String(machineInternals.parseMonitorOpt('all'))).toMatch(/^error:/);
+    expect(String(machineInternals.parseMonitorOpt('primary'))).toMatch(/^error:/);
     expect(machineInternals.parseMonitorOpt('0')).toBe(0);
     expect(machineInternals.parseMonitorOpt('3')).toBe(3);
     expect(String(machineInternals.parseMonitorOpt('-1'))).toMatch(/^error:/);

@@ -73,6 +73,20 @@ api_url = "https://dev.owlette.app"
     const parsed = parseToml(raw) as { profiles?: Record<string, { token?: string }> };
     expect(parsed.profiles?.default?.token).toBe('owk_live_x"y\\z');
   });
+
+  it('quotes profile table names that are not bare TOML keys', () => {
+    const path = tmpPath();
+    writeTokenToConfig({
+      configPath: path,
+      profile: 'release candidate.1',
+      token: 'owk_live_spacey',
+    });
+
+    const raw = readFileSync(path, 'utf-8');
+    expect(raw).toContain('[profiles."release candidate.1"]');
+    const parsed = parseToml(raw) as { profiles?: Record<string, { token?: string }> };
+    expect(parsed.profiles?.['release candidate.1']?.token).toBe('owk_live_spacey');
+  });
 });
 
 describe('clearTokenFromConfig', () => {

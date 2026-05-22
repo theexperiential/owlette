@@ -24,7 +24,13 @@
 import { Command } from 'commander';
 import { randomUUID } from 'crypto';
 import { loadConfig } from '../config';
-import { isJson, renderTable } from '../lib/output';
+import { fetchWithTimeout } from '../lib/http';
+import {
+  isJson,
+  renderTable,
+  unconfirmedMutationFatal,
+  usageFatal,
+} from '../lib/output';
 
 interface DeploymentTarget {
   machineId: string;
@@ -105,17 +111,17 @@ export function registerDeployCommands(program: Command): void {
 
       const machines = parseCsv(opts.machines);
       if (machines.length === 0) {
-        fatal('--machines must contain at least one non-empty id');
+        usageFatal('--machines must contain at least one non-empty id');
         return;
       }
       const closeProcesses = parseCsv(opts.closeProcesses);
       if (opts.closeProcesses !== undefined && closeProcesses.length === 0) {
-        fatal('--close-processes must contain at least one non-empty value when supplied');
+        usageFatal('--close-processes must contain at least one non-empty value when supplied');
         return;
       }
       const suppressProjects = parseCsv(opts.suppressProjects);
       if (opts.suppressProjects !== undefined && suppressProjects.length === 0) {
-        fatal('--suppress-projects must contain at least one non-empty value when supplied');
+        usageFatal('--suppress-projects must contain at least one non-empty value when supplied');
         return;
       }
 
@@ -132,20 +138,31 @@ export function registerDeployCommands(program: Command): void {
       if (suppressProjects.length > 0) body.suppress_projects = suppressProjects;
       if (opts.parallel) body.parallel_install = true;
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-deploy-create-${randomUUID()}`;
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
-        'Idempotency-Key': opts.idempotencyKey
-          ? String(opts.idempotencyKey)
-          : `cli-deploy-create-${randomUUID()}`,
+        'Idempotency-Key': idempotencyKey,
       };
 
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/deployments`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/sites/${opts.site}/deployments`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
         deploymentId?: string;
         siteId?: string;
@@ -200,7 +217,7 @@ export function registerDeployCommands(program: Command): void {
       if (opts.limit !== undefined) {
         const n = Number(opts.limit);
         if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
-          fatal('--limit must be a positive integer');
+          usageFatal('--limit must be a positive integer');
           return;
         }
         qs.set('page_size', String(n));
@@ -210,7 +227,7 @@ export function registerDeployCommands(program: Command): void {
       const url =
         `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/deployments` +
         (qs.toString() ? `?${qs.toString()}` : '');
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -265,7 +282,7 @@ export function registerDeployCommands(program: Command): void {
       if (!token) return;
 
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/deployments/${encodeURIComponent(deploymentId)}`;
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = (await res.json().catch(() => ({}))) as DeploymentDetail & {
@@ -302,20 +319,31 @@ export function registerDeployCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-deploy-retry-${randomUUID()}`;
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
-        'Idempotency-Key': opts.idempotencyKey
-          ? String(opts.idempotencyKey)
-          : `cli-deploy-retry-${randomUUID()}`,
+        'Idempotency-Key': idempotencyKey,
       };
 
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/deployments/${encodeURIComponent(deploymentId)}/retry`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({}),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({}),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/sites/${opts.site}/deployments/${deploymentId}/retry`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as {
         deploymentId?: string;
         siteId?: string;
@@ -367,24 +395,35 @@ export function registerDeployCommands(program: Command): void {
           return;
         }
       } else if (!opts.yes && !process.stdin.isTTY) {
-        fatal('stdin is not a tty and --yes was not supplied; refusing to cancel silently');
+        usageFatal('stdin is not a tty and --yes was not supplied; refusing to cancel silently');
         return;
       }
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-deploy-cancel-${randomUUID()}`;
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
-        'Idempotency-Key': opts.idempotencyKey
-          ? String(opts.idempotencyKey)
-          : `cli-deploy-cancel-${randomUUID()}`,
+        'Idempotency-Key': idempotencyKey,
       };
 
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/deployments/${encodeURIComponent(deploymentId)}/cancel`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({}),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({}),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/sites/${opts.site}/deployments/${deploymentId}/cancel`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as {
         deploymentId?: string;
         siteId?: string;
@@ -436,24 +475,35 @@ export function registerDeployCommands(program: Command): void {
           return;
         }
       } else if (!opts.yes && !process.stdin.isTTY) {
-        fatal('stdin is not a tty and --yes was not supplied; refusing to uninstall silently');
+        usageFatal('stdin is not a tty and --yes was not supplied; refusing to uninstall silently');
         return;
       }
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-deploy-uninstall-${randomUUID()}`;
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
-        'Idempotency-Key': opts.idempotencyKey
-          ? String(opts.idempotencyKey)
-          : `cli-deploy-uninstall-${randomUUID()}`,
+        'Idempotency-Key': idempotencyKey,
       };
 
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/deployments/${encodeURIComponent(deploymentId)}/uninstall`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({}),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({}),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/sites/${opts.site}/deployments/${deploymentId}/uninstall`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as {
         deploymentId?: string;
         siteId?: string;
@@ -512,24 +562,35 @@ export function registerDeployCommands(program: Command): void {
           return;
         }
       } else if (!opts.yes && !process.stdin.isTTY) {
-        fatal('stdin is not a tty and --yes was not supplied; refusing to delete silently');
+        usageFatal('stdin is not a tty and --yes was not supplied; refusing to delete silently');
         return;
       }
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-deploy-delete-${randomUUID()}`;
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
-        'Idempotency-Key': opts.idempotencyKey
-          ? String(opts.idempotencyKey)
-          : `cli-deploy-delete-${randomUUID()}`,
+        'Idempotency-Key': idempotencyKey,
       };
 
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/deployments/${encodeURIComponent(deploymentId)}`;
-      const res = await fetch(url, {
-        method: 'DELETE',
-        headers,
-        body: JSON.stringify({}),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'DELETE',
+          headers,
+          body: JSON.stringify({}),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `DELETE /api/sites/${opts.site}/deployments/${deploymentId}`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as {
         deploymentId?: string;
         siteId?: string;
@@ -617,7 +678,7 @@ function fatal(msg: string): void {
 async function promptYesNo(question: string): Promise<boolean> {
   const { createInterface } = await import('readline');
   return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer) => {
       rl.close();
       const normalized = answer.trim().toLowerCase();

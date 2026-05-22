@@ -13,7 +13,6 @@ import { registerRoostInspectCommands } from './commands/roost';
 import { registerRollbackCommand } from './commands/rollback';
 import { registerRoostDeployCommand } from './commands/roost-deploy';
 import { registerDeployCommands } from './commands/deploy';
-import { registerKeyCommands } from './commands/key';
 import { registerListenCommand } from './commands/listen';
 import { registerTriggerCommand } from './commands/trigger';
 import { registerSiteCommands } from './commands/site';
@@ -81,7 +80,6 @@ export function buildProgram(): Command {
   // top-level verbs (kept top-level for muscle memory; may move under
   // nouns in a future restructure)
   registerRollbackCommand(program);
-  registerKeyCommands(program);
   registerListenCommand(program);
   registerTriggerCommand(program);
 

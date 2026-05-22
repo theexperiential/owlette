@@ -43,6 +43,7 @@ beforeEach(() => {
   process.env.OWLETTE_TOKEN = 'owk_live_testtoken';
   process.env.OWLETTE_API_URL = 'https://dev.test';
   process.env.OWLETTE_PROFILE = 'default';
+  process.exitCode = 0;
   jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
   jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
 });
@@ -51,6 +52,7 @@ afterEach(() => {
   delete process.env.OWLETTE_TOKEN;
   delete process.env.OWLETTE_API_URL;
   delete process.env.OWLETTE_PROFILE;
+  process.exitCode = 0;
   jest.restoreAllMocks();
 });
 
@@ -110,6 +112,38 @@ describe('owlette roost deploy (dry-run)', () => {
     );
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers['Idempotency-Key']).toMatch(/^cli-deploy-/);
+  });
+
+  it('does not surface idempotency retry guidance for dry-run unconfirmed failures', async () => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(async () => {
+      throw new Error('socket timeout');
+    });
+    const stderr: string[] = [];
+    (process.stderr.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
+      stderr.push(chunk);
+      return true;
+    });
+
+    const program = buildProgram();
+    await program.parseAsync(
+      [
+        'roost',
+        'deploy',
+        'rst_testrs01234',
+        '--site',
+        'site-1',
+        '--dry-run',
+        '--idempotency-key',
+        'dry-run-key',
+      ],
+      { from: 'user' },
+    );
+
+    const err = stderr.join('');
+    expect(err).toContain('POST /api/roosts/rst_testrs01234/deploy failed');
+    expect(err).not.toContain('Idempotency-Key:');
+    expect(err).not.toContain('retry safely with:');
+    expect(process.exitCode).toBe(1);
   });
 
   it('respects --version, --machines and --at overrides', async () => {

@@ -195,6 +195,11 @@ export function registerListenCommand(program: Command): void {
         }
       }
 
+      if (!stopping && process.exitCode !== 1) {
+        process.stderr.write('owlette: stream closed by server\n');
+        process.exitCode = 1;
+      }
+
       process.stderr.write(
         `owlette: listener stopped. ` +
           `connected=${counts.connected} events=${counts.event} ` +

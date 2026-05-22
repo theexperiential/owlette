@@ -17,7 +17,8 @@
 
 import { Command } from 'commander';
 import { loadConfig } from '../config';
-import { humanBytes, isJson, renderTable, truncate } from '../lib/output';
+import { fetchWithTimeout } from '../lib/http';
+import { humanBytes, isJson, renderTable, truncate, usageFatal } from '../lib/output';
 
 interface RoostListItem {
   roostId: string;
@@ -146,7 +147,7 @@ export function registerRoostInspectCommands(program: Command): void {
         if (cursor) qs.set('cursor', cursor);
         if (opts.includeDeleted) qs.set('includeDeleted', 'true');
 
-        const res = await fetch(`${apiUrl}/api/roosts?${qs}`, {
+        const res = await fetchWithTimeout(`${apiUrl}/api/roosts?${qs}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = (await res.json().catch(() => ({}))) as {
@@ -199,7 +200,7 @@ export function registerRoostInspectCommands(program: Command): void {
       if (!token) return;
 
       const qs = new URLSearchParams({ siteId: opts.site });
-      const res = await fetch(`${apiUrl}/api/roosts/${encodeURIComponent(roostId)}?${qs}`, {
+      const res = await fetchWithTimeout(`${apiUrl}/api/roosts/${encodeURIComponent(roostId)}?${qs}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = (await res.json().catch(() => ({}))) as RoostDetail & { detail?: string };
@@ -235,7 +236,7 @@ export function registerRoostInspectCommands(program: Command): void {
       let toRef = opts.version as string | undefined;
       if (!toRef) {
         const qs = new URLSearchParams({ siteId: opts.site });
-        const res = await fetch(`${apiUrl}/api/roosts/${encodeURIComponent(roostId)}?${qs}`, {
+        const res = await fetchWithTimeout(`${apiUrl}/api/roosts/${encodeURIComponent(roostId)}?${qs}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = (await res.json().catch(() => ({}))) as RoostDetail & { detail?: string };
@@ -247,13 +248,13 @@ export function registerRoostInspectCommands(program: Command): void {
         }
         toRef = data.currentVersionId ?? undefined;
         if (!toRef) {
-          fatal('roost has no currentVersionId; pass --version <versionRef> explicitly');
+          usageFatal('roost has no currentVersionId; pass --version <versionRef> explicitly');
           return;
         }
       }
 
       const qs = new URLSearchParams({ siteId: opts.site, against: opts.against });
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${apiUrl}/api/roosts/${encodeURIComponent(roostId)}/versions/${encodeURIComponent(
           toRef,
         )}/diff?${qs}`,
@@ -297,7 +298,7 @@ export function registerRoostInspectCommands(program: Command): void {
         });
         if (cursor) qs.set('cursor', cursor);
 
-        const res = await fetch(
+        const res = await fetchWithTimeout(
           `${apiUrl}/api/roosts/${encodeURIComponent(roostId)}/versions?${qs}`,
           { headers: { Authorization: `Bearer ${token}` } },
         );

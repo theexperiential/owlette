@@ -22,6 +22,7 @@ import { Command } from 'commander';
 import { createHmac, randomUUID } from 'crypto';
 import { readFileSync } from 'fs';
 import { loadConfig } from '../config';
+import { fetchWithTimeout } from '../lib/http';
 
 const CANNED_PAYLOADS: Record<string, Record<string, unknown>> = {
   'version.published': {
@@ -339,7 +340,7 @@ async function fireServerProbe(opts: FireProbeOpts): Promise<void> {
   try {
     const probeUrl = new URL(`${opts.apiUrl}/api/webhooks/probe`);
     probeUrl.searchParams.set('siteId', opts.siteId);
-    const res = await fetch(probeUrl.toString(), {
+    const res = await fetchWithTimeout(probeUrl.toString(), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${opts.token}`,
@@ -365,7 +366,21 @@ async function fireServerProbe(opts: FireProbeOpts): Promise<void> {
     } else {
       process.stderr.write(`owlette: ← ${res.status} ${JSON.stringify(data)}\n`);
     }
-    if (!res.ok) process.exitCode = 1;
+    const deliveryStatus = typeof data.status === 'number' ? data.status : null;
+    const networkError = typeof data.networkError === 'string' ? data.networkError : null;
+    const deliveryFailed =
+      networkError !== null ||
+      deliveryStatus === null ||
+      deliveryStatus < 200 ||
+      deliveryStatus >= 300;
+    if (deliveryFailed && !opts.json) {
+      process.stderr.write(
+        `owlette: webhook probe delivery failed: ${
+          networkError ?? `receiver returned ${deliveryStatus ?? 'no status'}`
+        }\n`,
+      );
+    }
+    if (!res.ok || deliveryFailed) process.exitCode = 1;
   } catch (err) {
     process.stderr.write(`owlette: probe post failed: ${(err as Error).message}\n`);
     process.exitCode = 1;

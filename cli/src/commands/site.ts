@@ -13,6 +13,7 @@
 
 import { Command } from 'commander';
 import { loadConfig } from '../config';
+import { fetchWithTimeout } from '../lib/http';
 import { isJson, renderTable } from '../lib/output';
 
 interface SiteListItem {
@@ -61,7 +62,7 @@ export function registerSiteCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(`${apiUrl}/api/sites`, {
+      const res = await fetchWithTimeout(`${apiUrl}/api/sites`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -104,7 +105,7 @@ export function registerSiteCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(`${apiUrl}/api/sites/${encodeURIComponent(siteId)}`, {
+      const res = await fetchWithTimeout(`${apiUrl}/api/sites/${encodeURIComponent(siteId)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = (await res.json().catch(() => ({}))) as SiteDetail & { detail?: string };

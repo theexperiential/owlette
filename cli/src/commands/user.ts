@@ -24,7 +24,13 @@
 import { Command } from 'commander';
 import { randomUUID } from 'crypto';
 import { loadConfig } from '../config';
-import { isJson, renderTable } from '../lib/output';
+import { fetchWithTimeout } from '../lib/http';
+import {
+  isJson,
+  renderTable,
+  unconfirmedMutationFatal,
+  usageFatal,
+} from '../lib/output';
 
 interface UserListItem {
   uid: string;
@@ -98,7 +104,7 @@ export function registerUserCommands(program: Command): void {
       if (opts.limit !== undefined) {
         const n = Number(opts.limit);
         if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1 || n > 100) {
-          fatal('--limit must be an integer between 1 and 100');
+          usageFatal('--limit must be an integer between 1 and 100');
           return;
         }
         params.set('page_size', String(n));
@@ -109,7 +115,7 @@ export function registerUserCommands(program: Command): void {
         ? `${apiUrl}/api/users?${params.toString()}`
         : `${apiUrl}/api/users`;
 
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = (await res.json().catch(() => ({}))) as ListResponse;
@@ -162,7 +168,7 @@ export function registerUserCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(`${apiUrl}/api/users/${encodeURIComponent(uid)}`, {
+      const res = await fetchWithTimeout(`${apiUrl}/api/users/${encodeURIComponent(uid)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = (await res.json().catch(() => ({}))) as UserDetail & {
@@ -199,24 +205,35 @@ export function registerUserCommands(program: Command): void {
       if (!token) return;
 
       if (!PROMOTE_ROLES.has(opts.role)) {
-        fatal(`--role must be one of: ${[...PROMOTE_ROLES].join(', ')}`);
+        usageFatal(`--role must be one of: ${[...PROMOTE_ROLES].join(', ')}`);
         return;
       }
 
-      const res = await fetch(
-        `${apiUrl}/api/users/${encodeURIComponent(uid)}/promote`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'Idempotency-Key': opts.idempotencyKey
-              ? String(opts.idempotencyKey)
-              : `cli-user-promote-${randomUUID()}`,
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-user-promote-${randomUUID()}`;
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(
+          `${apiUrl}/api/users/${encodeURIComponent(uid)}/promote`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'Idempotency-Key': idempotencyKey,
+            },
+            body: JSON.stringify({ role: opts.role }),
           },
-          body: JSON.stringify({ role: opts.role }),
-        },
-      );
+        );
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/users/${uid}/promote`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as {
         uid?: string;
         role?: string;
@@ -257,20 +274,31 @@ export function registerUserCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(
-        `${apiUrl}/api/users/${encodeURIComponent(uid)}/demote`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'Idempotency-Key': opts.idempotencyKey
-              ? String(opts.idempotencyKey)
-              : `cli-user-demote-${randomUUID()}`,
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-user-demote-${randomUUID()}`;
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(
+          `${apiUrl}/api/users/${encodeURIComponent(uid)}/demote`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'Idempotency-Key': idempotencyKey,
+            },
+            body: JSON.stringify({}),
           },
-          body: JSON.stringify({}),
-        },
-      );
+        );
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/users/${uid}/demote`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as {
         uid?: string;
         role?: string;
@@ -323,24 +351,35 @@ export function registerUserCommands(program: Command): void {
 
       const siteIds = parseCsv(opts.sites);
       if (siteIds.length === 0) {
-        fatal('--sites must contain at least one site id');
+        usageFatal('--sites must contain at least one site id');
         return;
       }
 
-      const res = await fetch(
-        `${apiUrl}/api/users/${encodeURIComponent(uid)}/assign-sites`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'Idempotency-Key': opts.idempotencyKey
-              ? String(opts.idempotencyKey)
-              : `cli-user-assign-sites-${randomUUID()}`,
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-user-assign-sites-${randomUUID()}`;
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(
+          `${apiUrl}/api/users/${encodeURIComponent(uid)}/assign-sites`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'Idempotency-Key': idempotencyKey,
+            },
+            body: JSON.stringify({ siteIds }),
           },
-          body: JSON.stringify({ siteIds }),
-        },
-      );
+        );
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/users/${uid}/assign-sites`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as {
         uid?: string;
         assignedSiteIds?: string[];
@@ -389,24 +428,35 @@ export function registerUserCommands(program: Command): void {
 
       const siteIds = parseCsv(opts.sites);
       if (siteIds.length === 0) {
-        fatal('--sites must contain at least one site id');
+        usageFatal('--sites must contain at least one site id');
         return;
       }
 
-      const res = await fetch(
-        `${apiUrl}/api/users/${encodeURIComponent(uid)}/remove-sites`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'Idempotency-Key': opts.idempotencyKey
-              ? String(opts.idempotencyKey)
-              : `cli-user-remove-sites-${randomUUID()}`,
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-user-remove-sites-${randomUUID()}`;
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(
+          `${apiUrl}/api/users/${encodeURIComponent(uid)}/remove-sites`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'Idempotency-Key': idempotencyKey,
+            },
+            body: JSON.stringify({ siteIds }),
           },
-          body: JSON.stringify({ siteIds }),
-        },
-      );
+        );
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/users/${uid}/remove-sites`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as {
         uid?: string;
         removedSiteIds?: string[];
@@ -453,7 +503,7 @@ export function registerUserCommands(program: Command): void {
 
       if (!opts.yes) {
         if (!process.stdin.isTTY) {
-          fatal(
+          usageFatal(
             'stdin is not a tty and --yes was not supplied; refusing to delete silently',
           );
           return;
@@ -473,17 +523,28 @@ export function registerUserCommands(program: Command): void {
         ? `${apiUrl}/api/users/${encodeURIComponent(uid)}?${params.toString()}`
         : `${apiUrl}/api/users/${encodeURIComponent(uid)}`;
 
-      const res = await fetch(url, {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': opts.idempotencyKey
-            ? String(opts.idempotencyKey)
-            : `cli-user-delete-${randomUUID()}`,
-        },
-        body: JSON.stringify({}),
-      });
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-user-delete-${randomUUID()}`;
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify({}),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `DELETE /api/users/${uid}`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as {
         uid?: string;
         alreadyDeleted?: boolean;
@@ -591,7 +652,7 @@ function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json
 async function promptYesNo(question: string): Promise<boolean> {
   const { createInterface } = await import('readline');
   return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer) => {
       rl.close();
       const normalized = answer.trim().toLowerCase();

@@ -67,6 +67,7 @@ beforeEach(() => {
   process.env.OWLETTE_TOKEN = 'owk_live_testtoken';
   process.env.OWLETTE_API_URL = 'https://dev.test';
   process.env.OWLETTE_PROFILE = 'default';
+  process.exitCode = 0;
   jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
   jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
   // Ensure `process delete` without --yes on a non-tty bails (we test
@@ -77,6 +78,7 @@ afterEach(() => {
   delete process.env.OWLETTE_TOKEN;
   delete process.env.OWLETTE_API_URL;
   delete process.env.OWLETTE_PROFILE;
+  process.exitCode = 0;
   jest.restoreAllMocks();
 });
 
@@ -274,8 +276,7 @@ describe('owlette process create', () => {
     );
 
     expect(calls).toHaveLength(0);
-    expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
+    expect(process.exitCode).toBe(2);
   });
 });
 
@@ -324,8 +325,7 @@ describe('owlette process update', () => {
     );
 
     expect(calls).toHaveLength(0);
-    expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
+    expect(process.exitCode).toBe(2);
   });
 });
 
@@ -372,8 +372,7 @@ describe('owlette process delete', () => {
     );
 
     expect(calls).toHaveLength(0);
-    expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
+    expect(process.exitCode).toBe(2);
   });
 });
 
@@ -427,6 +426,42 @@ describe.each([
     expect(k1).not.toBe(k2);
     expect(k1).toMatch(new RegExp(`^cli-process-${verb}-`));
     expect(k2).toMatch(new RegExp(`^cli-process-${verb}-`));
+  });
+
+  it(`surfaces the idempotency key and append-only retry guidance when ${verb} is unconfirmed`, async () => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(async () => {
+      throw new Error('socket hang up');
+    });
+    const stderr: string[] = [];
+    (process.stderr.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
+      stderr.push(chunk);
+      return true;
+    });
+    const program = buildProgram();
+
+    await program.parseAsync(
+      [
+        'process',
+        verb,
+        'proc_abc',
+        '--site',
+        'site-1',
+        '--machine',
+        'm-1',
+        '--idempotency-key',
+        'pinned-process-key',
+      ],
+      { from: 'user' },
+    );
+
+    const errOut = stderr.join('');
+    expect(errOut).toContain('did not return a confirmed response');
+    expect(errOut).toContain('Idempotency-Key: pinned-process-key');
+    expect(errOut).toContain(
+      're-run your original command with `--idempotency-key pinned-process-key` appended',
+    );
+    expect(errOut).not.toContain(`owlette process ${verb} proc_abc`);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -518,8 +553,7 @@ describe('owlette process schedule', () => {
     );
 
     expect(calls).toHaveLength(0);
-    expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
+    expect(process.exitCode).toBe(2);
   });
 
   it('rejects an invalid --mode value before issuing http', async () => {
@@ -542,8 +576,7 @@ describe('owlette process schedule', () => {
     );
 
     expect(calls).toHaveLength(0);
-    expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
+    expect(process.exitCode).toBe(2);
   });
 
   it('rejects --blocks that is not valid json before issuing http', async () => {
@@ -568,8 +601,7 @@ describe('owlette process schedule', () => {
     );
 
     expect(calls).toHaveLength(0);
-    expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
+    expect(process.exitCode).toBe(2);
   });
 });
 

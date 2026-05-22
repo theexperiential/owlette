@@ -237,6 +237,43 @@ describe('owlette deploy create', () => {
       { from: 'user' },
     );
     expect(calls).toHaveLength(0);
+    expect(process.exitCode).toBe(2);
+  });
+
+  it('surfaces the idempotency key and retry command on unconfirmed failure', async () => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(async () => {
+      throw new Error('request timed out after 30000ms');
+    });
+    const stderr: string[] = [];
+    (process.stderr.write as unknown as jest.Mock).mockImplementation((c: string | Uint8Array) => {
+      stderr.push(typeof c === 'string' ? c : Buffer.from(c).toString('utf-8'));
+      return true;
+    });
+    const program = buildProgram();
+    await program.parseAsync(
+      [
+        'deploy',
+        'create',
+        '--site',
+        'site-1',
+        '--name',
+        'r',
+        '--installer-url',
+        'https://cdn/x.exe',
+        '--installer-name',
+        'x.exe',
+        '--silent-flags',
+        '/S',
+        '--machines',
+        'm-1',
+      ],
+      { from: 'user' },
+    );
+    const out = stderr.join('');
+    expect(out).toContain('did not return a confirmed response');
+    expect(out).toContain('Idempotency-Key: cli-deploy-create-');
+    expect(out).toContain('re-run your original command with `--idempotency-key cli-deploy-create-');
+    expect(out).not.toContain('owlette deploy create');
     expect(process.exitCode).toBe(1);
   });
 });
@@ -463,7 +500,7 @@ describe('owlette deploy uninstall', () => {
         from: 'user',
       });
       expect(calls).toHaveLength(0);
-      expect(process.exitCode).toBe(1);
+      expect(process.exitCode).toBe(2);
     } finally {
       if (isTTY) Object.defineProperty(process.stdin, 'isTTY', isTTY);
     }
@@ -504,7 +541,7 @@ describe('owlette deploy delete', () => {
         from: 'user',
       });
       expect(calls).toHaveLength(0);
-      expect(process.exitCode).toBe(1);
+      expect(process.exitCode).toBe(2);
     } finally {
       if (isTTY) Object.defineProperty(process.stdin, 'isTTY', isTTY);
     }

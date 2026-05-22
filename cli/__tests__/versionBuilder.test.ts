@@ -4,6 +4,7 @@ import {
   buildVersion,
   summariseVersion,
   uniqueHashes,
+  versionIdForVersion,
 } from '../src/lib/versionBuilder';
 
 const FILES = [
@@ -24,7 +25,7 @@ describe('buildVersion', () => {
     expect(m.files.map((f) => f.path)).toEqual(['a/first.bin', 'middle.bin', 'z/last.bin']);
   });
 
-  it('config carries producer + cliVersion + createdAt', () => {
+  it('config carries deterministic producer metadata', () => {
     const m = buildVersion({
       files: FILES,
       cliVersion: '1.2.3',
@@ -35,7 +36,13 @@ describe('buildVersion', () => {
     expect(m.config.cliVersion).toBe('1.2.3');
     expect(m.config.hostname).toBe('my-laptop');
     expect(m.config.platform).toBe('darwin');
-    expect(typeof m.config.createdAt).toBe('string');
+    expect(m.config.createdAt).toBeUndefined();
+  });
+
+  it('builds identical versionIds for identical input', () => {
+    const a = buildVersion({ files: FILES, cliVersion: '0.0.1' });
+    const b = buildVersion({ files: FILES, cliVersion: '0.0.1' });
+    expect(versionIdForVersion(a)).toBe(versionIdForVersion(b));
   });
 
   it('merges extra config fields into config', () => {

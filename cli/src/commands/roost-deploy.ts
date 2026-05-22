@@ -25,6 +25,11 @@
 import { Command } from 'commander';
 import { randomUUID } from 'crypto';
 import { loadConfig } from '../config';
+import { fetchWithTimeout } from '../lib/http';
+import {
+  unconfirmedMutationFatal,
+  usageFatal,
+} from '../lib/output';
 
 interface DeployResponse {
   rolloutId: string;
@@ -92,7 +97,7 @@ export function registerRoostDeployCommand(program: Command): void {
           .map((m: string) => m.trim())
           .filter(Boolean);
         if (machines.length === 0) {
-          fatal('--machines must contain at least one non-empty id when provided');
+          usageFatal('--machines must contain at least one non-empty id when provided');
           return;
         }
         body.machines = machines;
@@ -101,7 +106,7 @@ export function registerRoostDeployCommand(program: Command): void {
       if (opts.at) {
         const parsed = Date.parse(opts.at);
         if (Number.isNaN(parsed)) {
-          fatal(`--at '${opts.at}' is not a valid iso8601 timestamp`);
+          usageFatal(`--at '${opts.at}' is not a valid iso8601 timestamp`);
           return;
         }
         body.scheduleAt = new Date(parsed).toISOString();
@@ -113,23 +118,42 @@ export function registerRoostDeployCommand(program: Command): void {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       };
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : opts.dryRun
+          ? null
+          : `cli-deploy-${randomUUID()}`;
       if (opts.idempotencyKey) {
-        headers['Idempotency-Key'] = String(opts.idempotencyKey);
-      } else if (!opts.dryRun) {
+        headers['Idempotency-Key'] = idempotencyKey!;
+      } else if (idempotencyKey) {
         // Auto-key non-dry-run deploys so an accidental retry (network
         // blip, ctrl-c → rerun) doesn't create a second rollout. Dry
         // runs don't mutate anything, so no caching benefit there.
-        headers['Idempotency-Key'] = `cli-deploy-${randomUUID()}`;
+        headers['Idempotency-Key'] = idempotencyKey;
       }
 
-      const res = await fetch(
-        `${apiUrl}/api/roosts/${encodeURIComponent(roostId)}/deploy`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(body),
-        },
-      );
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(
+          `${apiUrl}/api/roosts/${encodeURIComponent(roostId)}/deploy`,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+          },
+        );
+      } catch (err) {
+        if (idempotencyKey && !opts.dryRun) {
+          unconfirmedMutationFatal({
+            operation: `POST /api/roosts/${roostId}/deploy`,
+            idempotencyKey,
+            cause: err,
+          });
+        } else {
+          fatal(`POST /api/roosts/${roostId}/deploy failed: ${(err as Error).message}`);
+        }
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as DeployResponse;
 
       if (!res.ok) {
