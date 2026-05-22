@@ -1,29 +1,24 @@
-name: cli publish
+name: node sdk publish
 
-# Publish @owlette/cli to npm from a release tag (`cli-vX.Y.Z` or
-# `cli-vX.Y.Z-prerelease`) or via manual dispatch.
+# Publish @owlette/sdk (Node SDK) to npm from a release tag
+# (`node-sdk-vX.Y.Z` or `node-sdk-vX.Y.Z-prerelease`) or via manual dispatch.
 #
 # Authentication uses npm OIDC trusted publishing — there is no NPM_TOKEN
-# secret. A trusted publisher for @owlette/cli that points at this workflow
+# secret. A trusted publisher for @owlette/sdk that points at this workflow
 # must be configured under the package settings on npmjs.com first. npm
 # requires the package to already exist before a trusted publisher can be
-# attached, so the very first publish of the package must be bootstrapped
-# once with a token / local `npm publish` (see docs/api/distribution.md).
-# Every release after that goes through this workflow tokenlessly, with
-# provenance attestations generated automatically.
+# attached, so the very first publish must be bootstrapped once with a
+# token / local `npm publish` (see docs/api/distribution.md). Every release
+# after that goes through this workflow tokenlessly, with provenance.
 #
-# Prerelease versions (e.g. 1.0.0-rc.0) publish under the matching dist-tag
-# (`rc`); stable versions publish under `latest`.
-#
-# Manual dispatch defaults to dry-run so the package contents can be
-# validated before a real publish. Tag pushes always publish after the
-# package version is verified against the tag.
+# Prerelease versions publish under the matching dist-tag (`rc`); stable
+# versions publish under `latest`. Manual dispatch defaults to dry-run.
 
 on:
   push:
     tags:
-      - 'cli-v[0-9]+.[0-9]+.[0-9]+'
-      - 'cli-v[0-9]+.[0-9]+.[0-9]+-*'
+      - 'node-sdk-v[0-9]+.[0-9]+.[0-9]+'
+      - 'node-sdk-v[0-9]+.[0-9]+.[0-9]+-*'
   workflow_dispatch:
     inputs:
       tag:
@@ -41,7 +36,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: cli-publish
+  group: node-sdk-publish
   cancel-in-progress: false
 
 jobs:
@@ -64,15 +59,15 @@ jobs:
         run: npm install -g npm@latest
 
       - name: Install dependencies
-        working-directory: cli
+        working-directory: sdks/node
         run: npm ci
 
       - name: Build
-        working-directory: cli
+        working-directory: sdks/node
         run: npm run build
 
       - name: Test
-        working-directory: cli
+        working-directory: sdks/node
         run: npm test
 
       - name: Verify tag matches package version
@@ -97,26 +92,26 @@ jobs:
               echo "no tag supplied on workflow_dispatch dry run; skipping tag/version check"
               exit 0
             fi
-            echo "refusing to publish: real publishes require a tag that matches cli/package.json"
+            echo "refusing to publish: real publishes require a tag that matches sdks/node/package.json"
             exit 1
           fi
 
-          if [[ ! "$tag" =~ ^cli-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
-            echo "refusing to publish: tag '$tag' must match cli-vX.Y.Z or cli-vX.Y.Z-prerelease"
+          if [[ ! "$tag" =~ ^node-sdk-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "refusing to publish: tag '$tag' must match node-sdk-vX.Y.Z or node-sdk-vX.Y.Z-prerelease"
             exit 1
           fi
 
-          expected="${tag#cli-v}"
-          actual="$(node -p "require('./cli/package.json').version")"
+          expected="${tag#node-sdk-v}"
+          actual="$(node -p "require('./sdks/node/package.json').version")"
           if [ "$actual" != "$expected" ]; then
-            echo "refusing to publish: cli/package.json version '$actual' does not match tag '$tag' (expected '$expected')"
+            echo "refusing to publish: sdks/node/package.json version '$actual' does not match tag '$tag' (expected '$expected')"
             exit 1
           fi
 
           echo "package version $actual matches $tag"
 
       - name: Publish
-        working-directory: cli
+        working-directory: sdks/node
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -131,7 +126,7 @@ jobs:
           else
             dist_tag="latest"
           fi
-          echo "publishing @owlette/cli@$version under dist-tag '$dist_tag'"
+          echo "publishing @owlette/sdk@$version under dist-tag '$dist_tag'"
 
           dry_run_flag=""
           if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_DRY_RUN" = "true" ]; then
