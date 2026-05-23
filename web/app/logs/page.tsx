@@ -819,7 +819,7 @@ export default function LogsPage() {
                     onClick={toggleAllExpanded}
                     aria-label={allExpanded ? 'collapse all logs' : 'expand all logs'}
                     data-testid="logs-expand-all"
-                    className="hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    className="transition-colors cursor-pointer"
                     size="icon"
                   >
                     {allExpanded ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />}
@@ -844,7 +844,7 @@ export default function LogsPage() {
                 aria-label="search logs"
                 aria-hidden={searchActive}
                 tabIndex={searchActive ? -1 : 0}
-                className={`gap-2 hover:bg-muted hover:text-foreground transition-opacity duration-200 cursor-pointer ${searchActive ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+                className={`gap-2 transition-all duration-200 cursor-pointer ${searchActive ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
               >
                 <Search className="w-4 h-4" />
                 search
@@ -889,7 +889,7 @@ export default function LogsPage() {
               variant="outline"
               onClick={() => setShowFilters(!showFilters)}
               aria-expanded={showFilters}
-              className="gap-2 hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+              className="gap-2 transition-colors cursor-pointer"
             >
               <Filter className="w-4 h-4" />
               {showFilters ? 'hide filters' : 'show filters'}
@@ -898,7 +898,7 @@ export default function LogsPage() {
               onClick={() => setShowClearDialog(true)}
               disabled={isClearing || logs.length === 0}
               variant="outline"
-              className="gap-2 border-red-400/60 text-red-400 hover:bg-red-950/50 hover:text-red-300 transition-colors cursor-pointer"
+              className="gap-2 border-red-400/60 text-red-400 hover:bg-red-950/50 hover:text-red-300 dark:hover:bg-red-950/50 dark:hover:text-red-300 transition-colors cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />
               {isClearing ? 'clearing...' : 'clear logs'}
