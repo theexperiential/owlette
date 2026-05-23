@@ -888,6 +888,7 @@ export default function LogsPage() {
             <Button
               variant="outline"
               onClick={() => setShowFilters(!showFilters)}
+              aria-expanded={showFilters}
               className="gap-2 hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
             >
               <Filter className="w-4 h-4" />
@@ -905,8 +906,10 @@ export default function LogsPage() {
           </div>
         </div>
 
-        {/* Filters */}
-        {showFilters && (
+        {/* Filters — animated expand/collapse via Radix Collapsible, reusing the
+            shared collapsible-down/up keyframes in globals.css */}
+        <Collapsible open={showFilters} onOpenChange={setShowFilters}>
+          <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
           <Card className="p-4 bg-card border-border mb-6">
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div>
@@ -1010,7 +1013,8 @@ export default function LogsPage() {
               </div>
             )}
           </Card>
-        )}
+          </CollapsibleContent>
+        </Collapsible>
 
         {/* Search scope notice — only when the matching scope exceeds the cap */}
         {isSearching && searchPoolTruncated && (
