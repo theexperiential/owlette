@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
@@ -10,7 +10,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { collection, query, orderBy, limit, getDocs, where, startAfter, Query, DocumentData, Timestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
-import { ChevronDown, ChevronsUpDown, ChevronsDownUp, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle, Camera } from 'lucide-react';
+import { ChevronDown, ChevronsUpDown, ChevronsDownUp, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle, Camera, Search } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
@@ -152,6 +152,65 @@ const formatAction = (action: string) => {
     .join(' ');
 };
 
+// When a search is active we load the full set of logs matching the current
+// server-side filters (not just the visible 50) so search covers the whole
+// scope. Bounded so a busy site can't trigger an unbounded read.
+const SEARCH_POOL_CAP = 2000;
+
+// Build the Firestore query for a site's logs honouring the active filters.
+// When non-date filters (action/machine/level) are active we can't combine them
+// with orderBy('timestamp') without composite indexes, so we drop the orderBy
+// and re-sort + date-filter client-side afterwards (see applyClientScope).
+function buildLogsQuery(
+  logsRef: Query,
+  filters: {
+    action: string;
+    machine: string;
+    level: string;
+    datePreset: DatePreset;
+    dateFrom: string;
+    dateTo: string;
+  },
+  max: number
+): { q: Query; hasNonDateFilters: boolean; dateRange: { from: Date | null; to: Date | null } } {
+  const dateRange = getDateRange(filters.datePreset, filters.dateFrom, filters.dateTo);
+  const hasNonDateFilters =
+    filters.action !== 'all' || filters.machine !== 'all' || filters.level !== 'all';
+
+  let q: Query = hasNonDateFilters
+    ? query(logsRef, limit(max))
+    : query(logsRef, orderBy('timestamp', 'desc'), limit(max));
+
+  if (filters.action !== 'all') q = query(q, where('action', '==', filters.action));
+  if (filters.machine !== 'all') q = query(q, where('machineId', '==', filters.machine));
+  if (filters.level !== 'all') q = query(q, where('level', '==', filters.level));
+  if (!hasNonDateFilters) {
+    if (dateRange.from) q = query(q, where('timestamp', '>=', Timestamp.fromDate(dateRange.from)));
+    if (dateRange.to) q = query(q, where('timestamp', '<=', Timestamp.fromDate(dateRange.to)));
+  }
+  return { q, hasNonDateFilters, dateRange };
+}
+
+// Mirror, on the client, the ordering + date window Firestore couldn't apply
+// server-side when non-date filters forced us to drop the orderBy.
+function applyClientScope(
+  docs: LogEvent[],
+  hasNonDateFilters: boolean,
+  dateRange: { from: Date | null; to: Date | null }
+): LogEvent[] {
+  if (!hasNonDateFilters) return docs;
+  let out = [...docs].sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis());
+  if (dateRange.from || dateRange.to) {
+    out = out.filter((log) => {
+      const ts = log.timestamp.toMillis();
+      if (dateRange.from && ts < dateRange.from.getTime()) return false;
+      if (dateRange.to && ts > dateRange.to.getTime()) return false;
+      return true;
+    });
+  }
+  return out;
+}
+
 // Extracted + memoized so toggling one row's expanded state doesn't re-render
 // every other row in the list. Without this, a click burns ~100–300ms on a
 // full page of logs before Radix can flip `data-state` and the animation can
@@ -219,7 +278,7 @@ const LogRow = React.memo(function LogRow({
                     <TooltipTrigger asChild>
                       <span className="text-muted-foreground truncate min-w-0 cursor-help">{log.details}</span>
                     </TooltipTrigger>
-                    <TooltipContent><p className="max-w-xs">{log.details}</p></TooltipContent>
+                    <TooltipContent><p className="max-w-sm whitespace-pre-wrap break-words">{log.details}</p></TooltipContent>
                   </Tooltip>
                 </>
               )}
@@ -304,6 +363,22 @@ export default function LogsPage() {
   const [filterDateTo, setFilterDateTo] = useState<string>('');
   const [showFilters, setShowFilters] = useState(false);
 
+  // Free-text search. `searchQuery` mirrors the input; `searchTerm` is the
+  // debounced, normalised value the filter actually runs against. `searchActive`
+  // toggles the collapsed button ↔ expanded field.
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [searchActive, setSearchActive] = useState(false);
+  const [searchCollapsedW, setSearchCollapsedW] = useState<number>();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchWrapperRef = useRef<HTMLDivElement>(null);
+  const searchBtnRef = useRef<HTMLButtonElement>(null);
+  // Full filtered scope loaded on demand while searching (see effect below).
+  const [searchPool, setSearchPool] = useState<LogEvent[] | null>(null);
+  const [searchPoolLoading, setSearchPoolLoading] = useState(false);
+  const [searchPoolTruncated, setSearchPoolTruncated] = useState(false);
+  const isSearching = searchTerm.length > 0;
+
   // Clear logs confirmation dialog
   const [showClearDialog, setShowClearDialog] = useState(false);
   const [screenshotModalUrl, setScreenshotModalUrl] = useState<string | null>(null);
@@ -335,15 +410,67 @@ export default function LogsPage() {
     });
   }, []);
 
-  const allExpanded = logs.length > 0 && expandedLogIds.size === logs.length;
+  // Debounce the search input so typing doesn't re-filter/re-render on every
+  // keystroke once a large batch is loaded.
+  useEffect(() => {
+    const id = setTimeout(() => setSearchTerm(searchQuery.trim().toLowerCase()), 150);
+    return () => clearTimeout(id);
+  }, [searchQuery]);
+
+  // Focus the field as it expands.
+  useEffect(() => {
+    if (searchActive) searchInputRef.current?.focus();
+  }, [searchActive]);
+
+  // Measure the collapsed button's natural width so expand/collapse can animate
+  // between real pixel widths — CSS can't transition to/from `auto`. Measured
+  // after paint while the wrapper is hugging content, so the value is exact and
+  // there's no layout shift.
+  useEffect(() => {
+    if (searchBtnRef.current) setSearchCollapsedW(searchBtnRef.current.offsetWidth);
+  }, []);
+
+  // Collapse back to a button on outside click — but only when empty, so an
+  // active search is never silently hidden (e.g. clicking a log row to expand
+  // it while filtering).
+  useEffect(() => {
+    if (!searchActive) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (searchWrapperRef.current?.contains(e.target as Node)) return;
+      if (!searchQuery) setSearchActive(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [searchActive, searchQuery]);
+
+  // Client-side substring filter. Firestore has no full-text query, so we match
+  // in JS against the search pool (the full set matching the active server-side
+  // filters, loaded on demand) — falling back to the on-screen logs until it
+  // arrives. Matches the formatted action label, raw action, machine, process,
+  // level, and details.
+  const filteredLogs = useMemo(() => {
+    if (!searchTerm) return logs;
+    const source = searchPool ?? logs;
+    return source.filter(log =>
+      formatAction(log.action).toLowerCase().includes(searchTerm) ||
+      log.action.toLowerCase().includes(searchTerm) ||
+      log.machineName?.toLowerCase().includes(searchTerm) ||
+      log.machineId?.toLowerCase().includes(searchTerm) ||
+      log.processName?.toLowerCase().includes(searchTerm) ||
+      log.details?.toLowerCase().includes(searchTerm) ||
+      log.level.toLowerCase().includes(searchTerm)
+    );
+  }, [logs, searchPool, searchTerm]);
+
+  const allExpanded = filteredLogs.length > 0 && filteredLogs.every(l => expandedLogIds.has(l.id));
 
   const toggleAllExpanded = useCallback(() => {
     if (allExpanded) {
       setExpandedLogIds(new Set());
     } else {
-      setExpandedLogIds(new Set(logs.map(l => l.id)));
+      setExpandedLogIds(new Set(filteredLogs.map(l => l.id)));
     }
-  }, [allExpanded, logs]);
+  }, [allExpanded, filteredLogs]);
 
   // Redirect if not logged in
   useEffect(() => {
@@ -376,66 +503,20 @@ export default function LogsPage() {
     setLogsLoading(true);
     setExpandedLogIds(new Set());
 
-    // Compute date range from preset
-    const dateRange = getDateRange(filterDatePreset, filterDateFrom, filterDateTo);
-
-    // Check if any non-date filters are active (date filters use orderBy-compatible where clauses)
-    const hasNonDateFilters = filterAction !== 'all' || filterMachine !== 'all' || filterLevel !== 'all';
-
-    // Build query with filters
     const logsRef = collection(db, 'sites', currentSiteId, 'logs');
-    let q: Query;
-
-    // Always use orderBy('timestamp', 'desc') — date range filters are compatible with it.
-    // Only skip orderBy when non-date filters are active without a composite index.
-    if (hasNonDateFilters) {
-      q = query(logsRef, limit(LOGS_PER_PAGE + 1));
-    } else {
-      q = query(logsRef, orderBy('timestamp', 'desc'), limit(LOGS_PER_PAGE + 1));
-    }
-
-    // Apply filters
-    if (filterAction !== 'all') {
-      q = query(q, where('action', '==', filterAction));
-    }
-    if (filterMachine !== 'all') {
-      q = query(q, where('machineId', '==', filterMachine));
-    }
-    if (filterLevel !== 'all') {
-      q = query(q, where('level', '==', filterLevel));
-    }
-    // Date range filters — applied client-side when non-date filters are active (no composite index),
-    // or via Firestore where clauses when only date filters are active
-    if (!hasNonDateFilters) {
-      if (dateRange.from) {
-        q = query(q, where('timestamp', '>=', Timestamp.fromDate(dateRange.from)));
-      }
-      if (dateRange.to) {
-        q = query(q, where('timestamp', '<=', Timestamp.fromDate(dateRange.to)));
-      }
-    }
+    const { q, hasNonDateFilters, dateRange } = buildLogsQuery(
+      logsRef,
+      { action: filterAction, machine: filterMachine, level: filterLevel, datePreset: filterDatePreset, dateFrom: filterDateFrom, dateTo: filterDateTo },
+      LOGS_PER_PAGE + 1
+    );
 
     // Set up real-time listener
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      let docsData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as LogEvent));
-
-      // Sort client-side by timestamp if non-date filters are active
-      if (hasNonDateFilters) {
-        docsData.sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis());
-      }
-
-      // Apply date range client-side when non-date filters are active
-      if (hasNonDateFilters && (dateRange.from || dateRange.to)) {
-        docsData = docsData.filter(log => {
-          const ts = log.timestamp.toMillis();
-          if (dateRange.from && ts < dateRange.from.getTime()) return false;
-          if (dateRange.to && ts > dateRange.to.getTime()) return false;
-          return true;
-        });
-      }
+      const docsData = applyClientScope(
+        snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEvent)),
+        hasNonDateFilters,
+        dateRange
+      );
 
       // Check if there are more pages
       const hasMoreData = docsData.length > LOGS_PER_PAGE;
@@ -443,7 +524,6 @@ export default function LogsPage() {
 
       // Remove the extra document used for pagination check
       const displayLogs = hasMoreData ? docsData.slice(0, LOGS_PER_PAGE) : docsData;
-
       setLogs(displayLogs);
 
       // Set pagination marker for infinite scroll
@@ -460,6 +540,53 @@ export default function LogsPage() {
     // Cleanup listener on unmount or when dependencies change
     return () => unsubscribe();
   }, [currentSiteId, filterAction, filterMachine, filterLevel, filterDatePreset, filterDateFrom, filterDateTo]);
+
+  // While searching, load the full set of logs matching the current server-side
+  // filters (capped) so search spans the whole scope, not just the visible 50.
+  // Re-runs when the filters change, not on every keystroke (the text filters
+  // the pool client-side in `filteredLogs`).
+  useEffect(() => {
+    if (!isSearching || !currentSiteId || !db) {
+      setSearchPool(null);
+      setSearchPoolTruncated(false);
+      setSearchPoolLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSearchPoolLoading(true);
+
+    (async () => {
+      try {
+        const logsRef = collection(db, 'sites', currentSiteId, 'logs');
+        const { q, hasNonDateFilters, dateRange } = buildLogsQuery(
+          logsRef,
+          { action: filterAction, machine: filterMachine, level: filterLevel, datePreset: filterDatePreset, dateFrom: filterDateFrom, dateTo: filterDateTo },
+          SEARCH_POOL_CAP + 1
+        );
+        const snapshot = await getDocs(q);
+        if (cancelled) return;
+
+        const docsData = applyClientScope(
+          snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEvent)),
+          hasNonDateFilters,
+          dateRange
+        );
+        setSearchPoolTruncated(docsData.length > SEARCH_POOL_CAP);
+        setSearchPool(docsData.slice(0, SEARCH_POOL_CAP));
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Error loading search pool:', error);
+          setSearchPool(null);
+        }
+      } finally {
+        if (!cancelled) setSearchPoolLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // `isSearching` (not `searchTerm`) so we don't refetch on every keystroke.
+  }, [isSearching, currentSiteId, filterAction, filterMachine, filterLevel, filterDatePreset, filterDateFrom, filterDateTo]);
 
   // Infinite scroll — load more logs
   const loadMore = useCallback(async () => {
@@ -503,7 +630,9 @@ export default function LogsPage() {
   // IntersectionObserver for infinite scroll sentinel
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!sentinel) return;
+    // Pause infinite scroll while searching: a short filtered list keeps the
+    // sentinel on-screen, which would otherwise auto-load every remaining page.
+    if (!sentinel || searchTerm) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -516,7 +645,7 @@ export default function LogsPage() {
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, isFetchingMore, loadMore]);
+  }, [hasMore, isFetchingMore, loadMore, searchTerm]);
 
   const resetFilters = () => {
     setFilterAction('all');
@@ -571,8 +700,13 @@ export default function LogsPage() {
     }
   };
 
-  // Get unique machines for filter
+  // Get unique machines for filter — drawn from the full loaded set (not the
+  // search-filtered view) so the dropdown doesn't collapse as you type.
   const uniqueMachines = Array.from(new Set(logs.map(log => log.machineId)));
+
+  // Header stats reflect the currently shown (search-filtered) logs.
+  const warningCount = filteredLogs.filter(l => l.level === 'warning').length;
+  const errorCount = filteredLogs.filter(l => l.level === 'error').length;
 
   if (loading || sitesLoading) {
     return (
@@ -635,12 +769,12 @@ export default function LogsPage() {
 
             <div className="flex items-center gap-6 md:gap-8">
               <div className="flex items-center gap-2.5">
-                <div className={`rounded-md p-1.5 ${logs.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
+                <div className={`rounded-md p-1.5 ${filteredLogs.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
                   <ScrollText className="h-4 w-4" />
                 </div>
                 <div>
                   <div className="flex items-baseline gap-0.5">
-                    <span className="text-xl font-bold text-foreground">{logs.length}</span>
+                    <span className="text-xl font-bold text-foreground">{filteredLogs.length}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-tight">events</p>
                 </div>
@@ -649,12 +783,12 @@ export default function LogsPage() {
               <div className="h-8 w-px bg-border" />
 
               <div className="flex items-center gap-2.5">
-                <div className={`rounded-md p-1.5 ${logs.filter(l => l.level === 'warning').length > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-muted text-muted-foreground'}`}>
+                <div className={`rounded-md p-1.5 ${warningCount > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-muted text-muted-foreground'}`}>
                   <AlertTriangle className="h-4 w-4" />
                 </div>
                 <div>
                   <div className="flex items-baseline gap-0.5">
-                    <span className={`text-xl font-bold ${logs.filter(l => l.level === 'warning').length > 0 ? 'text-yellow-400' : 'text-foreground'}`}>{logs.filter(l => l.level === 'warning').length}</span>
+                    <span className={`text-xl font-bold ${warningCount > 0 ? 'text-yellow-400' : 'text-foreground'}`}>{warningCount}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-tight">warnings</p>
                 </div>
@@ -663,12 +797,12 @@ export default function LogsPage() {
               <div className="h-8 w-px bg-border" />
 
               <div className="flex items-center gap-2.5">
-                <div className={`rounded-md p-1.5 ${logs.filter(l => l.level === 'error').length > 0 ? 'bg-red-500/10 text-red-400' : 'bg-muted text-muted-foreground'}`}>
+                <div className={`rounded-md p-1.5 ${errorCount > 0 ? 'bg-red-500/10 text-red-400' : 'bg-muted text-muted-foreground'}`}>
                   <AlertCircle className="h-4 w-4" />
                 </div>
                 <div>
                   <div className="flex items-baseline gap-0.5">
-                    <span className={`text-xl font-bold ${logs.filter(l => l.level === 'error').length > 0 ? 'text-red-400' : 'text-foreground'}`}>{logs.filter(l => l.level === 'error').length}</span>
+                    <span className={`text-xl font-bold ${errorCount > 0 ? 'text-red-400' : 'text-foreground'}`}>{errorCount}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-tight">errors</p>
                 </div>
@@ -677,7 +811,7 @@ export default function LogsPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            {logs.length > 0 && (
+            {filteredLogs.length > 0 && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -696,6 +830,61 @@ export default function LogsPage() {
                 </TooltipContent>
               </Tooltip>
             )}
+            {/* Expanding search — collapsed it's a button styled like "show filters";
+                clicking morphs it into the field, click-outside (when empty) collapses it back. */}
+            <div
+              ref={searchWrapperRef}
+              style={!searchActive && searchCollapsedW ? { width: searchCollapsedW } : undefined}
+              className={`relative inline-flex h-9 items-center transition-[width] duration-200 ease-out ${searchActive ? 'w-56 md:w-72' : ''}`}
+            >
+              <Button
+                ref={searchBtnRef}
+                variant="outline"
+                onClick={() => setSearchActive(true)}
+                aria-label="search logs"
+                aria-hidden={searchActive}
+                tabIndex={searchActive ? -1 : 0}
+                className={`gap-2 hover:bg-muted hover:text-foreground transition-opacity duration-200 cursor-pointer ${searchActive ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+              >
+                <Search className="w-4 h-4" />
+                search
+              </Button>
+              <div
+                aria-hidden={!searchActive}
+                className={`absolute inset-0 transition-opacity duration-150 ${searchActive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+              >
+                <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  ref={searchInputRef}
+                  type="text"
+                  placeholder="search logs..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setSearchQuery('');
+                      setSearchActive(false);
+                    }
+                  }}
+                  tabIndex={searchActive ? 0 : -1}
+                  data-testid="logs-search"
+                  className="h-9 w-full pl-9 pr-9 bg-muted border-border"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery('');
+                      searchInputRef.current?.focus();
+                    }}
+                    aria-label="clear search"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
             <Button
               variant="outline"
               onClick={() => setShowFilters(!showFilters)}
@@ -823,6 +1012,13 @@ export default function LogsPage() {
           </Card>
         )}
 
+        {/* Search scope notice — only when the matching scope exceeds the cap */}
+        {isSearching && searchPoolTruncated && (
+          <p className="mb-2 text-xs text-muted-foreground">
+            searching the most recent {SEARCH_POOL_CAP.toLocaleString()} logs in scope — add a date or machine filter to reach older entries.
+          </p>
+        )}
+
         {/* Logs List */}
         <Card className="bg-card border-border">
           <div className="divide-y divide-border">
@@ -830,12 +1026,16 @@ export default function LogsPage() {
               <div className="p-8 text-center text-muted-foreground">
                 loading logs...
               </div>
-            ) : logs.length === 0 ? (
+            ) : filteredLogs.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground">
-                no logs found for this site
+                {isSearching
+                  ? (searchPoolLoading && !searchPool
+                      ? 'searching…'
+                      : `no events match "${searchQuery.trim()}"`)
+                  : 'no logs found for this site'}
               </div>
             ) : (
-              logs.map((log) => (
+              filteredLogs.map((log) => (
                 <LogRow
                   key={log.id}
                   log={log}
@@ -852,8 +1052,8 @@ export default function LogsPage() {
           </div>
         </Card>
 
-        {/* Infinite scroll sentinel */}
-        <div ref={sentinelRef} className="h-1" />
+        {/* Infinite scroll sentinel — disabled while searching (see observer effect) */}
+        {!searchTerm && <div ref={sentinelRef} className="h-1" />}
         {isFetchingMore && (
           <div className="py-4 text-center text-sm text-muted-foreground">
             loading more...
