@@ -941,7 +941,7 @@ export default function DashboardPage() {
                         variant="ghost"
                         size="sm"
                         onClick={toggleAllExpanded}
-                        className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        className="cursor-pointer text-muted-foreground"
                       >
                         {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
                       </Button>
@@ -957,7 +957,7 @@ export default function DashboardPage() {
                         variant="ghost"
                         size="sm"
                         onClick={() => handleViewChange('card')}
-                        className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                        className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground'}`}
                       >
                         <LayoutGrid className="h-4 w-4" />
                       </Button>
@@ -973,7 +973,7 @@ export default function DashboardPage() {
                         size="sm"
                         onClick={() => handleViewChange('list')}
                         data-testid="view-toggle-list"
-                        className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                        className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground'}`}
                       >
                         <List className="h-4 w-4" />
                       </Button>

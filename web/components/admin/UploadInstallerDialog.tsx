@@ -213,7 +213,7 @@ export default function UploadInstallerDialog({
                     size="sm"
                     onClick={() => setFile(null)}
                     disabled={uploading}
-                    className="hover:bg-secondary! cursor-pointer"
+                    className="cursor-pointer"
                   >
                     <X className="h-4 w-4 text-muted-foreground" />
                   </Button>

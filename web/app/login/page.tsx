@@ -255,7 +255,7 @@ function LoginForm() {
           <Button
             type="button"
             variant="outline"
-            className="w-full bg-input border-border text-foreground hover:bg-muted hover:text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full bg-input border-border text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleGoogleLogin}
             disabled={loading}
           >
@@ -284,7 +284,7 @@ function LoginForm() {
             <Button
               type="button"
               variant="outline"
-              className="w-full bg-input border-border text-foreground hover:bg-muted hover:text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-input border-border text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={handlePasskeyLogin}
               disabled={loading}
             >

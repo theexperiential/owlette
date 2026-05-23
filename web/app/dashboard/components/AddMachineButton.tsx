@@ -134,7 +134,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
               variant="ghost"
               size="sm"
               onClick={() => setOpen(true)}
-              className="text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer group"
+              className="text-muted-foreground cursor-pointer group"
             >
               <Plus className="h-4 w-4" />
               <span className="max-w-0 overflow-hidden group-hover:max-w-32 transition-all duration-200 ease-in-out whitespace-nowrap">
@@ -216,7 +216,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                               disabled={isLoadingVersion || !downloadUrl}
                               onClick={() => downloadUrl && window.open(downloadUrl, '_blank')}
                               aria-label="download owlette agent"
-                              className="text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer p-1.5"
+                              className="text-muted-foreground cursor-pointer p-1.5"
                             >
                               {isLoadingVersion ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                             </Button>
@@ -240,7 +240,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                                 }
                               }}
                               aria-label="copy owlette agent download link"
-                              className="text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer p-1.5"
+                              className="text-muted-foreground cursor-pointer p-1.5"
                             >
                               <Copy className="h-4 w-4" />
                             </Button>
@@ -314,7 +314,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                         size="sm"
                         onClick={() => copyToClipboard(generatedPhrase, 'Phrase')}
                         aria-label="copy pairing phrase"
-                        className="border-border text-foreground hover:bg-secondary cursor-pointer shrink-0"
+                        className="border-border text-foreground cursor-pointer shrink-0"
                       >
                         <Copy className="h-4 w-4" />
                       </Button>
@@ -336,7 +336,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                           'Command'
                         )}
                         aria-label="copy silent install command"
-                        className="border-border text-foreground hover:bg-secondary cursor-pointer shrink-0"
+                        className="border-border text-foreground cursor-pointer shrink-0"
                       >
                         <Copy className="h-4 w-4" />
                       </Button>
@@ -351,7 +351,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
                       variant="ghost"
                       size="sm"
                       onClick={() => { setGenerateSuccess(false); setGeneratedPhrase(''); handleGenerate(); }}
-                      className="text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer h-7 px-2 text-xs"
+                      className="text-muted-foreground cursor-pointer h-7 px-2 text-xs"
                     >
                       <RefreshCw className="h-3 w-3 mr-1" />
                       regenerate
