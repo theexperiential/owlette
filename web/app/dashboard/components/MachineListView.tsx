@@ -390,7 +390,7 @@ export function MachineRow({
     <>
       <TableRow
         data-testid="machine-row"
-        className="border-border hover:bg-secondary/30 cursor-pointer"
+        className="border-border/50 bg-card hover:bg-secondary/30 cursor-pointer"
         onClick={handleRowClick}
       >
         <TableCell className="w-8 p-2">
@@ -688,7 +688,7 @@ export function MachineRow({
           the close animation can play; the grid-template-rows transition on
           the inner wrapper animates the height in/out. */}
       {heldExpanded && (
-        <TableRow key={`${machine.machineId}-processes`} className="border-border">
+        <TableRow key={`${machine.machineId}-processes`} className="border-border/50">
           <TableCell colSpan={10} className="p-0 overflow-hidden">
             <div
               className={`grid transition-[grid-template-rows] duration-200 ease-out ${
@@ -720,7 +720,7 @@ export function MachineRow({
                           <div className="absolute h-px bg-border/50" style={{ left: '4px', top: '50%', width: '12px' }} />
                           </div>
                           {/* Process card */}
-                          <div className="flex-1 min-w-0 flex items-center justify-between p-3 rounded border border-border/50">
+                          <div className="flex-1 min-w-0 flex items-center justify-between p-3 rounded border border-border/30 bg-card">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
                               <Cog className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
@@ -1023,7 +1023,7 @@ export function MachineListView({
 
 
   return (
-    <div className="rounded-lg border border-border bg-background overflow-hidden">
+    <div className="rounded-lg border border-border bg-card-sunken overflow-hidden">
       <Table className="table-fixed" style={{ contain: 'layout' }}>
         <MachineTableHeader
           deviceUnion={deviceUnion}

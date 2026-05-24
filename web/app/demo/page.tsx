@@ -246,7 +246,7 @@ export default function DemoPage() {
                 />
 
                 {/* Expand/Collapse All + View Toggle */}
-                <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
+                <div className="flex items-center gap-1 rounded-lg border border-border bg-card-sunken p-1 select-none">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button

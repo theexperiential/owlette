@@ -28,7 +28,7 @@ import { SparklineChart } from '@/components/charts';
 import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, RotateCw, Settings2, BellOff } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
-import { getUsageColorClass, getUsageRingClass } from '@/lib/usageColorUtils';
+import { getUsageColorClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
 import { formatThroughput } from '@/lib/networkUtils';
 import { DISK_IO_COLORS, formatDiskIO } from '@/lib/diskIOUtils';
@@ -225,7 +225,7 @@ function MachineCard({
   );
 
   return (
-    <Card data-testid="machine-card" className="border-border bg-card py-0 gap-0">
+    <Card data-testid="machine-card" className="border-border/60 bg-card-sunken py-0 gap-0">
       <CardHeader className="py-3 px-4 gap-0">
         <div className="flex items-center justify-between">
           <div className="flex flex-col min-w-0">
@@ -344,7 +344,7 @@ function MachineCard({
         <Collapsible open={statsExpanded} onOpenChange={onToggleStats}>
           {!statsExpanded && (
             <CollapsibleTrigger asChild>
-              <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
+              <Button variant="ghost" className="w-full border-t border-border/50 rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
                 <div className="flex items-center gap-2 w-full select-none">
                   <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
                   <div className="flex items-center gap-2.5 text-sm text-muted-foreground overflow-hidden">
@@ -416,18 +416,21 @@ function MachineCard({
           )}
           <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
         <CollapsibleTrigger asChild>
-          <div className="border-t border-border relative cursor-pointer group">
+          <div className="border-t border-border/50 relative cursor-pointer group">
             <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
             <div className="relative flex items-center px-4 py-1.5 select-none">
               <ChevronUp className="h-4 w-4 text-foreground/50 group-hover:text-foreground/70 transition-colors flex-shrink-0" />
             </div>
           </div>
         </CollapsibleTrigger>
-        <CardContent className="space-y-1.5 select-none pt-0 pb-4">
+        <CardContent className="select-none pt-0 pb-4">
+          {/* Section enclosure: one surface holding the metric rows, divided by
+              hairlines instead of dark gaps (prototype — see if this reads better). */}
+          <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
           {/* CPU Metric */}
           {cpuDevice && cpuDevice.percent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(cpuDevice.percent)}`}
+              className={`relative overflow-hidden cursor-pointer transition-colors group after:pointer-events-none after:absolute after:inset-0 after:content-[''] after:transition-colors hover:after:bg-secondary/25`}
               onClick={onMetricClick ? () => onMetricClick('cpu') : undefined}
             >
               {/* Sparkline background */}
@@ -465,7 +468,7 @@ function MachineCard({
           {/* Memory Metric */}
           {memory?.percent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(memory.percent)}`}
+              className={`relative overflow-hidden cursor-pointer transition-colors group after:pointer-events-none after:absolute after:inset-0 after:content-[''] after:transition-colors hover:after:bg-secondary/25`}
               onClick={onMetricClick ? () => onMetricClick('memory') : undefined}
             >
               {/* Sparkline background */}
@@ -492,7 +495,7 @@ function MachineCard({
           {/* Disk Metric */}
           {diskDevice && diskDevice.percent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(diskDevice.percent)}`}
+              className={`relative overflow-hidden cursor-pointer transition-colors group after:pointer-events-none after:absolute after:inset-0 after:content-[''] after:transition-colors hover:after:bg-secondary/25`}
               onClick={onMetricClick ? () => onMetricClick('disk') : undefined}
             >
               {/* Sparkline background */}
@@ -541,7 +544,7 @@ function MachineCard({
           {/* GPU Metric */}
           {gpuDevice && gpuDevice.usagePercent != null && (
             <div
-              className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(gpuDevice.usagePercent)}`}
+              className={`relative overflow-hidden cursor-pointer transition-colors group after:pointer-events-none after:absolute after:inset-0 after:content-[''] after:transition-colors hover:after:bg-secondary/25`}
               onClick={onMetricClick ? () => onMetricClick('gpu') : undefined}
             >
               {/* Sparkline background */}
@@ -588,7 +591,7 @@ function MachineCard({
             const maxUtil = Math.max(nicDevice.txUtil ?? 0, nicDevice.rxUtil ?? 0);
             return (
               <div
-                className={`relative rounded-lg overflow-hidden cursor-pointer hover:ring-1 transition-all group border border-border/50 ${getUsageRingClass(maxUtil)}`}
+                className={`relative overflow-hidden cursor-pointer transition-colors group after:pointer-events-none after:absolute after:inset-0 after:content-[''] after:transition-colors hover:after:bg-secondary/25`}
                 onClick={onMetricClick ? () => onMetricClick(`${nicDevice.id}_tx_util` as MetricType) : undefined}
               >
                 <div className={`absolute left-0 top-0 bottom-0 w-1 ${getUsageColorClass(maxUtil)}`} />
@@ -610,6 +613,7 @@ function MachineCard({
               </div>
             );
           })()}
+          </div>
         </CardContent>
           </CollapsibleContent>
         </Collapsible>
@@ -619,7 +623,7 @@ function MachineCard({
       <Collapsible open={effectiveDisplaysExpanded} onOpenChange={onToggleDisplays}>
         {!effectiveDisplaysExpanded && (
           <CollapsibleTrigger asChild>
-            <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
+            <Button variant="ghost" className="w-full border-t border-border/50 rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
               <div className="flex items-center gap-2 w-full select-none">
                 <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
                 {displayMonitors.length > 0 ? (
@@ -667,7 +671,7 @@ function MachineCard({
         )}
         <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
           <CollapsibleTrigger asChild>
-            <div className="border-t border-border relative cursor-pointer group">
+            <div className="border-t border-border/50 relative cursor-pointer group">
               <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
               <div className="relative flex items-center px-4 py-1.5 select-none">
                 <ChevronUp className="h-4 w-4 text-foreground/50 group-hover:text-foreground/70 transition-colors flex-shrink-0" />
@@ -675,12 +679,12 @@ function MachineCard({
             </div>
           </CollapsibleTrigger>
           <div
-            className={`px-4 pb-4 pt-2 ${onMetricClick ? 'cursor-pointer hover:bg-secondary/20 transition-colors' : ''}`}
+            className={`px-6 pb-4 pt-2 ${onMetricClick ? 'cursor-pointer hover:bg-secondary/20 transition-colors' : ''}`}
             onClick={onMetricClick ? (e) => { e.stopPropagation(); onMetricClick('display'); } : undefined}
           >
             {displayMonitors.length > 0 ? (
               <div className="grid grid-cols-2 gap-0">
-                <div className="min-w-0 h-[160px] border border-border/50 rounded-l-lg md:border-r-0 overflow-hidden">
+                <div className="min-w-0 h-[160px] border border-border/30 bg-card rounded-l-lg md:border-r-0 overflow-hidden">
                   <DisplayCanvas
                     monitors={displayMonitors}
                     mosaicGrids={displayProfile?.mosaicGrids}
@@ -688,7 +692,7 @@ function MachineCard({
                     className="h-[160px]"
                   />
                 </div>
-                <div className="h-[160px] border border-border/50 rounded-r-lg overflow-hidden flex flex-col justify-center gap-1.5 px-3 text-xs text-muted-foreground">
+                <div className="h-[160px] border border-border/30 bg-card rounded-r-lg overflow-hidden flex flex-col justify-center gap-1.5 px-3 text-xs text-muted-foreground">
                   {displayMonitors.map((m, i) => {
                     // Post-rotation dimensions match what Windows treats the
                     // panel as (and what the canvas rect renders): a 4K panel
@@ -719,7 +723,7 @@ function MachineCard({
         <Collapsible open={processesExpanded} onOpenChange={onToggleProcesses}>
           {!processesExpanded && (
             <CollapsibleTrigger asChild>
-              <Button variant="ghost" className="w-full border-t border-border rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
+              <Button variant="ghost" className="w-full border-t border-border/50 rounded-none hover:bg-secondary/30 cursor-pointer px-4 py-2.5 h-auto">
                 <div className="flex items-center gap-2.5 w-full select-none overflow-hidden">
                   <ChevronDown className="h-4 w-4 text-foreground/70 flex-shrink-0" />
                   <span className="text-sm flex-shrink-0 text-muted-foreground">
@@ -747,36 +751,17 @@ function MachineCard({
           )}
           <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
             <CollapsibleTrigger asChild>
-              <div className="border-t border-border relative cursor-pointer group">
+              <div className="border-t border-border/50 relative cursor-pointer group">
                 <div className="absolute inset-0 bg-gradient-to-b from-secondary to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 <div className="relative flex items-center px-4 py-2 select-none">
                   <ChevronUp className="h-4 w-4 text-foreground/50 group-hover:text-foreground/70 transition-colors flex-shrink-0" />
                 </div>
               </div>
             </CollapsibleTrigger>
-            <div className="relative px-2 pb-2 pt-0 md:px-4 md:pb-4 md:pt-0">
-              <div className="space-y-2">
-                {machine.processes.map((process, index) => (
-                  <div key={process.id} className="relative flex items-stretch">
-                    {/* Vertical line: from container top for first row, from row top for others */}
-                    <div
-                      className="absolute w-px bg-border/50"
-                      style={{
-                        left: '2px',
-                        top: index === 0 ? '-8px' : 0,
-                        height: index === 0 ? 'calc(50% + 8px)' : '50%'
-                      }}
-                    />
-                    {/* Extension for non-last rows bridging the gap */}
-                    {index < machine.processes!.length - 1 && (
-                      <div className="absolute w-px bg-border/50" style={{ left: '2px', top: '50%', bottom: '-8px' }} />
-                    )}
-                    {/* Horizontal branch */}
-                    <div className="relative w-4 flex-shrink-0">
-                      <div className="absolute h-px bg-border/50" style={{ left: '2px', top: '50%', width: '10px' }} />
-                    </div>
-                    {/* Process card */}
-                    <div className="flex-1 flex items-center justify-between p-2 md:p-3 rounded border border-border/50">
+            <div className="relative px-6 pb-2 pt-0 md:pb-4 md:pt-0">
+              <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
+                {machine.processes.map((process) => (
+                  <div key={process.id} className="flex items-center justify-between px-3 py-2.5 pl-4">
                         <div className="flex-1 min-w-0 flex items-center gap-2">
                           <span className="text-sm md:text-base text-white font-medium truncate select-text">{process.name}</span>
                           <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted' : process.status === 'RUNNING' ? 'bg-green-600' : process.status === 'INACTIVE' ? 'bg-slate-600 text-slate-200' : process.status === 'LAUNCH_FAILED' || process.status === 'STOPPED' || process.status === 'KILLED' ? 'bg-red-600' : 'bg-yellow-600'}`}>
@@ -787,7 +772,7 @@ function MachineCard({
                           {(() => {
                             const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
                             return (
-                              <div className="hidden md:flex items-stretch rounded-md overflow-hidden border border-border h-8">
+                              <div className="hidden md:flex items-stretch rounded-md overflow-hidden border border-border/50 h-8">
                                 {(['off', 'always', 'scheduled'] as const).map((mode) => {
                                   const isActive = currentMode === mode;
                                   const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
@@ -841,7 +826,7 @@ function MachineCard({
                             variant="ghost"
                             size="sm"
                             onClick={() => onEditProcess(process)}
-                            className="bg-card border border-border text-foreground p-2"
+                            className="bg-card border border-border/50 text-foreground p-2"
                           >
                             <Pencil className="h-3 w-3" />
                           </Button>
@@ -852,7 +837,7 @@ function MachineCard({
                                 size="sm"
                                 onClick={() => onRestartProcess(process.id, process.name)}
                                 aria-label={`restart ${process.name}`}
-                                className="bg-card border border-border text-foreground disabled:cursor-not-allowed disabled:opacity-50 p-2"
+                                className="bg-card border border-border/50 text-foreground disabled:cursor-not-allowed disabled:opacity-50 p-2"
                                 disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
                               >
                                 <RotateCw className="h-3 w-3" />
@@ -869,7 +854,7 @@ function MachineCard({
                                 size="sm"
                                 onClick={() => onKillProcess(process.id, process.name)}
                                 aria-label={`kill ${process.name}`}
-                                className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 p-2"
+                                className="bg-card border border-border/50 text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 p-2"
                                 disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
                               >
                                 <Square className="h-3 w-3" />
@@ -881,7 +866,6 @@ function MachineCard({
                           </Tooltip>
                         </div>
                       </div>
-                    </div>
                   ))}
                 </div>
                 {/* add process Button */}
@@ -890,7 +874,7 @@ function MachineCard({
                     variant="ghost"
                     size="sm"
                     onClick={onCreateProcess}
-                    className="bg-card border border-border text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
+                    className="bg-card border border-border/50 text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
                   >
                     <Plus className="h-3 w-3 mr-1" />
                     add process
@@ -903,12 +887,12 @@ function MachineCard({
 
       {/* add process button for machines with no processes */}
       {(!machine.processes || machine.processes.length === 0) && (
-        <div className="border-t border-border p-4">
+        <div className="border-t border-border/50 p-4">
           <Button
             variant="outline"
             size="sm"
             onClick={onCreateProcess}
-            className="w-full bg-card border-border text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
+            className="w-full bg-card border-border/50 text-accent-cyan hover:bg-accent-cyan/20 hover:border-accent-cyan/40 cursor-pointer"
           >
             <Plus className="h-3 w-3 mr-1" />
             add process
