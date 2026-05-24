@@ -424,8 +424,8 @@ function MachineCard({
           </div>
         </CollapsibleTrigger>
         <CardContent className="select-none pt-0 pb-4">
-          {/* Section enclosure: one surface holding the metric rows, divided by
-              hairlines instead of dark gaps (prototype — see if this reads better). */}
+          {/* Section enclosure: one surface holding the metric rows, separated by
+              hairline dividers instead of dark gaps. */}
           <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
           {/* CPU Metric */}
           {cpuDevice && cpuDevice.percent != null && (

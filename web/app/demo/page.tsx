@@ -329,7 +329,7 @@ export default function DemoPage() {
 
             {/* List View */}
             {viewType === 'list' && (
-              <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
+              <div className="rounded-lg border border-border bg-card-sunken overflow-hidden animate-in fade-in duration-300">
                 <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
                   <ListViewTableHeader />
                   <TableBody>
