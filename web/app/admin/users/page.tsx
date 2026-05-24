@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useUserManagement, type UserRole } from '@/hooks/useUserManagement';
 import type { FirestoreTs } from '@/hooks/useFirestore';
 import { Button } from '@/components/ui/button';
@@ -45,6 +45,23 @@ const ROLE_LABELS: Record<UserRole, string> = {
   superadmin: 'superadmin',
 };
 
+interface DeletionCounts {
+  sites?: number;
+  machines?: number;
+  [key: string]: number | undefined;
+}
+
+interface DeletionView {
+  id: string;
+  uid: string | null;
+  actorUid: string | null;
+  capability: string;
+  outcome: string;
+  timestamp: string | null;
+  denyReason: string | null;
+  counts: DeletionCounts | null;
+}
+
 /**
  * User Management Page
  *
@@ -55,7 +72,7 @@ const ROLE_LABELS: Record<UserRole, string> = {
  * - Demote admins to user
  */
 export default function UserManagementPage() {
-  const { users, loading, error, updateUserRole, getUserCounts, assignSiteToUser, removeSiteFromUser, deleteUser } = useUserManagement();
+  const { users, activity, loading, error, updateUserRole, getUserCounts, assignSiteToUser, removeSiteFromUser, deleteUser } = useUserManagement();
   const { user: currentUser } = useAuth();
   const [updatingUser, setUpdatingUser] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState<string | null>(null);
@@ -65,8 +82,34 @@ export default function UserManagementPage() {
   const [selectedUser, setSelectedUser] = useState<{ uid: string; email: string; role: UserRole; sites: string[] } | null>(null);
   const [userToDelete, setUserToDelete] = useState<{ uid: string; email: string } | null>(null);
   const [userToChangeRole, setUserToChangeRole] = useState<{ uid: string; email: string; currentRole: UserRole; newRole: UserRole } | null>(null);
+  const [deletions, setDeletions] = useState<DeletionView[]>([]);
 
   const counts = getUserCounts();
+
+  // Fetch the account-deletion audit feed once. Non-fatal: on error we log and
+  // leave `deletions` empty so the panel renders its empty state.
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch('/api/users/deletions');
+        if (!response.ok) {
+          console.error('Error fetching account deletions:', response.status);
+          return;
+        }
+        const body = await response.json();
+        if (cancelled) return;
+        setDeletions(Array.isArray(body.deletions) ? body.deletions : []);
+      } catch (err) {
+        console.error('Error fetching account deletions:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleOpenManageSites = (userId: string, email: string, role: UserRole, sites: string[]) => {
     setSelectedUser({ uid: userId, email, role, sites });
@@ -123,8 +166,8 @@ export default function UserManagementPage() {
   const handleOpenDeleteDialog = (userId: string, email: string) => {
     // Prevent user from deleting themselves
     if (userId === currentUser?.uid) {
-      toast.error('Cannot Delete Yourself', {
-        description: 'You cannot delete your own account.',
+      toast.error('cannot delete yourself', {
+        description: 'you cannot delete your own account.',
       });
       return;
     }
@@ -141,13 +184,13 @@ export default function UserManagementPage() {
 
     try {
       await deleteUser(userToDelete.uid);
-      toast.success('User Deleted', {
+      toast.success('user deleted', {
         description: `${userToDelete.email} has been permanently deleted.`,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      toast.error('Deletion Failed', {
-        description: message || 'Failed to delete user.',
+      toast.error('deletion failed', {
+        description: message || 'failed to delete user.',
       });
     } finally {
       setDeletingUser(null);
@@ -253,21 +296,24 @@ export default function UserManagementPage() {
                 <th className="text-left p-4 text-sm font-medium text-foreground">role</th>
                 <th className="text-left p-4 text-sm font-medium text-foreground">sites</th>
                 <th className="text-left p-4 text-sm font-medium text-foreground">joined</th>
+                <th className="text-left p-4 text-sm font-medium text-foreground">last seen</th>
                 <th className="text-right p-4 text-sm font-medium text-foreground">actions</th>
               </tr>
             </thead>
             <tbody>
               {users.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-8 text-center text-muted-foreground">
-                    No users found
+                  <td colSpan={6} className="p-8 text-center text-muted-foreground">
+                    no users found
                   </td>
                 </tr>
               ) : (
-                users.map((user) => (
+                users.map((user) => {
+                  const isDeleted = user.deletedAt != null;
+                  return (
                   <tr
                     key={user.uid}
-                    className="border-b border-border hover:bg-muted/50 transition-colors"
+                    className={`border-b border-border hover:bg-muted/50 transition-colors${isDeleted ? ' opacity-60' : ''}`}
                   >
                     {/* User Info */}
                     <td className="p-4">
@@ -277,7 +323,17 @@ export default function UserManagementPage() {
                         )}
                         <p className="text-sm text-muted-foreground">{user.email}</p>
                         {user.uid === currentUser?.uid && (
-                          <Badge className="mt-1 bg-accent-cyan text-gray-900 text-xs">You</Badge>
+                          <Badge className="mt-1 bg-accent-cyan text-gray-900 text-xs">you</Badge>
+                        )}
+                        {isDeleted && (
+                          <div className="mt-1">
+                            <Badge className="bg-secondary border border-border text-muted-foreground text-xs">
+                              deleted
+                            </Badge>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              deleted by {user.deletedBy ?? 'admin'} · {formatDate(user.deletedAt)}
+                            </p>
+                          </div>
                         )}
                       </div>
                     </td>
@@ -343,8 +399,31 @@ export default function UserManagementPage() {
                       {formatDate(user.createdAt)}
                     </td>
 
-                    {/* Actions */}
+                    {/* Last Seen — last refresh, falling back to last sign-in. */}
+                    <td className="p-4 text-muted-foreground text-sm">
+                      {(() => {
+                        const lastSeen = activity[user.uid]?.lastRefreshTime ?? activity[user.uid]?.lastSignInTime;
+                        if (!lastSeen) {
+                          return <span className="italic text-muted-foreground">never</span>;
+                        }
+                        return (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{formatDate(lastSeen)}</span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>{lastSeen}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        );
+                      })()}
+                    </td>
+
+                    {/* Actions — deleted accounts have no actionable operations. */}
                     <td className="p-4">
+                      {isDeleted ? (
+                        <div className="flex items-center justify-end text-muted-foreground">—</div>
+                      ) : (
                       <div className="flex items-center justify-end">
                         <DropdownMenu>
                           <Tooltip>
@@ -396,7 +475,7 @@ export default function UserManagementPage() {
                               {deletingUser === user.uid ? (
                                 <>
                                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                  Deleting...
+                                  deleting...
                                 </>
                               ) : (
                                 <>
@@ -408,12 +487,42 @@ export default function UserManagementPage() {
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
+                      )}
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Account-deletions audit feed — self-deletes + admin-deletes, newest-first. */}
+      {!loading && !error && (
+        <div className="mt-6 bg-card border border-border rounded-lg p-6">
+          <h2 className="text-lg font-semibold text-foreground mb-4">account deletions</h2>
+          {deletions.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic">no recent deletions</p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {deletions.map((d) => (
+                <li key={d.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
+                  <Badge className="bg-secondary border border-border text-muted-foreground text-xs">
+                    {d.capability === 'USER_SELF_DELETE' ? 'self-delete' : 'admin-delete'}
+                  </Badge>
+                  <span className="font-mono text-foreground">{d.uid ?? 'unknown'}</span>
+                  <span className="text-muted-foreground">{formatDate(d.timestamp)}</span>
+                  <span className="text-muted-foreground">{d.outcome}</span>
+                  {d.counts && (
+                    <span className="text-muted-foreground">
+                      {d.counts.sites ?? 0} site{d.counts.sites !== 1 ? 's' : ''} · {d.counts.machines ?? 0} machine{d.counts.machines !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
@@ -542,12 +651,12 @@ export default function UserManagementPage() {
               delete user
             </DialogTitle>
             <DialogDescription className="text-foreground">
-              Are you sure you want to delete <strong className="text-foreground">{userToDelete?.email}</strong>?
+              are you sure you want to delete <strong className="text-foreground">{userToDelete?.email}</strong>?
             </DialogDescription>
           </DialogHeader>
           <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-4 my-4">
             <p className="text-red-300 text-sm">
-              this action cannot be undone. All user data will be permanently removed.
+              this action cannot be undone. all user data will be permanently removed.
             </p>
           </div>
           <DialogFooter className="gap-2">

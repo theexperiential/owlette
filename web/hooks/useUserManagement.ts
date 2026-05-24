@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   collection,
   query,
@@ -20,6 +20,14 @@ export interface UserData {
   sites?: string[];
   createdAt: Timestamp;
   displayName?: string;
+  deletedAt?: number;
+  deletedBy?: string;
+}
+
+interface UserActivity {
+  lastSignInTime: string | null;
+  lastRefreshTime: string | null;
+  disabled: boolean;
 }
 
 /**
@@ -39,6 +47,7 @@ export function useUserManagement() {
   const [users, setUsers] = useState<UserData[]>([]);
   const [loading, setLoading] = useState(!!db);
   const [error, setError] = useState<string | null>(db ? null : 'Firebase is not configured');
+  const [activity, setActivity] = useState<Record<string, UserActivity>>({});
 
   // Fetch all users with real-time updates
   useEffect(() => {
@@ -78,6 +87,40 @@ export function useUserManagement() {
     return () => unsubscribe();
   }, []);
 
+  // Stable key derived from the uid set so the activity fetch only re-fires
+  // when the membership changes, not on every snapshot emission.
+  const uidKey = useMemo(
+    () => users.map((u) => u.uid).sort().join(','),
+    [users]
+  );
+
+  // Fetch Firebase Auth sign-in metadata (last-seen) keyed by uid. Non-fatal:
+  // the user table renders without activity if this fails.
+  useEffect(() => {
+    if (!uidKey) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch('/api/users/activity');
+        if (!response.ok) {
+          console.error('Error fetching user activity:', response.status);
+          return;
+        }
+        const body = await response.json();
+        if (cancelled) return;
+        setActivity(body.activity ?? {});
+      } catch (err) {
+        console.error('Error fetching user activity:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [uidKey]);
+
   /**
    * Update a user's role
    *
@@ -116,15 +159,17 @@ export function useUserManagement() {
    * - members: standard users with site-level access
    */
   const getUserCounts = useCallback(() => {
-    const superadmins = users.filter((u) => u.role === 'superadmin').length;
-    const admins = users.filter((u) => u.role === 'admin').length;
-    const members = users.filter((u) => u.role === 'member').length;
+    const active = users.filter((u) => u.deletedAt == null);
+    const superadmins = active.filter((u) => u.role === 'superadmin').length;
+    const admins = active.filter((u) => u.role === 'admin').length;
+    const members = active.filter((u) => u.role === 'member').length;
 
     return {
-      total: users.length,
+      total: active.length,
       superadmins,
       admins,
       members,
+      deleted: users.length - active.length,
     };
   }, [users]);
 
@@ -206,6 +251,7 @@ export function useUserManagement() {
 
   return {
     users,
+    activity,
     loading,
     error,
     updateUserRole,
