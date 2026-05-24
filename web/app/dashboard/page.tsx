@@ -32,7 +32,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 // Pure tab-state helpers — imported directly from the lightweight module so
 // the dashboard bundle doesn't have to resolve @/components/charts' barrel
 // (which re-exports Recharts-heavy components like MetricsDetailPanel).
-import { initialMetricToState, serializeTabs } from '@/components/charts/metricsTabs';
+import { deserializeTabs, initialMetricToState, serializeTabs } from '@/components/charts/metricsTabs';
 import type { MetricType } from '@/components/charts/ChartTooltip';
 import ScheduleEditor from '@/components/ScheduleEditor';
 import { MachineCardView } from './components/MachineCardView';
@@ -189,19 +189,27 @@ export default function DashboardPage() {
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   const [liveViewTarget, setLiveViewTarget] = useState<{ machineId: string; machineName: string } | null>(null);
 
-  // The detail panel opens only from an in-session metric click. We deliberately
-  // do NOT auto-restore it from the persisted pref on page load: a restored panel
-  // (often with stale/empty graph tabs) reserves an empty slide above the grid —
-  // the "gap between the title and machines" bug.
-  const [panelOpenedThisSession, setPanelOpenedThisSession] = useState(false);
+  // Restore the persisted metrics panel across reloads — but only when it resolves
+  // to a non-empty selection. activeGraphPanel (open-state) and graphTabs (content)
+  // are persisted independently and can desync (e.g. deselect-all leaves the panel
+  // "open" with zero lines); restoring that reserves an empty slide above the grid.
+  // No persisted entry → initialMetricToState default (always non-empty), so legacy
+  // panels still restore. The 'display' route has no graphTabs and is never empty.
   const detailPanel = useMemo<DetailPanelState | null>(() => {
-    if (!panelOpenedThisSession) return null;
     const p = userPreferences.activeGraphPanel;
     if (!p) return null;
-    // Defensive: don't show a panel for a machine that isn't in the current site.
+    // Don't restore a panel for a machine that isn't in the current site.
     if (!machines.some(m => m.machineId === p.machineId)) return null;
+    if (p.metric !== 'display') {
+      const persisted = userPreferences.graphTabs?.[p.machineId];
+      if (persisted !== undefined) {
+        const sel = deserializeTabs(persisted);
+        const hasAny = sel.metrics.length || sel.nics.length || sel.disks.length || sel.gpus.length || sel.diskIO.length;
+        if (!hasAny) return null;
+      }
+    }
     return { machineId: p.machineId, machineName: p.machineId, metric: p.metric as MetricType };
-  }, [panelOpenedThisSession, userPreferences.activeGraphPanel, machines]);
+  }, [userPreferences.activeGraphPanel, userPreferences.graphTabs, machines]);
 
   // Animate the panel's open/close (and machine-swap) with a height
   // slide. Tab switches within the same panel (CPU → Memory → GPU)
@@ -686,7 +694,6 @@ export default function DashboardPage() {
   // any existing graphTabs for this machine — rather than merging, so clicking
   // different cells behaves like switching tabs, not like accumulating them.
   const handleMetricClick = (machineId: string, metric: MetricType) => {
-    setPanelOpenedThisSession(true);
     // 'display' is a panel route, not a chart tab — skip graphTabs write to avoid
     // polluting persisted preferences with entries deserializeTabs will drop on read.
     if (metric === 'display') {

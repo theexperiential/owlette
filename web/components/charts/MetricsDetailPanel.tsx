@@ -1253,6 +1253,14 @@ export function MetricsDetailPanel({
                 <span className="text-sm text-muted-foreground/70">data appears as the agent collects metrics.</span>
               </div>
             </div>
+          ) : !activeLines.some((line) => !line.hidden) ? (
+            <div className="flex items-center justify-center h-full text-center">
+              <div className="text-muted-foreground">
+                no metrics selected.
+                <br />
+                <span className="text-sm text-muted-foreground/70">toggle a metric above to view its chart.</span>
+              </div>
+            </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ top: 12, right: 0, bottom: 5, left: 0 }}>
