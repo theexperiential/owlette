@@ -48,6 +48,7 @@
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-card-sunken: var(--card-sunken);
+  --color-card-header: var(--card-header);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -68,6 +69,12 @@
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-sunken: oklch(0.96 0 0);
+  /* Header surface: a slight step darker than --card-sunken (midway toward
+     --background) so machine headers read as distinct from their content.
+     Derived from themed tokens via color-mix and defined only here — it
+     re-resolves per theme at use time, so no .dark override is needed (and
+     therefore can't fall back to a light value the way a duplicated token can). */
+  --card-header: color-mix(in oklch, var(--card-sunken) 30%, var(--background));
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);

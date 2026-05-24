@@ -226,7 +226,7 @@ function MachineCard({
 
   return (
     <Card data-testid="machine-card" className="border-border/60 bg-card-sunken py-0 gap-0">
-      <CardHeader className="py-3 px-4 gap-0">
+      <CardHeader className="py-3 px-4 gap-0 bg-card-header rounded-t-xl">
         <div className="flex items-center justify-between">
           <div className="flex flex-col min-w-0">
             <CardTitle className="text-xl font-semibold text-white select-text flex items-center gap-1.5">

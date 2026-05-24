@@ -131,8 +131,8 @@ function DeviceColumnHeader({
  */
 export const MemoizedTableHeader = memo(function MemoizedTableHeader() {
   return (
-    <TableHeader className="sticky top-0 z-10 bg-background">
-      <TableRow className="border-border hover:bg-transparent">
+    <TableHeader className="sticky top-0 z-10 bg-card-header">
+      <TableRow className="border-border/60 hover:bg-transparent">
         <TableHead className="text-foreground w-8"></TableHead>
         <TableHead className="text-foreground w-[140px]">hostname</TableHead>
         <TableHead className="text-foreground w-[72px]">status</TableHead>
@@ -166,8 +166,8 @@ export const MachineTableHeader = memo(function MachineTableHeader({
   setListPref,
 }: MachineTableHeaderProps) {
   return (
-    <TableHeader className="sticky top-0 z-10 bg-background">
-      <TableRow className="border-border hover:bg-transparent">
+    <TableHeader className="sticky top-0 z-10 bg-card-header">
+      <TableRow className="border-border/60 hover:bg-transparent">
         <TableHead className="text-foreground w-8"></TableHead>
         <TableHead className="text-foreground w-[140px]">hostname</TableHead>
         <TableHead className="text-foreground w-[72px]">status</TableHead>
@@ -390,7 +390,7 @@ export function MachineRow({
     <>
       <TableRow
         data-testid="machine-row"
-        className="border-border/50 bg-card hover:bg-secondary/30 cursor-pointer"
+        className="border-border/50 bg-card-sunken hover:bg-secondary/30 cursor-pointer"
         onClick={handleRowClick}
       >
         <TableCell className="w-8 p-2">
@@ -696,31 +696,19 @@ export function MachineRow({
               }`}
             >
             <div className="overflow-hidden min-h-0">
-            <div className="pr-4 relative" style={{ paddingLeft: '12px', paddingTop: '8px', paddingBottom: '8px' }}>
+            {/* Sunken tray (bg-card-sunken) + raised bg-card enclosure — the
+                same surface scheme the card view uses for its sections, so the
+                processes panel clearly reads as offset from the bg-card machine
+                row above. */}
+            <div className="px-4 py-3 bg-card-sunken">
               {machine.processes && machine.processes.length > 0 ? (
                 <>
-                  <div className="space-y-2">
-                    {machine.processes.map((process, index) => (
-                      <div key={process.id} className="relative flex items-stretch">
-                        {/* Vertical line: from container top for first row, from row top for others */}
-                        <div
-                          className="absolute w-px bg-border/50"
-                          style={{
-                            left: '4px',
-                            top: index === 0 ? '-8px' : 0,
-                            height: index === 0 ? 'calc(50% + 8px)' : '50%'
-                          }}
-                        />
-                        {/* Extension for non-last rows bridging the gap */}
-                        {index < machine.processes!.length - 1 && (
-                          <div className="absolute w-px bg-border/50" style={{ left: '4px', top: '50%', bottom: '-8px' }} />
-                        )}
-                        {/* Horizontal branch */}
-                        <div className="relative w-5 flex-shrink-0">
-                          <div className="absolute h-px bg-border/50" style={{ left: '4px', top: '50%', width: '12px' }} />
-                          </div>
-                          {/* Process card */}
-                          <div className="flex-1 min-w-0 flex items-center justify-between p-3 rounded border border-border/30 bg-card">
+                  {/* Section enclosure: one raised bg-card surface holding the
+                      process rows, separated by hairline dividers — mirrors the
+                      card view instead of the old floating bordered cards. */}
+                  <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
+                    {machine.processes.map((process) => (
+                      <div key={process.id} className="flex items-center justify-between p-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
                               <Cog className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
@@ -939,7 +927,6 @@ export function MachineRow({
                             );
                           })()}
                         </div>
-                      </div>
                     ))}
                   </div>
                   {/* add process Button */}
@@ -1023,7 +1010,7 @@ export function MachineListView({
 
 
   return (
-    <div className="rounded-lg border border-border bg-card-sunken overflow-hidden">
+    <div className="rounded-xl border border-border/60 bg-card-sunken overflow-hidden">
       <Table className="table-fixed" style={{ contain: 'layout' }}>
         <MachineTableHeader
           deviceUnion={deviceUnion}

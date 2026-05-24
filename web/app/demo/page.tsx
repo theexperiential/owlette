@@ -246,7 +246,7 @@ export default function DemoPage() {
                 />
 
                 {/* Expand/Collapse All + View Toggle */}
-                <div className="flex items-center gap-1 rounded-lg border border-border bg-card-sunken p-1 select-none">
+                <div className="flex items-center gap-1 rounded-lg bg-card-sunken p-1 select-none">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -329,7 +329,7 @@ export default function DemoPage() {
 
             {/* List View */}
             {viewType === 'list' && (
-              <div className="rounded-lg border border-border bg-card-sunken overflow-hidden animate-in fade-in duration-300">
+              <div className="rounded-xl border border-border/60 bg-card-sunken overflow-hidden animate-in fade-in duration-300">
                 <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
                   <ListViewTableHeader />
                   <TableBody>
