@@ -62,6 +62,12 @@ interface DeletionView {
   counts: DeletionCounts | null;
 }
 
+interface UserActivity {
+  lastSignInTime: string | null;
+  lastRefreshTime: string | null;
+  disabled: boolean;
+}
+
 /**
  * User Management Page
  *
@@ -72,7 +78,7 @@ interface DeletionView {
  * - Demote admins to user
  */
 export default function UserManagementPage() {
-  const { users, activity, loading, error, updateUserRole, getUserCounts, assignSiteToUser, removeSiteFromUser, deleteUser } = useUserManagement();
+  const { users, loading, error, updateUserRole, getUserCounts, assignSiteToUser, removeSiteFromUser, deleteUser } = useUserManagement();
   const { user: currentUser } = useAuth();
   const [updatingUser, setUpdatingUser] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState<string | null>(null);
@@ -83,6 +89,7 @@ export default function UserManagementPage() {
   const [userToDelete, setUserToDelete] = useState<{ uid: string; email: string } | null>(null);
   const [userToChangeRole, setUserToChangeRole] = useState<{ uid: string; email: string; currentRole: UserRole; newRole: UserRole } | null>(null);
   const [deletions, setDeletions] = useState<DeletionView[]>([]);
+  const [activity, setActivity] = useState<Record<string, UserActivity>>({});
 
   const counts = getUserCounts();
 
@@ -103,6 +110,33 @@ export default function UserManagementPage() {
         setDeletions(Array.isArray(body.deletions) ? body.deletions : []);
       } catch (err) {
         console.error('Error fetching account deletions:', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch Firebase Auth sign-in metadata (last-seen) for the table. Page-level
+  // rather than in useUserManagement: that hook is also used by ManageSitesDialog
+  // on non-superadmin pages (roosts/dashboard/logs), where this superadmin-only
+  // endpoint would 403. Non-fatal — the column renders "never" if it fails.
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch('/api/users/activity');
+        if (!response.ok) {
+          console.error('Error fetching user activity:', response.status);
+          return;
+        }
+        const body = await response.json();
+        if (cancelled) return;
+        setActivity(body.activity ?? {});
+      } catch (err) {
+        console.error('Error fetching user activity:', err);
       }
     })();
 

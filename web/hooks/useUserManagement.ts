@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   collection,
   query,
@@ -24,12 +24,6 @@ export interface UserData {
   deletedBy?: string;
 }
 
-interface UserActivity {
-  lastSignInTime: string | null;
-  lastRefreshTime: string | null;
-  disabled: boolean;
-}
-
 /**
  * useUserManagement Hook
  *
@@ -47,7 +41,6 @@ export function useUserManagement() {
   const [users, setUsers] = useState<UserData[]>([]);
   const [loading, setLoading] = useState(!!db);
   const [error, setError] = useState<string | null>(db ? null : 'Firebase is not configured');
-  const [activity, setActivity] = useState<Record<string, UserActivity>>({});
 
   // Fetch all users with real-time updates
   useEffect(() => {
@@ -86,40 +79,6 @@ export function useUserManagement() {
 
     return () => unsubscribe();
   }, []);
-
-  // Stable key derived from the uid set so the activity fetch only re-fires
-  // when the membership changes, not on every snapshot emission.
-  const uidKey = useMemo(
-    () => users.map((u) => u.uid).sort().join(','),
-    [users]
-  );
-
-  // Fetch Firebase Auth sign-in metadata (last-seen) keyed by uid. Non-fatal:
-  // the user table renders without activity if this fails.
-  useEffect(() => {
-    if (!uidKey) return;
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const response = await fetch('/api/users/activity');
-        if (!response.ok) {
-          console.error('Error fetching user activity:', response.status);
-          return;
-        }
-        const body = await response.json();
-        if (cancelled) return;
-        setActivity(body.activity ?? {});
-      } catch (err) {
-        console.error('Error fetching user activity:', err);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [uidKey]);
 
   /**
    * Update a user's role
@@ -251,7 +210,6 @@ export function useUserManagement() {
 
   return {
     users,
-    activity,
     loading,
     error,
     updateUserRole,
