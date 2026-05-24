@@ -189,13 +189,19 @@ export default function DashboardPage() {
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   const [liveViewTarget, setLiveViewTarget] = useState<{ machineId: string; machineName: string } | null>(null);
 
-  // Metrics Detail Panel state is the source of truth in userPreferences.activeGraphPanel
-  // (persisted across reloads). Derive the rendered panel from that pref once machines load.
+  // The detail panel opens only from an in-session metric click. We deliberately
+  // do NOT auto-restore it from the persisted pref on page load: a restored panel
+  // (often with stale/empty graph tabs) reserves an empty slide above the grid —
+  // the "gap between the title and machines" bug.
+  const [panelOpenedThisSession, setPanelOpenedThisSession] = useState(false);
   const detailPanel = useMemo<DetailPanelState | null>(() => {
+    if (!panelOpenedThisSession) return null;
     const p = userPreferences.activeGraphPanel;
     if (!p) return null;
+    // Defensive: don't show a panel for a machine that isn't in the current site.
+    if (!machines.some(m => m.machineId === p.machineId)) return null;
     return { machineId: p.machineId, machineName: p.machineId, metric: p.metric as MetricType };
-  }, [userPreferences.activeGraphPanel]);
+  }, [panelOpenedThisSession, userPreferences.activeGraphPanel, machines]);
 
   // Animate the panel's open/close (and machine-swap) with a height
   // slide. Tab switches within the same panel (CPU → Memory → GPU)
@@ -680,6 +686,7 @@ export default function DashboardPage() {
   // any existing graphTabs for this machine — rather than merging, so clicking
   // different cells behaves like switching tabs, not like accumulating them.
   const handleMetricClick = (machineId: string, metric: MetricType) => {
+    setPanelOpenedThisSession(true);
     // 'display' is a panel route, not a chart tab — skip graphTabs write to avoid
     // polluting persisted preferences with entries deserializeTabs will drop on read.
     if (metric === 'display') {
@@ -934,7 +941,7 @@ export default function DashboardPage() {
                 />
 
                 {/* Expand/Collapse All + View Toggle */}
-                <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
+                <div className="flex items-center gap-1 rounded-lg border border-border bg-card-sunken p-1 select-none">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
