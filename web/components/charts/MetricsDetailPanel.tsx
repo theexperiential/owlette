@@ -1367,7 +1367,7 @@ export function MetricsDetailPanel({
             cards align with the chart's plot area (the "0" on the x-axis). */}
         {chartData.length > 0 && hasSelection && (
           <div
-            className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2"
+            className="mt-2 flex flex-wrap gap-2"
             style={{ paddingLeft: CHART_Y_AXIS_WIDTH }}
             onMouseLeave={() => setHoveredKey(null)}
           >
@@ -1404,36 +1404,37 @@ export function MetricsDetailPanel({
               return (
                 <div
                   key={key}
-                  className="p-2 rounded-lg bg-secondary border border-border transition-colors hover:bg-accent/40 cursor-default"
+                  className="flex items-center gap-4 px-3 py-2 rounded-lg bg-secondary border border-border/60 transition-colors hover:bg-accent/40 cursor-default"
                   style={{ borderLeftColor: color, borderLeftWidth: '3px' }}
                   onMouseEnter={() => setHoveredKey(key)}
                 >
-                  {/* Metric label — Thermometer icon for temp entries
+                  {/* Metric label — left. Thermometer icon for temp entries
                       (cpuTemp/gpuTemp and per-GPU _temp), ArrowUp/ArrowDown
                       for NIC TX/RX. Both disambiguate siblings that share the
                       same base label (CPU usage vs CPU temp, Ethernet TX vs
                       Ethernet RX). */}
-                  <div className="text-xs font-medium text-foreground mb-1.5 inline-flex items-center gap-1">
+                  <div className="inline-flex items-center gap-1 text-xs font-medium text-foreground">
                     {label}
                     {showThermometer && <Thermometer className="h-3 w-3 shrink-0" />}
                     {direction === 'tx' && <ArrowUp className="h-3 w-3 shrink-0" />}
                     {direction === 'rx' && <ArrowDown className="h-3 w-3 shrink-0" />}
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs">
-                    <div>
-                      <div className="text-muted-foreground">avg</div>
-                      <div className="font-semibold text-foreground">
+                  {/* Stats — enclosed section floated right, ordered min / avg / max. */}
+                  <div className="flex shrink-0 items-center gap-3 rounded-md border border-border/50 bg-background/40 px-2.5 py-1 text-xs">
+                    <div className="text-center leading-tight">
+                      <div className="text-[10px] text-muted-foreground">min</div>
+                      <div className="font-semibold text-foreground whitespace-nowrap">{fmtMin}</div>
+                    </div>
+                    <div className="text-center leading-tight">
+                      <div className="text-[10px] text-muted-foreground">avg</div>
+                      <div className="font-semibold text-foreground whitespace-nowrap">
                         {fmtAvg}
                         {isNetwork && <span className="text-muted-foreground ml-0.5 font-normal">({formatThroughput(avgThroughput)})</span>}
                       </div>
                     </div>
-                    <div>
-                      <div className="text-muted-foreground">max</div>
-                      <div className="font-semibold text-foreground">{fmtMax}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">min</div>
-                      <div className="font-semibold text-foreground">{fmtMin}</div>
+                    <div className="text-center leading-tight">
+                      <div className="text-[10px] text-muted-foreground">max</div>
+                      <div className="font-semibold text-foreground whitespace-nowrap">{fmtMax}</div>
                     </div>
                   </div>
                 </div>

@@ -32,7 +32,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 // Pure tab-state helpers — imported directly from the lightweight module so
 // the dashboard bundle doesn't have to resolve @/components/charts' barrel
 // (which re-exports Recharts-heavy components like MetricsDetailPanel).
-import { deserializeTabs, initialMetricToState, serializeTabs } from '@/components/charts/metricsTabs';
+import { initialMetricToState, serializeTabs } from '@/components/charts/metricsTabs';
 import type { MetricType } from '@/components/charts/ChartTooltip';
 import ScheduleEditor from '@/components/ScheduleEditor';
 import { MachineCardView } from './components/MachineCardView';
@@ -189,27 +189,19 @@ export default function DashboardPage() {
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   const [liveViewTarget, setLiveViewTarget] = useState<{ machineId: string; machineName: string } | null>(null);
 
-  // Restore the persisted metrics panel across reloads — but only when it resolves
-  // to a non-empty selection. activeGraphPanel (open-state) and graphTabs (content)
-  // are persisted independently and can desync (e.g. deselect-all leaves the panel
-  // "open" with zero lines); restoring that reserves an empty slide above the grid.
-  // No persisted entry → initialMetricToState default (always non-empty), so legacy
-  // panels still restore. The 'display' route has no graphTabs and is never empty.
+  // The metrics panel's open-state is driven solely by activeGraphPanel — it
+  // stays open (showing the in-panel "no metrics selected" state) until the
+  // user dismisses it with the X button, even when every metric is toggled off.
+  // We intentionally do NOT collapse it on an empty graphTabs selection:
+  // "clear all" should empty the panel, not dismiss it. The same empty-but-open
+  // panel therefore restores across reloads.
   const detailPanel = useMemo<DetailPanelState | null>(() => {
     const p = userPreferences.activeGraphPanel;
     if (!p) return null;
     // Don't restore a panel for a machine that isn't in the current site.
     if (!machines.some(m => m.machineId === p.machineId)) return null;
-    if (p.metric !== 'display') {
-      const persisted = userPreferences.graphTabs?.[p.machineId];
-      if (persisted !== undefined) {
-        const sel = deserializeTabs(persisted);
-        const hasAny = sel.metrics.length || sel.nics.length || sel.disks.length || sel.gpus.length || sel.diskIO.length;
-        if (!hasAny) return null;
-      }
-    }
     return { machineId: p.machineId, machineName: p.machineId, metric: p.metric as MetricType };
-  }, [userPreferences.activeGraphPanel, userPreferences.graphTabs, machines]);
+  }, [userPreferences.activeGraphPanel, machines]);
 
   // Animate the panel's open/close (and machine-swap) with a height
   // slide. Tab switches within the same panel (CPU → Memory → GPU)
