@@ -16,6 +16,12 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { collection, getDocs, query, where, documentId, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useDemoContext } from '@/contexts/DemoContext';
+import {
+  formatHourBucketId,
+  formatDayBucketId,
+  DAY_BUCKET_ID_RE,
+  HOUR_BUCKET_ID_RE,
+} from '@/lib/metricsHistoryBuckets';
 import type { TimeRange } from '@/components/charts';
 
 /**
@@ -120,19 +126,9 @@ function getStartDate(range: TimeRange): Date {
   }
 }
 
-const DAY_BUCKET_ID_RE = /^\d{4}-\d{2}-\d{2}$/;
-const HOUR_BUCKET_ID_RE = /^\d{4}-\d{2}-\d{2}-\d{2}$/;
 const FIRESTORE_IN_LIMIT = 30;
 const MAX_FETCHED_SAMPLES = 5000;
 const MAX_DAY_BUCKET_IN_QUERIES = 24;
-
-function formatDayBucketId(date: Date): string {
-  return date.toISOString().split('T')[0];
-}
-
-function formatHourBucketId(date: Date): string {
-  return date.toISOString().slice(0, 13).replace('T', '-');
-}
 
 function chunkArray<T>(items: T[], chunkSize: number): T[][] {
   const chunks: T[][] = [];

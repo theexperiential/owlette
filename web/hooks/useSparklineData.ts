@@ -4,27 +4,126 @@
  * useSparklineData Hook
  *
  * Provides real-time sparkline data for a specific metric type.
- * Uses Firestore snapshot listener for live updates.
+ * Uses Firestore snapshot listeners for live updates.
  *
- * Returns the last 60 samples (1 hour at 1-min resolution) for
- * displaying inline sparklines in machine cards.
+ * Returns the last 60 samples (~1 hour at 1-min resolution) for displaying
+ * inline sparklines in machine cards.
+ *
+ * Bucket shapes (mirrors useHistoricalMetrics):
+ * - The cloud function writes hourly UTC buckets: metrics_history/{YYYY-MM-DD-HH}.
+ * - Legacy data and the e2e fixtures use a daily bucket: metrics_history/{YYYY-MM-DD}.
+ * We subscribe to the current + previous hour buckets (so the window stays full
+ * across the top of the hour) plus today's daily bucket, then merge and keep the
+ * most recent 60 samples. Listeners re-subscribe at each hour boundary so the
+ * data doesn't freeze on a stale bucket when a tab stays open.
  */
 
 import { useState, useEffect } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, documentId, onSnapshot, type Firestore } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useDemoContext } from '@/contexts/DemoContext';
+import { formatHourBucketId, formatDayBucketId } from '@/lib/metricsHistoryBuckets';
 import type { SparklineDataPoint, MetricColor } from '@/components/charts';
 
 type SparklineMetricType = 'cpu' | 'memory' | 'disk' | 'gpu';
 
 // Map metric type to abbreviated key in Firestore
-const metricKeyMap: Record<SparklineMetricType, string> = {
+const metricKeyMap: Record<SparklineMetricType, 'c' | 'm' | 'd' | 'g'> = {
   cpu: 'c',
   memory: 'm',
   disk: 'd',
   gpu: 'g',
 };
+
+const HOUR_MS = 60 * 60 * 1000;
+const MAX_SAMPLES = 60;
+
+/** Raw sample as stored in a metrics_history bucket (abbreviated keys). */
+interface RawSample {
+  t: number;
+  c?: number;
+  m?: number;
+  d?: number;
+  g?: number;
+}
+
+function currentHourEpoch(): number {
+  return Math.floor(Date.now() / HOUR_MS);
+}
+
+function msUntilNextHour(): number {
+  return HOUR_MS - (Date.now() % HOUR_MS);
+}
+
+/**
+ * Re-derive an hour epoch at every UTC hour boundary so subscriptions that
+ * close over a bucket id get torn down and recreated for the new hour. Inert
+ * (no timer) when `active` is false.
+ */
+function useHourEpoch(active: boolean): number {
+  const [epoch, setEpoch] = useState<number>(() => currentHourEpoch());
+  useEffect(() => {
+    if (!active) return;
+    // +2s buffer so we're safely inside the new hour before recomputing ids.
+    const timer = setTimeout(() => setEpoch(currentHourEpoch()), msUntilNextHour() + 2000);
+    return () => clearTimeout(timer);
+  }, [active, epoch]);
+  return epoch;
+}
+
+/**
+ * Subscribe to the metrics_history buckets that can hold the last hour of
+ * samples — current + previous hourly buckets plus today's legacy daily bucket
+ * — merge them (deduped by timestamp), and deliver the most recent 60 samples
+ * sorted ascending by time. Returns an unsubscribe.
+ *
+ * A single `documentId() in [...]` query listener covers all three buckets
+ * (one listener per machine, not three), mirroring how useHistoricalMetrics
+ * reads this collection. Only the current-hour doc actually changes minute to
+ * minute, so steady-state update traffic is unchanged.
+ */
+function subscribeLastHourSamples(
+  database: Firestore,
+  siteId: string,
+  machineId: string,
+  onSamples: (samples: RawSample[]) => void,
+): () => void {
+  const now = new Date();
+  const bucketIds = [
+    formatHourBucketId(new Date(now.getTime() - HOUR_MS)), // previous hour
+    formatHourBucketId(now),                               // current hour
+    formatDayBucketId(now),                                // legacy / e2e daily
+  ];
+
+  const historyRef = collection(database, 'sites', siteId, 'machines', machineId, 'metrics_history');
+  const bucketsQuery = query(historyRef, where(documentId(), 'in', bucketIds));
+
+  return onSnapshot(
+    bucketsQuery,
+    (snapshot) => {
+      // Dedupe by timestamp (a sample maps to exactly one bucket in practice;
+      // this is defensive against daily/hourly overlap). Query results iterate
+      // in documentId order, so the daily bucket ("YYYY-MM-DD") is visited
+      // before the hourly ones ("YYYY-MM-DD-HH") — hourly wins any tie. Then
+      // sort and keep the last 60.
+      const byTime = new Map<number, RawSample>();
+      snapshot.forEach((docSnap) => {
+        const samples = (docSnap.data()?.samples ?? []) as RawSample[];
+        for (const s of samples) {
+          if (s && typeof s.t === 'number') byTime.set(s.t, s);
+        }
+      });
+      const merged = Array.from(byTime.values())
+        .sort((a, b) => a.t - b.t)
+        .slice(-MAX_SAMPLES);
+      onSamples(merged);
+    },
+    (error) => {
+      console.error('Error listening to sparkline data:', error);
+      onSamples([]);
+    },
+  );
+}
 
 interface UseSparklineDataResult {
   data: SparklineDataPoint[];
@@ -54,57 +153,22 @@ export function useSparklineData(
   }>({ data: [], loadedKey: null });
 
   const currentKey = db && siteId && machineId ? `${siteId}/${machineId}/${metricType}` : null;
+  const hourEpoch = useHourEpoch(currentKey !== null);
 
   useEffect(() => {
     if (!currentKey || !db || !siteId || !machineId) return;
 
-    // Get today's bucket ID
-    const bucketId = new Date().toISOString().split('T')[0];
-
-    // Listen to today's metrics history bucket
-    const docRef = doc(
-      db,
-      'sites',
-      siteId,
-      'machines',
-      machineId,
-      'metrics_history',
-      bucketId
-    );
-
-    const unsubscribe = onSnapshot(
-      docRef,
-      (snapshot) => {
-        if (!snapshot.exists()) {
-          setState({ data: [], loadedKey: currentKey });
-          return;
-        }
-
-        const docData = snapshot.data();
-        const samples = docData?.samples || [];
-
-        // Get the value key for this metric type
-        const valueKey = metricKeyMap[metricType];
-
-        // Extract the last 60 samples (1 hour of data)
-        const recentSamples = samples
-          .slice(-60)
-          .map((s: Record<string, number>) => ({
-            t: s.t,
-            v: s[valueKey] ?? 0,
-          }))
-          .filter((s: SparklineDataPoint) => s.v !== undefined && s.v !== null);
-
-        setState({ data: recentSamples, loadedKey: currentKey });
-      },
-      (error) => {
-        console.error('Error listening to sparkline data:', error);
-        setState({ data: [], loadedKey: currentKey });
-      }
-    );
+    const valueKey = metricKeyMap[metricType];
+    const unsubscribe = subscribeLastHourSamples(db, siteId, machineId, (samples) => {
+      const data = samples
+        .map((s) => ({ t: s.t, v: s[valueKey] ?? 0 }))
+        .filter((s) => s.v !== undefined && s.v !== null);
+      setState({ data, loadedKey: currentKey });
+    });
 
     return () => unsubscribe();
-  }, [currentKey, siteId, machineId, metricType]);
+    // hourEpoch re-subscribes the listeners at each hour boundary.
+  }, [currentKey, siteId, machineId, metricType, hourEpoch]);
 
   const matched = currentKey !== null && state.loadedKey === currentKey;
   const data = matched ? state.data : EMPTY_SPARKLINE;
@@ -149,6 +213,7 @@ export function useAllSparklineData(
   }>({ cpu: [], memory: [], disk: [], gpu: [], loadedKey: null });
 
   const currentKey = !demo && db && siteId && machineId ? `${siteId}/${machineId}` : null;
+  const hourEpoch = useHourEpoch(currentKey !== null);
 
   useEffect(() => {
     // Demo mode is handled entirely at render (see below) — the synthesized
@@ -156,58 +221,26 @@ export function useAllSparklineData(
     if (demo) return;
     if (!currentKey || !db || !siteId || !machineId) return;
 
-    // Get today's bucket ID
-    const bucketId = new Date().toISOString().split('T')[0];
+    const unsubscribe = subscribeLastHourSamples(db, siteId, machineId, (samples) => {
+      const cpu: SparklineDataPoint[] = [];
+      const memory: SparklineDataPoint[] = [];
+      const disk: SparklineDataPoint[] = [];
+      const gpu: SparklineDataPoint[] = [];
 
-    // Listen to today's metrics history bucket
-    const docRef = doc(
-      db,
-      'sites',
-      siteId,
-      'machines',
-      machineId,
-      'metrics_history',
-      bucketId
-    );
-
-    const unsubscribe = onSnapshot(
-      docRef,
-      (snapshot) => {
-        if (!snapshot.exists()) {
-          setState({ cpu: [], memory: [], disk: [], gpu: [], loadedKey: currentKey });
-          return;
-        }
-
-        const docData = snapshot.data();
-        const samples = docData?.samples || [];
-
-        // Get last 60 samples — single pass extracting all metrics
-        const recentSamples = samples.slice(-60);
-        const cpu: SparklineDataPoint[] = [];
-        const memory: SparklineDataPoint[] = [];
-        const disk: SparklineDataPoint[] = [];
-        const gpu: SparklineDataPoint[] = [];
-
-        for (const s of recentSamples) {
-          const t = s.t;
-          cpu.push({ t, v: s.c ?? 0 });
-          memory.push({ t, v: s.m ?? 0 });
-          disk.push({ t, v: s.d ?? 0 });
-          if (s.g > 0) gpu.push({ t, v: s.g });
-        }
-
-        // Single setState — one re-render instead of five
-        setState({ cpu, memory, disk, gpu, loadedKey: currentKey });
-      },
-      (error) => {
-        console.error('Error listening to sparkline data:', error);
-        // Mark loaded even on error so the spinner clears.
-        setState({ cpu: [], memory: [], disk: [], gpu: [], loadedKey: currentKey });
+      for (const s of samples) {
+        cpu.push({ t: s.t, v: s.c ?? 0 });
+        memory.push({ t: s.t, v: s.m ?? 0 });
+        disk.push({ t: s.t, v: s.d ?? 0 });
+        if ((s.g ?? 0) > 0) gpu.push({ t: s.t, v: s.g as number });
       }
-    );
+
+      // Single setState — one re-render instead of five
+      setState({ cpu, memory, disk, gpu, loadedKey: currentKey });
+    });
 
     return () => unsubscribe();
-  }, [currentKey, siteId, machineId, demo]);
+    // hourEpoch re-subscribes the listeners at each hour boundary.
+  }, [currentKey, siteId, machineId, demo, hourEpoch]);
 
   if (demo && machineId) return { ...demo.getSparklineData(machineId) };
   // Surface only data that matches the currently-requested key. If db isn't
