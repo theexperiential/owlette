@@ -17,9 +17,9 @@
 
 'use client';
 
-import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { useMinuteTick } from '@/hooks/useMinuteTick';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -47,8 +47,8 @@ import { getUsageColorClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
 import { formatThroughput } from '@/lib/networkUtils';
 import { DISK_IO_COLORS, formatDiskIO } from '@/lib/diskIOUtils';
-import { resolveDevice, unionIds } from '@/lib/deviceResolvers';
-import { useDevicePrefs, type DeviceKind, type DeviceSelection } from '@/hooks/useDevicePrefs';
+import { resolveDevice } from '@/lib/deviceResolvers';
+import { type DeviceKind, type DeviceSelection } from '@/hooks/useDevicePrefs';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
@@ -218,23 +218,6 @@ export const MachineTableHeader = memo(function MachineTableHeader({
     </TableHeader>
   );
 });
-
-interface MachineListViewProps {
-  machines: Machine[];
-  processesExpanded: boolean;
-  currentSiteId: string;
-  siteTimezone?: string;
-  siteTimeFormat?: '12h' | '24h';
-  onToggleProcesses: () => void;
-  onEditProcess: (machineId: string, process: Process) => void;
-  onCreateProcess: (machineId: string) => void;
-  onKillProcess: (machineId: string, processId: string, processName: string) => void;
-  onRestartProcess: (machineId: string, processId: string, processName: string) => void;
-  onSetLaunchMode: (machineId: string, processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
-  onConfigureSchedule?: (machineId: string, process: Process) => void;
-  onRemoveMachine: (machineId: string, machineName: string, isOnline: boolean) => void;
-  onMetricClick?: (machineId: string, metricType: MetricType) => void;
-}
 
 /**
  * Individual machine row component with sparkline support
@@ -963,88 +946,5 @@ export function MachineRow({
         </TableRow>
       )}
     </>
-  );
-}
-
-export function MachineListView({
-  machines,
-  processesExpanded,
-  currentSiteId,
-  siteTimezone = 'UTC',
-  siteTimeFormat = '12h',
-  onToggleProcesses,
-  onEditProcess,
-  onCreateProcess,
-  onKillProcess,
-  onRestartProcess,
-  onSetLaunchMode,
-  onConfigureSchedule,
-  onRemoveMachine,
-  onMetricClick,
-}: MachineListViewProps) {
-  const { userPreferences } = useAuth();
-  const { prefs, setListPref } = useDevicePrefs();
-  const listPref = prefs.listView;
-  const uniqueTimezones = new Set(machines.map(m => m.machineTimezone).filter(Boolean));
-  const showLocalClock = uniqueTimezones.size > 1;
-
-  // Union of device ids across visible machines — drives the column-header
-  // dropdown menus. Memoized so the memoized table header doesn't re-render
-  // on every metrics tick (only when the device set actually changes).
-  const deviceUnion = useMemo<DeviceUnion>(() => ({
-    cpus:  unionIds(machines.map(m => m.devices?.cpus?.map(c => c.id) ?? [])),
-    disks: unionIds(machines.map(m => m.devices?.disks?.map(d => d.id) ?? [])),
-    gpus:  unionIds(machines.map(m => m.devices?.gpus?.map(g => g.id) ?? [])),
-    nics:  unionIds(machines.map(m => m.devices?.nics?.map(n => n.id) ?? [])),
-  }), [machines]);
-
-  // A dropdown is worth showing only when at least one visible machine has
-  // more than one device of that kind — otherwise the selector would offer
-  // nothing meaningful beyond "auto".
-  const showDropdown = useMemo<ShowDropdownFlags>(() => ({
-    cpu:  machines.some(m => (m.devices?.cpus?.length  ?? 0) > 1),
-    disk: machines.some(m => (m.devices?.disks?.length ?? 0) > 1),
-    gpu:  machines.some(m => (m.devices?.gpus?.length  ?? 0) > 1),
-    nic:  machines.some(m => (m.devices?.nics?.length  ?? 0) > 1),
-  }), [machines]);
-
-
-  return (
-    <div className="rounded-xl border border-border/60 bg-card-sunken overflow-hidden">
-      <Table className="table-fixed" style={{ contain: 'layout' }}>
-        <MachineTableHeader
-          deviceUnion={deviceUnion}
-          showDropdown={showDropdown}
-          listPref={listPref}
-          setListPref={setListPref}
-        />
-        <TableBody>
-          {machines.map((machine) => (
-            <MachineRow
-              key={machine.machineId}
-              machine={machine}
-              isExpanded={processesExpanded}
-              currentSiteId={currentSiteId}
-              siteTimezone={siteTimezone}
-              siteTimeFormat={siteTimeFormat}
-              userPreferences={userPreferences}
-              onToggleExpanded={onToggleProcesses}
-              onEditProcess={(process) => onEditProcess(machine.machineId, process)}
-              onCreateProcess={() => onCreateProcess(machine.machineId)}
-              onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}
-              onRestartProcess={(processId, processName) => onRestartProcess(machine.machineId, processId, processName)}
-              onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
-                onSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
-              }
-              onConfigureSchedule={onConfigureSchedule ? (process) => onConfigureSchedule(machine.machineId, process) : undefined}
-              onRemoveMachine={() => onRemoveMachine(machine.machineId, machine.machineId, machine.online)}
-              onMetricClick={onMetricClick ? (metricType) => onMetricClick(machine.machineId, metricType) : undefined}
-              showLocalClock={showLocalClock}
-              listPref={listPref}
-            />
-          ))}
-        </TableBody>
-      </Table>
-    </div>
   );
 }
