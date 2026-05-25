@@ -78,8 +78,8 @@ interface UserActivity {
  * - Demote admins to user
  */
 export default function UserManagementPage() {
-  const { users, loading, error, updateUserRole, getUserCounts, assignSiteToUser, removeSiteFromUser, deleteUser } = useUserManagement();
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, isSuperadmin } = useAuth();
+  const { users, loading, error, updateUserRole, getUserCounts, assignSiteToUser, removeSiteFromUser, deleteUser } = useUserManagement(isSuperadmin);
   const [updatingUser, setUpdatingUser] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState<string | null>(null);
   const [manageSitesDialogOpen, setManageSitesDialogOpen] = useState(false);

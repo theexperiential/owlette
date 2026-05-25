@@ -35,16 +35,24 @@ export interface UserData {
  * - Sort and filter users
  *
  * Usage:
- * const { users, loading, error, updateUserRole } = useUserManagement();
+ * const { users, loading, error, updateUserRole } = useUserManagement(isSuperadmin);
  */
-export function useUserManagement() {
+const EMPTY_USERS: UserData[] = [];
+
+export function useUserManagement(enabled: boolean) {
   const [users, setUsers] = useState<UserData[]>([]);
-  const [loading, setLoading] = useState(!!db);
-  const [error, setError] = useState<string | null>(db ? null : 'Firebase is not configured');
+  const [loading, setLoading] = useState(enabled && !!db);
+  const [error, setError] = useState<string | null>(
+    enabled && !db ? 'Firebase is not configured' : null
+  );
+
+  const exposedUsers = enabled ? users : EMPTY_USERS;
+  const exposedLoading = enabled ? loading : false;
+  const exposedError = enabled && !db ? 'Firebase is not configured' : enabled ? error : null;
 
   // Fetch all users with real-time updates
   useEffect(() => {
-    if (!db) return;
+    if (!enabled || !db) return;
 
     // No try/catch: `collection()`/`query()` only throw for invalid path or
     // query shape (both literals here), and onSnapshot surfaces runtime
@@ -78,7 +86,7 @@ export function useUserManagement() {
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [enabled]);
 
   /**
    * Update a user's role
@@ -118,7 +126,7 @@ export function useUserManagement() {
    * - members: standard users with site-level access
    */
   const getUserCounts = useCallback(() => {
-    const active = users.filter((u) => u.deletedAt == null);
+    const active = exposedUsers.filter((u) => u.deletedAt == null);
     const superadmins = active.filter((u) => u.role === 'superadmin').length;
     const admins = active.filter((u) => u.role === 'admin').length;
     const members = active.filter((u) => u.role === 'member').length;
@@ -128,9 +136,9 @@ export function useUserManagement() {
       superadmins,
       admins,
       members,
-      deleted: users.length - active.length,
+      deleted: exposedUsers.length - active.length,
     };
-  }, [users]);
+  }, [exposedUsers]);
 
   /**
    * Assign a site to a user
@@ -209,9 +217,9 @@ export function useUserManagement() {
   );
 
   return {
-    users,
-    loading,
-    error,
+    users: exposedUsers,
+    loading: exposedLoading,
+    error: exposedError,
     updateUserRole,
     getUserCounts,
     assignSiteToUser,

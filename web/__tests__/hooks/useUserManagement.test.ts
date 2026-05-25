@@ -30,6 +30,7 @@ jest.mock('firebase/firestore', () => ({
 }));
 
 import { useUserManagement } from '@/hooks/useUserManagement';
+import { onSnapshot } from 'firebase/firestore';
 
 const activeDoc = (uid: string, role: string) => ({
   id: uid,
@@ -44,6 +45,7 @@ const deletedDoc = (uid: string, role: string, deletedAt: number) => ({
 beforeEach(() => {
   snapshotDocs = [];
   unsubscribe.mockClear();
+  jest.mocked(onSnapshot).mockClear();
 });
 
 afterEach(() => {
@@ -57,7 +59,7 @@ describe('useUserManagement — soft delete', () => {
       deletedDoc('u-deleted', 'admin', 1700000000000),
     ];
 
-    const { result } = renderHook(() => useUserManagement());
+    const { result } = renderHook(() => useUserManagement(true));
     await waitFor(() => expect(result.current.users).toHaveLength(2));
 
     const active = result.current.users.find((u) => u.uid === 'u-active');
@@ -78,7 +80,7 @@ describe('useUserManagement — getUserCounts', () => {
       deletedDoc('u-del-2', 'admin', 1700000000001),
     ];
 
-    const { result } = renderHook(() => useUserManagement());
+    const { result } = renderHook(() => useUserManagement(true));
     await waitFor(() => expect(result.current.users).toHaveLength(5));
 
     const counts = result.current.getUserCounts();
@@ -87,5 +89,18 @@ describe('useUserManagement — getUserCounts', () => {
     expect(counts.admins).toBe(1);
     expect(counts.members).toBe(1);
     expect(counts.deleted).toBe(2);
+  });
+});
+
+describe('useUserManagement — disabled', () => {
+  it('does not subscribe and returns inert state when disabled', () => {
+    snapshotDocs = [activeDoc('u-active', 'member')];
+
+    const { result } = renderHook(() => useUserManagement(false));
+
+    expect(onSnapshot).not.toHaveBeenCalled();
+    expect(result.current.users).toEqual([]);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBeNull();
   });
 });
