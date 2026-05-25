@@ -164,9 +164,11 @@ const formatAction = (action: string) => {
 const SEARCH_POOL_CAP = 2000;
 
 // Build the Firestore query for a site's logs honouring the active filters.
-// When non-date filters (action/machine/level) are active we can't combine them
-// with orderBy('timestamp') without composite indexes, so we drop the orderBy
-// and re-sort + date-filter client-side afterwards (see applyClientScope).
+// Always ordered by timestamp desc so the page shows the *most recent* matching
+// logs (not an arbitrary __name__-ordered slice). Every filter combination —
+// action/machine/level, optionally with a timestamp range — is backed by a
+// composite index in firestore.indexes.json, so the ordering, date window, and
+// equality filters are all resolved server-side.
 function buildLogsQuery(
   logsRef: Query,
   filters: {
@@ -178,43 +180,18 @@ function buildLogsQuery(
     dateTo: string;
   },
   max: number
-): { q: Query; hasNonDateFilters: boolean; dateRange: { from: Date | null; to: Date | null } } {
+): Query {
   const dateRange = getDateRange(filters.datePreset, filters.dateFrom, filters.dateTo);
-  const hasNonDateFilters =
-    filters.action !== 'all' || filters.machine !== 'all' || filters.level !== 'all';
 
-  let q: Query = hasNonDateFilters
-    ? query(logsRef, limit(max))
-    : query(logsRef, orderBy('timestamp', 'desc'), limit(max));
+  let q: Query = query(logsRef, orderBy('timestamp', 'desc'), limit(max));
 
   if (filters.action !== 'all') q = query(q, where('action', '==', filters.action));
   if (filters.machine !== 'all') q = query(q, where('machineId', '==', filters.machine));
   if (filters.level !== 'all') q = query(q, where('level', '==', filters.level));
-  if (!hasNonDateFilters) {
-    if (dateRange.from) q = query(q, where('timestamp', '>=', Timestamp.fromDate(dateRange.from)));
-    if (dateRange.to) q = query(q, where('timestamp', '<=', Timestamp.fromDate(dateRange.to)));
-  }
-  return { q, hasNonDateFilters, dateRange };
-}
+  if (dateRange.from) q = query(q, where('timestamp', '>=', Timestamp.fromDate(dateRange.from)));
+  if (dateRange.to) q = query(q, where('timestamp', '<=', Timestamp.fromDate(dateRange.to)));
 
-// Mirror, on the client, the ordering + date window Firestore couldn't apply
-// server-side when non-date filters forced us to drop the orderBy.
-function applyClientScope(
-  docs: LogEvent[],
-  hasNonDateFilters: boolean,
-  dateRange: { from: Date | null; to: Date | null }
-): LogEvent[] {
-  if (!hasNonDateFilters) return docs;
-  let out = [...docs].sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis());
-  if (dateRange.from || dateRange.to) {
-    out = out.filter((log) => {
-      const ts = log.timestamp.toMillis();
-      if (dateRange.from && ts < dateRange.from.getTime()) return false;
-      if (dateRange.to && ts > dateRange.to.getTime()) return false;
-      return true;
-    });
-  }
-  return out;
+  return q;
 }
 
 // Shared grid template so the column header and every log row line up exactly:
@@ -535,7 +512,7 @@ export default function LogsPage() {
     setExpandedLogIds(new Set());
 
     const logsRef = collection(db, 'sites', currentSiteId, 'logs');
-    const { q, hasNonDateFilters, dateRange } = buildLogsQuery(
+    const q = buildLogsQuery(
       logsRef,
       { action: filterAction, machine: filterMachine, level: filterLevel, datePreset: filterDatePreset, dateFrom: filterDateFrom, dateTo: filterDateTo },
       LOGS_PER_PAGE + 1
@@ -543,11 +520,7 @@ export default function LogsPage() {
 
     // Set up real-time listener
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const docsData = applyClientScope(
-        snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEvent)),
-        hasNonDateFilters,
-        dateRange
-      );
+      const docsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEvent));
 
       // Check if there are more pages
       const hasMoreData = docsData.length > LOGS_PER_PAGE;
@@ -590,7 +563,7 @@ export default function LogsPage() {
     (async () => {
       try {
         const logsRef = collection(db, 'sites', currentSiteId, 'logs');
-        const { q, hasNonDateFilters, dateRange } = buildLogsQuery(
+        const q = buildLogsQuery(
           logsRef,
           { action: filterAction, machine: filterMachine, level: filterLevel, datePreset: filterDatePreset, dateFrom: filterDateFrom, dateTo: filterDateTo },
           SEARCH_POOL_CAP + 1
@@ -598,11 +571,7 @@ export default function LogsPage() {
         const snapshot = await getDocs(q);
         if (cancelled) return;
 
-        const docsData = applyClientScope(
-          snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEvent)),
-          hasNonDateFilters,
-          dateRange
-        );
+        const docsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEvent));
         setSearchPoolTruncated(docsData.length > SEARCH_POOL_CAP);
         setSearchPool(docsData.slice(0, SEARCH_POOL_CAP));
       } catch (error) {
@@ -626,15 +595,16 @@ export default function LogsPage() {
     setIsFetchingMore(true);
 
     try {
-      const dateRange = getDateRange(filterDatePreset, filterDateFrom, filterDateTo);
+      // Same query as the initial page (identical ordering + filters), advanced
+      // past the last loaded doc — so page N+1 continues exactly where page N
+      // left off. Reusing buildLogsQuery keeps the two from drifting apart.
       const logsRef = collection(db, 'sites', currentSiteId, 'logs');
-      let q = query(logsRef, orderBy('timestamp', 'desc'), startAfter(lastDoc), limit(LOGS_PER_PAGE + 1));
-
-      if (filterAction !== 'all') q = query(q, where('action', '==', filterAction));
-      if (filterMachine !== 'all') q = query(q, where('machineId', '==', filterMachine));
-      if (filterLevel !== 'all') q = query(q, where('level', '==', filterLevel));
-      if (dateRange.from) q = query(q, where('timestamp', '>=', Timestamp.fromDate(dateRange.from)));
-      if (dateRange.to) q = query(q, where('timestamp', '<=', Timestamp.fromDate(dateRange.to)));
+      const baseQuery = buildLogsQuery(
+        logsRef,
+        { action: filterAction, machine: filterMachine, level: filterLevel, datePreset: filterDatePreset, dateFrom: filterDateFrom, dateTo: filterDateTo },
+        LOGS_PER_PAGE + 1
+      );
+      const q = query(baseQuery, startAfter(lastDoc));
 
       const snapshot = await getDocs(q);
       const docsData = snapshot.docs.map(doc => ({
