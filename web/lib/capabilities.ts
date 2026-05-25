@@ -53,6 +53,9 @@ const SITE_ADMIN_CAPABILITIES: readonly Capability[] = [
   ...MEMBER_CAPABILITIES,
   Capability.MACHINE_EXEC_COMMAND,
   Capability.MACHINE_CONFIG_WRITE,
+  // Site-scoped (see SITE_SCOPED_CAPABILITIES): admins can remove machines on their
+  // OWN assigned sites; superadmins on any site.
+  Capability.MACHINE_REMOVE,
   Capability.DEPLOYMENT_MANAGE,
   Capability.DISTRIBUTION_MANAGE,
   Capability.UNINSTALL_TRIGGER,

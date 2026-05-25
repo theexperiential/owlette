@@ -12,8 +12,9 @@
  * `web/hooks/useMachineOperations.ts` exactly. The hook will be deleted in
  * a follow-up wave once the route-side action is the only writer.
  *
- * Capability: `MACHINE_REMOVE` — superadmin only per the role matrix in
- * `web/lib/capabilities.ts`. Site admins cannot remove machines.
+ * Capability: `MACHINE_REMOVE` — site-scoped per the role matrix in
+ * `web/lib/capabilities.ts`. Site admins can remove machines on their assigned
+ * sites; superadmins on any site.
  *
  * Atomicity: the main doc + config delete run in a Firestore batch; the
  * two command-map docs are deleted as best-effort follow-ups since they

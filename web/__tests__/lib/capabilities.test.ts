@@ -92,6 +92,7 @@ describe('RoleCapabilityMatrix', () => {
         'USER_SELF_DELETE',
         'MACHINE_EXEC_COMMAND',
         'MACHINE_CONFIG_WRITE',
+        'MACHINE_REMOVE',
         'DEPLOYMENT_MANAGE',
         'DISTRIBUTION_MANAGE',
         'UNINSTALL_TRIGGER',
@@ -109,8 +110,9 @@ describe('RoleCapabilityMatrix', () => {
     );
   });
 
-  it('admin does NOT include MACHINE_REMOVE (superadmin-only delete)', () => {
-    expect(RoleCapabilityMatrix.admin).not.toContain(Capability.MACHINE_REMOVE);
+  it('admin includes MACHINE_REMOVE, site-scoped to assigned sites', () => {
+    expect(RoleCapabilityMatrix.admin).toContain(Capability.MACHINE_REMOVE);
+    expect(isSiteScopedCapability(Capability.MACHINE_REMOVE)).toBe(true);
   });
 
   it('admin does NOT include any global capability', () => {
