@@ -370,7 +370,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           ...(deployTargets !== undefined ? { targets: deployTargets } : {}),
           ...(deployExtractPath !== undefined ? { extractPath: deployExtractPath } : {}),
         };
-        if (Object.keys(providedRoostPatch).length > 0) {
+        const configApplied = Object.keys(providedRoostPatch).length > 0;
+        if (configApplied) {
+          // The config write must honor optimistic concurrency too — otherwise a
+          // stale expectedHead could ride a config change in via the no-op branch,
+          // bypassing the CAS guard the promote/create paths enforce below.
+          if (expectedHead !== undefined && currentId !== expectedHead) {
+            return { conflict: true as const, currentId };
+          }
           tx.set(
             roostRef,
             { updatedAt: FieldValue.serverTimestamp(), ...providedRoostPatch },
@@ -384,6 +391,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           versionNumber: existingNumber,
           currentVersionId: versionId,
           previousVersionId,
+          configApplied,
         };
       }
 
@@ -578,7 +586,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       auth.scopeCheck,
     );
     if (idem.mode === 'proceed') await saveIdempotency(idem.token, response);
-    if (result.outcome !== 'noop') {
+    // Emit for real versioning changes (create/promote) and for a same-head
+    // republish that actually restated deploy config — but not for a pure no-op.
+    const configOnly = result.outcome === 'noop' && 'configApplied' in result && result.configApplied;
+    if (result.outcome !== 'noop' || configOnly) {
       emitMutation({
         kind: 'roost_mutated',
         siteId: site.siteId,
@@ -588,7 +599,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           verb:
             result.outcome === 'promote'
               ? 'version_promote'
-              : 'version_publish',
+              : result.outcome === 'noop'
+                ? 'config_update'
+                : 'version_publish',
           endpoint: request.nextUrl.pathname,
           method: request.method,
           roostId,

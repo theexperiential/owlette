@@ -435,6 +435,7 @@ describe('POST /versions — version-number monotonicity', () => {
     txState.currentVersionId = String(first.body.versionId);
     const roostWritesBefore = txState.roostWrites.length;
     const versionWritesBefore = txState.versionWrites.length;
+    mockEmitMutation.mockClear();
 
     const second = await publish(undefined, { targets: ['machine-7'], name: 'lobby v2' });
 
@@ -451,6 +452,14 @@ describe('POST /versions — version-number monotonicity', () => {
     expect(w.name).toBe('lobby v2');
     expect(w).not.toHaveProperty('versionCounter');
     expect(w).not.toHaveProperty('versionId');
+
+    // ...and the config update is audited (verb=config_update), not silent.
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'roost_mutated',
+        attributes: expect.objectContaining({ verb: 'config_update' }),
+      }),
+    );
   });
 
   async function publishTwoVersionHistory(): Promise<{
@@ -590,6 +599,23 @@ describe('POST /versions - expectedCurrentVersionId CAS', () => {
     expect(res.status).toBe(201);
     expect(txState.versionWrites[0]!.parentVersionId).toBe('vrs_existing');
     expect(txState.roostWrites[0]!.previousVersionId).toBe('vrs_existing');
+  });
+
+  it('rejects a config-only republish-at-head when expectedCurrentVersionId is stale', async () => {
+    // Republishing the head bytes hits the no-op branch; a config write there
+    // must still honor CAS, not slip past it with a stale expected head.
+    const first = await publish();
+    expect(first.status).toBe(201);
+    txState.versionCounter = 1;
+    txState.currentVersionId = String(first.body.versionId);
+    const roostWritesBefore = txState.roostWrites.length;
+
+    const res = await publish({ expectedCurrentVersionId: 'vrs_stale', targets: ['machine-9'] });
+
+    expect(res.status).toBe(412);
+    expect(res.body.code).toBe('version_stale');
+    // No config write slipped through the CAS guard.
+    expect(txState.roostWrites).toHaveLength(roostWritesBefore);
   });
 
   it('rejects non-string non-null expectedCurrentVersionId', async () => {
