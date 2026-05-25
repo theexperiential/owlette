@@ -1,0 +1,5 @@
+# ElevenLabs voiceover generation for the tutorial series.
+# Install into a throwaway venv — this is production tooling, not part of the agent.
+#   python -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt
+requests>=2.31
+python-dotenv>=1.0   # optional; generate.py falls back to a minimal .env parser if absent
