@@ -11,7 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { streamText, stepCountIs, convertToModelMessages, type ModelMessage, type UIMessage } from 'ai';
+import { streamText, stepCountIs, convertToModelMessages, type UIMessage } from 'ai';
 import { resolveAuth, requireScope } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
 
     // ─── Site-Wide Mode (unchanged — web-side LLM) ─────────────────────
     if (isSiteMode) {
-      return handleSiteWideMode(db, userId, siteId, await convertToModelMessages(messages), chatId, effectiveAccess);
+      return handleSiteWideMode(db, userId, siteId, messages, chatId, effectiveAccess);
     }
 
     // ─── Single Machine Mode ───────────────────────────────────────────
@@ -205,7 +205,7 @@ export async function POST(request: NextRequest) {
       return handleLocalCortex(db, siteId, machineId, machineName, messages, chatId);
     } else {
       // ─── Fallback: Server-side LLM (existing approach) ────────────
-      return handleServerSideLLM(db, userId, siteId, machineId, machineName, await convertToModelMessages(messages), chatId, effectiveAccess);
+      return handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, effectiveAccess);
     }
   } catch (error: unknown) {
     return apiError(error, 'cortex');
@@ -371,19 +371,20 @@ async function handleServerSideLLM(
   siteId: string,
   machineId: string,
   machineName: string,
-  messages: ModelMessage[],
+  messages: UIMessage[],
   chatId: string,
   access: SiteAccessLevel,
 ): Promise<Response> {
-  const [llmConfig, processes] = await Promise.all([
+  const [llmConfig, processes, requireTier3Approval] = await Promise.all([
     resolveLlmConfig(db, userId, siteId),
     fetchProcessSummaries(db, siteId, machineId),
+    getCortexRequireTier3Approval(db, siteId),
   ]);
 
   const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
   const executableTools = buildExecutableTools(
     db, siteId, machineId, chatId, toolDefs,
-    false, [], { userId, userRole: access.role },
+    false, [], { userId, userRole: access.role, requireTier3Approval },
   );
 
   const model = createModel(llmConfig);
@@ -391,7 +392,10 @@ async function handleServerSideLLM(
   const result = streamText({
     model,
     system: buildSystemPrompt(machineName || machineId, false, processes),
-    messages,
+    // Convert with the built tools so per-tool toModelOutput hooks (e.g.
+    // capture_screenshot → image-url) project prior-turn tool outputs into
+    // model content, not just on the turn they were produced.
+    messages: await convertToModelMessages(messages, { tools: executableTools }),
     tools: executableTools,
     stopWhen: stepCountIs(10),
   });
@@ -407,7 +411,7 @@ async function handleSiteWideMode(
   db: FirebaseFirestore.Firestore,
   userId: string,
   siteId: string,
-  messages: ModelMessage[],
+  messages: UIMessage[],
   chatId: string,
   access: SiteAccessLevel,
 ): Promise<Response> {
@@ -419,12 +423,15 @@ async function handleSiteWideMode(
     );
   }
 
-  const llmConfig = await resolveLlmConfig(db, userId, siteId);
+  const [llmConfig, requireTier3Approval] = await Promise.all([
+    resolveLlmConfig(db, userId, siteId),
+    getCortexRequireTier3Approval(db, siteId),
+  ]);
 
   const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
   const executableTools = buildExecutableTools(
     db, siteId, SITE_TARGET_ID, chatId, toolDefs,
-    true, onlineMachines, { userId, userRole: access.role },
+    true, onlineMachines, { userId, userRole: access.role, requireTier3Approval },
   );
 
   const model = createModel(llmConfig);
@@ -432,7 +439,7 @@ async function handleSiteWideMode(
   const result = streamText({
     model,
     system: buildSystemPrompt('', true),
-    messages,
+    messages: await convertToModelMessages(messages, { tools: executableTools }),
     tools: executableTools,
     stopWhen: stepCountIs(10),
   });

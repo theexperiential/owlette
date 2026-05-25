@@ -52,6 +52,13 @@ function stripReservedExistingCommandKeys(params: Record<string, unknown>): Reco
 export interface BuildExecutableToolsOptions {
   userId?: string;
   userRole?: string | null;
+  /**
+   * Whether tier-3 tools require in-chat approval. Defaults to true. When the
+   * per-site flag (`getCortexRequireTier3Approval`) is off, tier-3 tools
+   * auto-run on the server-side / site-wide paths too — not just local Cortex —
+   * so the approval toggle is honored consistently everywhere.
+   */
+  requireTier3Approval?: boolean;
 }
 
 type ProcessToolResult = Record<string, unknown>;
@@ -1117,8 +1124,9 @@ export function buildExecutableTools(
       // client surfaces approve/deny and resumes the stream once answered.
       // Tier 1/2 keep auto-running. This is a chat-only guardrail — autonomous
       // Cortex uses a separate `buildAutonomousTools` (no human to approve), so
-      // it is intentionally unaffected.
-      needsApproval: def.tier >= 3,
+      // it is intentionally unaffected. Gated by the per-site approval flag so
+      // turning approval off disables the gate on every path, not just local.
+      needsApproval: def.tier >= 3 && options.requireTier3Approval !== false,
       execute: async (params: unknown) => {
         // Server-side tools run directly on the web server (no agent relay)
         if (SERVER_SIDE_TOOLS.has(toolName)) {
@@ -1170,8 +1178,35 @@ export function buildExecutableTools(
     // For capture_screenshot: inject the image as a vision content block
     // so the LLM can see and analyze the screenshot, not just get a URL string
     if (toolName === 'capture_screenshot') {
+      type ScreenshotBlock = { type: 'text'; text: string } | { type: 'image-url'; url: string };
       toolConfig.toModelOutput = ({ output }: { output: unknown }) => {
         const result = output as Record<string, unknown> | null;
+
+        // Site-wide mode aggregates per-machine results as { machines: [...] }.
+        // Project each machine's screenshot URL as its own image block so the
+        // model sees all of them — a single top-level `url` only exists in
+        // single-machine mode.
+        const machines = Array.isArray(result?.machines)
+          ? (result!.machines as Array<Record<string, unknown>>)
+          : null;
+        if (machines) {
+          const blocks: ScreenshotBlock[] = [];
+          for (const m of machines) {
+            const mid = (m.machine as string) || 'machine';
+            const murl = m.url as string | undefined;
+            if (murl) {
+              blocks.push({ type: 'text' as const, text: `${mid}:` });
+              blocks.push({ type: 'image-url' as const, url: murl });
+            } else {
+              const note = (m.message as string) || (m.error as string) || 'no screenshot';
+              blocks.push({ type: 'text' as const, text: `${mid}: ${note}` });
+            }
+          }
+          if (blocks.length > 0) {
+            return { type: 'content' as const, value: blocks };
+          }
+        }
+
         const url = result?.url as string | undefined;
         const message = (result?.message as string) || (result?.error as string) || 'Screenshot captured';
 

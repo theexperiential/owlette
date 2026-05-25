@@ -407,9 +407,10 @@ async function runServerSideLLM(
   maxToolTier: ToolTier,
   userRole: string | null,
 ): Promise<Response> {
-  const [llmConfig, processes] = await Promise.all([
+  const [llmConfig, processes, requireTier3Approval] = await Promise.all([
     resolveLlmConfig(db, userId, siteId),
     fetchProcessSummaries(db, siteId, machineId),
+    getCortexRequireTier3Approval(db, siteId),
   ]);
 
   const toolDefs = getToolsByTier(maxToolTier);
@@ -421,7 +422,7 @@ async function runServerSideLLM(
     toolDefs,
     false,
     [],
-    { userId, userRole },
+    { userId, userRole, requireTier3Approval },
   );
 
   const model = createModel(llmConfig);
@@ -464,7 +465,10 @@ async function runSiteWideMode(
   onlineMachines: string[],
   userRole: string | null,
 ): Promise<Response> {
-  const llmConfig = await resolveLlmConfig(db, userId, siteId);
+  const [llmConfig, requireTier3Approval] = await Promise.all([
+    resolveLlmConfig(db, userId, siteId),
+    getCortexRequireTier3Approval(db, siteId),
+  ]);
   const toolDefs = getToolsByTier(maxToolTier);
   const executableTools = buildExecutableTools(
     db,
@@ -474,7 +478,7 @@ async function runSiteWideMode(
     toolDefs,
     true,
     onlineMachines,
-    { userId, userRole },
+    { userId, userRole, requireTier3Approval },
   );
 
   const model = createModel(llmConfig);
