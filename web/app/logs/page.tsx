@@ -310,10 +310,10 @@ const LogRow = React.memo(function LogRow({
             <span className="text-foreground truncate">{log.machineName}</span>
             {/* process */}
             <span className="text-muted-foreground truncate">{log.processName || '—'}</span>
-            {/* details (flex, truncates) + screenshot indicator */}
+            {/* details preview (flex, truncates) + screenshot indicator — hidden once expanded, where the full details render below (avoids duplicating the text) */}
             <div className="flex items-center gap-2 min-w-0">
-              {log.screenshotUrl && <Camera className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
-              {log.details ? (
+              {!isExpanded && log.screenshotUrl && <Camera className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
+              {!isExpanded && (log.details ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span className="text-muted-foreground truncate min-w-0 cursor-help">{log.details}</span>
@@ -322,7 +322,7 @@ const LogRow = React.memo(function LogRow({
                 </Tooltip>
               ) : (
                 <span className="text-muted-foreground/40">—</span>
-              )}
+              ))}
             </div>
           </div>
         </button>
