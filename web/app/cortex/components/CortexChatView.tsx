@@ -863,40 +863,41 @@ function ConversationItem({
 
   return (
     <div
-      role="button"
-      tabIndex={0}
       data-active-conversation={isActive ? 'true' : undefined}
-      aria-current={isActive ? 'true' : undefined}
-      className={`group flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-accent/50 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-accent-cyan focus-visible:ring-inset ${
+      className={`group flex items-center gap-2 px-3 py-2 hover:bg-accent/50 transition-colors ${
         isActive ? 'bg-accent' : ''
       }`}
-      onClick={onClick}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onClick();
-        }
-      }}
     >
-      {conversation.source === 'autonomous' ? (
-        <Zap className="h-3.5 w-3.5 text-accent-cyan flex-shrink-0" />
-      ) : (
-        <MessageSquare className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-      )}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <p className="text-sm text-foreground truncate">{conversation.title}</p>
-          {conversation.source === 'autonomous' && (
-            <span className="text-[10px] px-1 py-0.5 rounded bg-accent-cyan/15 text-accent-cyan font-medium flex-shrink-0">
-              auto
-            </span>
-          )}
+      {/* The open-conversation control is a real <button> (keyboard- and
+          screen-reader-accessible) with the rename/delete buttons as SIBLINGS,
+          not nested inside it — nesting interactive controls is a serious axe
+          violation (nested-interactive) and fails the cortex a11y gate. */}
+      <button
+        type="button"
+        onClick={onClick}
+        aria-current={isActive ? 'true' : undefined}
+        className="flex items-center gap-2 flex-1 min-w-0 text-left cursor-pointer rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent-cyan focus-visible:ring-inset"
+      >
+        {conversation.source === 'autonomous' ? (
+          <Zap className="h-3.5 w-3.5 text-accent-cyan flex-shrink-0" />
+        ) : (
+          <MessageSquare className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm text-foreground truncate">{conversation.title}</p>
+            {conversation.source === 'autonomous' && (
+              <span className="text-[10px] px-1 py-0.5 rounded bg-accent-cyan/15 text-accent-cyan font-medium flex-shrink-0">
+                auto
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground flex items-center gap-1">
+            <span className="truncate">{conversation.targetType === 'site' ? 'all machines' : conversation.machineName || 'unknown machine'}</span>
+            <span className="text-muted-foreground flex-shrink-0">· {timeAgo(conversation.updatedAt)}</span>
+          </p>
         </div>
-        <p className="text-xs text-muted-foreground flex items-center gap-1">
-          <span className="truncate">{conversation.targetType === 'site' ? 'all machines' : conversation.machineName || 'unknown machine'}</span>
-          <span className="text-muted-foreground flex-shrink-0">· {timeAgo(conversation.updatedAt)}</span>
-        </p>
-      </div>
+      </button>
       <div className="opacity-0 group-hover:opacity-100 flex items-center transition-all">
         <button
           onClick={(e) => {
