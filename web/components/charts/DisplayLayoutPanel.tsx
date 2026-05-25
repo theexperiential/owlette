@@ -1091,8 +1091,8 @@ export function DisplayLayoutPanel({
     }
 
     return (
-      <div className="animate-in fade-in duration-100 grid grid-cols-1 md:grid-cols-2 gap-0">
-        <div className="min-w-0 h-[280px] border border-border rounded-l-lg md:border-r-0 overflow-hidden">
+      <div className="animate-in fade-in duration-100 grid grid-cols-1 md:grid-cols-2 gap-0 bg-card rounded-lg">
+        <div className="min-w-0 h-[280px] border border-border rounded-l-lg md:border-r-0 overflow-hidden bg-card">
           <DisplayCanvas
             monitors={canvasMonitors}
             mosaicGrids={activeTab === 'live' ? profile?.mosaicGrids : undefined}
@@ -1204,7 +1204,7 @@ export function DisplayLayoutPanel({
   return (
     <Card
       data-testid="display-layout-panel"
-      className="border-border bg-card py-0 gap-0"
+      className="border-border bg-card-sunken py-0 gap-0"
     >
       <CardContent className="p-4">
         {/* Single header row: machine title, tabs, write actions, close.

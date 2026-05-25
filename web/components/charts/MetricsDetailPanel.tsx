@@ -1049,7 +1049,7 @@ export function MetricsDetailPanel({
   }, [availableMetrics, effectiveMetrics, selectedNics, nicNames, networkMode, selectedDisks, diskNames, driveOrder, selectedGpus, gpuNames, effectiveDiskIO, diskIOMode, gpuDisplayLabel]);
 
   return (
-    <Card className="border-border bg-card py-0 gap-0">
+    <Card className="border-border bg-card-sunken py-0 gap-0">
       <CardContent className="p-4">
         {/* Title row */}
         <div className="flex items-center gap-3 mb-3">
@@ -1240,7 +1240,7 @@ export function MetricsDetailPanel({
         </div>
 
         {/* Chart Area */}
-        <div className="h-[280px] w-full">
+        <div className="h-[280px] w-full rounded-lg border border-border/40 bg-card p-2">
           {error ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-destructive">{error}</div>
