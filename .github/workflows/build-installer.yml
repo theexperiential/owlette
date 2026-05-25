@@ -47,7 +47,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # full history so the VERSION + changelog commit that triggered
           # the tag are in the source tree for the build to reference.
