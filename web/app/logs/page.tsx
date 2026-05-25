@@ -21,7 +21,7 @@ import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
 import { DatePicker } from '@/components/ui/date-picker';
-import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
+import { formatSiteScopedTimestamp, getDisplayTimezone, zonedTimeToUtcMs } from '@/lib/timeUtils';
 
 interface LogEvent {
   id: string;
@@ -115,10 +115,6 @@ function getDateRange(preset: DatePreset, customFrom?: string, customTo?: string
   }
 }
 
-const startOfDayMs = (d: Date) =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
-const endOfDayMs = (d: Date) =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
 // Bridge the native-string filter state (YYYY-MM-DD) <-> the DatePicker's Date value.
 const toYMD = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -698,8 +694,22 @@ export default function LogsPage() {
 
     try {
       // Date window comes from the clear dialog's own from/to date pickers.
-      const since = clearFrom ? startOfDayMs(clearFrom) : undefined;
-      const until = clearTo ? endOfDayMs(clearTo) : undefined;
+      // Resolve the bounds in the SAME timezone the logs are displayed in (not
+      // browser-local) so clearing "May 25" deletes May 25 as the operator sees
+      // it — otherwise a cross-timezone admin over-/under-deletes at the day
+      // boundary. Mirrors the display resolution used to render each row.
+      const clearTz = getDisplayTimezone(
+        userPreferences.timeDisplayMode || 'machine',
+        userPreferences.timezone,
+        undefined,
+        siteTimezone,
+      );
+      const since = clearFrom
+        ? zonedTimeToUtcMs(clearFrom.getFullYear(), clearFrom.getMonth(), clearFrom.getDate(), 0, 0, 0, 0, clearTz)
+        : undefined;
+      const until = clearTo
+        ? zonedTimeToUtcMs(clearTo.getFullYear(), clearTo.getMonth(), clearTo.getDate(), 23, 59, 59, 999, clearTz)
+        : undefined;
       const hasFilters =
         filterAction !== 'all' ||
         filterMachine !== 'all' ||
