@@ -98,6 +98,22 @@ export const SCOPE_PRESETS: Record<ApiKeyScopePreset, ApiKeyScope[]> = {
   admin: wildcardScopes(['read', 'write', 'deploy', 'rollback', 'admin']),
 };
 
+/** Ordered preset keys for scope pickers (excludes the synthetic "custom" option). */
+export const SCOPE_PRESET_KEYS: readonly ApiKeyScopePreset[] = [
+  'readonly',
+  'publisher',
+  'operator',
+  'admin',
+];
+
+/** Human-readable descriptions of each preset, shared across every scope picker. */
+export const SCOPE_PRESET_DESCRIPTIONS: Record<ApiKeyScopePreset, string> = {
+  readonly: 'read access to roosts, sites, machines, and cortex chats — no mutations',
+  publisher: 'read + write — can upload chunks, publish versions, and use cortex chats',
+  operator: 'read, write, deploy, rollback — full day-to-day operations',
+  admin: 'full access including admin permissions',
+};
+
 export const DEFAULT_TTL_DAYS = 90;
 export const MAX_TTL_DAYS = 365;
 export const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000;
