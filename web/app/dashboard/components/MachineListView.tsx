@@ -534,7 +534,7 @@ export function MachineRow({
                     const io = machine.metrics?.diskio?.[diskDevice.id];
                     if (!io || (io.readBps === 0 && io.writeBps === 0)) return null;
                     return (
-                      <div className="flex-shrink-0 flex gap-1 text-xs font-medium">
+                      <div className="ml-auto flex-shrink-0 flex gap-1 text-xs font-medium">
                         <div className="flex flex-col text-right">
                           <span style={{ color: DISK_IO_COLORS.read }}>r</span>
                           <span style={{ color: DISK_IO_COLORS.write }}>w</span>
