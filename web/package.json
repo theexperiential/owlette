@@ -23,7 +23,9 @@
     "e2e:ui": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --ui\"",
     "e2e:install": "playwright install chromium",
     "screenshots": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts\"",
-    "screenshots:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts --headed --debug\""
+    "screenshots:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts --headed --debug\"",
+    "videos": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts\"",
+    "videos:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts --headed --debug\""
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.63",
