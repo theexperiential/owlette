@@ -5,6 +5,46 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
+## [Unreleased]
+
+> Web/dashboard changes shipped to prod since 2.12.3. No version bump — the
+> version number tracks the agent, and this batch contains no agent changes.
+
+### added
+
+- **Cortex tier-3 tool-approval gate.** Tier-3 tool calls now require explicit in-chat approval. `/api/cortex` migrated to the UIMessage protocol (`convertToModelMessages`); the per-site approval flag is default-on and forces the server-side path. Includes Cortex sidebar/UX fixes and a persistent chat layout.
+- **Scoped full-text search on the logs page**, plus an animated filters panel.
+- **Date-scoped log clearing.** Clear-logs deletion accepts a `since`/`until` range, with the date window computed in the display timezone.
+- **Themed date picker** (shadcn calendar + popover input) and dark-mode theming of native form controls via `color-scheme`.
+- **Site admins can remove machines on their assigned sites** (previously superadmin-only).
+- **Admin user management: last-seen column and deleted-user visibility.**
+- **Any authenticated user can create API keys from account settings** — the account dialog was wrongly pointed at the superadmin-only `/api/account/api-keys`; it now uses the user-scoped `/api/keys` with an explicit scope-preset selector.
+- **`GET /api/users/deletions`** is now documented in the OpenAPI spec; new Firestore composite indexes back the log filter combinations and the deletions audit feed.
+- **CLI / SDK OIDC trusted-publishing workflows** for `@owlette/cli` and the SDKs.
+
+### fixed
+
+- **Dashboard "Missing or insufficient permissions" error (Sentry OWLETTE-WEB-3R).** `useUserManagement` opened a realtime listener over the whole `users` collection (superadmin-only per `firestore.rules`) for *every* user, via `ManageSitesDialog` mounted on the dashboard/roosts/logs/deployments pages — so every non-superadmin tripped a permission-denied on load. The listener is now gated to superadmins (client-side; rules unchanged).
+- **Quieted expected `permission-denied` noise** on the site-availability check (`CreateSiteDialog`) and Cortex chat-URL load, and **blocked agent ID tokens from minting user API keys** (`POST /api/keys`).
+- **Logs are ordered by timestamp across all filter combinations.**
+- **roost:** config-only republish honors content-addressed CAS on the no-op branch; a restated deploy config is applied on same-version republish.
+- **Cortex conversation rows are a11y-accessible** (no nested buttons).
+- **Dark-mode button hover repaired** and standardized on the secondary rollover.
+- **Metrics panel** persistence restored (gated on a non-empty selection; no auto-restore on load); empty metrics-slide gap removed; inline sparklines read hourly `metrics_history` buckets; disk r/w throughput right-aligned in the machine list.
+
+### changed
+
+- **Logs page refactor** — themed date pickers, date-scoped clear, aligned-column table.
+- **Sunken machine card/list surfaces** with section enclosures; metrics/displays panels darkened with brighter content.
+- **CLI pre-publish hardening** (6-wave review): request timeouts, idempotency-key surfacing on unconfirmed failures; `owlette key` removed (key management is dashboard-only).
+- Removed the dead `MachineListView` wrapper and redundant per-instance button hover overrides.
+
+### infrastructure / docs
+
+- `/preflight` pre-push gate + `post-push-e2e` watch hook; build-system skill expanded with the installer-release + version-bump flow.
+- CI: bumped checkout/setup-node/setup-java/cache to Node 24 action majors; py-sdk publish now runs pytest first.
+- Layperson video-tutorial series + Playwright video-capture harness.
+
 ## [2.12.3] - 2026-05-19
 
 ### fixed

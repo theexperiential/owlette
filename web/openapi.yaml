@@ -5753,6 +5753,53 @@ paths:
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not superadmin) }
 
+  /api/users/deletions:
+    get:
+      tags: [Users]
+      summary: list user-deletion audit events (superadmin only)
+      description: |
+        Lists user-deletion events from the platform audit log, newest first.
+        Covers both self-service deletions (`USER_SELF_DELETE`) and
+        superadmin-initiated deletions (`USER_DELETE`); both land in
+        `global/audit_log/entries`. Requires `user=*:read` scope
+        (superadmin-only at minting) or a session/id-token from a superadmin
+        user.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: max events to return (clamped 1..200)
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+      responses:
+        '200':
+          description: Deletion events (newest first)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deletions]
+                properties:
+                  deletions:
+                    type: array
+                    items:
+                      type: object
+                      required: [id]
+                      properties:
+                        id: { type: string }
+                        uid: { type: string, nullable: true }
+                        actorUid: { type: string, nullable: true }
+                        capability: { type: string }
+                        outcome: { type: string }
+                        timestamp: { type: string, format: date-time, nullable: true }
+                        denyReason: { type: string, nullable: true }
+                        counts: { type: object, nullable: true, additionalProperties: true }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not superadmin) }
+
   /api/users/bootstrap:
     post:
       tags: [Users]
