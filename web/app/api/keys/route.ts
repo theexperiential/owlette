@@ -108,7 +108,7 @@ function validateScopes(raw: unknown): ApiKeyScope[] | string {
 export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
-      const userId = await requireSessionOrIdToken(request);
+      const userId = await requireSessionOrIdToken(request, { rejectAgentTokens: true });
 
       let body: CreateKeyBody;
       try {

@@ -206,6 +206,37 @@ describe('requireSessionOrIdToken', () => {
     );
     expect(mockVerifyIdToken).not.toHaveBeenCalled();
   });
+
+  it('rejects agent-role bearer tokens with 403 when rejectAgentTokens is set', async () => {
+    mockGetSession.mockResolvedValue(validSession({ userId: null }));
+    mockVerifyIdToken.mockResolvedValue({ uid: 'agent-uid', role: 'agent' });
+    const req = makeRequest('http://localhost/test', {
+      headers: { authorization: 'Bearer agent-token' },
+    });
+    await expect(
+      requireSessionOrIdToken(req, { rejectAgentTokens: true }),
+    ).rejects.toThrow(expect.objectContaining({ status: 403 }));
+  });
+
+  it('allows agent-role bearer tokens by default (no behavior change for existing callers)', async () => {
+    mockGetSession.mockResolvedValue(validSession({ userId: null }));
+    mockVerifyIdToken.mockResolvedValue({ uid: 'agent-uid', role: 'agent' });
+    const req = makeRequest('http://localhost/test', {
+      headers: { authorization: 'Bearer agent-token' },
+    });
+    await expect(requireSessionOrIdToken(req)).resolves.toBe('agent-uid');
+  });
+
+  it('allows non-agent bearer tokens when rejectAgentTokens is set', async () => {
+    mockGetSession.mockResolvedValue(validSession({ userId: null }));
+    mockVerifyIdToken.mockResolvedValue({ uid: 'human-uid', role: 'member' });
+    const req = makeRequest('http://localhost/test', {
+      headers: { authorization: 'Bearer human-token' },
+    });
+    await expect(
+      requireSessionOrIdToken(req, { rejectAgentTokens: true }),
+    ).resolves.toBe('human-uid');
+  });
 });
 
 // ─── requireAdminOrIdToken ─────────────────────────────────────────────────

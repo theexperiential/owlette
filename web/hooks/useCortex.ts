@@ -474,7 +474,14 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
           }
         } catch (error) {
           if (!isMountedRef.current || requestId !== loadChatRequestRef.current) return;
-          console.error('Failed to load chat messages:', error);
+          // permission-denied is expected when the URL points at a chat the user
+          // doesn't own (or an autonomous chat for a site they can't access) —
+          // firestore.rules correctly denies it. Surface as not_found without
+          // logging noise; only log genuinely unexpected failures.
+          const code = (error as { code?: string } | null)?.code;
+          if (code !== 'permission-denied') {
+            console.error('Failed to load chat messages:', error);
+          }
           setChatLoadError('not_found');
           chat.setMessages([]);
         }
