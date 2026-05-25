@@ -21,11 +21,21 @@ import {
 } from '@/lib/actions/clearLogs.server';
 
 const mockWhere = jest.fn();
+const mockOrderBy = jest.fn();
+const mockStartAfter = jest.fn();
 const mockLimit = jest.fn();
 const mockGet = jest.fn();
 const mockQuery = {
   where: (...args: unknown[]) => {
     mockWhere(...args);
+    return mockQuery;
+  },
+  orderBy: (...args: unknown[]) => {
+    mockOrderBy(...args);
+    return mockQuery;
+  },
+  startAfter: (...args: unknown[]) => {
+    mockStartAfter(...args);
     return mockQuery;
   },
   limit: (n: number) => {
@@ -57,6 +67,21 @@ function snapFor(ids: string[]) {
     empty: ids.length === 0,
     size: ids.length,
     docs: ids.map((id) => ({ id, ref: { path: `sites/site-a/logs/${id}` } })),
+  };
+}
+
+// Date-scoped path reads doc.data() to filter action/machine/level in memory.
+function snapForData(
+  rows: Array<{ id: string; action?: string; machineId?: string; level?: string }>,
+) {
+  return {
+    empty: rows.length === 0,
+    size: rows.length,
+    docs: rows.map((r) => ({
+      id: r.id,
+      ref: { path: `sites/site-a/logs/${r.id}` },
+      data: () => r,
+    })),
   };
 }
 
@@ -123,6 +148,44 @@ describe('clearLogs', () => {
       clearLogs(
         { siteId: 'site-a', db: mockDb as unknown as Firestore },
         { level: 'verbose' },
+      ),
+    ).rejects.toBeInstanceOf(ClearLogsValidationError);
+  });
+
+  it('date-scoped clear orders by timestamp, ranges, and filters in memory', async () => {
+    mockGet.mockResolvedValueOnce(
+      snapForData([
+        { id: 'a', action: 'process_crashed', level: 'error' },
+        { id: 'b', action: 'agent_started', level: 'info' },
+      ]),
+    );
+
+    const result = await clearLogs(
+      { siteId: 'site-a', db: mockDb as unknown as Firestore },
+      { sinceMs: 1000, untilMs: 2000, level: 'error' },
+    );
+
+    // Only doc 'a' matches level=error; 'b' is filtered out in memory.
+    expect(result.deletedCount).toBe(1);
+    expect(mockOrderBy).toHaveBeenCalledWith('timestamp', 'desc');
+    expect(mockWhere).toHaveBeenCalledWith('timestamp', '>=', expect.anything());
+    expect(mockWhere).toHaveBeenCalledWith('timestamp', '<=', expect.anything());
+    expect(mockBatchInstances).toHaveLength(1);
+    expect(mockBatchInstances[0].delete).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects invalid since/until bounds', async () => {
+    await expect(
+      clearLogs(
+        { siteId: 'site-a', db: mockDb as unknown as Firestore },
+        { sinceMs: 5000, untilMs: 1000 },
+      ),
+    ).rejects.toMatchObject({ field: 'sinceMs' });
+
+    await expect(
+      clearLogs(
+        { siteId: 'site-a', db: mockDb as unknown as Firestore },
+        { sinceMs: -1 },
       ),
     ).rejects.toBeInstanceOf(ClearLogsValidationError);
   });

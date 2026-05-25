@@ -614,8 +614,10 @@ paths:
       summary: Clear site logs
       description: |
         Deletes log entries from `sites/{siteId}/logs`. Optional filters
-        match the current logs view: action, machineId, and level. Whole-site
-        clearing requires explicit `all: true`. API-key callers must hold
+        match the current logs view: action, machineId, level, and a
+        `since`/`until` timestamp window. Whole-site clearing (no filters)
+        requires explicit `all: true`. Note: full-text search is client-side
+        and does NOT scope deletion. API-key callers must hold
         `site=<siteId>:admin`; session callers need the site-log management
         capability.
       security:
@@ -641,6 +643,12 @@ paths:
                 level:
                   type: string
                   enum: [debug, info, warning, error, critical]
+                since:
+                  type: string
+                  description: ISO 8601 or unix-ms inclusive lower timestamp bound. Scopes deletion to a time window.
+                until:
+                  type: string
+                  description: ISO 8601 or unix-ms inclusive upper timestamp bound.
       responses:
         '200':
           description: Logs cleared
