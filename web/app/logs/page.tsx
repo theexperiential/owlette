@@ -20,6 +20,7 @@ import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
+import { DatePicker } from '@/components/ui/date-picker';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 
 interface LogEvent {
@@ -113,6 +114,15 @@ function getDateRange(preset: DatePreset, customFrom?: string, customTo?: string
       return { from: null, to: null };
   }
 }
+
+const startOfDayMs = (d: Date) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+const endOfDayMs = (d: Date) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
+// Bridge the native-string filter state (YYYY-MM-DD) <-> the DatePicker's Date value.
+const toYMD = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const fromYMD = (s: string): Date | undefined => (s ? new Date(s + 'T00:00:00') : undefined);
 
 // Action type labels for filtering
 const ACTION_TYPES = [
@@ -211,6 +221,30 @@ function applyClientScope(
   return out;
 }
 
+// Shared grid template so the column header and every log row line up exactly:
+// chevron · level · time · event · machine · process · details(flex, truncates).
+const LOG_GRID =
+  'grid grid-cols-[14px_76px_104px_150px_132px_116px_minmax(0,1fr)] items-center gap-3';
+
+// Compact relative time for the scannable time column ("2m ago", "3d ago"). The
+// absolute timestamp is shown on hover and in the expanded row.
+function relativeTime(date?: Date): string {
+  if (!date) return '';
+  const s = Math.round((Date.now() - date.getTime()) / 1000);
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  if (d < 7) return `${d}d ago`;
+  const w = Math.round(d / 7);
+  if (w < 5) return `${w}w ago`;
+  const mo = Math.round(d / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.round(d / 365)}y ago`;
+}
+
 // Extracted + memoized so toggling one row's expanded state doesn't re-render
 // every other row in the list. Without this, a click burns ~100–300ms on a
 // full page of logs before Radix can flip `data-state` and the animation can
@@ -239,64 +273,62 @@ const LogRow = React.memo(function LogRow({
       open={isExpanded}
       onOpenChange={() => onToggle(log.id)}
       data-testid={`log-row-${log.id}`}
-      className={`group/row hover:bg-muted/50 transition-colors border-b border-border last:border-b-0 ${isExpanded ? 'bg-muted/30' : ''}`}
+      className={`group/row hover:bg-card/40 transition-colors border-b border-border last:border-b-0`}
     >
       <CollapsibleTrigger asChild>
-        <button type="button" className="w-full px-4 py-3 text-left cursor-pointer">
-          <div className="flex items-center justify-between gap-4 text-sm">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <div className="flex items-center gap-3 flex-shrink-0">
-                <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
-                <div className="w-[60px] flex-shrink-0">{getLevelBadge(log.level)}</div>
+        <button type="button" className="w-full px-4 py-2.5 text-left cursor-pointer">
+          <div className={`${LOG_GRID} text-sm`}>
+            {/* chevron */}
+            <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
+            {/* level */}
+            <div>{getLevelBadge(log.level)}</div>
+            {/* time (relative; absolute on hover) */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-muted-foreground text-xs whitespace-nowrap truncate cursor-help">
+                  {relativeTime(log.timestamp?.toDate())}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {formatSiteScopedTimestamp(
+                  log.timestamp?.toDate(),
+                  timeDisplayMode,
+                  userTz,
+                  siteTz,
+                  timeFormat
+                )}
+              </TooltipContent>
+            </Tooltip>
+            {/* event */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-foreground font-medium truncate cursor-help">{formatAction(log.action)}</span>
+              </TooltipTrigger>
+              <TooltipContent>{formatAction(log.action)}</TooltipContent>
+            </Tooltip>
+            {/* machine */}
+            <span className="text-foreground truncate">{log.machineName}</span>
+            {/* process */}
+            <span className="text-muted-foreground truncate">{log.processName || '—'}</span>
+            {/* details (flex, truncates) + screenshot indicator */}
+            <div className="flex items-center gap-2 min-w-0">
+              {log.screenshotUrl && <Camera className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
+              {log.details ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <span className="text-foreground font-medium truncate max-w-[140px] flex-shrink-0 text-left cursor-help">
-                      {formatAction(log.action)}
-                    </span>
+                    <span className="text-muted-foreground truncate min-w-0 cursor-help">{log.details}</span>
                   </TooltipTrigger>
-                  <TooltipContent>{formatAction(log.action)}</TooltipContent>
+                  <TooltipContent><p className="max-w-sm whitespace-pre-wrap break-words">{log.details}</p></TooltipContent>
                 </Tooltip>
-              </div>
-              <span className="text-muted-foreground">•</span>
-              <span className="text-foreground whitespace-nowrap">{log.machineName}</span>
-              {log.processName && (
-                <>
-                  <span className="text-muted-foreground">•</span>
-                  <span className="text-foreground whitespace-nowrap">{log.processName}</span>
-                </>
-              )}
-              {!isExpanded && log.screenshotUrl && (
-                <>
-                  <span className="text-muted-foreground">•</span>
-                  <Camera className="w-3 h-3 text-muted-foreground" />
-                </>
-              )}
-              {!isExpanded && log.details && (
-                <>
-                  <span className="text-muted-foreground">•</span>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="text-muted-foreground truncate min-w-0 cursor-help">{log.details}</span>
-                    </TooltipTrigger>
-                    <TooltipContent><p className="max-w-sm whitespace-pre-wrap break-words">{log.details}</p></TooltipContent>
-                  </Tooltip>
-                </>
-              )}
-            </div>
-            <div className="text-muted-foreground whitespace-nowrap text-xs">
-              {formatSiteScopedTimestamp(
-                log.timestamp?.toDate(),
-                timeDisplayMode,
-                userTz,
-                siteTz,
-                timeFormat
+              ) : (
+                <span className="text-muted-foreground/40">—</span>
               )}
             </div>
           </div>
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-        <div className="px-4 pb-3 pt-3 border-t border-border/50 text-sm flex gap-6">
+        <div className="px-4 pb-3 pt-3 border-t border-border/50 text-sm flex gap-6 bg-card">
           <div className="flex-shrink-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 self-start">
             <span className="text-muted-foreground">machine id</span>
             <span className="text-foreground text-xs font-mono">{log.machineId}</span>
@@ -361,6 +393,9 @@ export default function LogsPage() {
   const [filterDatePreset, setFilterDatePreset] = useState<DatePreset>('all');
   const [filterDateFrom, setFilterDateFrom] = useState<string>('');
   const [filterDateTo, setFilterDateTo] = useState<string>('');
+  // Clear-logs dialog date window — independent of the page's view filters.
+  const [clearFrom, setClearFrom] = useState<Date | undefined>(undefined);
+  const [clearTo, setClearTo] = useState<Date | undefined>(undefined);
   const [showFilters, setShowFilters] = useState(false);
 
   // Free-text search. `searchQuery` mirrors the input; `searchTerm` is the
@@ -662,10 +697,15 @@ export default function LogsPage() {
     setIsClearing(true);
 
     try {
+      // Date window comes from the clear dialog's own from/to date pickers.
+      const since = clearFrom ? startOfDayMs(clearFrom) : undefined;
+      const until = clearTo ? endOfDayMs(clearTo) : undefined;
       const hasFilters =
         filterAction !== 'all' ||
         filterMachine !== 'all' ||
-        filterLevel !== 'all';
+        filterLevel !== 'all' ||
+        since !== undefined ||
+        until !== undefined;
       const idempotencySuffix =
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
           ? crypto.randomUUID()
@@ -680,6 +720,8 @@ export default function LogsPage() {
           ...(filterAction !== 'all' ? { action: filterAction } : {}),
           ...(filterMachine !== 'all' ? { machineId: filterMachine } : {}),
           ...(filterLevel !== 'all' ? { level: filterLevel } : {}),
+          ...(since !== undefined ? { since } : {}),
+          ...(until !== undefined ? { until } : {}),
           ...(!hasFilters ? { all: true } : {}),
         }),
       });
@@ -993,21 +1035,19 @@ export default function LogsPage() {
             {filterDatePreset === 'custom' && (
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-4 pt-4 border-t border-border/50">
                 <div>
-                  <Label className="text-foreground text-sm mb-2">from</Label>
-                  <Input
-                    type="date"
-                    value={filterDateFrom}
-                    onChange={(e) => setFilterDateFrom(e.target.value)}
-                    className="bg-muted border-border"
+                  <Label className="text-foreground text-sm mb-2 block">from</Label>
+                  <DatePicker
+                    value={fromYMD(filterDateFrom)}
+                    onChange={(d) => setFilterDateFrom(d ? toYMD(d) : '')}
+                    placeholder="start date"
                   />
                 </div>
                 <div>
-                  <Label className="text-foreground text-sm mb-2">to</Label>
-                  <Input
-                    type="date"
-                    value={filterDateTo}
-                    onChange={(e) => setFilterDateTo(e.target.value)}
-                    className="bg-muted border-border"
+                  <Label className="text-foreground text-sm mb-2 block">to</Label>
+                  <DatePicker
+                    value={fromYMD(filterDateTo)}
+                    onChange={(d) => setFilterDateTo(d ? toYMD(d) : '')}
+                    placeholder="end date"
                   />
                 </div>
               </div>
@@ -1024,7 +1064,18 @@ export default function LogsPage() {
         )}
 
         {/* Logs List */}
-        <Card className="bg-card border-border">
+        <Card className="bg-card-sunken border-border/60 overflow-hidden py-0 gap-0">
+          {!logsLoading && filteredLogs.length > 0 && (
+            <div className={`${LOG_GRID} px-4 py-3 border-b border-border bg-card-header rounded-t-xl text-[11px] font-medium tracking-wide text-muted-foreground`}>
+              <span aria-hidden />
+              <span>level</span>
+              <span>time</span>
+              <span>event</span>
+              <span>machine</span>
+              <span>process</span>
+              <span>details</span>
+            </div>
+          )}
           <div className="divide-y divide-border">
             {logsLoading ? (
               <div className="p-8 text-center text-muted-foreground">
@@ -1091,18 +1142,54 @@ export default function LogsPage() {
       {/* Clear Logs Confirmation Dialog */}
       <ConfirmDialog
         open={showClearDialog}
-        onOpenChange={setShowClearDialog}
+        onOpenChange={(o) => {
+          setShowClearDialog(o);
+          if (!o) {
+            setClearFrom(undefined);
+            setClearTo(undefined);
+          }
+        }}
         title="clear event logs"
-        description={
-          filterAction !== 'all' || filterMachine !== 'all' || filterLevel !== 'all'
-            ? `this will permanently delete all logs matching the current filters.\n\nfilters active:\n${filterAction !== 'all' ? `• action: ${ACTION_TYPES.find(t => t.value === filterAction)?.label}\n` : ''}${filterMachine !== 'all' ? `• machine: ${filterMachine}\n` : ''}${filterLevel !== 'all' ? `• level: ${filterLevel}\n` : ''}\nthis action cannot be undone.`
-            : `this will permanently delete ALL event logs for this site (across all machines).\n\nthis action cannot be undone.`
-        }
+        description={(() => {
+          const scope: string[] = [];
+          if (filterAction !== 'all') scope.push(`• action: ${ACTION_TYPES.find(t => t.value === filterAction)?.label}`);
+          if (filterMachine !== 'all') scope.push(`• machine: ${filterMachine}`);
+          if (filterLevel !== 'all') scope.push(`• level: ${filterLevel}`);
+          if (clearFrom) scope.push(`• from: ${clearFrom.toLocaleDateString()}`);
+          if (clearTo) scope.push(`• to: ${clearTo.toLocaleDateString()}`);
+          const searchNote = searchTerm
+            ? `\n\nnote: the search box does NOT limit deletion — only the scope below applies.`
+            : '';
+          return scope.length > 0
+            ? `this will permanently delete logs matching this scope:\n${scope.join('\n')}${searchNote}\n\nthis action cannot be undone.`
+            : `with no date range or view filters set, this will permanently delete ALL event logs for this site (across all machines).${searchNote}\n\nthis action cannot be undone.`;
+        })()}
         confirmText="clear logs"
         cancelText="cancel"
         onConfirm={handleClearLogs}
         variant="destructive"
-      />
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label className="text-foreground text-sm mb-1.5 block">from (optional)</Label>
+            <DatePicker
+              value={clearFrom}
+              onChange={setClearFrom}
+              placeholder="any start"
+              disabled={(d) => (clearTo ? d > clearTo : false)}
+            />
+          </div>
+          <div>
+            <Label className="text-foreground text-sm mb-1.5 block">to (optional)</Label>
+            <DatePicker
+              value={clearTo}
+              onChange={setClearTo}
+              placeholder="any end"
+              disabled={(d) => (clearFrom ? d < clearFrom : false)}
+            />
+          </div>
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }
