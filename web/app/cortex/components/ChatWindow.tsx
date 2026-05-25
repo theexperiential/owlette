@@ -25,9 +25,13 @@ interface ChatWindowProps {
   isLoading: boolean;
   hasApiKey?: boolean | null;
   onOpenSettings?: () => void;
+  /** Approve/deny a pending tier-3 tool call by its approvalId. */
+  onToolApproval?: (approvalId: string, approved: boolean) => void;
+  /** Where tool calls run, shown in the approval prompt (machine / "all machines"). */
+  approvalTargetLabel?: string;
 }
 
-export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
+export function ChatWindow({ messages, isLoading, onToolApproval, approvalTargetLabel }: ChatWindowProps) {
   const { user } = useAuth();
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -230,13 +234,31 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
 
               if (part.type.startsWith('tool-') || part.type === 'dynamic-tool') {
                 // v6: static tool parts have type 'tool-{name}', dynamic ones have type 'dynamic-tool' with toolName
-                const toolPart = part as { type: string; toolName?: string; toolCallId?: string; args?: unknown; input?: unknown; output?: unknown; state?: string };
+                const toolPart = part as {
+                  type: string; toolName?: string; toolCallId?: string;
+                  args?: unknown; input?: unknown; output?: unknown; errorText?: string; state?: string;
+                  approval?: { id: string; approved?: boolean };
+                };
                 const toolName = toolPart.type === 'dynamic-tool'
                   ? (toolPart.toolName || 'unknown')
                   : toolPart.type.slice(5); // strip 'tool-' prefix
                 const args = (toolPart.args || toolPart.input || {}) as Record<string, unknown>;
-                const result = toolPart.output;
-                const hasResult = toolPart.state === 'output-available' || toolPart.state === 'output-error' || toolPart.state === 'result' || result !== undefined;
+                const state = toolPart.state;
+                // 'output-error' carries the message in `errorText` (not `output`);
+                // surface it as an { error } result so the card renders the failed state.
+                const result = state === 'output-error'
+                  ? { error: toolPart.errorText || 'tool execution failed' }
+                  : toolPart.output;
+                const hasResult = state === 'output-available' || state === 'output-error' || state === 'result' || toolPart.output !== undefined;
+
+                // Tier-3 approval gate (AI SDK human-in-the-loop):
+                //   approval-requested            → show approve/deny
+                //   approval-responded (denied) / output-denied → declined
+                //   approval-responded (approved) → resuming → loading until output
+                const awaitingApproval = state === 'approval-requested';
+                const denied = state === 'output-denied'
+                  || (state === 'approval-responded' && toolPart.approval?.approved === false);
+                const approvalId = toolPart.approval?.id;
 
                 return (
                   <ToolCallCard
@@ -244,7 +266,11 @@ export function ChatWindow({ messages, isLoading }: ChatWindowProps) {
                     toolName={toolName}
                     args={args}
                     result={hasResult ? result : undefined}
-                    isLoading={!hasResult}
+                    isLoading={!hasResult && !awaitingApproval && !denied}
+                    approvalState={awaitingApproval ? 'requested' : denied ? 'denied' : undefined}
+                    approvalTargetLabel={approvalTargetLabel}
+                    onApprove={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, true) : undefined}
+                    onDeny={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, false) : undefined}
                   />
                 );
               }

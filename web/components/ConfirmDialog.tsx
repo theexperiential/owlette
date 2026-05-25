@@ -51,7 +51,7 @@ export default function ConfirmDialog({
         </DialogHeader>
         {children}
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} className="bg-secondary border border-border cursor-pointer">
+          <Button variant="secondary" onClick={() => onOpenChange(false)} className="border border-border">
             {cancelText}
           </Button>
           <Button

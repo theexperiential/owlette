@@ -141,6 +141,7 @@ import {
   buildExecutableTools,
   verifyUserSiteAccess,
   resolveCortexMaxTier,
+  getCortexRequireTier3Approval,
   COMMAND_TIMEOUT_MS,
 } from '@/lib/cortex-utils.server';
 
@@ -287,6 +288,16 @@ describe('buildExecutableTools', () => {
   it('site mode creates tools for fan-out execution', () => {
     const tools = buildExecutableTools({} as unknown as FirebaseFirestore.Firestore, 's1', '', 'c1', allTools, true, ['m1', 'm2']);
     expect(Object.keys(tools)).toHaveLength(allTools.length);
+  });
+
+  it('marks tier-3 tools needsApproval and leaves tier-1/2 auto-running', () => {
+    const tools = buildExecutableTools({} as unknown as FirebaseFirestore.Firestore, 's1', 'm1', 'c1', allTools);
+    for (const def of allTools) {
+      expect(tools[def.name].needsApproval).toBe(def.tier >= 3);
+    }
+    // Sanity: the fixture actually exercises both sides of the gate.
+    expect(allTools.some((t) => t.tier >= 3)).toBe(true);
+    expect(allTools.some((t) => t.tier < 3)).toBe(true);
   });
 
   it('executes update_process server-side and resolves process_name to processId', async () => {
@@ -478,5 +489,54 @@ describe('resolveCortexMaxTier', () => {
     expect(
       resolveCortexMaxTier({ role: 'member', isSuperadmin: false, isSiteAdmin: false, isSiteOwner: false })
     ).toBe(1);
+  });
+});
+
+// ─── getCortexRequireTier3Approval ──────────────────────────────────────────
+
+/** db stub for sites/{siteId}/settings/cortex.get(). Pass 'throw' to simulate a read error. */
+function makeCortexSettingsDb(
+  cortexDoc: { exists: boolean; data?: () => unknown } | 'throw',
+) {
+  return {
+    collection: () => ({
+      doc: () => ({
+        collection: () => ({
+          doc: () => ({
+            get: async () => {
+              if (cortexDoc === 'throw') throw new Error('firestore down');
+              return cortexDoc;
+            },
+          }),
+        }),
+      }),
+    }),
+  } as unknown as FirebaseFirestore.Firestore;
+}
+
+describe('getCortexRequireTier3Approval', () => {
+  it('defaults to true (gate on) when the settings doc is absent', async () => {
+    const db = makeCortexSettingsDb({ exists: false });
+    expect(await getCortexRequireTier3Approval(db, 's1')).toBe(true);
+  });
+
+  it('defaults to true when the field is absent', async () => {
+    const db = makeCortexSettingsDb({ exists: true, data: () => ({}) });
+    expect(await getCortexRequireTier3Approval(db, 's1')).toBe(true);
+  });
+
+  it('returns false only when explicitly disabled', async () => {
+    const db = makeCortexSettingsDb({ exists: true, data: () => ({ requireTier3Approval: false }) });
+    expect(await getCortexRequireTier3Approval(db, 's1')).toBe(false);
+  });
+
+  it('returns true when explicitly enabled', async () => {
+    const db = makeCortexSettingsDb({ exists: true, data: () => ({ requireTier3Approval: true }) });
+    expect(await getCortexRequireTier3Approval(db, 's1')).toBe(true);
+  });
+
+  it('fails safe (true) when the read throws', async () => {
+    const db = makeCortexSettingsDb('throw');
+    expect(await getCortexRequireTier3Approval(db, 's1')).toBe(true);
   });
 });

@@ -305,6 +305,41 @@ export async function isCortexEnabled(
 }
 
 /**
+ * Whether tier-3 (privileged) Cortex tool calls require explicit in-chat
+ * approval before they execute, for the given site.
+ *
+ * Stored at `sites/{siteId}/settings/cortex.requireTier3Approval`. Defaults to
+ * `true` when the doc or field is absent so the safety gate is on by default —
+ * an admin must deliberately opt out per site.
+ *
+ * When this is `true`, single-machine admin chats are forced through the
+ * server-side LLM path (skipping local Cortex) so the AI SDK's `needsApproval`
+ * gate can fire — see the routing decision in `runCortexStream` /
+ * `app/api/cortex/route.ts`. When `false`, local Cortex is allowed and the
+ * gate does not apply (the agent runs tools locally; approval is not enforced).
+ */
+export async function getCortexRequireTier3Approval(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+): Promise<boolean> {
+  try {
+    const settingsDoc = await db
+      .collection('sites')
+      .doc(siteId)
+      .collection('settings')
+      .doc('cortex')
+      .get();
+
+    if (!settingsDoc.exists) return true;
+
+    return settingsDoc.data()?.requireTier3Approval !== false;
+  } catch {
+    // Fail safe: if we can't read the setting, keep the gate on.
+    return true;
+  }
+}
+
+/**
  * Get all online machines for a site.
  */
 export async function getOnlineMachines(
@@ -1076,6 +1111,14 @@ export function buildExecutableTools(
     const toolConfig: any = {
       description: def.description,
       inputSchema: jsonSchema(def.parameters as Record<string, unknown>),
+      // Tier-3 tools (run_powershell, execute_script, reboot_machine, etc.)
+      // pause for explicit in-chat approval before `execute` runs. The AI SDK
+      // emits a `tool-approval-request` part instead of calling `execute`; the
+      // client surfaces approve/deny and resumes the stream once answered.
+      // Tier 1/2 keep auto-running. This is a chat-only guardrail — autonomous
+      // Cortex uses a separate `buildAutonomousTools` (no human to approve), so
+      // it is intentionally unaffected.
+      needsApproval: def.tier >= 3,
       execute: async (params: unknown) => {
         // Server-side tools run directly on the web server (no agent relay)
         if (SERVER_SIDE_TOOLS.has(toolName)) {

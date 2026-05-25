@@ -11,7 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { streamText, stepCountIs, type ModelMessage } from 'ai';
+import { streamText, stepCountIs, convertToModelMessages, type ModelMessage, type UIMessage } from 'ai';
 import { resolveAuth, requireScope } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -25,6 +25,7 @@ import {
   isMachineOnline,
   isCortexEnabled,
   getOnlineMachines,
+  getCortexRequireTier3Approval,
   buildExecutableTools,
   type SiteAccessLevel,
 } from '@/lib/cortex-utils.server';
@@ -124,14 +125,14 @@ export async function POST(request: NextRequest) {
       machineName,
       chatId,
     } = body as {
-      messages: ModelMessage[];  // content can be string or Array<TextPart | ImagePart>
+      messages: UIMessage[];  // AI SDK UIMessages (text + file + tool/approval parts)
       siteId: string;
       machineId: string;
       machineName: string;
       chatId: string;
     };
 
-    if (!messages || !siteId || !chatId) {
+    if (!messages || !Array.isArray(messages) || messages.length === 0 || !siteId || !chatId) {
       return NextResponse.json(
         { error: 'messages, siteId, and chatId are required' },
         { status: 400 },
@@ -157,7 +158,7 @@ export async function POST(request: NextRequest) {
 
     // ─── Site-Wide Mode (unchanged — web-side LLM) ─────────────────────
     if (isSiteMode) {
-      return handleSiteWideMode(db, userId, siteId, messages, chatId, effectiveAccess);
+      return handleSiteWideMode(db, userId, siteId, await convertToModelMessages(messages), chatId, effectiveAccess);
     }
 
     // ─── Single Machine Mode ───────────────────────────────────────────
@@ -184,11 +185,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Non-admins are forced through the server-side LLM path so the tier
-    // cap (tier 1, read-only) is actually enforced. The local Cortex path
-    // runs tools inside the agent and does not yet honor a per-user tier
-    // cap — routing members through it would reopen the tier-3 exposure.
-    const cortexLocal = effectiveAccess.isSiteAdmin
+    // Routing into the local Cortex path requires BOTH:
+    //  1. site-admin caller — the local path runs tools inside the agent and
+    //     does not honor a per-user tier cap, so non-admins are forced through
+    //     the server-side LLM path where the tier cap (tier 1) is enforced.
+    //  2. tier-3 approval NOT required for this site — the local path executes
+    //     tools inside the agent, so the web-side `needsApproval` gate cannot
+    //     see or pause them. When approval is required (the default), admins are
+    //     routed server-side so the AI SDK approval gate fires. See
+    //     getCortexRequireTier3Approval / the §6 decision in the PR.
+    const localPathAllowed =
+      effectiveAccess.isSiteAdmin && !(await getCortexRequireTier3Approval(db, siteId));
+    const cortexLocal = localPathAllowed
       ? await isCortexLocal(db, siteId, machineId)
       : false;
 
@@ -197,7 +205,7 @@ export async function POST(request: NextRequest) {
       return handleLocalCortex(db, siteId, machineId, machineName, messages, chatId);
     } else {
       // ─── Fallback: Server-side LLM (existing approach) ────────────
-      return handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, effectiveAccess);
+      return handleServerSideLLM(db, userId, siteId, machineId, machineName, await convertToModelMessages(messages), chatId, effectiveAccess);
     }
   } catch (error: unknown) {
     return apiError(error, 'cortex');
@@ -220,7 +228,7 @@ async function handleLocalCortex(
   siteId: string,
   machineId: string,
   machineName: string,
-  messages: ModelMessage[],
+  messages: UIMessage[],
   chatId: string,
 ): Promise<Response> {
   const activeChatRef = db
@@ -231,34 +239,29 @@ async function handleLocalCortex(
     .collection('cortex')
     .doc('active-chat');
 
-  // Extract user message text and images
+  // Extract the latest user message text + images from its UIMessage parts.
   const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
-  const msgContent = (lastUserMsg as { content?: unknown })?.content;
 
   let userText = '';
   const images: Array<{ url: string; mediaType: string }> = [];
 
-  if (typeof msgContent === 'string') {
-    userText = msgContent;
-  } else if (Array.isArray(msgContent)) {
-    for (const block of msgContent) {
-      if (block.type === 'text') userText += block.text || '';
-      if (block.type === 'image' && block.image) {
-        images.push({ url: String(block.image), mediaType: block.mediaType || 'image/jpeg' });
-      }
+  for (const part of lastUserMsg?.parts ?? []) {
+    if (part.type === 'text') {
+      userText += part.text || '';
+    } else if (part.type === 'file' && part.mediaType?.startsWith('image/') && part.url) {
+      images.push({ url: part.url, mediaType: part.mediaType });
     }
   }
 
-  // Serialize messages for Firestore (flatten multimodal to text for history)
-  const serializedMessages = messages.map((m) => {
-    const c = (m as { content?: unknown }).content;
-    if (typeof c === 'string') return { role: m.role, content: c };
-    if (Array.isArray(c)) {
-      const text = c.filter((b: { type: string }) => b.type === 'text').map((b: { text?: string }) => b.text || '').join('');
-      return { role: m.role, content: text };
-    }
-    return { role: m.role, content: '' };
-  });
+  // Serialize messages for Firestore (flatten to text history for the agent,
+  // which consumes `[{ role, content }]` — preserves the existing contract).
+  const serializedMessages = messages.map((m) => ({
+    role: m.role,
+    content: m.parts
+      .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+      .map((p) => p.text || '')
+      .join(''),
+  }));
 
   // Write pending message for local Cortex to pick up
   await activeChatRef.set(

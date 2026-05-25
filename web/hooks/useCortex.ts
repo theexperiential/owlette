@@ -10,7 +10,7 @@
 'use client';
 
 import { useChat as useAIChat } from '@ai-sdk/react';
-import { DefaultChatTransport } from 'ai';
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithApprovalResponses } from 'ai';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection,
@@ -71,6 +71,11 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
   const [chatLoadError, setChatLoadError] = useState<ChatLoadError | null>(null);
   const loadChatRequestRef = useRef(0);
   const isMountedRef = useRef(true);
+  // The current unpersisted "new conversation" row. Held in a ref so a Firestore
+  // snapshot refire (which rebuilds `conversations` from persisted docs) doesn't
+  // erase the optimistic entry before the first message is saved. Cleared once
+  // its doc shows up in a snapshot, or when it's discarded/deleted.
+  const draftConvoRef = useRef<ChatConversation | null>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -106,41 +111,13 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     () =>
       new DefaultChatTransport({
         api: '/api/cortex',
+        // Send the full UIMessages (text + file + tool/approval parts). The
+        // server reconstructs ModelMessages via `convertToModelMessages`, which
+        // is what lets a tier-3 approval round-trip carry the pending tool call
+        // and the approve/deny decision back so streamText can resume.
         prepareSendMessagesRequest: ({ messages }) => ({
           body: {
-            messages: messages.map((m) => {
-              const hasFiles = m.parts.some((p) => p.type === 'file');
-
-              if (!hasFiles) {
-                // Text-only message — send as plain string for backwards compat
-                return {
-                  role: m.role,
-                  content: m.parts
-                    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-                    .map((p) => p.text)
-                    .join('') || '',
-                };
-              }
-
-              // Multimodal message — send as AI SDK content block array
-              const content: Array<Record<string, unknown>> = [];
-              for (const p of m.parts) {
-                if (p.type === 'text') {
-                  content.push({ type: 'text', text: (p as { text: string }).text });
-                } else if (p.type === 'file') {
-                  const fp = p as FileUIPart;
-                  if (fp.mediaType?.startsWith('image/')) {
-                    // AI SDK ImagePart format: { type: 'image', image: url, mediaType }
-                    content.push({
-                      type: 'image',
-                      image: fp.url,
-                      mediaType: fp.mediaType,
-                    });
-                  }
-                }
-              }
-              return { role: m.role, content };
-            }),
+            messages,
             siteId: siteIdRef.current,
             machineId: machineIdRef.current,
             machineName: machineNameRef.current,
@@ -154,6 +131,10 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
   const chat = useAIChat({
     id: chatId,
     transport,
+    // Once the user has answered every pending tier-3 approval on the last
+    // assistant message, automatically re-send so the SDK resumes (executes
+    // approved tools, feeds denials back to the model).
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
     onFinish: async () => {
       // Persist conversation metadata + messages after assistant response
       if (user && db) {
@@ -255,6 +236,15 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
         return true;
       });
       deduped.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      // Keep the unpersisted draft pinned until its doc lands in a snapshot.
+      const draft = draftConvoRef.current;
+      if (draft) {
+        if (seen.has(draft.id)) {
+          draftConvoRef.current = null; // persisted now — the real doc supersedes it
+        } else {
+          deduped.unshift(draft);
+        }
+      }
       setConversations(deduped);
       setLoadingConversations(false);
     }
@@ -336,20 +326,25 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     const effectiveMachineName = overrides?.machineName ?? machineNameRef.current;
     const isSiteMode = effectiveMachineId === SITE_TARGET_ID;
 
-    // Add optimistic entry to sidebar, removing any previous empty "new conversation" entries
+    // Add optimistic entry to the sidebar. Track it by id (in a ref) so the
+    // snapshot listener can preserve it; drop only the *previous* draft by id
+    // (not every "new conversation"-titled row, which could be a real chat).
+    const previousDraftId = draftConvoRef.current?.id;
+    const draft: ChatConversation = {
+      id: newId,
+      title: 'new conversation',
+      siteId: siteIdRef.current,
+      targetType: isSiteMode ? 'site' : 'machine',
+      targetMachineId: isSiteMode ? null : effectiveMachineId,
+      machineName: isSiteMode ? 'All Machines' : effectiveMachineName,
+      source: 'user',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    draftConvoRef.current = draft;
     setConversations((prev) => [
-      {
-        id: newId,
-        title: 'new conversation',
-        siteId: siteIdRef.current,
-        targetType: isSiteMode ? 'site' : 'machine',
-        targetMachineId: isSiteMode ? null : effectiveMachineId,
-        machineName: isSiteMode ? 'All Machines' : effectiveMachineName,
-        source: 'user',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-      ...prev.filter((c) => c.title !== 'new conversation'),
+      draft,
+      ...prev.filter((c) => c.id !== newId && c.id !== previousDraftId),
     ]);
   }, [chat]);
 
@@ -499,6 +494,9 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
 
       // Remove from local list immediately (handles both persisted and optimistic entries)
       setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+      if (draftConvoRef.current?.id === conversationId) {
+        draftConvoRef.current = null;
+      }
 
       if (conversationId === chatId) {
         if (isEmptyNew) {
@@ -631,6 +629,11 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     setMessages: chat.setMessages,
     stop: chat.stop,
     status: chat.status,
+
+    // Tier-3 tool approval (human-in-the-loop). Pass the approvalId from a
+    // tool part in `approval-requested` state. `sendAutomaticallyWhen` resumes
+    // the stream once every pending approval on the message is answered.
+    addToolApprovalResponse: chat.addToolApprovalResponse,
 
     // Input management
     input: inputValue,
