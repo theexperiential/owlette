@@ -424,6 +424,35 @@ describe('POST /versions — version-number monotonicity', () => {
     expect(mocks.batchSet).not.toHaveBeenCalled();
   });
 
+  it('same content at head still applies explicitly-provided deploy config (no version bump)', async () => {
+    // Regression for the silent-target-drop bug: republishing identical bytes
+    // that are already the head must still honor a changed target/name set.
+    const first = await publish();
+    expect(first.status).toBe(201);
+
+    txState.versionCounter = 1;
+    txState.previousVersionId = null;
+    txState.currentVersionId = String(first.body.versionId);
+    const roostWritesBefore = txState.roostWrites.length;
+    const versionWritesBefore = txState.versionWrites.length;
+
+    const second = await publish(undefined, { targets: ['machine-7'], name: 'lobby v2' });
+
+    // Still a versioning no-op: same version, no counter bump, no new version doc.
+    expect(second.status).toBe(200);
+    expect(second.body.versionId).toBe(first.body.versionId);
+    expect(second.body.versionNumber).toBe(1);
+    expect(txState.versionWrites).toHaveLength(versionWritesBefore);
+
+    // ...but the roost doc was updated with the restated config.
+    expect(txState.roostWrites).toHaveLength(roostWritesBefore + 1);
+    const w = txState.roostWrites[txState.roostWrites.length - 1]!;
+    expect(w.targets).toEqual(['machine-7']);
+    expect(w.name).toBe('lobby v2');
+    expect(w).not.toHaveProperty('versionCounter');
+    expect(w).not.toHaveProperty('versionId');
+  });
+
   async function publishTwoVersionHistory(): Promise<{
     v1: { status: number; body: Record<string, unknown> };
     v2: { status: number; body: Record<string, unknown> };

@@ -359,6 +359,24 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           typeof existing.previousVersionId === 'string'
             ? existing.previousVersionId
             : null;
+        // Re-publishing the exact current head is a no-op for *versioning*, but
+        // the client may still be restating deploy config (name / targets /
+        // extractPath). Apply any explicitly-provided fields so a target change
+        // isn't silently dropped — without advancing the counter or rewriting
+        // the immutable version doc. Omitted fields are left untouched (a true
+        // no-op stays a no-op and writes nothing).
+        const providedRoostPatch: Record<string, unknown> = {
+          ...(deployName !== undefined ? { name: deployName } : {}),
+          ...(deployTargets !== undefined ? { targets: deployTargets } : {}),
+          ...(deployExtractPath !== undefined ? { extractPath: deployExtractPath } : {}),
+        };
+        if (Object.keys(providedRoostPatch).length > 0) {
+          tx.set(
+            roostRef,
+            { updatedAt: FieldValue.serverTimestamp(), ...providedRoostPatch },
+            { merge: true },
+          );
+        }
         return {
           conflict: false as const,
           outcome: 'noop' as const,
