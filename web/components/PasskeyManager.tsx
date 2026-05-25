@@ -242,7 +242,7 @@ export function PasskeyManager({ userId, compact = false }: PasskeyManagerProps)
               <Button
                 variant="outline"
                 size="sm"
-                className="w-full bg-input border-border text-foreground hover:bg-muted hover:text-foreground cursor-pointer"
+                className="w-full bg-input border-border text-foreground cursor-pointer"
                 onClick={handleRegister}
                 disabled={registering}
               >

@@ -18,5 +18,15 @@ export const isProduction =
   process.env.NODE_ENV === 'production' &&
   !process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN?.includes('dev');
 
-export const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+// Friendly display name shown in recipients' inboxes (the part before the address).
+// External-facing, so the product name keeps its normal casing.
+const FROM_NAME = 'Owlette';
+
+const RESEND_FROM_ADDRESS = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+
+// Resend accepts an RFC 5322 "Name <addr>" string. If the configured value already
+// carries a display name, respect it verbatim; otherwise prepend the friendly name.
+export const FROM_EMAIL = RESEND_FROM_ADDRESS.includes('<')
+  ? RESEND_FROM_ADDRESS
+  : `${FROM_NAME} <${RESEND_FROM_ADDRESS}>`;
 export const ENV_LABEL = isProduction ? 'PRODUCTION' : 'DEVELOPMENT';

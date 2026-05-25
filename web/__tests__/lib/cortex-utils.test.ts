@@ -141,6 +141,7 @@ import {
   buildExecutableTools,
   verifyUserSiteAccess,
   resolveCortexMaxTier,
+  getCortexRequireTier3Approval,
   COMMAND_TIMEOUT_MS,
 } from '@/lib/cortex-utils.server';
 
@@ -287,6 +288,29 @@ describe('buildExecutableTools', () => {
   it('site mode creates tools for fan-out execution', () => {
     const tools = buildExecutableTools({} as unknown as FirebaseFirestore.Firestore, 's1', '', 'c1', allTools, true, ['m1', 'm2']);
     expect(Object.keys(tools)).toHaveLength(allTools.length);
+  });
+
+  it('marks tier-3 tools needsApproval and leaves tier-1/2 auto-running', () => {
+    const tools = buildExecutableTools({} as unknown as FirebaseFirestore.Firestore, 's1', 'm1', 'c1', allTools);
+    for (const def of allTools) {
+      expect(tools[def.name].needsApproval).toBe(def.tier >= 3);
+    }
+    // Sanity: the fixture actually exercises both sides of the gate.
+    expect(allTools.some((t) => t.tier >= 3)).toBe(true);
+    expect(allTools.some((t) => t.tier < 3)).toBe(true);
+  });
+
+  it('disables tier-3 needsApproval when requireTier3Approval is false', () => {
+    // The per-site approval toggle, when off, must drop the gate on this path
+    // too (not just local-Cortex routing) — otherwise the toggle lies.
+    const tools = buildExecutableTools(
+      {} as unknown as FirebaseFirestore.Firestore,
+      's1', 'm1', 'c1', allTools, false, [],
+      { requireTier3Approval: false },
+    );
+    for (const def of allTools) {
+      expect(tools[def.name].needsApproval).toBe(false);
+    }
   });
 
   it('executes update_process server-side and resolves process_name to processId', async () => {
@@ -478,5 +502,103 @@ describe('resolveCortexMaxTier', () => {
     expect(
       resolveCortexMaxTier({ role: 'member', isSuperadmin: false, isSiteAdmin: false, isSiteOwner: false })
     ).toBe(1);
+  });
+});
+
+// ─── getCortexRequireTier3Approval ──────────────────────────────────────────
+
+/** db stub for sites/{siteId}/settings/cortex.get(). Pass 'throw' to simulate a read error. */
+function makeCortexSettingsDb(
+  cortexDoc: { exists: boolean; data?: () => unknown } | 'throw',
+) {
+  return {
+    collection: () => ({
+      doc: () => ({
+        collection: () => ({
+          doc: () => ({
+            get: async () => {
+              if (cortexDoc === 'throw') throw new Error('firestore down');
+              return cortexDoc;
+            },
+          }),
+        }),
+      }),
+    }),
+  } as unknown as FirebaseFirestore.Firestore;
+}
+
+describe('getCortexRequireTier3Approval', () => {
+  it('defaults to true (gate on) when the settings doc is absent', async () => {
+    const db = makeCortexSettingsDb({ exists: false });
+    expect(await getCortexRequireTier3Approval(db, 's1')).toBe(true);
+  });
+
+  it('defaults to true when the field is absent', async () => {
+    const db = makeCortexSettingsDb({ exists: true, data: () => ({}) });
+    expect(await getCortexRequireTier3Approval(db, 's1')).toBe(true);
+  });
+
+  it('returns false only when explicitly disabled', async () => {
+    const db = makeCortexSettingsDb({ exists: true, data: () => ({ requireTier3Approval: false }) });
+    expect(await getCortexRequireTier3Approval(db, 's1')).toBe(false);
+  });
+
+  it('returns true when explicitly enabled', async () => {
+    const db = makeCortexSettingsDb({ exists: true, data: () => ({ requireTier3Approval: true }) });
+    expect(await getCortexRequireTier3Approval(db, 's1')).toBe(true);
+  });
+
+  it('fails safe (true) when the read throws', async () => {
+    const db = makeCortexSettingsDb('throw');
+    expect(await getCortexRequireTier3Approval(db, 's1')).toBe(true);
+  });
+});
+
+// ─── capture_screenshot toModelOutput (image projection) ─────────────────────
+
+describe('capture_screenshot toModelOutput', () => {
+  function screenshotToModelOutput(siteMode: boolean) {
+    const def = allTools.find((t) => t.name === 'capture_screenshot')!;
+    const tools = buildExecutableTools(
+      {} as unknown as FirebaseFirestore.Firestore,
+      's1', siteMode ? '' : 'm1', 'c1', [def], siteMode, siteMode ? ['m1', 'm2'] : [],
+    );
+    return tools.capture_screenshot.toModelOutput as (a: { output: unknown }) => {
+      type: string;
+      value: unknown;
+    };
+  }
+
+  it('projects a single-machine screenshot url as an image-url block', () => {
+    const out = screenshotToModelOutput(false)({ output: { url: 'https://x/s.jpg', message: 'shot' } });
+    expect(out).toEqual({
+      type: 'content',
+      value: [
+        { type: 'text', text: 'shot' },
+        { type: 'image-url', url: 'https://x/s.jpg' },
+      ],
+    });
+  });
+
+  it('projects each machine url in site-wide aggregated output', () => {
+    const out = screenshotToModelOutput(true)({
+      output: { machines: [
+        { machine: 'm1', url: 'https://x/m1.jpg' },
+        { machine: 'm2', error: 'offline' },
+      ] },
+    });
+    expect(out).toEqual({
+      type: 'content',
+      value: [
+        { type: 'text', text: 'm1:' },
+        { type: 'image-url', url: 'https://x/m1.jpg' },
+        { type: 'text', text: 'm2: offline' },
+      ],
+    });
+  });
+
+  it('falls back to text when there is no url', () => {
+    const out = screenshotToModelOutput(false)({ output: { error: 'capture failed' } });
+    expect(out).toEqual({ type: 'text', value: 'capture failed' });
   });
 });

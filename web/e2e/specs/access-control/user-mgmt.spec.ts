@@ -56,7 +56,7 @@ test.describe('/admin/users — role badges', () => {
     const row = page.getByRole('row', { name: /super@e2e\.test/ });
     await expect(row.getByText('superadmin', { exact: true })).toBeVisible();
     await expect(row.getByText('all sites')).toBeVisible();
-    await expect(row.getByText('You', { exact: true })).toBeVisible();
+    await expect(row.getByText('you', { exact: true })).toBeVisible();
   });
 
   test('admin row shows admin badge + assigned site pill', async ({ page }) => {

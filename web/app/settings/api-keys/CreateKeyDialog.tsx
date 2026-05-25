@@ -27,6 +27,8 @@ import {
   DEFAULT_TTL_DAYS,
   MAX_TTL_DAYS,
   SCOPE_PRESETS,
+  SCOPE_PRESET_KEYS,
+  SCOPE_PRESET_DESCRIPTIONS,
   type ApiKeyEnvironment,
   type ApiKeyPermission,
   type ApiKeyResource,
@@ -36,14 +38,6 @@ import {
 
 const RESOURCES: readonly ApiKeyResource[] = ALL_RESOURCES;
 const PERMISSIONS: ApiKeyPermission[] = ['read', 'write', 'deploy', 'rollback', 'admin'];
-const PRESETS: ApiKeyScopePreset[] = ['readonly', 'publisher', 'operator', 'admin'];
-
-const PRESET_DESCRIPTIONS: Record<ApiKeyScopePreset, string> = {
-  readonly: 'read access to roosts, sites, machines, and cortex chats — no mutations',
-  publisher: 'read + write — can upload chunks, publish versions, and use cortex chats',
-  operator: 'read, write, deploy, rollback — full day-to-day operations',
-  admin: 'full access including admin permissions',
-};
 
 interface CreateKeyResponse {
   success: true;
@@ -239,7 +233,7 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: Props) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {PRESETS.map((p) => (
+                {SCOPE_PRESET_KEYS.map((p) => (
                   <SelectItem key={p} value={p}>
                     {p}
                   </SelectItem>
@@ -248,7 +242,7 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: Props) {
               </SelectContent>
             </Select>
             {preset !== 'custom' && (
-              <p className="text-xs text-muted-foreground">{PRESET_DESCRIPTIONS[preset]}</p>
+              <p className="text-xs text-muted-foreground">{SCOPE_PRESET_DESCRIPTIONS[preset]}</p>
             )}
           </div>
 

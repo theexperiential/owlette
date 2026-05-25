@@ -224,6 +224,59 @@ export function getDisplayTimezone(
 }
 
 /**
+ * Convert a wall-clock time (calendar components) in a given IANA timezone to
+ * the corresponding UTC epoch milliseconds.
+ *
+ * Uses the standard offset-correction trick: interpret the components as if
+ * they were UTC, see what wall-clock that instant renders as in the target
+ * zone, and subtract the difference. Accurate except within the ~1-hour DST
+ * fold, which is irrelevant for the day-boundary bounds this is used for.
+ *
+ * Needed because `new Date(y, m, d, …)` builds the instant in the *browser's*
+ * timezone — wrong when the surface (e.g. logs) shows and operates on times in
+ * the site/display timezone instead.
+ */
+export function zonedTimeToUtcMs(
+  year: number,
+  monthIndex: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  millisecond: number,
+  timeZone: string,
+): number {
+  const asUtc = Date.UTC(year, monthIndex, day, hour, minute, second, millisecond);
+  try {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    const parts = dtf.formatToParts(new Date(asUtc));
+    const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+    const tzAsUtc = Date.UTC(
+      get('year'),
+      get('month') - 1,
+      get('day'),
+      get('hour'),
+      get('minute'),
+      get('second'),
+      millisecond,
+    );
+    return asUtc - (tzAsUtc - asUtc);
+  } catch {
+    // Invalid timezone — fall back to treating the components as UTC.
+    return asUtc;
+  }
+}
+
+/**
  * Resolve the timezone AND the source label that explains where it came
  * from, in a single call. Used by surfaces that want to render a
  * `<TimezoneChip>` next to a list of times — the chip needs to know both

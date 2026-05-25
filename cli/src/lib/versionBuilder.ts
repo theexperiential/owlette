@@ -12,11 +12,12 @@
  *   }
  *
  * `config` carries free-form metadata about the push (cli version,
- * source host, timestamp). The server ignores unknown keys but writes
+ * source host). The server ignores unknown keys but writes
  * the whole object into the version body in R2 — useful for auditing
  * how a given version was produced.
  */
 
+import { createHash } from 'crypto';
 import type { ChunkedFileEntry } from './chunker';
 
 export const VERSION_MEDIA_TYPE = 'application/vnd.owlette.version.v1+json';
@@ -41,7 +42,6 @@ export function buildVersion(input: BuildVersionInput): BuiltVersion {
   const config: Record<string, unknown> = {
     producer: 'owlette-cli',
     cliVersion: input.cliVersion,
-    createdAt: new Date().toISOString(),
   };
   if (input.hostname) config.hostname = input.hostname;
   if (input.platform) config.platform = input.platform;
@@ -60,6 +60,16 @@ export function buildVersion(input: BuildVersionInput): BuiltVersion {
     config,
     files,
   };
+}
+
+/** Canonical JSON form used by the server when deriving the content address. */
+export function canonicalVersionJson(version: BuiltVersion): string {
+  return JSON.stringify(sortForCanonical(version));
+}
+
+/** SHA-256 content address for a built version body. */
+export function versionIdForVersion(version: BuiltVersion): string {
+  return createHash('sha256').update(canonicalVersionJson(version)).digest('hex');
 }
 
 /** Dedup the set of chunk hashes referenced by a version's files. */
@@ -92,4 +102,13 @@ export function summariseVersion(files: readonly ChunkedFileEntry[]): {
     totalChunks,
     uniqueChunks: unique.size,
   };
+}
+
+function sortForCanonical(v: unknown): unknown {
+  if (v === null || typeof v !== 'object') return v;
+  if (Array.isArray(v)) return v.map(sortForCanonical);
+  const out: Record<string, unknown> = {};
+  const keys = Object.keys(v as Record<string, unknown>).sort();
+  for (const k of keys) out[k] = sortForCanonical((v as Record<string, unknown>)[k]);
+  return out;
 }

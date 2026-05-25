@@ -856,6 +856,28 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}', ()
     expect(ttlMs).toBeLessThanOrEqual(60 * 60 * 1000 + 1000); // ≤ 1h + slack
   });
 
+  it('200 completed capture_screenshot accepts agent result.storage_path', async () => {
+    const storagePath = `screenshots/${SITE}/${MACHINE}/1700000000000-storage-path.jpg`;
+    queueGetSnapshots(null, {
+      [CID]: {
+        type: 'capture_screenshot',
+        status: 'completed',
+        result: { storage_path: storagePath },
+      },
+    });
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands/${CID}`,
+    );
+    const res = await commandStatusGET(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE, commandId: CID }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.result.screenshot_url).toMatch(/^https:\/\/signed\.example\/read-/);
+    expect(fakeBucket.file).toHaveBeenLastCalledWith(storagePath);
+  });
+
   it('200 failed shape surfaces error string', async () => {
     queueGetSnapshots(null, {
       [CID]: { type: 'reboot_machine', status: 'failed', error: 'reboot blocked: kiosk lock' },

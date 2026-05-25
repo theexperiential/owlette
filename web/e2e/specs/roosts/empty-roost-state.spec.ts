@@ -22,10 +22,7 @@ const ROOST_ID = 'rst_test_empty_001';
 const ROOST_NAME = 'empty-roost';
 
 function isKnownPageChromeNoise(message: string): boolean {
-  return (
-    message.includes('Error fetching users: FirebaseError') ||
-    message === '[Error] An error occurred'
-  );
+  return message === '[Error] An error occurred';
 }
 
 async function cleanup() {

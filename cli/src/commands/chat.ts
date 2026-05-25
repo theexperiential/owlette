@@ -9,24 +9,30 @@
  *   PATCH  /api/cortex/conversations/{conversationId}      — rename
  *   DELETE /api/cortex/conversations/{conversationId}      — soft delete
  *
- * `send` consumes the AI-SDK v3 line-prefixed stream protocol the server
- * emits via `result.toUIMessageStreamResponse()`:
+ * `send` consumes both stream protocols the server can emit today:
  *   `0:"<json-encoded delta>"\n` → text delta (write to stdout immediately)
  *   `d:{...}\n`                  → end-of-stream marker
  *   `3:"<error>"\n`              → upstream error frame
+ *   `data: {"type":"text-delta","delta":"..."}` → AI SDK 6 UI-message SSE
  * The CLI flushes deltas as they arrive so users see the model think rather
  * than waiting for the full reply.
  *
  * Mutations carry an auto-generated `Idempotency-Key` header so a network
- * retry doesn't double-create / double-delete. `chat send` sends the header
- * for replay safety even though the server skips the cache for streaming
- * responses (see `web/app/api/cortex/conversations/[conversationId]/route.ts`).
+ * retry doesn't double-create / double-delete. `chat send` also sends the
+ * header for tracing/proxy tooling, but streamed responses are not safely
+ * replayable because the server does not cache them.
  */
 
 import { Command } from 'commander';
 import { randomUUID } from 'crypto';
 import { loadConfig } from '../config';
-import { isJson, renderTable } from '../lib/output';
+import { fetchWithTimeout } from '../lib/http';
+import {
+  isJson,
+  renderTable,
+  unconfirmedMutationFatal,
+  usageFatal,
+} from '../lib/output';
 
 interface ConversationSummary {
   conversationId: string;
@@ -99,17 +105,28 @@ export function registerChatCommands(program: Command): void {
       if (opts.machine) body.machineId = opts.machine;
       if (opts.title) body.title = opts.title;
 
-      const res = await fetch(`${apiUrl}/api/cortex/conversations`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': opts.idempotencyKey
-            ? String(opts.idempotencyKey)
-            : `cli-chat-new-${randomUUID()}`,
-        },
-        body: JSON.stringify(body),
-      });
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-chat-new-${randomUUID()}`;
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(`${apiUrl}/api/cortex/conversations`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: 'POST /api/cortex/conversations',
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const raw = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
         data?: NewResponse;
@@ -156,14 +173,14 @@ export function registerChatCommands(program: Command): void {
       if (opts.limit !== undefined) {
         const n = Number(opts.limit);
         if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1 || n > 100) {
-          fatal('--limit must be an integer between 1 and 100');
+          usageFatal('--limit must be an integer between 1 and 100');
           return;
         }
         params.set('page_size', String(n));
       }
       if (opts.cursor) params.set('page_token', String(opts.cursor));
 
-      const res = await fetch(`${apiUrl}/api/cortex/conversations?${params.toString()}`, {
+      const res = await fetchWithTimeout(`${apiUrl}/api/cortex/conversations?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const raw = (await res.json().catch(() => ({}))) as {
@@ -229,23 +246,35 @@ export function registerChatCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(
-        `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            // Server skips idempotency caching on streamed responses, but
-            // the header is still safe to send and useful for downstream
-            // proxies / replay tooling.
-            'Idempotency-Key': opts.idempotencyKey
-              ? String(opts.idempotencyKey)
-              : `cli-chat-send-${randomUUID()}`,
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-chat-send-${randomUUID()}`;
+      let res: Response;
+      try {
+        res = await fetch(
+          `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              // Server skips idempotency caching on streamed responses; keep
+              // the header only for downstream tracing/proxy tooling.
+              'Idempotency-Key': idempotencyKey,
+            },
+            body: JSON.stringify({ role: 'user', content: message }),
           },
-          body: JSON.stringify({ role: 'user', content: message }),
-        },
-      );
+        );
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        process.stderr.write(
+          `owlette: POST /api/cortex/conversations/${conversationId} did not return a confirmed response: ${detail}\n` +
+            '  inspect the conversation before retrying: run `owlette chat list` and view the conversation in the UI.\n' +
+            '  retrying may append the message twice.\n',
+        );
+        process.exitCode = 1;
+        return;
+      }
 
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as {
@@ -268,6 +297,19 @@ export function registerChatCommands(program: Command): void {
       const decoder = new TextDecoder();
       let pending = '';
 
+      const emitDelta = (delta: string): void => {
+        if (json) {
+          collected.push(delta);
+        } else {
+          process.stdout.write(delta);
+        }
+      };
+
+      const emitStreamError = (detail: string): void => {
+        process.stderr.write(`\nowlette: cortex error — ${detail}\n`);
+        process.exitCode = 1;
+      };
+
       const consume = (line: string): void => {
         if (!line) return;
         if (line.startsWith('0:')) {
@@ -275,11 +317,7 @@ export function registerChatCommands(program: Command): void {
           try {
             const parsed = JSON.parse(line.slice(2));
             if (typeof parsed === 'string') {
-              if (json) {
-                collected.push(parsed);
-              } else {
-                process.stdout.write(parsed);
-              }
+              emitDelta(parsed);
             }
           } catch {
             // Drop malformed delta — never crash the stream.
@@ -293,8 +331,26 @@ export function registerChatCommands(program: Command): void {
           } catch {
             /* keep raw */
           }
-          process.stderr.write(`\nowlette: cortex error — ${detail}\n`);
-          process.exitCode = 1;
+          emitStreamError(detail);
+        } else if (line.startsWith('data:')) {
+          const raw = line.slice(5).trimStart();
+          if (!raw || raw === '[DONE]') return;
+          try {
+            const parsed = JSON.parse(raw) as Record<string, unknown>;
+            if (parsed.type === 'text-delta' && typeof parsed.delta === 'string') {
+              emitDelta(parsed.delta);
+            } else if (parsed.type === 'error') {
+              const detail =
+                typeof parsed.errorText === 'string'
+                  ? parsed.errorText
+                  : typeof parsed.error === 'string'
+                    ? parsed.error
+                    : JSON.stringify(parsed);
+              emitStreamError(detail);
+            }
+          } catch {
+            // Drop malformed SSE data — never crash the stream.
+          }
         }
         // `d:` and any other prefix → ignore (end markers / tool frames).
       };
@@ -339,7 +395,7 @@ export function registerChatCommands(program: Command): void {
 
       if (!opts.yes) {
         if (!process.stdin.isTTY) {
-          fatal(
+          usageFatal(
             'stdin is not a tty and --yes was not supplied; refusing to delete silently',
           );
           return;
@@ -353,18 +409,29 @@ export function registerChatCommands(program: Command): void {
         }
       }
 
-      const res = await fetch(
-        `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
-        {
-          method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Idempotency-Key': opts.idempotencyKey
-              ? String(opts.idempotencyKey)
-              : `cli-chat-delete-${randomUUID()}`,
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-chat-delete-${randomUUID()}`;
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(
+          `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
+          {
+            method: 'DELETE',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Idempotency-Key': idempotencyKey,
+            },
           },
-        },
-      );
+        );
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `DELETE /api/cortex/conversations/${conversationId}`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const raw = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
         data?: MutationResponse;
@@ -405,20 +472,31 @@ export function registerChatCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(
-        `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
-        {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'Idempotency-Key': opts.idempotencyKey
-              ? String(opts.idempotencyKey)
-              : `cli-chat-rename-${randomUUID()}`,
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-chat-rename-${randomUUID()}`;
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(
+          `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
+          {
+            method: 'PATCH',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'Idempotency-Key': idempotencyKey,
+            },
+            body: JSON.stringify({ title }),
           },
-          body: JSON.stringify({ title }),
-        },
-      );
+        );
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `PATCH /api/cortex/conversations/${conversationId}`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const raw = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
         data?: MutationResponse;
@@ -464,7 +542,7 @@ function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json
 async function promptYesNo(question: string): Promise<boolean> {
   const { createInterface } = await import('readline');
   return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer) => {
       rl.close();
       const normalized = answer.trim().toLowerCase();

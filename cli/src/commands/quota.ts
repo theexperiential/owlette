@@ -17,7 +17,8 @@
 
 import { Command } from 'commander';
 import { loadConfig } from '../config';
-import { humanBytes, isJson, renderTable } from '../lib/output';
+import { fetchWithTimeout } from '../lib/http';
+import { humanBytes, isJson, renderTable, usageFatal } from '../lib/output';
 
 interface QuotaAlarm {
   id: string;
@@ -87,7 +88,7 @@ export function registerQuotaCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/quota`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
@@ -126,14 +127,12 @@ export function registerQuotaCommands(program: Command): void {
 
       const period = opts.period as string;
       if (!VALID_PERIODS.includes(period as QuotaPeriod)) {
-        fatal(
-          `--period must be one of ${VALID_PERIODS.join(', ')} (got '${period}')`,
-        );
+        usageFatal(`--period must be one of ${VALID_PERIODS.join(', ')} (got '${period}')`);
         return;
       }
 
       const qs = new URLSearchParams({ period });
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/quota/history?${qs}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
@@ -253,9 +252,9 @@ function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json
   return { apiUrl, token, json: isJson(cmd) };
 }
 
-function fatal(msg: string): void {
+function fatal(msg: string, exitCode = 1): void {
   process.stderr.write(`owlette: ${msg}\n`);
-  process.exitCode = 1;
+  process.exitCode = exitCode;
 }
 
 /** Export for unit tests. */

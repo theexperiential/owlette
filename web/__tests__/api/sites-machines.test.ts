@@ -434,7 +434,7 @@ describe('DELETE /api/sites/{siteId}/machines/{machineId}', () => {
     expect(docStore[`sites/${SITE}/machines/${MACHINE}`]).not.toBeNull();
   });
 
-  it('rejects site admins because MACHINE_REMOVE is superadmin-only', async () => {
+  it('allows a site admin to remove a machine on their assigned site', async () => {
     seedSite();
     authedSession('site-admin', 'admin');
     seedMachine();
@@ -442,12 +442,13 @@ describe('DELETE /api/sites/{siteId}/machines/{machineId}', () => {
     const res = await machineDELETE(
       createMockRequest(`http://localhost/api/sites/${SITE}/machines/${MACHINE}`, {
         method: 'DELETE',
+        headers: { 'Idempotency-Key': 'remove-machine-admin-1' },
       }),
       { params: Promise.resolve({ siteId: SITE, machineId: MACHINE }) },
     );
 
-    expect(res.status).toBe(403);
-    expect(docStore[`sites/${SITE}/machines/${MACHINE}`]).not.toBeNull();
+    expect(res.status).toBe(200);
+    expect(docStore[`sites/${SITE}/machines/${MACHINE}`]).toBeNull();
   });
 
   it('rejects API keys without machine write scope', async () => {

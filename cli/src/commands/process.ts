@@ -30,7 +30,13 @@
 import { Command } from 'commander';
 import { randomUUID } from 'crypto';
 import { loadConfig } from '../config';
-import { isJson, renderTable } from '../lib/output';
+import { fetchWithTimeout } from '../lib/http';
+import {
+  isJson,
+  renderTable,
+  unconfirmedMutationFatal,
+  usageFatal,
+} from '../lib/output';
 
 interface ProcessSummary {
   processId: string;
@@ -122,7 +128,7 @@ export function registerProcessCommands(program: Command): void {
       if (!token) return;
 
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(opts.machine)}/processes`;
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}` } });
       const data = (await res.json().catch(() => ({}))) as
         OkEnvelope<ProcessListResponse> & ProblemEnvelope;
       if (!res.ok) {
@@ -166,7 +172,7 @@ export function registerProcessCommands(program: Command): void {
       if (!token) return;
 
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(opts.machine)}/processes/${encodeURIComponent(processId)}`;
-      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}` } });
       const data = (await res.json().catch(() => ({}))) as
         OkEnvelope<ProcessSummary> & ProblemEnvelope;
       if (!res.ok) {
@@ -203,12 +209,16 @@ export function registerProcessCommands(program: Command): void {
     .option('--priority <priority>', 'process priority (idle|below|normal|above|high|realtime)')
     .option('--visibility <visibility>', 'window visibility (visible|hidden|minimized|maximized)')
     .option('--launch-mode <mode>', 'launch mode (off|always|scheduled)')
+    .option(
+      '--idempotency-key <key>',
+      'optional Idempotency-Key header (auto-generated if omitted)',
+    )
     .action(async (opts, cmd) => {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
       if (opts.launchMode && !VALID_SCHEDULE_MODES.includes(opts.launchMode as ScheduleMode)) {
-        return fatal(`--launch-mode must be one of ${VALID_SCHEDULE_MODES.join(', ')}`);
+        return usageFatal(`--launch-mode must be one of ${VALID_SCHEDULE_MODES.join(', ')}`);
       }
 
       const body: Record<string, unknown> = {
@@ -220,16 +230,29 @@ export function registerProcessCommands(program: Command): void {
       if (opts.visibility !== undefined) body.visibility = opts.visibility;
       if (opts.launchMode !== undefined) body.launch_mode = opts.launchMode;
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-process-create-${randomUUID()}`;
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(opts.machine)}/processes`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `cli-process-create-${randomUUID()}`,
-        },
-        body: JSON.stringify(body),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/sites/${opts.site}/machines/${opts.machine}/processes`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as
         OkEnvelope<{ processId: string }> & ProblemEnvelope;
       if (!res.ok) {
@@ -262,6 +285,10 @@ export function registerProcessCommands(program: Command): void {
     .option('--priority <priority>', 'process priority (idle|below|normal|above|high|realtime)')
     .option('--visibility <visibility>', 'window visibility (visible|hidden|minimized|maximized)')
     .option('--launch-mode <mode>', 'launch mode (off|always|scheduled)')
+    .option(
+      '--idempotency-key <key>',
+      'optional Idempotency-Key header (auto-generated if omitted)',
+    )
     .action(async (processId: string, opts, cmd) => {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
@@ -270,7 +297,7 @@ export function registerProcessCommands(program: Command): void {
       // unknown options out so a user can't pass `--id` directly. We also
       // guard `--launch-mode` for early feedback.
       if (opts.launchMode && !VALID_SCHEDULE_MODES.includes(opts.launchMode as ScheduleMode)) {
-        return fatal(`--launch-mode must be one of ${VALID_SCHEDULE_MODES.join(', ')}`);
+        return usageFatal(`--launch-mode must be one of ${VALID_SCHEDULE_MODES.join(', ')}`);
       }
 
       const body: Record<string, unknown> = {};
@@ -282,19 +309,32 @@ export function registerProcessCommands(program: Command): void {
       if (opts.launchMode !== undefined) body.launch_mode = opts.launchMode;
 
       if (Object.keys(body).length === 0) {
-        return fatal('at least one field flag is required (--name, --exe, --cwd, --priority, --visibility, --launch-mode)');
+        return usageFatal('at least one field flag is required (--name, --exe, --cwd, --priority, --visibility, --launch-mode)');
       }
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-process-update-${randomUUID()}`;
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(opts.machine)}/processes/${encodeURIComponent(processId)}`;
-      const res = await fetch(url, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `cli-process-update-${randomUUID()}`,
-        },
-        body: JSON.stringify(body),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `PATCH /api/sites/${opts.site}/machines/${opts.machine}/processes/${processId}`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as
         OkEnvelope<{ processId: string }> & ProblemEnvelope;
       if (!res.ok) {
@@ -333,11 +373,11 @@ export function registerProcessCommands(program: Command): void {
           return;
         }
       } else if (!opts.yes && !process.stdin.isTTY) {
-        return fatal('stdin is not a tty and --yes was not supplied; refusing to delete silently');
+        return usageFatal('stdin is not a tty and --yes was not supplied; refusing to delete silently');
       }
 
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(opts.machine)}/processes/${encodeURIComponent(processId)}`;
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -383,13 +423,17 @@ export function registerProcessCommands(program: Command): void {
       '--blocks <json>',
       'schedule blocks as inline json (required when --mode=scheduled)',
     )
+    .option(
+      '--idempotency-key <key>',
+      'optional Idempotency-Key header (auto-generated if omitted)',
+    )
     .action(async (processId: string, opts, cmd) => {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
       const mode = opts.mode;
       if (!VALID_SCHEDULE_MODES.includes(mode as ScheduleMode)) {
-        return fatal(`--mode must be one of ${VALID_SCHEDULE_MODES.join(', ')}`);
+        return usageFatal(`--mode must be one of ${VALID_SCHEDULE_MODES.join(', ')}`);
       }
 
       let blocks: unknown = undefined;
@@ -397,32 +441,45 @@ export function registerProcessCommands(program: Command): void {
         try {
           blocks = JSON.parse(String(opts.blocks));
         } catch (err) {
-          return fatal(
+          return usageFatal(
             `--blocks must be valid json: ${(err as Error).message}`,
           );
         }
         if (!Array.isArray(blocks)) {
-          return fatal('--blocks must be a json array of schedule blocks');
+          return usageFatal('--blocks must be a json array of schedule blocks');
         }
       }
 
       if (mode === 'scheduled' && (!Array.isArray(blocks) || blocks.length === 0)) {
-        return fatal('--blocks is required and must be a non-empty json array when --mode=scheduled');
+        return usageFatal('--blocks is required and must be a non-empty json array when --mode=scheduled');
       }
 
       const body: Record<string, unknown> = { mode };
       if (blocks !== undefined) body.blocks = blocks;
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-process-schedule-${randomUUID()}`;
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(opts.machine)}/processes/${encodeURIComponent(processId)}/schedule`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `cli-process-schedule-${randomUUID()}`,
-        },
-        body: JSON.stringify(body),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/sites/${opts.site}/machines/${opts.machine}/processes/${processId}/schedule`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as
         OkEnvelope<ScheduleResponse> & ProblemEnvelope;
       if (!res.ok) {
@@ -455,22 +512,39 @@ function registerControlVerb(
     .description(description)
     .requiredOption('--site <siteId>', 'site id that owns the machine')
     .requiredOption('--machine <machineId>', 'machine id that owns the process')
+    .option(
+      '--idempotency-key <key>',
+      'optional Idempotency-Key header (auto-generated if omitted)',
+    )
     .action(async (processId: string, opts, cmd) => {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-process-${verb}-${randomUUID()}`;
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(opts.machine)}/processes/${encodeURIComponent(processId)}/${verb}`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `cli-process-${verb}-${randomUUID()}`,
-        },
-        // No body, but the server reads `request.text()` for idempotency key
-        // hashing — sending an empty string keeps that consistent.
-        body: '',
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          // No body, but the server reads `request.text()` for idempotency key
+          // hashing — sending an empty string keeps that consistent.
+          body: '',
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/sites/${opts.site}/machines/${opts.machine}/processes/${processId}/${verb}`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as
         OkEnvelope<CommandQueueResponse> & ProblemEnvelope;
       if (!res.ok) {
@@ -574,7 +648,7 @@ function hintForCode(code: string): string | null {
 async function promptYesNo(question: string): Promise<boolean> {
   const { createInterface } = await import('readline');
   return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer) => {
       rl.close();
       const normalized = answer.trim().toLowerCase();

@@ -1,0 +1,136 @@
+name: node sdk publish
+
+# Publish @owlette/sdk (Node SDK) to npm from a release tag
+# (`node-sdk-vX.Y.Z` or `node-sdk-vX.Y.Z-prerelease`) or via manual dispatch.
+#
+# Authentication uses npm OIDC trusted publishing — there is no NPM_TOKEN
+# secret. A trusted publisher for @owlette/sdk that points at this workflow
+# must be configured under the package settings on npmjs.com first. npm
+# requires the package to already exist before a trusted publisher can be
+# attached, so the very first publish must be bootstrapped once with a
+# token / local `npm publish` (see docs/api/distribution.md). Every release
+# after that goes through this workflow tokenlessly, with provenance.
+#
+# Prerelease versions publish under the matching dist-tag (`rc`); stable
+# versions publish under `latest`. Manual dispatch defaults to dry-run.
+
+on:
+  push:
+    tags:
+      - 'node-sdk-v[0-9]+.[0-9]+.[0-9]+'
+      - 'node-sdk-v[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'optional tag or ref to publish from'
+        required: false
+        type: string
+      dry_run:
+        description: 'run npm publish with --dry-run'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: node-sdk-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm to a trusted-publishing-capable version
+        # Trusted publishing requires npm >= 11.5.1; node 22 ships npm 10.x.
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        working-directory: sdks/node
+        run: npm ci
+
+      - name: Build
+        working-directory: sdks/node
+        run: npm run build
+
+      - name: Test
+        working-directory: sdks/node
+        run: npm test
+
+      - name: Verify tag matches package version
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          tag=""
+          if [ "$EVENT_NAME" = "push" ]; then
+            tag="${GITHUB_REF_NAME}"
+          elif [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+            tag="${tag#refs/tags/}"
+          fi
+
+          if [ -z "$tag" ]; then
+            if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_DRY_RUN" = "true" ]; then
+              echo "no tag supplied on workflow_dispatch dry run; skipping tag/version check"
+              exit 0
+            fi
+            echo "refusing to publish: real publishes require a tag that matches sdks/node/package.json"
+            exit 1
+          fi
+
+          if [[ ! "$tag" =~ ^node-sdk-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "refusing to publish: tag '$tag' must match node-sdk-vX.Y.Z or node-sdk-vX.Y.Z-prerelease"
+            exit 1
+          fi
+
+          expected="${tag#node-sdk-v}"
+          actual="$(node -p "require('./sdks/node/package.json').version")"
+          if [ "$actual" != "$expected" ]; then
+            echo "refusing to publish: sdks/node/package.json version '$actual' does not match tag '$tag' (expected '$expected')"
+            exit 1
+          fi
+
+          echo "package version $actual matches $tag"
+
+      - name: Publish
+        working-directory: sdks/node
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          version="$(node -p "require('./package.json').version")"
+          if [[ "$version" == *-* ]]; then
+            pre="${version#*-}"
+            dist_tag="${pre%%.*}"
+          else
+            dist_tag="latest"
+          fi
+          echo "publishing @owlette/sdk@$version under dist-tag '$dist_tag'"
+
+          dry_run_flag=""
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_DRY_RUN" = "true" ]; then
+            dry_run_flag="--dry-run"
+          fi
+
+          npm publish --provenance --access public --tag "$dist_tag" $dry_run_flag

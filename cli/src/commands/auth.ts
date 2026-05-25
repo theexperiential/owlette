@@ -11,7 +11,7 @@
  */
 
 import { Command } from 'commander';
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 import { createDecipheriv, hkdfSync } from 'crypto';
 import { platform } from 'os';
 import {
@@ -26,6 +26,7 @@ import {
   writeStoredCredential,
   type WriteCredentialResult,
 } from '../credentialStore';
+import { fetchWithTimeout } from '../lib/http';
 import { runWhoami } from './whoami';
 
 const DEVICE_CODE_WRAP_VERSION = 'v1';
@@ -100,13 +101,26 @@ interface PollEncryptedResponse {
 }
 
 function tryOpenBrowser(url: string): void {
-  const p = platform();
-  const cmd =
-    p === 'win32' ? `start "" "${url}"` : p === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
+  let parsed: URL;
   try {
-    exec(cmd, () => {
-      /* best-effort — ignore errors; the user has the url to copy-paste */
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+
+  const p = platform();
+  const command = p === 'win32' ? 'explorer.exe' : p === 'darwin' ? 'open' : 'xdg-open';
+  try {
+    const child = spawn(command, [parsed.toString()], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
     });
+    child.on('error', () => {
+      /* best-effort - the user has the url to copy-paste */
+    });
+    child.unref();
   } catch {
     /* ignore */
   }
@@ -122,7 +136,7 @@ async function post<T>(
   path: string,
   body: Record<string, unknown>,
 ): Promise<{ status: number; data: T }> {
-  const res = await fetch(`${apiUrl}${path}`, {
+  const res = await fetchWithTimeout(`${apiUrl}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

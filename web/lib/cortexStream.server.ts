@@ -29,6 +29,7 @@ import {
   isMachineOnline,
   isCortexEnabled,
   getOnlineMachines,
+  getCortexRequireTier3Approval,
   buildExecutableTools,
 } from '@/lib/cortex-utils.server';
 
@@ -130,7 +131,16 @@ export async function runCortexStream(
   // Non-admins are forced through the server-side LLM path so the tier cap
   // (tier 1, read-only) is actually enforced. The local Cortex path runs
   // tools inside the agent and does not yet honor a per-user tier cap.
-  const cortexLocal = access.isSiteAdmin && maxToolTier >= 3
+  //
+  // Additionally, when tier-3 approval is required for the site (the default),
+  // admins are kept on the server-side path so the AI SDK `needsApproval` gate
+  // can pause privileged tool calls — the local path runs tools inside the
+  // agent where the web server can't gate them. See the §6 decision in the PR.
+  const localPathAllowed =
+    access.isSiteAdmin &&
+    maxToolTier >= 3 &&
+    !(await getCortexRequireTier3Approval(db, siteId));
+  const cortexLocal = localPathAllowed
     ? await isCortexLocal(db, siteId, machineId)
     : false;
 
@@ -397,9 +407,10 @@ async function runServerSideLLM(
   maxToolTier: ToolTier,
   userRole: string | null,
 ): Promise<Response> {
-  const [llmConfig, processes] = await Promise.all([
+  const [llmConfig, processes, requireTier3Approval] = await Promise.all([
     resolveLlmConfig(db, userId, siteId),
     fetchProcessSummaries(db, siteId, machineId),
+    getCortexRequireTier3Approval(db, siteId),
   ]);
 
   const toolDefs = getToolsByTier(maxToolTier);
@@ -411,7 +422,7 @@ async function runServerSideLLM(
     toolDefs,
     false,
     [],
-    { userId, userRole },
+    { userId, userRole, requireTier3Approval },
   );
 
   const model = createModel(llmConfig);
@@ -454,7 +465,10 @@ async function runSiteWideMode(
   onlineMachines: string[],
   userRole: string | null,
 ): Promise<Response> {
-  const llmConfig = await resolveLlmConfig(db, userId, siteId);
+  const [llmConfig, requireTier3Approval] = await Promise.all([
+    resolveLlmConfig(db, userId, siteId),
+    getCortexRequireTier3Approval(db, siteId),
+  ]);
   const toolDefs = getToolsByTier(maxToolTier);
   const executableTools = buildExecutableTools(
     db,
@@ -464,7 +478,7 @@ async function runSiteWideMode(
     toolDefs,
     true,
     onlineMachines,
-    { userId, userRole },
+    { userId, userRole, requireTier3Approval },
   );
 
   const model = createModel(llmConfig);

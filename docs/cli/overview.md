@@ -5,7 +5,7 @@ hide:
 
 # owlette cli — overview
 
-`owlette` is the command-line client for the [owlette.app](https://owlette.app) api. It runs on macOS, linux, and windows and lets you authenticate, push roosts, manage sites and machines, mint api keys, and inspect audit logs from your terminal or ci pipeline.
+`owlette` is the command-line client for the [owlette.app](https://owlette.app) api. It runs on macOS, linux, and windows and lets you authenticate, push roosts, manage sites and machines, and inspect audit logs from your terminal or ci pipeline.
 
 This page is the 15-minute onboarding: install → log in → push your first roost. For per-command reference, start with [auth](reference/auth.md), [roost](reference/roost.md), [machine](reference/machine.md), [listen](reference/listen.md), or [trigger](reference/trigger.md). For route/stub/deferred status across the whole CLI, see the [readiness matrix](readiness.md).
 
@@ -173,7 +173,8 @@ Every command lives under one of these top-level groups. **`[ready]`** verbs hit
 | noun | tier | verbs | what it does |
 |---|---|---|---|
 | [`site`](reference/site.md) | ready | `list` `get` | sites you have access to |
-| [`key`](reference/key.md) | ready | `create` `list` `rotate` `revoke` | your api keys |
+
+API key creation, rotation, and revocation are dashboard-only. See [key management](reference/key.md).
 
 ### superadmin nouns
 
@@ -218,7 +219,7 @@ Commands that accept `--json` write one JSON document to stdout. Newer commands 
 { "ok": true, "data": { /* command-specific payload */ } }
 ```
 
-Examples in source include `roost list`, `key list`, `site list`, `machine list`, `whoami`, and `trigger`, which print raw payloads or command-specific objects rather than a universal `{ ok, data }` envelope.
+Examples in source include `roost list`, `site list`, `machine list`, `whoami`, and `trigger`, which print raw payloads or command-specific objects rather than a universal `{ ok, data }` envelope.
 
 **wrapped failure**
 ```json

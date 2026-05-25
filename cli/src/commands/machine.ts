@@ -27,7 +27,13 @@ import { randomUUID } from 'crypto';
 import { writeFile } from 'fs/promises';
 import * as path from 'path';
 import { loadConfig } from '../config';
-import { isJson, renderTable } from '../lib/output';
+import { fetchWithTimeout } from '../lib/http';
+import {
+  isJson,
+  renderTable,
+  unconfirmedMutationFatal,
+  usageFatal,
+} from '../lib/output';
 import { stubExit } from '../lib/stubExit';
 
 interface RoostSummary {
@@ -171,7 +177,7 @@ export function registerMachineCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
@@ -224,7 +230,7 @@ export function registerMachineCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(machineId)}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
@@ -256,7 +262,7 @@ export function registerMachineCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(machineId)}/deployments`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
@@ -319,9 +325,13 @@ export function registerMachineCommands(program: Command): void {
     .requiredOption('--site <siteId>', 'site id that owns the machine')
     .option(
       '--monitor <monitor>',
-      'monitor target: `all`, `primary`, or a non-negative integer index',
+      'non-negative integer monitor index (0 captures all monitors)',
     )
     .option('--output <path>', 'path to write the png (default: screenshot-<machineId>-<ts>.png in cwd)')
+    .option(
+      '--idempotency-key <key>',
+      'optional Idempotency-Key header (auto-generated if omitted)',
+    )
     .action(async (machineId: string, opts, cmd) => {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
@@ -330,25 +340,43 @@ export function registerMachineCommands(program: Command): void {
       if (opts.monitor !== undefined) {
         const monitor = parseMonitorOpt(String(opts.monitor));
         if (typeof monitor === 'string' && monitor.startsWith('error:')) {
-          return fatal(monitor.slice('error:'.length));
+          return usageFatal(monitor.slice('error:'.length));
         }
         params.monitor = monitor;
       }
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-machine-screenshot-${randomUUID()}`;
       const queueUrl = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(machineId)}/commands`;
-      const queueRes = await fetch(queueUrl, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `cli-machine-screenshot-${randomUUID()}`,
-        },
-        body: JSON.stringify({ type: 'capture_screenshot', params }),
-      });
+      let queueRes: Response;
+      try {
+        queueRes = await fetchWithTimeout(queueUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify({ type: 'capture_screenshot', params }),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/sites/${opts.site}/machines/${machineId}/commands`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const queueData = (await queueRes.json().catch(() => ({}))) as
         OkEnvelope<CommandQueueEnvelope> & ProblemEnvelope;
       if (!queueRes.ok) {
-        return fatalProblem(`POST /api/sites/${opts.site}/machines/${machineId}/commands`, queueRes.status, queueData);
+        return fatalProblem(
+          `POST /api/sites/${opts.site}/machines/${machineId}/commands`,
+          queueRes.status,
+          queueData,
+          'screenshot',
+        );
       }
 
       const commandId = queueData.data?.commandId;
@@ -365,12 +393,12 @@ export function registerMachineCommands(program: Command): void {
           await sleep(SCREENSHOT_POLL_INTERVAL_MS);
         }
         if (!json) process.stdout.write('.');
-        const pollRes = await fetch(pollUrl, { headers: { Authorization: `Bearer ${token}` } });
+        const pollRes = await fetchWithTimeout(pollUrl, { headers: { Authorization: `Bearer ${token}` } });
         const pollData = (await pollRes.json().catch(() => ({}))) as
           OkEnvelope<CommandStatusEnvelope> & ProblemEnvelope;
         if (!pollRes.ok) {
           if (!json) process.stdout.write('\n');
-          return fatalProblem(`GET ${pollUrl}`, pollRes.status, pollData);
+          return fatalProblem(`GET ${pollUrl}`, pollRes.status, pollData, 'screenshot');
         }
         const status = pollData.data?.status;
         if (status === 'completed' || status === 'failed') {
@@ -457,6 +485,10 @@ function registerSimpleCommandVerb(
       '--delay-seconds <n>',
       'delay before the agent fires the command (default: 0)',
     )
+    .option(
+      '--idempotency-key <key>',
+      'optional Idempotency-Key header (auto-generated if omitted)',
+    )
     .action(async (machineId: string, opts, cmd) => {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
@@ -465,21 +497,34 @@ function registerSimpleCommandVerb(
       if (opts.delaySeconds !== undefined) {
         const n = Number(opts.delaySeconds);
         if (!Number.isFinite(n) || n < 0) {
-          return fatal('--delay-seconds must be a non-negative number');
+          return usageFatal('--delay-seconds must be a non-negative number');
         }
         params.delay_seconds = Math.floor(n);
       }
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-machine-${cfg.verb}-${randomUUID()}`;
       const url = `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/machines/${encodeURIComponent(machineId)}/commands`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `cli-machine-${cfg.verb}-${randomUUID()}`,
-        },
-        body: JSON.stringify({ type: cfg.commandType, params }),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify({ type: cfg.commandType, params }),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/sites/${opts.site}/machines/${machineId}/commands`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as
         OkEnvelope<CommandQueueEnvelope> & ProblemEnvelope;
       if (!res.ok) {
@@ -583,10 +628,15 @@ function fatal(msg: string): void {
  * (or any other server route that uses the canonical envelope). Pulls
  * `code` + `detail` and adds a hint for the stable codes we surface.
  */
-function fatalProblem(operation: string, status: number, env: ProblemEnvelope): void {
+function fatalProblem(
+  operation: string,
+  status: number,
+  env: ProblemEnvelope,
+  context?: 'screenshot',
+): void {
   const code = env.code ?? '(no code)';
   const detail = env.detail ?? JSON.stringify(env);
-  const hint = hintForCode(code);
+  const hint = hintForCode(code, context);
   const suffix = hint ? `\n  hint: ${hint}` : '';
   process.stderr.write(
     `owlette: ${operation} failed (${status}, code=${code}): ${detail}${suffix}\n`,
@@ -594,13 +644,16 @@ function fatalProblem(operation: string, status: number, env: ProblemEnvelope): 
   process.exitCode = 1;
 }
 
-function hintForCode(code: string): string | null {
+function hintForCode(code: string, context?: 'screenshot'): string | null {
   switch (code) {
     case 'machine_offline':
       return 'machine appears offline; check the dashboard heartbeat';
     case 'unsupported_command_type':
       return 'supported types: reboot_machine, shutdown_machine, capture_screenshot';
     case 'scope_insufficient':
+      if (context === 'screenshot') {
+        return 'screenshot requires both machine=<id>:write and machine=<id>:read scopes';
+      }
       return 'your key is missing the required scope: machine=<id>:write';
     default:
       return null;
@@ -608,15 +661,16 @@ function hintForCode(code: string): string | null {
 }
 
 /**
- * Parse `--monitor` value: `all`, `primary`, or a non-negative integer.
+ * Parse `--monitor` value as a non-negative integer. The agent treats
+ * monitor 0 as the all-monitors virtual display; named values cannot be
+ * represented by its current command contract.
  * On error, returns `error:<message>` so the caller can surface it via
  * `fatal()`.
  */
 function parseMonitorOpt(raw: string): string | number {
-  if (raw === 'all' || raw === 'primary') return raw;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
-    return `error:--monitor must be 'all', 'primary', or a non-negative integer`;
+    return `error:--monitor must be a non-negative integer (0 captures all monitors; named monitors are not supported)`;
   }
   return n;
 }

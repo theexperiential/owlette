@@ -70,14 +70,15 @@ owlette machine deployments m_abc123 --site site-1 --json | jq '.deployments[] |
 
 ## reboot
 
-queue a `reboot_machine` command on the machine. the command is allowlisted in wave-2A commands and auto-tagged with an `Idempotency-Key` so retrying after a network blip is safe.
+queue a `reboot_machine` command on the machine. the command is allowlisted in wave-2A commands and auto-tagged with an `Idempotency-Key`. if the cli reports an unconfirmed failure, retry safely only by reusing the same key with `--idempotency-key`.
 
-**synopsis** — `owlette machine reboot <machineId> --site <siteId> [--delay-seconds <n>]`
+**synopsis** — `owlette machine reboot <machineId> --site <siteId> [--delay-seconds <n>] [--idempotency-key <key>]`
 
 | flag | required | purpose |
 |---|---|---|
 | `--site <siteId>` | yes | site id that owns the machine |
 | `--delay-seconds <n>` | no | non-negative integer; agent waits this long before firing (default 0) |
+| `--idempotency-key <key>` | no | reuse the printed key when retrying an unconfirmed mutation |
 
 ```bash
 owlette machine reboot m_abc123 --site site-1
@@ -90,14 +91,15 @@ owlette machine reboot m_abc123 --site site-1 --delay-seconds 60 --json
 
 ## shutdown
 
-queue a `shutdown_machine` command on the machine. same idempotency + delay semantics as `reboot`.
+queue a `shutdown_machine` command on the machine. same delay semantics as `reboot`; retry an unconfirmed mutation only with the same `--idempotency-key`.
 
-**synopsis** — `owlette machine shutdown <machineId> --site <siteId> [--delay-seconds <n>]`
+**synopsis** — `owlette machine shutdown <machineId> --site <siteId> [--delay-seconds <n>] [--idempotency-key <key>]`
 
 | flag | required | purpose |
 |---|---|---|
 | `--site <siteId>` | yes | site id that owns the machine |
 | `--delay-seconds <n>` | no | non-negative integer; agent waits this long before firing (default 0) |
+| `--idempotency-key <key>` | no | reuse the printed key when retrying an unconfirmed mutation |
 
 ```bash
 owlette machine shutdown m_abc123 --site site-1
@@ -112,17 +114,18 @@ owlette machine shutdown m_abc123 --site site-1 --delay-seconds 30
 
 capture a screenshot from the machine and download it locally. this is a queue → poll → download flow: the cli posts a `capture_screenshot` command, polls the command-state endpoint every 1.5s for up to 60s, then fetches the bytes from the signed url the agent uploaded to.
 
-**synopsis** — `owlette machine screenshot <machineId> --site <siteId> [--monitor <m>] [--output <path>]`
+**synopsis** — `owlette machine screenshot <machineId> --site <siteId> [--monitor <m>] [--output <path>] [--idempotency-key <key>]`
 
 | flag | required | purpose |
 |---|---|---|
 | `--site <siteId>` | yes | site id that owns the machine |
-| `--monitor <m>` | no | `all`, `primary`, or a non-negative integer index. when omitted, the cli sends no monitor value and the agent defaults to `0` / all monitors. |
+| `--monitor <m>` | no | non-negative integer index. `0` captures all monitors; named values such as `all` or `primary` are not accepted. when omitted, the cli sends no monitor value and the agent defaults to `0` / all monitors. |
 | `--output <path>` | no | path to write the png (default: `screenshot-<machineId>-<timestamp>.png` in cwd) |
+| `--idempotency-key <key>` | no | reuse the printed key when retrying an unconfirmed mutation |
 
 ```bash
 owlette machine screenshot m_abc123 --site site-1
-owlette machine screenshot m_abc123 --site site-1 --monitor all --output /tmp/wall.png
+owlette machine screenshot m_abc123 --site site-1 --monitor 1 --output /tmp/monitor-1.png
 owlette machine screenshot m_abc123 --site site-1 --monitor 0 --json
 ```
 
@@ -172,6 +175,6 @@ stable problem+json codes surfaced with a hint: `machine_offline`, `unsupported_
 
 - **scope**: site-scoped. mutations require an api key with `machine=<id>:write` (or `site=<id>:write`).
 - **tier**: A for `list`, `get`, `deployments`, `reboot`, `shutdown`, `screenshot`. C stub for `live-view`.
-- **idempotency**: every mutation auto-generates an `Idempotency-Key`, so retrying a failed `reboot`/`shutdown`/`screenshot` will not double-fire.
+- **idempotency**: every mutation auto-generates an `Idempotency-Key`. retrying is safe only after an unconfirmed failure and only when reusing the same printed key with `--idempotency-key`; a fresh retry can queue a second command.
 - **screenshot ttl**: the signed url returned by the agent expires shortly after capture — the cli downloads inline so you do not need to handle expiry yourself.
 - see [overview](../overview.md) for global flags (`--profile`, `--json`, `--api-url`) and config precedence.

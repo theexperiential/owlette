@@ -84,13 +84,21 @@ export function CreateSiteDialog({
         setValidationError('');
       }
     } catch (error: unknown) {
-      console.error('Error checking site availability:', error);
-      const e = error as { code?: string };
-      if (e?.code === 'permission-denied') {
+      const code = (error as { code?: string } | null)?.code;
+      // A client read of sites/{id} is denied BOTH when the site doesn't exist
+      // (truly available) AND when it exists but is owned by another user
+      // (firestore.rules hides foreign sites). The client can't distinguish the
+      // two, so treat permission-denied as optimistically available and let the
+      // server be authoritative: POST /api/sites returns 409 on a real collision,
+      // which createSite() surfaces as "already taken". This is deliberate — we do
+      // NOT expose a global existence-check endpoint that would let anyone
+      // enumerate site IDs. permission-denied is therefore expected, not an error.
+      if (code === 'permission-denied') {
         setAvailabilityStatus('available');
         setValidationError('');
         return;
       }
+      console.error('Error checking site availability:', error);
       setAvailabilityStatus('invalid');
       setValidationError('Failed to check availability');
     }

@@ -65,6 +65,10 @@ function tomlString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
+function tomlKeySegment(value: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(value) ? value : tomlString(value);
+}
+
 function serialise(config: ConfigFile): string {
   const lines: string[] = [];
 
@@ -88,7 +92,7 @@ function serialise(config: ConfigFile): string {
   for (const name of profileNames) {
     const profile = profiles[name];
     if (!profile) continue;
-    lines.push(`[profiles.${name}]`);
+    lines.push(`[profiles.${tomlKeySegment(name)}]`);
     for (const [key, value] of Object.entries(profile)) {
       if (typeof value === 'string') {
         lines.push(`${key} = ${tomlString(value)}`);

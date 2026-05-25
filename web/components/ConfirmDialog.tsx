@@ -20,6 +20,8 @@ interface ConfirmDialogProps {
   cancelText?: string;
   onConfirm: () => void;
   variant?: 'default' | 'destructive';
+  /** Optional extra content rendered between the description and the buttons. */
+  children?: React.ReactNode;
 }
 
 export default function ConfirmDialog({
@@ -31,6 +33,7 @@ export default function ConfirmDialog({
   cancelText = 'Cancel',
   onConfirm,
   variant = 'default',
+  children,
 }: ConfirmDialogProps) {
   const handleConfirm = () => {
     onConfirm();
@@ -46,8 +49,9 @@ export default function ConfirmDialog({
             {description}
           </DialogDescription>
         </DialogHeader>
+        {children}
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} className="bg-secondary border border-border cursor-pointer">
+          <Button variant="secondary" onClick={() => onOpenChange(false)} className="border border-border">
             {cancelText}
           </Button>
           <Button

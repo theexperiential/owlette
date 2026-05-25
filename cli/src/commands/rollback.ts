@@ -15,9 +15,9 @@
  *      prompt; otherwise `--yes` is required (no silent rollbacks from
  *      pipes).
  *   5. POST /api/roosts/{id}/rollback with { siteId, targetVersion }.
- *      `targetVersion` is the raw operator input — the server resolves
- *      number-or-id-or-alias into a concrete versionId inside the
- *      rollback handler, so the client stays dumb about the grammar.
+ *      The diff preview resolves number-or-id-or-alias refs first; the
+ *      mutation uses that concrete version id so idempotent retries can
+ *      replay the same body.
  *
  * Exit codes:
  *   0 — rollback succeeded (or user said 'no' to the prompt)
@@ -26,8 +26,11 @@
  */
 
 import { Command } from 'commander';
+import { randomUUID } from 'crypto';
 import { createInterface } from 'readline';
 import { loadConfig } from '../config';
+import { fetchWithTimeout } from '../lib/http';
+import { usageFatal } from '../lib/output';
 import { _internals as roostInternals } from './roost';
 
 interface RoostDetail {
@@ -91,6 +94,10 @@ export function registerRollbackCommand(program: Command): void {
       'explicit target version (id, #N, vN, "current", "previous", "first"); default: previousVersionId',
     )
     .option('--yes', 'skip the confirmation prompt (required when stdin is not a tty)')
+    .option(
+      '--idempotency-key <key>',
+      'optional Idempotency-Key header (auto-generated if omitted)',
+    )
     .action(async (roostId: string, opts, cmd) => {
       const globals = cmd.optsWithGlobals();
       const { apiUrl, token } = loadConfig({ profile: globals.profile });
@@ -116,7 +123,7 @@ export function registerRollbackCommand(program: Command): void {
         return;
       }
       if (!roost.currentVersionId) {
-        fatal(`roost ${roostId} has no currentVersionId — nothing to roll back from`);
+        usageFatal(`roost ${roostId} has no currentVersionId — nothing to roll back from`);
         return;
       }
 
@@ -128,7 +135,7 @@ export function registerRollbackCommand(program: Command): void {
         (typeof opts.to === 'string' && opts.to.length > 0 ? opts.to : null) ??
         roost.previousVersionId;
       if (!targetRef) {
-        fatal(
+        usageFatal(
           'no rollback target: the roost has no previousVersionId. pass --to <versionRef> explicitly.',
         );
         return;
@@ -154,21 +161,14 @@ export function registerRollbackCommand(program: Command): void {
       // Refuse a no-op rollback — the diff endpoint resolved both refs
       // and reported identical versions, so there's nothing to flip.
       if (diff.toVersion && diff.fromVersion && diff.toVersion === diff.fromVersion) {
-        fatal(
+        usageFatal(
           `target version resolves to ${diff.toVersion}, which is already the current version. pass --to <versionRef> to a different version.`,
         );
         return;
       }
+      const resolvedTargetVersionId = diff.toVersion ?? diff.versionId;
 
-      if (json) {
-        process.stdout.write(
-          JSON.stringify(
-            { action: 'plan', roost, target: targetRef, diff },
-            null,
-            2,
-          ) + '\n',
-        );
-      } else {
+      if (!json) {
         process.stdout.write(
           `about to roll back roost '${roost.name}' (${roostId})\n` +
             `  current  ${roost.currentVersionId}\n` +
@@ -180,20 +180,47 @@ export function registerRollbackCommand(program: Command): void {
       // 4. Confirm.
       if (!opts.yes) {
         if (!process.stdin.isTTY) {
-          fatal(
+          usageFatal(
             'stdin is not a tty and --yes was not supplied; refusing to roll back silently.',
           );
           return;
         }
         const ok = await promptYesNo('proceed with rollback? [y/N] ');
         if (!ok) {
-          process.stdout.write('rollback cancelled\n');
+          if (json) {
+            process.stdout.write(
+              JSON.stringify({ action: 'cancelled', roost, target: targetRef, diff }, null, 2) + '\n',
+            );
+          } else {
+            process.stdout.write('rollback cancelled\n');
+          }
           return;
         }
       }
 
       // 5. Fire.
-      const result = await performRollback(apiUrl, token, roostId, siteId, targetRef);
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-rollback-${randomUUID()}`;
+      let result: RollbackResponse | null;
+      try {
+        result = await performRollback(
+          apiUrl,
+          token,
+          roostId,
+          siteId,
+          resolvedTargetVersionId,
+          idempotencyKey,
+        );
+      } catch (err) {
+        unconfirmedRollbackFatal({
+          operation: `POST /api/roosts/${roostId}/rollback`,
+          idempotencyKey,
+          targetVersionId: resolvedTargetVersionId,
+          cause: err,
+        });
+        return;
+      }
       if (!result) {
         process.exitCode = 1;
         return;
@@ -201,7 +228,7 @@ export function registerRollbackCommand(program: Command): void {
 
       if (json) {
         process.stdout.write(
-          JSON.stringify({ action: 'rolled_back', result }, null, 2) + '\n',
+          JSON.stringify({ action: 'rolled_back', roost, target: targetRef, diff, result }, null, 2) + '\n',
         );
       } else {
         process.stdout.write(
@@ -224,7 +251,7 @@ async function fetchRoost(
   siteId: string,
 ): Promise<RoostDetail | null> {
   const qs = new URLSearchParams({ siteId });
-  const res = await fetch(`${apiUrl}/api/roosts/${encodeURIComponent(roostId)}?${qs}`, {
+  const res = await fetchWithTimeout(`${apiUrl}/api/roosts/${encodeURIComponent(roostId)}?${qs}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = (await res.json().catch(() => ({}))) as RoostDetail;
@@ -246,7 +273,7 @@ async function fetchDiff(
   from: string,
 ): Promise<DiffResponse | null> {
   const qs = new URLSearchParams({ siteId, against: from });
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${apiUrl}/api/roosts/${encodeURIComponent(roostId)}/versions/${encodeURIComponent(to)}/diff?${qs}`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
@@ -264,12 +291,14 @@ async function performRollback(
   roostId: string,
   siteId: string,
   targetVersion: string,
+  idempotencyKey: string,
 ): Promise<RollbackResponse | null> {
-  const res = await fetch(`${apiUrl}/api/roosts/${encodeURIComponent(roostId)}/rollback`, {
+  const res = await fetchWithTimeout(`${apiUrl}/api/roosts/${encodeURIComponent(roostId)}/rollback`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
+      'Idempotency-Key': idempotencyKey,
     },
     body: JSON.stringify({ siteId, targetVersion }),
   });
@@ -294,7 +323,7 @@ async function performRollback(
  */
 function promptYesNo(question: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer) => {
       rl.close();
       const normalized = answer.trim().toLowerCase();
@@ -303,8 +332,24 @@ function promptYesNo(question: string): Promise<boolean> {
   });
 }
 
-function fatal(msg: string): void {
+function fatal(msg: string, exitCode = 1): void {
   process.stderr.write(`owlette: ${msg}\n`);
+  process.exitCode = exitCode;
+}
+
+function unconfirmedRollbackFatal(input: {
+  operation: string;
+  idempotencyKey: string;
+  targetVersionId: string;
+  cause: unknown;
+}): void {
+  const detail = input.cause instanceof Error ? input.cause.message : String(input.cause);
+  process.stderr.write(
+    `owlette: ${input.operation} did not return a confirmed response: ${detail}\n` +
+      `  The request may or may not have completed.\n` +
+      `  Idempotency-Key: ${input.idempotencyKey}\n` +
+      `  To retry safely, re-run your original command with \`--to ${input.targetVersionId} --idempotency-key ${input.idempotencyKey}\` appended.\n`,
+  );
   process.exitCode = 1;
 }
 

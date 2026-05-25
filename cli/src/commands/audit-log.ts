@@ -25,7 +25,8 @@
 
 import { Command } from 'commander';
 import { loadConfig } from '../config';
-import { isJson, renderTable, truncate } from '../lib/output';
+import { fetchWithTimeout } from '../lib/http';
+import { isJson, renderTable, truncate, usageFatal } from '../lib/output';
 
 interface AuditLogRecord {
   hash: string;
@@ -123,6 +124,7 @@ export function registerAuditLogCommands(program: Command): void {
       const collected: AuditLogRecord[] = [];
       let cursor = typeof opts.cursor === 'string' ? opts.cursor : '';
       let nextPageToken = '';
+      let limitReached = false;
 
       for (;;) {
         const qs = new URLSearchParams({
@@ -133,7 +135,7 @@ export function registerAuditLogCommands(program: Command): void {
         if (typeof opts.actor === 'string' && opts.actor.length > 0) qs.set('actor', opts.actor);
         if (sinceIso) qs.set('since', sinceIso);
 
-        const res = await fetch(
+        const res = await fetchWithTimeout(
           `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/audit-log?${qs}`,
           { headers: { Authorization: `Bearer ${token}` } },
         );
@@ -147,15 +149,26 @@ export function registerAuditLogCommands(program: Command): void {
           return;
         }
 
-        for (const r of data.records ?? []) {
+        const pageRecords = data.records ?? [];
+        let stoppedInsidePage = false;
+        for (let i = 0; i < pageRecords.length; i++) {
+          const r = pageRecords[i]!;
           if (clientKindSet && !clientKindSet.has(r.kind)) continue;
           if (untilMs !== null && r.recordedAt !== null && r.recordedAt > untilMs) continue;
           collected.push(r);
-          if (Number.isFinite(limit) && collected.length >= limit) break;
+          if (Number.isFinite(limit) && collected.length >= limit) {
+            limitReached = true;
+            stoppedInsidePage = i < pageRecords.length - 1;
+            break;
+          }
         }
-        nextPageToken = data.next_page_token ?? data.nextPageToken ?? '';
+        const serverNextPageToken = data.next_page_token ?? data.nextPageToken ?? '';
+        nextPageToken =
+          limitReached && (stoppedInsidePage || serverNextPageToken)
+            ? collected[collected.length - 1]?.hash ?? ''
+            : serverNextPageToken;
         if (!nextPageToken) break;
-        if (Number.isFinite(limit) && collected.length >= limit) break;
+        if (limitReached) break;
         cursor = nextPageToken;
       }
 
@@ -175,7 +188,7 @@ export function registerAuditLogCommands(program: Command): void {
         formatTimestamp(r.recordedAt),
         r.kind,
         truncate(r.actor, 32),
-        truncate(r.hash, 12),
+        r.hash,
       ]);
       process.stdout.write(renderTable(['recordedAt', 'kind', 'actor', 'hash'], rows));
       if (nextPageToken) {
@@ -193,7 +206,7 @@ export function registerAuditLogCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(
+      const res = await fetchWithTimeout(
         `${apiUrl}/api/sites/${encodeURIComponent(opts.site)}/audit-log/${encodeURIComponent(recordHash)}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
@@ -304,7 +317,7 @@ function parseWhen(raw: string, flag: string): string | null {
   }
   const parsed = Date.parse(raw);
   if (Number.isNaN(parsed)) {
-    fatal(`${flag} must be iso 8601 or a relative duration (e.g. 24h, 7d, 30m); got '${raw}'`);
+    usageFatal(`${flag} must be iso 8601 or a relative duration (e.g. 24h, 7d, 30m); got '${raw}'`);
     return null;
   }
   return new Date(parsed).toISOString();

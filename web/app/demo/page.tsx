@@ -246,7 +246,7 @@ export default function DemoPage() {
                 />
 
                 {/* Expand/Collapse All + View Toggle */}
-                <div className="flex items-center gap-1 rounded-lg border border-border bg-muted p-1 select-none">
+                <div className="flex items-center gap-1 rounded-lg bg-card-sunken p-1 select-none">
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -254,7 +254,7 @@ export default function DemoPage() {
                         size="sm"
                         onClick={toggleAllProcesses}
                         aria-label={allExpanded ? 'collapse all' : 'expand all'}
-                        className="cursor-pointer text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        className="cursor-pointer text-muted-foreground"
                       >
                         {allExpanded ? <ChevronsDownUp className="h-4 w-4" /> : <ChevronsUpDown className="h-4 w-4" />}
                       </Button>
@@ -271,7 +271,7 @@ export default function DemoPage() {
                         size="sm"
                         onClick={() => setViewType('card')}
                         aria-label="card view"
-                        className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                        className={`cursor-pointer ${viewType === 'card' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground'}`}
                       >
                         <LayoutGrid className="h-4 w-4" />
                       </Button>
@@ -287,7 +287,7 @@ export default function DemoPage() {
                         size="sm"
                         onClick={() => setViewType('list')}
                         aria-label="list view"
-                        className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
+                        className={`cursor-pointer ${viewType === 'list' ? 'bg-secondary text-accent-cyan' : 'text-muted-foreground'}`}
                       >
                         <List className="h-4 w-4" />
                       </Button>
@@ -329,7 +329,7 @@ export default function DemoPage() {
 
             {/* List View */}
             {viewType === 'list' && (
-              <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
+              <div className="rounded-xl border border-border/60 bg-card-sunken overflow-hidden animate-in fade-in duration-300">
                 <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
                   <ListViewTableHeader />
                   <TableBody>

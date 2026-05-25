@@ -1,104 +1,94 @@
 'use client';
 
 /**
- * Synaptic firing indicator — a triad of neurons (big, medium, small)
- * exchanging signals bidirectionally along shared axons. Each neuron
- * bobs gently; the whole cluster drifts.
+ * Synaptic firing indicator — a hexagonal neuron lattice. Six nodes sit at the
+ * vertices of a pointy-top hexagon; a faint web of perimeter + diagonal axons
+ * connects them. Cyan signal dots flow around the ring in sequence (a travelling
+ * wave) while the nodes fire in a staggered pulse — lively, but composed.
  */
 export function SynapticIndicator() {
-  const A = { x: 5, y: 18, r: 3.2 };   // big
-  const B = { x: 19, y: 15, r: 2.3 };  // medium
-  const C = { x: 13, y: 4, r: 1.6 };   // small
+  const R = 8;
+  const C = 12;
 
-  const cycle = 380;
-  const d = `${cycle}ms`;
+  // Pointy-top hexagon vertices, starting at the top and going clockwise.
+  const verts = [-90, -30, 30, 90, 150, 210].map((deg) => {
+    const a = (deg * Math.PI) / 180;
+    return { x: +(C + R * Math.cos(a)).toFixed(2), y: +(C + R * Math.sin(a)).toFixed(2) };
+  });
 
-  // 6 pulses — every edge fires in both directions, staggered
-  const pulses = [
-    { from: A, to: B, delay: 0 },
-    { from: B, to: C, delay: 60 },
-    { from: C, to: A, delay: 120 },
-    { from: B, to: A, delay: 190 },
-    { from: C, to: B, delay: 250 },
-    { from: A, to: C, delay: 310 },
-  ];
+  // Closed perimeter path the signal dots travel along.
+  const perimeter = `M ${verts.map((v) => `${v.x} ${v.y}`).join(' L ')} Z`;
+  // Long axons across the centre, for the neural-web texture.
+  const diagonals = [[0, 3], [1, 4], [2, 5]].map(
+    ([a, b]) => `M ${verts[a].x} ${verts[a].y} L ${verts[b].x} ${verts[b].y}`,
+  );
 
-  // Per-neuron gentle bob (subtle Y oscillation, varied phase)
-  const bobs = [
-    { values: '0 0; 0 -0.5; 0 0.3; 0 0', dur: '1.6s' },
-    { values: '0 0; 0 0.4; 0 -0.4; 0 0', dur: '1.3s' },
-    { values: '0 0; 0 -0.3; 0 0.5; 0 0', dur: '1.9s' },
-  ];
-  const nodes = [A, B, C];
+  const loop = 2100;          // ms for one full lap around the hexagon
+  const nodeCycle = 1260;     // ms for the node firing wave
+  const signals = [0, 1, 2].map((i) => (i * loop) / 3); // three dots, evenly chasing
 
   return (
-    <svg
-      viewBox="0 0 24 24"
-      className="h-6 w-6 overflow-visible text-foreground"
-      aria-hidden
-    >
-      <g>
-        {/* Whole-cluster drift */}
-        <animateTransform
-          attributeName="transform"
-          type="translate"
-          values="0 0; 0.5 -0.4; -0.4 0.4; 0 0"
-          keyTimes="0; 0.33; 0.66; 1"
-          dur="2.4s"
-          repeatCount="indefinite"
-        />
-
-        {/* Axons */}
-        {[
-          [A, B],
-          [B, C],
-          [C, A],
-        ].map(([p, q], i) => (
-          <line
-            key={`edge-${i}`}
-            x1={p.x}
-            y1={p.y}
-            x2={q.x}
-            y2={q.y}
-            stroke="currentColor"
-            strokeOpacity={0.4}
-            strokeWidth={1}
-          />
+    <svg viewBox="0 0 24 24" className="h-6 w-6 overflow-visible" aria-hidden>
+      {/* Axon lattice */}
+      <g className="text-foreground" fill="none" stroke="currentColor" strokeLinejoin="round">
+        <path d={perimeter} strokeOpacity={0.22} strokeWidth={1} />
+        {diagonals.map((d, i) => (
+          <path key={`axon-${i}`} d={d} strokeOpacity={0.1} strokeWidth={0.75} />
         ))}
+      </g>
 
-        {/* Neurons — each bobs independently */}
-        {nodes.map((n, i) => (
-          <g key={`node-${i}`}>
-            <animateTransform
-              attributeName="transform"
-              type="translate"
-              values={bobs[i].values}
-              dur={bobs[i].dur}
-              repeatCount="indefinite"
-            />
-            <circle cx={n.x} cy={n.y} r={n.r} fill="currentColor" />
-          </g>
+      {/* Static fallback for reduced motion — a calm, dimly-lit hexagon. */}
+      <g className="hidden motion-reduce:block text-foreground" fill="currentColor">
+        {verts.map((v, i) => (
+          <circle key={`static-node-${i}`} cx={v.x} cy={v.y} r={1.3} opacity={0.7} />
         ))}
+      </g>
 
-        {/* Bidirectional pulses */}
-        {pulses.map((p, i) => (
-          <circle key={`pulse-${i}`} r={1.6} fill="currentColor" opacity={0}>
-            <animateMotion
-              dur={d}
-              repeatCount="indefinite"
-              begin={`${p.delay}ms`}
-              path={`M ${p.from.x} ${p.from.y} L ${p.to.x} ${p.to.y}`}
-            />
-            <animate
-              attributeName="opacity"
-              values="0;1;1;0"
-              keyTimes="0;0.2;0.8;1"
-              dur={d}
-              begin={`${p.delay}ms`}
-              repeatCount="indefinite"
-            />
-          </circle>
-        ))}
+      {/* Animated layer — suppressed entirely when the user prefers reduced motion. */}
+      <g className="motion-reduce:hidden">
+        {/* Neurons — fire in a staggered wave around the ring */}
+        <g className="text-foreground" fill="currentColor">
+          {verts.map((v, i) => (
+            <circle key={`node-${i}`} cx={v.x} cy={v.y} r={1.3}>
+              <animate
+                attributeName="r"
+                values="1.1;2;1.1"
+                dur={`${nodeCycle}ms`}
+                begin={`${(i * nodeCycle) / 6}ms`}
+                repeatCount="indefinite"
+              />
+              <animate
+                attributeName="opacity"
+                values="0.45;1;0.45"
+                dur={`${nodeCycle}ms`}
+                begin={`${(i * nodeCycle) / 6}ms`}
+                repeatCount="indefinite"
+              />
+            </circle>
+          ))}
+        </g>
+
+        {/* Signals — cyan dots flowing between neurons, sequenced */}
+        <g className="text-accent-cyan" fill="currentColor">
+          {signals.map((delay, i) => (
+            <circle key={`signal-${i}`} r={1.4} opacity={0}>
+              <animateMotion
+                dur={`${loop}ms`}
+                begin={`${delay}ms`}
+                repeatCount="indefinite"
+                path={perimeter}
+              />
+              <animate
+                attributeName="opacity"
+                values="0;1;1;0.85;0"
+                keyTimes="0;0.08;0.5;0.85;1"
+                dur={`${loop}ms`}
+                begin={`${delay}ms`}
+                repeatCount="indefinite"
+              />
+            </circle>
+          ))}
+        </g>
       </g>
     </svg>
   );

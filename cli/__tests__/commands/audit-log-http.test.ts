@@ -182,6 +182,81 @@ describe('owlette audit-log list', () => {
 
     expect(calls[0]!.url).toContain('page_token=tok_42');
   });
+
+  it('returns last emitted hash as nextPageToken when --limit stops inside a page', async () => {
+    const firstHash = 'a'.repeat(64);
+    const secondHash = 'b'.repeat(64);
+    installFetchStub({
+      siteId: 'site-1',
+      records: [
+        {
+          hash: firstHash,
+          kind: 'api_key_used',
+          actor: 'u_1',
+          siteId: 'site-1',
+          occurredAt: 1,
+          recordedAt: 1,
+          attributes: {},
+        },
+        {
+          hash: secondHash,
+          kind: 'api_key_used',
+          actor: 'u_1',
+          siteId: 'site-1',
+          occurredAt: 2,
+          recordedAt: 2,
+          attributes: {},
+        },
+      ],
+      nextPageToken: 'server-end-of-page',
+    });
+    const writes: string[] = [];
+    (process.stdout.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
+      writes.push(chunk);
+      return true;
+    });
+    const program = buildProgram();
+
+    await program.parseAsync(
+      ['--json', 'audit-log', 'list', '--site', 'site-1', '--limit', '1'],
+      { from: 'user' },
+    );
+
+    const out = JSON.parse(writes.join('')) as { nextPageToken: string };
+    expect(out.nextPageToken).toBe(firstHash);
+  });
+
+  it('prints the full record hash in table output', async () => {
+    const hash = 'c'.repeat(64);
+    installFetchStub({
+      siteId: 'site-1',
+      records: [
+        {
+          hash,
+          kind: 'api_key_used',
+          actor: 'u_1',
+          siteId: 'site-1',
+          occurredAt: 1,
+          recordedAt: 1,
+          attributes: {},
+        },
+      ],
+      nextPageToken: '',
+    });
+    const writes: string[] = [];
+    (process.stdout.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
+      writes.push(chunk);
+      return true;
+    });
+    const program = buildProgram();
+
+    await program.parseAsync(
+      ['audit-log', 'list', '--site', 'site-1'],
+      { from: 'user' },
+    );
+
+    expect(writes.join('')).toContain(hash);
+  });
 });
 
 describe('owlette audit-log get', () => {

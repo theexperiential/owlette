@@ -1,0 +1,130 @@
+name: python sdk publish
+
+# Publish owlette-sdk (Python SDK) to PyPI from a release tag
+# (`py-sdk-v<PEP440 version>`, e.g. `py-sdk-v1.0.0rc0`) or via manual
+# dispatch.
+#
+# Authentication uses PyPI OIDC trusted publishing. Unlike npm, PyPI
+# supports a "pending publisher" that creates the project on the first
+# publish, so no API token is ever required. Configure the trusted
+# publisher on PyPI before the first tag push:
+#   project:  owlette-sdk
+#   owner:    <github org/user>
+#   repo:     <repo name>
+#   workflow: py-sdk-publish.yml
+#   environment: (leave blank — this workflow does not pin one)
+# A pending publisher does not reserve the name until first publish, so
+# push the release tag promptly after configuring it.
+#
+# Manual dispatch defaults to a build-only dry run. Set target=testpypi to
+# publish to TestPyPI (needs a matching pending publisher on TestPyPI).
+
+on:
+  push:
+    tags:
+      - 'py-sdk-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'optional tag or ref to publish from'
+        required: false
+        type: string
+      target:
+        description: 'publish target'
+        required: false
+        type: choice
+        options:
+          - dry-run
+          - testpypi
+          - pypi
+        default: dry-run
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: py-sdk-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run tests
+        working-directory: sdks/python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pytest
+
+      - name: Build sdist and wheel
+        working-directory: sdks/python
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build --sdist --wheel
+          python -m twine check dist/*
+
+      - name: Verify tag matches package version
+        shell: bash
+        working-directory: sdks/python
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+
+          tag=""
+          if [ "$EVENT_NAME" = "push" ]; then
+            tag="${GITHUB_REF_NAME}"
+          elif [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+            tag="${tag#refs/tags/}"
+          fi
+
+          if [ -z "$tag" ]; then
+            if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_TARGET" = "dry-run" ]; then
+              echo "no tag supplied on workflow_dispatch dry run; skipping tag/version check"
+              exit 0
+            fi
+            echo "refusing to publish: real publishes require a tag that matches pyproject.toml"
+            exit 1
+          fi
+
+          if [[ ! "$tag" =~ ^py-sdk-v.+$ ]]; then
+            echo "refusing to publish: tag '$tag' must match py-sdk-v<version>"
+            exit 1
+          fi
+
+          expected="${tag#py-sdk-v}"
+          actual="$(python -c "import tomllib,sys;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")"
+          if [ "$actual" != "$expected" ]; then
+            echo "refusing to publish: pyproject.toml version '$actual' does not match tag '$tag' (expected '$expected')"
+            exit 1
+          fi
+
+          echo "package version $actual matches $tag"
+
+      - name: Publish to TestPyPI
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdks/python/dist
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi') }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdks/python/dist

@@ -3,11 +3,66 @@
 import { createMockRequest } from './helpers/utils';
 import {
   mocks,
-  mockDbFactory,
   docSnapshot,
 } from './helpers/firestore-mock';
 
 const mockEmitMutation = jest.fn();
+
+function mockBuildCollection(
+  path = '',
+  parent: Record<string, unknown> | null = null,
+): Record<string, unknown> {
+  const parts = path.split('/').filter(Boolean);
+  const collection: Record<string, unknown> = {
+    __path: path,
+    id: parts[parts.length - 1] ?? path,
+    parent,
+    orderBy: mocks.orderBy,
+    limit: mocks.limit,
+    startAfter: mocks.startAfter,
+    where: mocks.where,
+    get: mocks.collectionGet,
+  };
+  collection.doc = (id = 'auto') => mockBuildDoc(`${path}/${id}`, collection);
+  return collection;
+}
+
+function mockBuildDoc(
+  path: string,
+  parent: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const parts = path.split('/').filter(Boolean);
+  const ref: Record<string, unknown> = {
+    __path: path,
+    id: parts[parts.length - 1] ?? path,
+    parent,
+    get: () => {
+      if (parts.length === 2 && parts[0] === 'sites') {
+        if (mocks.siteDocs.has(parts[1])) {
+          return Promise.resolve(docSnapshot(parts[1], mocks.siteDocs.get(parts[1]) ?? null));
+        }
+        return Promise.resolve(docSnapshot(parts[1], {}));
+      }
+      return mocks.get();
+    },
+    set: mocks.set,
+    update: mocks.update,
+    delete: mocks.del,
+  };
+  ref.collection = (sub: string) => mockBuildCollection(`${path}/${sub}`, ref);
+  return ref;
+}
+
+function mockPathDbFactory(): Record<string, unknown> {
+  return {
+    collection: (name: string) => mockBuildCollection(name),
+    batch: () => ({
+      set: mocks.batchSet,
+      delete: mocks.batchDelete,
+      commit: mocks.batchCommit,
+    }),
+  };
+}
 
 jest.mock('@sentry/nextjs', () => ({
   captureException: jest.fn(),
@@ -29,14 +84,34 @@ const txState = {
   versionWrites: [] as Array<Record<string, unknown>>,
   /** Captured `tx.set(roostRef, ...)` payloads, in call order. */
   roostWrites: [] as Array<Record<string, unknown>>,
+  /** Stored version docs keyed by versionId for transaction reads. */
+  versionDocs: new Map<string, Record<string, unknown>>(),
 };
+
+function isVersionDocWrite(payload: Record<string, unknown>): boolean {
+  return Object.prototype.hasOwnProperty.call(payload, 'versionId');
+}
+
+function transactionSnapshotFor(
+  ref: unknown,
+  roostData: Record<string, unknown>,
+): ReturnType<typeof docSnapshot> {
+  const path =
+    typeof (ref as { __path?: unknown }).__path === 'string'
+      ? ((ref as { __path: string }).__path)
+      : '';
+  if (path.includes('/versions/')) {
+    const versionId = path.split('/').filter(Boolean).pop() ?? 'version';
+    return docSnapshot(versionId, txState.versionDocs.get(versionId) ?? null);
+  }
+  return docSnapshot('rst_test', roostData);
+}
 
 const mockRunTransaction = jest.fn(
   async (cb: (tx: unknown) => Promise<unknown>): Promise<unknown> => {
-    let nthSetCall = 0;
     const tx = {
-      get: async () =>
-        docSnapshot('rst_test', {
+      get: async (ref: unknown) =>
+        transactionSnapshotFor(ref, {
           versionCounter: txState.versionCounter,
           currentVersionId: txState.currentVersionId,
           previousVersionId: txState.previousVersionId,
@@ -44,10 +119,14 @@ const mockRunTransaction = jest.fn(
           targets: [],
         }),
       set: jest.fn((_ref: unknown, payload: Record<string, unknown>) => {
-        // The route writes to versions sub-collection FIRST, then roost doc.
-        if (nthSetCall === 0) txState.versionWrites.push(payload);
-        else txState.roostWrites.push(payload);
-        nthSetCall++;
+        if (isVersionDocWrite(payload)) {
+          txState.versionWrites.push(payload);
+          if (typeof payload.versionId === 'string') {
+            txState.versionDocs.set(payload.versionId, { ...payload });
+          }
+        } else {
+          txState.roostWrites.push(payload);
+        }
       }),
       update: jest.fn(),
     };
@@ -58,7 +137,7 @@ const mockRunTransaction = jest.fn(
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => {
-    const base = mockDbFactory() as Record<string, unknown>;
+    const base = mockPathDbFactory() as Record<string, unknown>;
     return { ...base, runTransaction: mockRunTransaction };
   },
   getAdminAuth: () => ({ verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')) }),
@@ -94,7 +173,7 @@ const SITE = 'site-alpha';
 const ROOST = 'rst_test_0000000001';
 const CHUNK_HASH = 'a'.repeat(64);
 
-function buildVersionEnvelope(): Record<string, unknown> {
+function buildVersionEnvelope(hash = CHUNK_HASH): Record<string, unknown> {
   // Minimal valid OCI-shaped version body. The route validates schemaVersion
   // + mediaType + config object + non-empty files[] with hash (64-char
   // lowercase hex) + positive size on every chunk.
@@ -106,7 +185,7 @@ function buildVersionEnvelope(): Record<string, unknown> {
       {
         path: 'main.toe',
         size: 4,
-        chunks: [{ hash: CHUNK_HASH, size: 4 }],
+        chunks: [{ hash, size: 4 }],
       },
     ],
   };
@@ -125,6 +204,7 @@ beforeEach(() => {
   txState.previousVersionId = null;
   txState.versionWrites.length = 0;
   txState.roostWrites.length = 0;
+  txState.versionDocs.clear();
   mocks.set.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue(undefined);
 });
@@ -134,10 +214,13 @@ beforeEach(() => {
 /* ========================================================================== */
 
 describe('POST /versions — version-number monotonicity', () => {
-  async function publish(): Promise<{ status: number; body: Record<string, unknown> }> {
+  async function publish(
+    hash = CHUNK_HASH,
+    fields: Record<string, unknown> = {},
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
     const req = createMockRequest(`http://localhost/api/roosts/${ROOST}/versions`, {
       method: 'POST',
-      body: { siteId: SITE, version: buildVersionEnvelope() },
+      body: { siteId: SITE, version: buildVersionEnvelope(hash), ...fields },
     });
     const res = await createPOST(req, { params: Promise.resolve({ roostId: ROOST }) });
     return { status: res.status, body: (await res.json()) as Record<string, unknown> };
@@ -194,7 +277,7 @@ describe('POST /versions — version-number monotonicity', () => {
     txState.previousVersionId = txState.currentVersionId;
     txState.currentVersionId = String(r1.body.versionId);
 
-    const r2 = await publish();
+    const r2 = await publish('b'.repeat(64));
     expect(r2.body.versionNumber).toBe(2);
     expect(txState.versionWrites[1]!.versionNumber).toBe(2);
     expect(txState.roostWrites[1]!.versionCounter).toBe(2);
@@ -202,7 +285,7 @@ describe('POST /versions — version-number monotonicity', () => {
 
   it('three publishes in a row stay monotonic 1, 2, 3', async () => {
     for (const n of [1, 2, 3]) {
-      const r = await publish();
+      const r = await publish(String.fromCharCode(96 + n).repeat(64));
       expect(r.body.versionNumber).toBe(n);
       txState.versionCounter = n;
       txState.previousVersionId = txState.currentVersionId;
@@ -246,12 +329,11 @@ describe('POST /versions — version-number monotonicity', () => {
           const versionCounterAtRead = txState.versionCounter;
           const currentAtRead = txState.currentVersionId;
           const previousAtRead = txState.previousVersionId;
-          let nthSetCall = 0;
           const pendingVersionWrites: Array<Record<string, unknown>> = [];
           const pendingRoostWrites: Array<Record<string, unknown>> = [];
           const tx = {
-            get: async () =>
-              docSnapshot('rst_test', {
+            get: async (ref: unknown) =>
+              transactionSnapshotFor(ref, {
                 versionCounter: versionCounterAtRead,
                 currentVersionId: currentAtRead,
                 previousVersionId: previousAtRead,
@@ -260,9 +342,11 @@ describe('POST /versions — version-number monotonicity', () => {
               }),
             set: jest.fn(
               (_ref: unknown, payload: Record<string, unknown>) => {
-                if (nthSetCall === 0) pendingVersionWrites.push(payload);
-                else pendingRoostWrites.push(payload);
-                nthSetCall++;
+                if (isVersionDocWrite(payload)) {
+                  pendingVersionWrites.push(payload);
+                } else {
+                  pendingRoostWrites.push(payload);
+                }
               },
             ),
             update: jest.fn(),
@@ -271,7 +355,12 @@ describe('POST /versions — version-number monotonicity', () => {
           // CAS check: only commit if txState.versionCounter hasn't moved
           // since we read it.
           if (txState.versionCounter === versionCounterAtRead) {
-            for (const w of pendingVersionWrites) txState.versionWrites.push(w);
+            for (const w of pendingVersionWrites) {
+              txState.versionWrites.push(w);
+              if (typeof w.versionId === 'string') {
+                txState.versionDocs.set(w.versionId, { ...w });
+              }
+            }
             for (const w of pendingRoostWrites) {
               txState.roostWrites.push(w);
               if (typeof w.versionCounter === 'number') {
@@ -290,7 +379,10 @@ describe('POST /versions — version-number monotonicity', () => {
       },
     );
 
-    const [a, b] = await Promise.all([publish(), publish()]);
+    const [a, b] = await Promise.all([
+      publish('a'.repeat(64)),
+      publish('b'.repeat(64)),
+    ]);
 
     // Both publishes must succeed (the loser is retried internally).
     expect(a.status).toBe(201);
@@ -307,6 +399,230 @@ describe('POST /versions — version-number monotonicity', () => {
     // Two writes to each side of the transaction (one per publish).
     expect(txState.versionWrites).toHaveLength(2);
     expect(txState.roostWrites).toHaveLength(2);
+  });
+
+  it('identical content already at head is a no-op, not a new version number', async () => {
+    const first = await publish();
+    expect(first.status).toBe(201);
+    expect(first.body.versionNumber).toBe(1);
+
+    txState.versionCounter = 1;
+    txState.previousVersionId = null;
+    txState.currentVersionId = String(first.body.versionId);
+    mockEmitMutation.mockClear();
+    mocks.batchSet.mockClear();
+
+    const second = await publish();
+
+    expect(second.status).toBe(200);
+    expect(second.body.versionId).toBe(first.body.versionId);
+    expect(second.body.versionNumber).toBe(1);
+    expect(second.body.previousVersionId).toBeNull();
+    expect(txState.versionWrites).toHaveLength(1);
+    expect(txState.roostWrites).toHaveLength(1);
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+    expect(mocks.batchSet).not.toHaveBeenCalled();
+  });
+
+  it('same content at head still applies explicitly-provided deploy config (no version bump)', async () => {
+    // Regression for the silent-target-drop bug: republishing identical bytes
+    // that are already the head must still honor a changed target/name set.
+    const first = await publish();
+    expect(first.status).toBe(201);
+
+    txState.versionCounter = 1;
+    txState.previousVersionId = null;
+    txState.currentVersionId = String(first.body.versionId);
+    const roostWritesBefore = txState.roostWrites.length;
+    const versionWritesBefore = txState.versionWrites.length;
+    mockEmitMutation.mockClear();
+
+    const second = await publish(undefined, { targets: ['machine-7'], name: 'lobby v2' });
+
+    // Still a versioning no-op: same version, no counter bump, no new version doc.
+    expect(second.status).toBe(200);
+    expect(second.body.versionId).toBe(first.body.versionId);
+    expect(second.body.versionNumber).toBe(1);
+    expect(txState.versionWrites).toHaveLength(versionWritesBefore);
+
+    // ...but the roost doc was updated with the restated config.
+    expect(txState.roostWrites).toHaveLength(roostWritesBefore + 1);
+    const w = txState.roostWrites[txState.roostWrites.length - 1]!;
+    expect(w.targets).toEqual(['machine-7']);
+    expect(w.name).toBe('lobby v2');
+    expect(w).not.toHaveProperty('versionCounter');
+    expect(w).not.toHaveProperty('versionId');
+
+    // ...and the config update is audited (verb=config_update), not silent.
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'roost_mutated',
+        attributes: expect.objectContaining({ verb: 'config_update' }),
+      }),
+    );
+  });
+
+  async function publishTwoVersionHistory(): Promise<{
+    v1: { status: number; body: Record<string, unknown> };
+    v2: { status: number; body: Record<string, unknown> };
+  }> {
+    const v1 = await publish('a'.repeat(64));
+    txState.versionCounter = 1;
+    txState.previousVersionId = null;
+    txState.currentVersionId = String(v1.body.versionId);
+
+    const v2 = await publish('b'.repeat(64));
+    txState.versionCounter = 2;
+    txState.previousVersionId = String(v1.body.versionId);
+    txState.currentVersionId = String(v2.body.versionId);
+
+    return { v1, v2 };
+  }
+
+  it('promotes an existing non-current version without rewriting history', async () => {
+    const { v1, v2 } = await publishTwoVersionHistory();
+    expect(v1.status).toBe(201);
+    expect(v2.status).toBe(201);
+
+    mockEmitMutation.mockClear();
+    mocks.batchSet.mockClear();
+    const versionWriteCount = txState.versionWrites.length;
+    const versionDocCount = txState.versionDocs.size;
+
+    const promoted = await publish('a'.repeat(64), {
+      name: 'promoted lobby',
+      targets: ['machine-1'],
+      extractPath: 'show/scene',
+    });
+
+    expect(promoted.status).toBe(200);
+    expect(promoted.body.versionId).toBe(v1.body.versionId);
+    expect(promoted.body.versionNumber).toBe(1);
+    expect(promoted.body.currentVersionId).toBe(v1.body.versionId);
+    expect(promoted.body.previousVersionId).toBe(v2.body.versionId);
+
+    expect(txState.versionWrites).toHaveLength(versionWriteCount);
+    expect(txState.versionDocs.size).toBe(versionDocCount);
+    expect(txState.versionDocs.get(String(v1.body.versionId))!.versionNumber).toBe(1);
+    expect(txState.versionCounter).toBe(2);
+
+    const roostWrite = txState.roostWrites[txState.roostWrites.length - 1]!;
+    expect(roostWrite.currentVersionId).toBe(v1.body.versionId);
+    expect(roostWrite.previousVersionId).toBe(v2.body.versionId);
+    expect(roostWrite.currentVersionNumber).toBe(1);
+    expect(roostWrite).not.toHaveProperty('versionCounter');
+    expect(roostWrite.name).toBe('promoted lobby');
+    expect(roostWrite.targets).toEqual(['machine-1']);
+    expect(roostWrite.extractPath).toBe('show/scene');
+
+    expect(mocks.batchSet).not.toHaveBeenCalled();
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'roost_mutated',
+        siteId: SITE,
+        targetId: v1.body.versionId,
+        attributes: expect.objectContaining({
+          verb: 'version_promote',
+          roostId: ROOST,
+          versionNumber: 1,
+          previousVersionId: v2.body.versionId,
+        }),
+      }),
+    );
+  });
+
+  it('promote respects expectedCurrentVersionId CAS', async () => {
+    const { v1 } = await publishTwoVersionHistory();
+
+    mockEmitMutation.mockClear();
+    mocks.batchSet.mockClear();
+    const versionWriteCount = txState.versionWrites.length;
+    const roostWriteCount = txState.roostWrites.length;
+
+    const stale = await publish('a'.repeat(64), {
+      expectedCurrentVersionId: v1.body.versionId,
+    });
+
+    expect(stale.status).toBe(412);
+    expect(stale.body.code).toBe('version_stale');
+    expect(txState.versionWrites).toHaveLength(versionWriteCount);
+    expect(txState.roostWrites).toHaveLength(roostWriteCount);
+    expect(mocks.batchSet).not.toHaveBeenCalled();
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+});
+
+/* ========================================================================== */
+/*  POST /versions - expectedCurrentVersionId CAS                              */
+/* ========================================================================== */
+
+describe('POST /versions - expectedCurrentVersionId CAS', () => {
+  async function publish(
+    fields: Record<string, unknown> = {},
+  ): Promise<{ status: number; body: Record<string, unknown> }> {
+    const req = createMockRequest(`http://localhost/api/roosts/${ROOST}/versions`, {
+      method: 'POST',
+      body: { siteId: SITE, version: buildVersionEnvelope(), ...fields },
+    });
+    const res = await createPOST(req, { params: Promise.resolve({ roostId: ROOST }) });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  }
+
+  it('accepts explicit null when the roost is still empty', async () => {
+    const res = await publish({ expectedCurrentVersionId: null });
+
+    expect(res.status).toBe(201);
+    expect(res.body.previousVersionId).toBeNull();
+    expect(txState.versionWrites).toHaveLength(1);
+    expect(txState.roostWrites).toHaveLength(1);
+  });
+
+  it('rejects explicit null when a head already exists', async () => {
+    txState.versionCounter = 3;
+    txState.currentVersionId = 'vrs_existing';
+
+    const res = await publish({ expectedCurrentVersionId: null });
+
+    expect(res.status).toBe(412);
+    expect(res.body.code).toBe('version_stale');
+    expect(txState.versionWrites).toHaveLength(0);
+    expect(txState.roostWrites).toHaveLength(0);
+  });
+
+  it('skips CAS when expectedCurrentVersionId is absent', async () => {
+    txState.versionCounter = 3;
+    txState.currentVersionId = 'vrs_existing';
+
+    const res = await publish();
+
+    expect(res.status).toBe(201);
+    expect(txState.versionWrites[0]!.parentVersionId).toBe('vrs_existing');
+    expect(txState.roostWrites[0]!.previousVersionId).toBe('vrs_existing');
+  });
+
+  it('rejects a config-only republish-at-head when expectedCurrentVersionId is stale', async () => {
+    // Republishing the head bytes hits the no-op branch; a config write there
+    // must still honor CAS, not slip past it with a stale expected head.
+    const first = await publish();
+    expect(first.status).toBe(201);
+    txState.versionCounter = 1;
+    txState.currentVersionId = String(first.body.versionId);
+    const roostWritesBefore = txState.roostWrites.length;
+
+    const res = await publish({ expectedCurrentVersionId: 'vrs_stale', targets: ['machine-9'] });
+
+    expect(res.status).toBe(412);
+    expect(res.body.code).toBe('version_stale');
+    // No config write slipped through the CAS guard.
+    expect(txState.roostWrites).toHaveLength(roostWritesBefore);
+  });
+
+  it('rejects non-string non-null expectedCurrentVersionId', async () => {
+    const res = await publish({ expectedCurrentVersionId: 123 });
+
+    expect(res.status).toBe(400);
+    expect(mockRunTransaction).not.toHaveBeenCalled();
   });
 });
 

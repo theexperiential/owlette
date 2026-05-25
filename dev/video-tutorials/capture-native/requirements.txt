@@ -1,0 +1,6 @@
+# Native (windows) capture tooling for the installer / agent GUI / tray.
+# Windows-only. Install into a throwaway venv on the demo machine.
+#   python -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt
+pywinauto>=0.6.9
+# ffmpeg is optional and NOT a pip package — install separately if you want
+# recorder.ScreenRecorder; otherwise just record with OBS by hand.

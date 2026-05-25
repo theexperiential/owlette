@@ -81,6 +81,7 @@ beforeEach(() => {
   process.env.OWLETTE_TOKEN = 'owk_live_testtoken';
   process.env.OWLETTE_API_URL = 'https://dev.test';
   process.env.OWLETTE_PROFILE = 'default';
+  process.exitCode = 0;
   jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
   jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
 });
@@ -89,6 +90,7 @@ afterEach(() => {
   delete process.env.OWLETTE_TOKEN;
   delete process.env.OWLETTE_API_URL;
   delete process.env.OWLETTE_PROFILE;
+  process.exitCode = 0;
   jest.restoreAllMocks();
 });
 
@@ -256,6 +258,17 @@ describe('owlette chat list', () => {
     expect(out.conversations).toEqual(conversations);
     expect(out.nextPageToken).toBe('next-1');
   });
+
+  it('rejects invalid --limit with exit 2 before firing fetch', async () => {
+    const calls = installFetchStub({});
+    const program = buildProgram();
+    await program.parseAsync(
+      ['chat', 'list', '--site', 'site-1', '--limit', 'banana'],
+      { from: 'user' },
+    );
+    expect(calls).toHaveLength(0);
+    expect(process.exitCode).toBe(2);
+  });
 });
 
 /* -------------------- send -------------------- */
@@ -302,6 +315,31 @@ describe('owlette chat send', () => {
     expect(out.endsWith('\n')).toBe(true);
   });
 
+  it('flushes AI SDK UI-message SSE text deltas to stdout as they arrive', async () => {
+    installStreamingFetchStub([
+      `data: {"type":"text-start","id":"txt1"}\n\n`,
+      `data: {"type":"text-delta","id":"txt1","delta":"hello "}\n\n`,
+      `data: {"type":"text-delta","id":"txt1","delta":"world"}\n\n`,
+      `data: {"type":"finish"}\n\n`,
+      `data: [DONE]\n\n`,
+    ]);
+    const writes: string[] = [];
+    (process.stdout.write as unknown as jest.Mock).mockImplementation(
+      (chunk: string) => {
+        writes.push(chunk);
+        return true;
+      },
+    );
+    const program = buildProgram();
+    await program.parseAsync(
+      ['chat', 'send', 'conv_1', 'hi'],
+      { from: 'user' },
+    );
+    const out = writes.join('');
+    expect(out).toContain('hello world');
+    expect(out.endsWith('\n')).toBe(true);
+  });
+
   it('aggregates the full reply into the json envelope in --json mode', async () => {
     installStreamingFetchStub([
       `0:"step 1 "\n`,
@@ -322,6 +360,39 @@ describe('owlette chat send', () => {
     );
     const out = JSON.parse(writes.join(''));
     expect(out).toEqual({ conversationId: 'conv_1', content: 'step 1 step 2' });
+  });
+
+  it('tells users to inspect the conversation after an unconfirmed send failure', async () => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(async () => {
+      throw new Error('network timeout');
+    });
+    const stderr: string[] = [];
+    (process.stderr.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
+      stderr.push(chunk);
+      return true;
+    });
+
+    const program = buildProgram();
+    await program.parseAsync(
+      [
+        'chat',
+        'send',
+        'conv_1',
+        'hi',
+        '--idempotency-key',
+        'chat-send-key',
+      ],
+      { from: 'user' },
+    );
+
+    const err = stderr.join('');
+    expect(err).toContain('did not return a confirmed response');
+    expect(err).toContain('inspect the conversation before retrying');
+    expect(err).toContain('owlette chat list');
+    expect(err).toContain('may append the message twice');
+    expect(err).not.toContain('retry safely with:');
+    expect(err).not.toContain('Idempotency-Key:');
+    expect(process.exitCode).toBe(1);
   });
 });
 

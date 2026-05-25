@@ -110,7 +110,8 @@ export async function requireSession(request: NextRequest): Promise<string> {
 }
 
 export async function requireSessionOrIdToken(
-  request: NextRequest
+  request: NextRequest,
+  options: { rejectAgentTokens?: boolean } = {}
 ): Promise<string> {
   try {
     return await requireSession(request);
@@ -126,8 +127,16 @@ export async function requireSessionOrIdToken(
     try {
       const adminAuth = getAdminAuth();
       const decoded = await adminAuth.verifyIdToken(bearer);
+      // Agents authenticate via custom tokens (role='agent') for site/machine
+      // operations and must never mint user-scoped API keys. Opt-in per call so
+      // existing callers are unaffected; session callers are always human, so
+      // this only applies to the ID-token branch.
+      if (options.rejectAgentTokens && decoded.role === 'agent') {
+        throw new ApiAuthError(403, 'Forbidden: agent credentials cannot create api keys');
+      }
       return decoded.uid;
-    } catch {
+    } catch (e) {
+      if (e instanceof ApiAuthError) throw e; // preserve the 403 above
       throw new ApiAuthError(401, 'Unauthorized: Invalid ID token');
     }
   }

@@ -17,6 +17,12 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { PasskeyManager } from '@/components/PasskeyManager';
 import { getBrowserTimezone } from '@/lib/timeUtils';
+import {
+  SCOPE_PRESETS,
+  SCOPE_PRESET_KEYS,
+  SCOPE_PRESET_DESCRIPTIONS,
+  type ApiKeyScopePreset,
+} from '@/lib/apiKeyTypes';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -112,6 +118,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [apiKeys, setApiKeys] = useState<ApiKeyEntry[]>([]);
   const [apiKeysLoading] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
+  const [keyScopePreset, setKeyScopePreset] = useState<ApiKeyScopePreset>('publisher');
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [creatingKey, setCreatingKey] = useState(false);
   const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null);
@@ -184,7 +191,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         .catch(() => {});
 
       // Load API keys
-      fetch('/api/account/api-keys')
+      fetch('/api/keys')
         .then((res) => res.json())
         .then((data) => {
           if (data.success) setApiKeys(data.keys || []);
@@ -212,6 +219,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setShowLlmKey(false);
       setApiKeys([]);
       setNewKeyName('');
+      setKeyScopePreset('publisher');
       setCreatedKey(null);
       setCreatingKey(false);
       setActiveSection('profile');
@@ -1133,41 +1141,74 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
 
                   {/* Create new key */}
                   <div className="rounded-md border border-border bg-card/50 p-4 space-y-3">
-                    <div className="flex items-end gap-2">
-                      <div className="flex-1 space-y-2">
-                        <Label htmlFor="apiKeyName" className="text-white">key name</Label>
-                        <Input
-                          id="apiKeyName"
-                          type="text"
-                          placeholder="e.g. CI/CD, monitoring script"
-                          value={newKeyName}
-                          onChange={(e) => setNewKeyName(e.target.value)}
-                          className="border-border bg-background text-white"
-                          disabled={creatingKey}
-                        />
-                      </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="apiKeyName" className="text-white">key name</Label>
+                      <Input
+                        id="apiKeyName"
+                        type="text"
+                        placeholder="e.g. CI/CD, monitoring script"
+                        value={newKeyName}
+                        onChange={(e) => setNewKeyName(e.target.value)}
+                        className="border-border bg-background text-white"
+                        disabled={creatingKey}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="apiKeyScope" className="text-white">scope</Label>
+                      <Select
+                        value={keyScopePreset}
+                        onValueChange={(v) => setKeyScopePreset(v as ApiKeyScopePreset)}
+                        disabled={creatingKey}
+                      >
+                        <SelectTrigger id="apiKeyScope" className="border-border bg-background text-white hover:bg-secondary">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="border-border bg-secondary text-white">
+                          {SCOPE_PRESET_KEYS.map((p) => (
+                            <SelectItem key={p} value={p} className="cursor-pointer hover:bg-muted">
+                              {p}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground">{SCOPE_PRESET_DESCRIPTIONS[keyScopePreset]}</p>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] text-muted-foreground">
+                        need custom scopes?{' '}
+                        <Link
+                          href="/settings/api-keys"
+                          onClick={() => onOpenChange(false)}
+                          className="text-accent-cyan hover:underline"
+                        >
+                          manage api keys
+                        </Link>
+                      </p>
                       <Button
                         type="button"
                         size="sm"
                         onClick={async () => {
                           setCreatingKey(true);
                           try {
-                            const res = await fetch('/api/account/api-keys', {
+                            const res = await fetch('/api/keys', {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ name: newKeyName || 'API Key' }),
+                              body: JSON.stringify({
+                                name: newKeyName.trim() || 'api key',
+                                scopes: SCOPE_PRESETS[keyScopePreset],
+                              }),
                             });
                             const data = await res.json();
                             if (res.ok && data.success) {
                               setCreatedKey(data.key);
                               setNewKeyName('');
                               // Refresh list
-                              const listRes = await fetch('/api/account/api-keys');
+                              const listRes = await fetch('/api/keys');
                               const listData = await listRes.json();
                               if (listData.success) setApiKeys(listData.keys || []);
                               toast.success('API key created');
                             } else {
-                              toast.error(data.error || 'Failed to create key');
+                              toast.error(data.detail || data.error || 'Failed to create key');
                             }
                           } catch {
                             toast.error('Failed to create key');
@@ -1175,7 +1216,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                           setCreatingKey(false);
                         }}
                         disabled={creatingKey}
-                        className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 h-9"
+                        className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 h-9 flex-shrink-0"
                       >
                         {creatingKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5 mr-1" /> create key</>}
                       </Button>
@@ -1209,14 +1250,15 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                                   onClick={async () => {
                                     setRevokingKeyId(k.id);
                                     try {
-                                      const res = await fetch(`/api/account/api-keys/${encodeURIComponent(k.id)}`, {
+                                      const res = await fetch(`/api/keys/${encodeURIComponent(k.id)}`, {
                                         method: 'DELETE',
                                       });
                                       if (res.ok) {
                                         setApiKeys((prev) => prev.filter((key) => key.id !== k.id));
                                         toast.success('API key revoked');
                                       } else {
-                                        toast.error('Failed to revoke key');
+                                        const data = await res.json().catch(() => ({}));
+                                        toast.error(data.detail || data.error || 'Failed to revoke key');
                                       }
                                     } catch {
                                       toast.error('Failed to revoke key');

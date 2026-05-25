@@ -19,6 +19,7 @@ import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { Command } from 'commander';
 import { loadConfig } from '../config';
+import { fetchWithTimeout } from '../lib/http';
 import { isJson } from '../lib/output';
 
 /**
@@ -71,7 +72,7 @@ export function registerVersionCommand(program: Command): void {
 
       let res: Response;
       try {
-        res = await fetch(`${apiUrl}/api/version`, { headers });
+        res = await fetchWithTimeout(`${apiUrl}/api/version`, { headers });
       } catch (err) {
         fatal(`GET /api/version failed: ${(err as Error).message}`);
         return;

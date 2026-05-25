@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Wrench, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Wrench, CheckCircle2, AlertCircle, Loader2, ShieldAlert, Ban, Check } from 'lucide-react';
 import { getToolByName } from '@/lib/mcp-tools';
+import { Button } from '@/components/ui/button';
 import { CopyButton } from './CopyButton';
 
 interface ToolCallCardProps {
@@ -10,14 +11,36 @@ interface ToolCallCardProps {
   args: Record<string, unknown>;
   result?: unknown;
   isLoading?: boolean;
+  /**
+   * Tier-3 approval (human-in-the-loop). `requested` shows approve/deny
+   * controls; `denied` shows the declined state. Absent for tier-1/2 tools
+   * and for already-executed tier-3 calls.
+   */
+  approvalState?: 'requested' | 'denied';
+  /** Where the tool will run, e.g. a machine name or "all machines". */
+  approvalTargetLabel?: string;
+  onApprove?: () => void;
+  onDeny?: () => void;
 }
 
-export function ToolCallCard({ toolName, args, result, isLoading }: ToolCallCardProps) {
+export function ToolCallCard({
+  toolName,
+  args,
+  result,
+  isLoading,
+  approvalState,
+  approvalTargetLabel,
+  onApprove,
+  onDeny,
+}: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const toolDef = getToolByName(toolName);
 
   const hasError = result != null && typeof result === 'object' && !!(result as Record<string, unknown>).error;
   const tierLabel = toolDef ? `Tier ${toolDef.tier}` : '';
+  const awaitingApproval = approvalState === 'requested';
+  const denied = approvalState === 'denied';
 
   // Inline preview for screenshot captures: prefer the uploaded Firebase URL,
   // fall back to inline base64 JPEG if the upload failed but the capture succeeded.
@@ -31,20 +54,30 @@ export function ToolCallCard({ toolName, args, result, isLoading }: ToolCallCard
     }
   }
 
+  const statusIcon = awaitingApproval ? (
+    <ShieldAlert className="h-4 w-4 text-amber-400" />
+  ) : isLoading ? (
+    <Loader2 className="h-4 w-4 text-accent-cyan animate-spin" />
+  ) : denied ? (
+    <Ban className="h-4 w-4 text-muted-foreground" />
+  ) : hasError ? (
+    <AlertCircle className="h-4 w-4 text-red-400" />
+  ) : (
+    <CheckCircle2 className="h-4 w-4 text-green-400" />
+  );
+
   return (
-    <div className="my-2 rounded-lg border border-border bg-secondary/50 overflow-hidden">
+    <div
+      className={`my-2 rounded-lg border overflow-hidden ${
+        awaitingApproval ? 'border-amber-500/40 bg-amber-500/5' : 'border-border bg-secondary/50'
+      }`}
+    >
       {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/50 transition-colors cursor-pointer"
       >
-        {isLoading ? (
-          <Loader2 className="h-4 w-4 text-accent-cyan animate-spin" />
-        ) : hasError ? (
-          <AlertCircle className="h-4 w-4 text-red-400" />
-        ) : (
-          <CheckCircle2 className="h-4 w-4 text-green-400" />
-        )}
+        {statusIcon}
 
         <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
 
@@ -57,7 +90,9 @@ export function ToolCallCard({ toolName, args, result, isLoading }: ToolCallCard
         )}
 
         <span className="ml-auto flex items-center gap-1 text-muted-foreground">
-          {isLoading && <span className="text-xs">executing...</span>}
+          {awaitingApproval && <span className="text-xs text-amber-400">awaiting approval</span>}
+          {denied && <span className="text-xs">denied</span>}
+          {isLoading && !awaitingApproval && <span className="text-xs">executing...</span>}
           {expanded ? (
             <ChevronDown className="h-3.5 w-3.5" />
           ) : (
@@ -65,6 +100,42 @@ export function ToolCallCard({ toolName, args, result, isLoading }: ToolCallCard
           )}
         </span>
       </button>
+
+      {/* Approval banner — privileged tier-3 action needs explicit go-ahead.
+          The payload stays collapsed (expand the card header to inspect the
+          input) so it isn't duplicated here and under the expanded view. */}
+      {awaitingApproval && (
+        <div className="border-t border-amber-500/30 px-3 py-2.5 space-y-2.5">
+          <p className="text-xs text-foreground">
+            cortex wants to run the privileged <span className="font-mono">{toolName}</span> tool
+            {approvalTargetLabel ? <> on <span className="font-medium">{approvalTargetLabel}</span></> : null}. approve to continue, or expand to inspect the input.
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="default"
+              disabled={submitting || !onApprove}
+              onClick={() => { setSubmitting(true); onApprove?.(); }}
+              className="h-8"
+            >
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              approve
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={submitting || !onDeny}
+              onClick={() => { setSubmitting(true); onDeny?.(); }}
+              className="h-8"
+            >
+              <Ban className="h-3.5 w-3.5" />
+              deny
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Inline screenshot preview (always visible when available) */}
       {screenshotSrc && (
@@ -92,7 +163,7 @@ export function ToolCallCard({ toolName, args, result, isLoading }: ToolCallCard
             <div>
               <div className="flex items-center">
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  arguments
+                  input
                 </span>
                 <CopyButton value={JSON.stringify(args, null, 2)} className="ml-2" />
               </div>
@@ -119,7 +190,7 @@ export function ToolCallCard({ toolName, args, result, isLoading }: ToolCallCard
               <div>
                 <div className="flex items-center">
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                    result
+                    output
                   </span>
                   <CopyButton value={resultStr} className="ml-2" />
                 </div>

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
 import { useOwletteChat, type ChatConversation } from '@/hooks/useCortex';
+import { useCortexSidebarPrefs } from '@/hooks/useCortexSidebarPrefs';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Button } from '@/components/ui/button';
@@ -17,6 +18,7 @@ import { ChatWindow } from './ChatWindow';
 import { ChatInput } from './ChatInput';
 import { MachineSelector, SITE_TARGET_ID } from './MachineSelector';
 import { CortexPowerToggle } from './CortexPowerToggle';
+import { CortexApprovalToggle } from './CortexApprovalToggle';
 import { LoadingWord } from '@/components/LoadingWord';
 
 function timeAgo(date: Date): string {
@@ -65,7 +67,7 @@ interface CortexChatViewProps {
 
 export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   const router = useRouter();
-  const { user, userSites, isSuperadmin, loading: authLoading, lastSiteId, lastMachineIds, updateLastSite, updateLastMachine } = useAuth();
+  const { user, userSites, isSuperadmin, isSiteAdmin, loading: authLoading, lastSiteId, lastMachineIds, updateLastSite, updateLastMachine } = useAuth();
   const { sites, loading: sitesLoading } = useSites(user?.uid, userSites, isSuperadmin);
 
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
@@ -76,8 +78,8 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   const [errorDismissed, setErrorDismissed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [categorizingAll, setCategorizingAll] = useState(false);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Sidebar expand/collapse state persists per-device to Firestore.
+  const { sidebarOpen, setSidebarOpen, collapsedGroups, setCollapsedGroups } = useCortexSidebarPrefs();
 
   const { machines } = useMachines(currentSiteId);
 
@@ -112,7 +114,11 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   const selectedMachine = !isSiteMode ? machines.find((m) => m.machineId === selectedMachineId) : null;
   const suppressNextChatRouteRef = useRef(false);
   const skipNextLandingResetRef = useRef(false);
-  const pendingNewChatFromRouteIdRef = useRef<string | null>(null);
+  // Set when we intentionally start a new chat (or delete the routed chat) while
+  // the URL still points at the old chat: the persistent component would briefly
+  // see initialChatId(old) !== activeChatId(new) and wrongly reload the old chat,
+  // stealing selection from the just-created one. One-shot skip of that load.
+  const suppressNextLoadRef = useRef(false);
   const previousChatIdRef = useRef<string | null>(null);
   const previousInitialChatIdRef = useRef<string | undefined>(initialChatId);
 
@@ -132,6 +138,12 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   const loadChat = chat.loadChat;
 
   useEffect(() => {
+    // Skip the load that a just-started new chat (or a deletion) would otherwise
+    // trigger from the stale URL before navigation commits.
+    if (suppressNextLoadRef.current) {
+      suppressNextLoadRef.current = false;
+      return;
+    }
     if (!initialChatId || initialChatId === activeChatId) return;
     void loadChat(initialChatId);
   }, [initialChatId, activeChatId, loadChat]);
@@ -151,18 +163,14 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
     }
   }, [activeChatId, initialChatId, router]);
 
+  // Landing transition: when the URL goes from a routed chat back to /cortex
+  // (browser back, or a deletion), start a fresh chat. Skipped when an explicit
+  // handler (handleNewChat / handleDeleteChat) already started one. With the
+  // persistent layout the component is not remounted, so this fires on the
+  // initialChatId prop change rather than on mount.
   useEffect(() => {
     const previousInitialChatId = previousInitialChatIdRef.current;
     previousInitialChatIdRef.current = initialChatId;
-
-    const pendingNewChatFromRouteId = pendingNewChatFromRouteIdRef.current;
-    if (!initialChatId && pendingNewChatFromRouteId) {
-      if (activeChatId !== pendingNewChatFromRouteId) {
-        pendingNewChatFromRouteIdRef.current = null;
-        router.replace(`/cortex/${encodeURIComponent(activeChatId)}`);
-      }
-      return;
-    }
 
     if (initialChatId || !previousInitialChatId) return;
     if (skipNextLandingResetRef.current) {
@@ -172,7 +180,7 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
 
     suppressNextChatRouteRef.current = true;
     chat.startNewChat();
-  }, [activeChatId, chat, initialChatId, router]);
+  }, [chat, initialChatId]);
 
   // Reset error dismissed state when a new error arrives
   useEffect(() => {
@@ -184,8 +192,13 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
 
   const handleNewChat = useCallback((overrides?: { machineId?: string; machineName?: string }) => {
     if (initialChatId) {
-      pendingNewChatFromRouteIdRef.current = initialChatId;
+      // Navigate back to the landing URL but keep it there until the chat is
+      // persisted (handleChatPersisted replaces to /cortex/{id}). suppress stops
+      // the URL-sync effect from pushing the unsaved id; skipNextLandingReset
+      // stops the landing effect from starting a *second* new chat.
       suppressNextChatRouteRef.current = true;
+      skipNextLandingResetRef.current = true;
+      suppressNextLoadRef.current = true;
       router.push('/cortex');
     }
 
@@ -194,14 +207,27 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   }, [chat, initialChatId, router]);
 
   const handleConversationClick = useCallback((conversationId: string) => {
+    // Expand the selected conversation's category group if the user had it
+    // collapsed, so the row it lives in is actually visible after selecting.
+    const convo = conversationsRef.current.find((c) => c.id === conversationId);
+    if (convo && convo.title !== 'new conversation') {
+      const label = convo.category || 'General';
+      setCollapsedGroups((prev) => {
+        if (!prev.has(label)) return prev;
+        const next = new Set(prev);
+        next.delete(label);
+        return next;
+      });
+    }
     router.push(`/cortex/${encodeURIComponent(conversationId)}`);
-  }, [router]);
+  }, [router, setCollapsedGroups]);
 
   const handleDeleteChat = useCallback((conversationId: string) => {
     const deletedRouteChat = conversationId === initialChatId;
     if (deletedRouteChat) {
       suppressNextChatRouteRef.current = true;
       skipNextLandingResetRef.current = true;
+      suppressNextLoadRef.current = true;
     }
 
     void chat.deleteChat(conversationId);
@@ -228,10 +254,43 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
     return () => observer.disconnect();
   }, [hasMoreConversations, loadingMore, loadMoreConversations]);
 
+  // Latest conversations, readable from event handlers without re-subscribing.
+  const conversationsRef = useRef(chat.conversations);
+  conversationsRef.current = chat.conversations;
+
+  // Scroll the active conversation row into view whenever the active chat changes
+  // (selecting a conversation, starting a new one), so the highlighted row is
+  // never left scrolled out of sight. No state writes here — purely a DOM nudge.
+  useEffect(() => {
+    if (!chat.chatId) return;
+    const raf = requestAnimationFrame(() => {
+      sidebarScrollRef.current
+        ?.querySelector<HTMLElement>('[data-active-conversation="true"]')
+        ?.scrollIntoView({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [chat.chatId]);
+
   // Skip "new conversation" entries — the API requires a title or first message to categorize
   const uncategorizedIds = chat.conversations
     .filter((c) => !c.category && c.title !== 'new conversation')
     .map((c) => c.id);
+
+  // Drive the collapse-all/expand-all toggle off the *actual* set of visible
+  // group labels so the icon/label and the action never disagree (e.g. one
+  // section expanded while the rest are collapsed).
+  const visibleGroupLabels = groupConversationsByCategory(
+    chat.conversations.filter((c) => c.title !== 'new conversation'),
+  ).map((g) => g.label);
+  const allGroupsCollapsed =
+    visibleGroupLabels.length > 0 && visibleGroupLabels.every((l) => collapsedGroups.has(l));
+
+  // Which category the active conversation lives in — used to flag a collapsed
+  // section that contains the current chat, so the user knows where it is.
+  const activeConvo = chat.conversations.find((c) => c.id === chat.chatId);
+  const activeCategoryLabel = activeConvo && activeConvo.title !== 'new conversation'
+    ? (activeConvo.category || 'General')
+    : null;
 
   const categorizeAll = async () => {
     if (categorizingAll || uncategorizedIds.length === 0) return;
@@ -397,17 +456,14 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
                     <TooltipTrigger asChild>
                       <Button
                         onClick={() => {
-                          const groups = groupConversationsByCategory(chat.conversations);
-                          const allLabels = groups.map((g) => g.label);
-                          const allCollapsed = allLabels.every((l) => collapsedGroups.has(l));
-                          setCollapsedGroups(allCollapsed ? new Set() : new Set(allLabels));
+                          setCollapsedGroups(allGroupsCollapsed ? new Set() : new Set(visibleGroupLabels));
                         }}
                         variant="ghost"
                         size="icon"
-                        aria-label={collapsedGroups.size > 0 ? 'expand conversation groups' : 'collapse conversation groups'}
+                        aria-label={allGroupsCollapsed ? 'expand conversation groups' : 'collapse conversation groups'}
                         className="h-8 w-8 min-w-8 text-muted-foreground hover:text-foreground"
                       >
-                        {collapsedGroups.size > 0 ? (
+                        {allGroupsCollapsed ? (
                           <ChevronsUpDown className="h-4 w-4" />
                         ) : (
                           <ChevronsDownUp className="h-4 w-4" />
@@ -415,7 +471,7 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>{collapsedGroups.size > 0 ? 'expand all' : 'collapse all'}</p>
+                      <p>{allGroupsCollapsed ? 'expand all' : 'collapse all'}</p>
                     </TooltipContent>
                   </Tooltip>
                 )}
@@ -478,6 +534,9 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
                   chat.conversations.filter((c) => c.title !== 'new conversation')
                 ).map((group) => {
                   const isCollapsed = collapsedGroups.has(group.label);
+                  // Highlight the header of whichever group holds the active
+                  // conversation — collapsed (where the row is hidden) or expanded.
+                  const containsActive = group.label === activeCategoryLabel;
                   return (
                     <div key={group.label}>
                       <button
@@ -489,12 +548,18 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
                         })}
                         className="w-full flex items-center gap-1 px-3 py-2.5 mt-1.5 first:mt-0 cursor-pointer hover:bg-accent/30 transition-colors"
                       >
-                        <ChevronRight className={`h-3 w-3 text-muted-foreground/50 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
-                        <span className="text-xs font-medium text-muted-foreground/70 uppercase tracking-wider">
+                        <ChevronRight className={`h-3 w-3 transition-transform ${isCollapsed ? '' : 'rotate-90'} ${containsActive ? 'text-accent-cyan' : 'text-muted-foreground/50'}`} />
+                        <span className={`text-xs font-medium uppercase tracking-wider ${containsActive ? 'text-accent-cyan' : 'text-muted-foreground/70'}`}>
                           {group.label}
                         </span>
+                        {containsActive && isCollapsed && (
+                          <>
+                            <span className="h-1.5 w-1.5 rounded-full bg-accent-cyan flex-shrink-0" aria-hidden />
+                            <span className="sr-only">contains the current conversation</span>
+                          </>
+                        )}
                         <span className="text-xs text-muted-foreground/40 ml-auto">
-                          {group.conversations.length}{chat.hasMoreConversations ? '+' : ''}
+                          {group.conversations.length}
                         </span>
                       </button>
                       {!isCollapsed && group.conversations.map((convo) => (
@@ -593,11 +658,14 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
               </span>
             )}
 
-            {!isSiteMode && selectedMachine && (
-              <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-2">
+              {currentSiteId && isSiteAdmin(currentSiteId) && (
+                <CortexApprovalToggle siteId={currentSiteId} />
+              )}
+              {!isSiteMode && selectedMachine && (
                 <CortexPowerToggle siteId={currentSiteId} machine={selectedMachine} />
-              </div>
-            )}
+              )}
+            </div>
           </div>
 
           {/* Messages */}
@@ -609,6 +677,8 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
               isLoading={chat.isLoading}
               hasApiKey={hasApiKey}
               onOpenSettings={() => setAccountSettingsOpen(true)}
+              onToolApproval={(id, approved) => chat.addToolApprovalResponse({ id, approved })}
+              approvalTargetLabel={isSiteMode ? 'all machines' : selectedMachineId}
             />
           )}
 
@@ -734,7 +804,7 @@ function ConversationItem({
             setConfirming(false);
           }}
           aria-label={`cancel delete ${conversation.title}`}
-          className="p-1 rounded hover:bg-secondary transition-colors cursor-pointer"
+          className="p-1 rounded hover:bg-accent transition-colors cursor-pointer"
         >
           <X className="h-3.5 w-3.5 text-muted-foreground" />
         </button>
@@ -768,7 +838,7 @@ function ConversationItem({
               setEditing(false);
             }}
             aria-label={`save rename ${conversation.title}`}
-            className="p-1 rounded hover:bg-secondary transition-colors cursor-pointer"
+            className="p-1 rounded hover:bg-accent transition-colors cursor-pointer"
           >
               <Check className="h-3.5 w-3.5 text-accent-cyan" />
             </button>
@@ -783,7 +853,7 @@ function ConversationItem({
             setEditing(false);
           }}
           aria-label={`cancel rename ${conversation.title}`}
-          className="p-1 rounded hover:bg-secondary transition-colors cursor-pointer"
+          className="p-1 rounded hover:bg-accent transition-colors cursor-pointer"
         >
           <X className="h-3.5 w-3.5 text-muted-foreground" />
         </button>
@@ -793,30 +863,41 @@ function ConversationItem({
 
   return (
     <div
-      className={`group flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-accent/50 transition-colors ${
+      data-active-conversation={isActive ? 'true' : undefined}
+      className={`group flex items-center gap-2 px-3 py-2 hover:bg-accent/50 transition-colors ${
         isActive ? 'bg-accent' : ''
       }`}
-      onClick={onClick}
     >
-      {conversation.source === 'autonomous' ? (
-        <Zap className="h-3.5 w-3.5 text-accent-cyan flex-shrink-0" />
-      ) : (
-        <MessageSquare className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
-      )}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <p className="text-sm text-foreground truncate">{conversation.title}</p>
-          {conversation.source === 'autonomous' && (
-            <span className="text-[10px] px-1 py-0.5 rounded bg-accent-cyan/15 text-accent-cyan font-medium flex-shrink-0">
-              auto
-            </span>
-          )}
+      {/* The open-conversation control is a real <button> (keyboard- and
+          screen-reader-accessible) with the rename/delete buttons as SIBLINGS,
+          not nested inside it — nesting interactive controls is a serious axe
+          violation (nested-interactive) and fails the cortex a11y gate. */}
+      <button
+        type="button"
+        onClick={onClick}
+        aria-current={isActive ? 'true' : undefined}
+        className="flex items-center gap-2 flex-1 min-w-0 text-left cursor-pointer rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent-cyan focus-visible:ring-inset"
+      >
+        {conversation.source === 'autonomous' ? (
+          <Zap className="h-3.5 w-3.5 text-accent-cyan flex-shrink-0" />
+        ) : (
+          <MessageSquare className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm text-foreground truncate">{conversation.title}</p>
+            {conversation.source === 'autonomous' && (
+              <span className="text-[10px] px-1 py-0.5 rounded bg-accent-cyan/15 text-accent-cyan font-medium flex-shrink-0">
+                auto
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground flex items-center gap-1">
+            <span className="truncate">{conversation.targetType === 'site' ? 'all machines' : conversation.machineName || 'unknown machine'}</span>
+            <span className="text-muted-foreground flex-shrink-0">· {timeAgo(conversation.updatedAt)}</span>
+          </p>
         </div>
-        <p className="text-xs text-muted-foreground flex items-center gap-1">
-          <span className="truncate">{conversation.targetType === 'site' ? 'all machines' : conversation.machineName || 'unknown machine'}</span>
-          <span className="text-muted-foreground flex-shrink-0">· {timeAgo(conversation.updatedAt)}</span>
-        </p>
-      </div>
+      </button>
       <div className="opacity-0 group-hover:opacity-100 flex items-center transition-all">
         <button
           onClick={(e) => {
@@ -825,7 +906,7 @@ function ConversationItem({
             setEditing(true);
           }}
           aria-label={`rename ${conversation.title}`}
-          className="p-1 rounded hover:bg-secondary transition-colors cursor-pointer"
+          className="p-1 rounded hover:bg-accent transition-colors cursor-pointer"
         >
           <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground transition-colors" />
         </button>

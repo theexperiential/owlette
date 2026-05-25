@@ -155,4 +155,18 @@ describe('owlette quota history', () => {
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/quota/history?period=7d');
     expect(JSON.parse(writes.join(''))).toEqual(history);
   });
+
+  it('exits 2 when --period is invalid', async () => {
+    const calls = installFetchStub({ siteId: 'site-1', period: '30d', days: 30, daily: [] });
+    const program = buildProgram();
+
+    await program.parseAsync(
+      ['quota', 'history', '--site', 'site-1', '--period', 'banana'],
+      { from: 'user' },
+    );
+
+    expect(calls).toHaveLength(0);
+    expect(process.exitCode).toBe(2);
+    process.exitCode = 0;
+  });
 });

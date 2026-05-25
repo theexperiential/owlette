@@ -23,7 +23,9 @@
     "e2e:ui": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --ui\"",
     "e2e:install": "playwright install chromium",
     "screenshots": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts\"",
-    "screenshots:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts --headed --debug\""
+    "screenshots:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts --headed --debug\"",
+    "videos": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts\"",
+    "videos:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts --headed --debug\""
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.63",
@@ -56,7 +58,7 @@
     "ai": "^6.0.134",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "date-fns": "^4.1.0",
+    "date-fns": "^4.3.0",
     "firebase": "^12.5.0",
     "firebase-admin": "^13.5.0",
     "fumadocs-core": "^16.8.12",
@@ -72,6 +74,7 @@
     "otplib": "^12.0.1",
     "qrcode": "^1.5.4",
     "react": "19.2.0",
+    "react-day-picker": "^10.0.1",
     "react-dom": "19.2.0",
     "react-firebase-hooks": "^5.1.1",
     "react-markdown": "^10.1.0",

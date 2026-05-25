@@ -104,10 +104,10 @@ Legend:
 
 | command | status | reference page | public route or reason |
 |---|---|---|---|
-| `owlette key create` | ready | [key](reference/key.md) | `POST /api/keys` |
-| `owlette key list` | ready | [key](reference/key.md) | `GET /api/keys` |
-| `owlette key rotate <keyId>` | ready | [key](reference/key.md) | `POST /api/keys/{keyId}/rotate` |
-| `owlette key revoke <keyId>` | ready | [key](reference/key.md) | `DELETE /api/keys/{keyId}` |
+| `owlette key create` | not available | [key](reference/key.md) | key management is dashboard/session-only; no CLI command is registered |
+| `owlette key list` | not available | [key](reference/key.md) | key management is dashboard/session-only; no CLI command is registered |
+| `owlette key rotate <keyId>` | not available | [key](reference/key.md) | key management is dashboard/session-only; no CLI command is registered |
+| `owlette key revoke <keyId>` | not available | [key](reference/key.md) | key management is dashboard/session-only; no CLI command is registered |
 | `owlette user list` | ready | [user](reference/user.md) | `GET /api/users` |
 | `owlette user get <uid>` | ready | [user](reference/user.md) | `GET /api/users/{uid}` |
 | `owlette user promote <uid>` | ready | [user](reference/user.md) | `POST /api/users/{uid}/promote` |

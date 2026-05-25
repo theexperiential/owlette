@@ -40,6 +40,33 @@ export function errLine(line: string): void {
   process.stderr.write(line + '\n');
 }
 
+/** Print a local usage/validation/refusal error and mark the command as usage-failed. */
+export function usageFatal(msg: string): void {
+  errLine(`owlette: ${msg}`);
+  process.exitCode = 2;
+}
+
+interface UnconfirmedMutationFatalInput {
+  operation: string;
+  idempotencyKey: string;
+  cause: unknown;
+}
+
+/**
+ * Surface the idempotency key after a mutating request fails before the CLI
+ * receives a confirmed HTTP response.
+ */
+export function unconfirmedMutationFatal(input: UnconfirmedMutationFatalInput): void {
+  const detail = input.cause instanceof Error ? input.cause.message : String(input.cause);
+  process.stderr.write(
+    `owlette: ${input.operation} did not return a confirmed response: ${detail}\n` +
+      `  The request may or may not have completed.\n` +
+      `  Idempotency-Key: ${input.idempotencyKey}\n` +
+      `  To retry safely, re-run your original command with \`--idempotency-key ${input.idempotencyKey}\` appended.\n`,
+  );
+  process.exitCode = 1;
+}
+
 /**
  * ASCII table renderer: pads each column to the widest cell, draws a
  * dash separator row under the headers, preserves insertion order.

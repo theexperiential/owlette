@@ -70,31 +70,37 @@ Do not commit generated `dist/`, `.egg-info/`, or package archive files. They ar
 
 ## publish sequence
 
-Prefer a release workflow with npm provenance and PyPI trusted publishing. If a local emergency publish is approved, record the operator, registry account, package, version, and reason in the sprint log.
+Publishing is driven by CI from release tags using OIDC trusted publishing — no long-lived registry tokens live in GitHub secrets. The dist-tag is derived from the package version automatically: a prerelease (e.g. `1.0.0-rc.0`) publishes under the `rc` tag, a stable version under `latest`.
+
+| package | workflow | release tag |
+|---|---|---|
+| `@owlette/cli` | `.github/workflows/cli-publish.yml` | `cli-vX.Y.Z[-pre]` |
+| `@owlette/sdk` | `.github/workflows/node-sdk-publish.yml` | `node-sdk-vX.Y.Z[-pre]` |
+| `owlette-sdk` | `.github/workflows/py-sdk-publish.yml` | `py-sdk-v<PEP440>` (e.g. `py-sdk-v1.0.0rc0`) |
+
+Each workflow also supports `workflow_dispatch` with a dry-run default so package contents can be validated before a real publish.
+
+### one-time trusted-publisher setup
+
+- **npm** cannot attach a trusted publisher to a package that does not exist yet, so the first publish of each npm package must be bootstrapped once. Sign in locally with the package owner account (2FA enabled) and run a single `npm publish --tag rc --access public` from `cli/` and from `sdks/node/`. Then, in each package's settings on npmjs.com, add a GitHub Actions trusted publisher pointing at the workflow above. Every release after that goes through CI tokenlessly with provenance.
+- **PyPI** supports a "pending publisher" that creates the project on first publish, so no bootstrap and no token is needed. Configure the pending publisher (project `owlette-sdk`, this repo's owner/name, workflow `py-sdk-publish.yml`, environment left blank) before pushing the first `py-sdk-v*` tag. The name is not reserved until that first publish, so tag promptly.
+
+### releasing
 
 ```powershell
-cd cli
-npm publish --tag rc --access public
+# example: cut the CLI rc release
+git tag cli-v1.0.0-rc.0
+git push origin cli-v1.0.0-rc.0   # → cli-publish.yml publishes @owlette/cli@rc with provenance
 ```
 
-```powershell
-cd sdks/node
-npm publish --tag rc --access public
-```
-
-```powershell
-cd sdks/python
-python -m build --sdist --wheel
-python -m twine upload --repository testpypi dist/*
-python -m twine upload dist/*
-```
-
-After npm publishes, confirm the `rc` tag points at the intended version:
+After npm publishes, confirm the dist-tag points at the intended version:
 
 ```powershell
 npm view @owlette/cli dist-tags
 npm view @owlette/sdk dist-tags
 ```
+
+If a local emergency publish is approved (registry/CI outage), record the operator, registry account, package, version, and reason in the sprint log before running `npm publish` / `twine upload` by hand.
 
 ---
 
@@ -134,4 +140,4 @@ Homebrew, Scoop, and winget remain blocked until there is a stable release artif
 
 ## current status
 
-The repository is prepared for RC package dry-runs, but no registry publish has been executed from this sprint environment. Until npm, PyPI, Homebrew, Scoop, and winget installs work or receive an explicit launch waiver, 5.3 remains launch-blocked and not externally complete.
+OIDC trusted-publishing workflows are wired for all three packages and the RC builds pass clean-checkout dry-runs. No registry publish has been executed yet. Remaining owner steps before the first publish: create the `@owlette` npm org with 2FA, bootstrap the first npm publish of each package, configure the npm trusted publishers, and configure the PyPI pending publisher for `owlette-sdk`; PyPI creates the project on first OIDC publish, so publish promptly after the pending publisher is set. Until npm, PyPI, Homebrew, Scoop, and winget installs work or receive an explicit launch waiver, 5.3 remains launch-blocked and not externally complete.

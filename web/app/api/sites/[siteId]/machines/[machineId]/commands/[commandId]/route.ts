@@ -94,7 +94,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           ? cmd.screenshot_path
           : typeof baseResult.screenshot_path === 'string'
             ? (baseResult.screenshot_path as string)
-            : null;
+            : typeof baseResult.storage_path === 'string'
+              ? (baseResult.storage_path as string)
+              : typeof cmd.storage_path === 'string'
+                ? cmd.storage_path
+                : null;
       if (storagePath) {
         const signed = await issueScreenshotReadUrl(storagePath);
         if (signed) {

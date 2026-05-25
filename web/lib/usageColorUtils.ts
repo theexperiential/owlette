@@ -50,24 +50,3 @@ export function getUsageColor(percent: number): string {
     return 'rgb(239, 68, 68)';    // red-500
   }
 }
-
-/**
- * Get the ring/hover color class based on usage percentage
- * For use in hover states
- *
- * @param percent - Usage percentage (0-100)
- * @returns Tailwind CSS ring color class
- */
-export function getUsageRingClass(percent: number): string {
-  if (percent < 30) {
-    return 'hover:ring-emerald-500/30';
-  } else if (percent < 50) {
-    return 'hover:ring-violet-500/30';
-  } else if (percent < 70) {
-    return 'hover:ring-sky-500/30';
-  } else if (percent < 85) {
-    return 'hover:ring-amber-500/30';
-  } else {
-    return 'hover:ring-red-500/30';
-  }
-}

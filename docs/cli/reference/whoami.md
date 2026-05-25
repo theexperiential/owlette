@@ -99,4 +99,4 @@ emits the historical envelope `auth status` has always produced:
 - **tier**: `[ready]`
 - **alias**: [`auth status`](auth.md#auth-status) — same code path, byte-identical stdout/stderr
 - **token source**: precedence is `OWLETTE_TOKEN` env var -> OS keychain/token-file credential store -> legacy active profile `token` field in `config.toml`. `--profile <name>` picks the profile; the bare command uses `default`
-- **related**: [`auth login`](auth.md#auth-login) to mint + store the token this command introspects, [`key list`](key.md) for the server-side view of every key on your account
+- **related**: [`auth login`](auth.md#auth-login) to mint + store the token this command introspects, [dashboard key management](key.md) for account key inventory

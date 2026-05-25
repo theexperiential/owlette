@@ -20,7 +20,14 @@ import { createHash, randomUUID } from 'crypto';
 import { readFileSync, statSync } from 'fs';
 import { basename } from 'path';
 import { loadConfig } from '../config';
-import { humanBytes, isJson, renderTable } from '../lib/output';
+import { fetchWithTimeout } from '../lib/http';
+import {
+  humanBytes,
+  isJson,
+  renderTable,
+  unconfirmedMutationFatal,
+  usageFatal,
+} from '../lib/output';
 
 interface InstallerVersion {
   version: string;
@@ -72,7 +79,7 @@ export function registerInstallerCommands(program: Command): void {
       if (opts.limit !== undefined) {
         const n = Number(opts.limit);
         if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1) {
-          fatal('--limit must be a positive integer');
+          usageFatal('--limit must be a positive integer');
           return;
         }
         qs.set('page_size', String(n));
@@ -80,7 +87,7 @@ export function registerInstallerCommands(program: Command): void {
       if (opts.cursor) qs.set('page_token', String(opts.cursor));
 
       const url = `${apiUrl}/api/installer` + (qs.toString() ? `?${qs.toString()}` : '');
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -141,7 +148,7 @@ export function registerInstallerCommands(program: Command): void {
       const { apiUrl, token, json } = resolveAuth(cmd);
       if (!token) return;
 
-      const res = await fetch(`${apiUrl}/api/installer/latest`, {
+      const res = await fetchWithTimeout(`${apiUrl}/api/installer/latest`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = (await res.json().catch(() => ({}))) as InstallerVersion & {
@@ -213,7 +220,7 @@ export function registerInstallerCommands(program: Command): void {
         buffer = readFileSync(file);
         fileSize = statSync(file).size;
       } catch (err) {
-        fatal(
+        usageFatal(
           `cannot read installer file '${file}': ${err instanceof Error ? err.message : String(err)}`,
         );
         return;
@@ -242,15 +249,25 @@ export function registerInstallerCommands(program: Command): void {
       if (opts.releaseNotes !== undefined) startBody.releaseNotes = opts.releaseNotes;
       if (opts.setLatest !== undefined) startBody.setAsLatest = Boolean(opts.setLatest);
 
-      const startRes = await fetch(`${apiUrl}/api/installer/upload`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idempotencyKey,
-        },
-        body: JSON.stringify(startBody),
-      });
+      let startRes: Response;
+      try {
+        startRes = await fetchWithTimeout(`${apiUrl}/api/installer/upload`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify(startBody),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: 'POST /api/installer/upload',
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const startData = (await startRes.json().catch(() => ({}))) as {
         uploadUrl?: string;
         uploadId?: string;
@@ -298,15 +315,25 @@ export function registerInstallerCommands(program: Command): void {
 
       // ── step 3: finalize ─────────────────────────────────────────────
       if (!json) process.stdout.write('owlette: finalising…\n');
-      const finalizeRes = await fetch(`${apiUrl}/api/installer/upload`, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idempotencyKey,
-        },
-        body: JSON.stringify({ uploadId: startData.uploadId, checksum_sha256: checksum }),
-      });
+      let finalizeRes: Response;
+      try {
+        finalizeRes = await fetchWithTimeout(`${apiUrl}/api/installer/upload`, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify({ uploadId: startData.uploadId, checksum_sha256: checksum }),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: 'PUT /api/installer/upload (finalize)',
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const finalizeData = (await finalizeRes.json().catch(() => ({}))) as {
         version?: string;
         download_url?: string;
@@ -358,24 +385,35 @@ export function registerInstallerCommands(program: Command): void {
           return;
         }
       } else if (!opts.yes && !process.stdin.isTTY) {
-        fatal('stdin is not a tty and --yes was not supplied; refusing to set-latest silently');
+        usageFatal('stdin is not a tty and --yes was not supplied; refusing to set-latest silently');
         return;
       }
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-installer-set-latest-${randomUUID()}`;
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
-        'Idempotency-Key': opts.idempotencyKey
-          ? String(opts.idempotencyKey)
-          : `cli-installer-set-latest-${randomUUID()}`,
+        'Idempotency-Key': idempotencyKey,
       };
 
       const url = `${apiUrl}/api/installer/${encodeURIComponent(version)}/set-latest`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({}),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({}),
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `POST /api/installer/${version}/set-latest`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as {
         version?: string;
         latest?: unknown;
@@ -428,22 +466,33 @@ export function registerInstallerCommands(program: Command): void {
           return;
         }
       } else if (!opts.yes && !process.stdin.isTTY) {
-        fatal('stdin is not a tty and --yes was not supplied; refusing to delete silently');
+        usageFatal('stdin is not a tty and --yes was not supplied; refusing to delete silently');
         return;
       }
 
+      const idempotencyKey = opts.idempotencyKey
+        ? String(opts.idempotencyKey)
+        : `cli-installer-delete-${randomUUID()}`;
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
-        'Idempotency-Key': opts.idempotencyKey
-          ? String(opts.idempotencyKey)
-          : `cli-installer-delete-${randomUUID()}`,
+        'Idempotency-Key': idempotencyKey,
       };
 
       const url = `${apiUrl}/api/installer/${encodeURIComponent(version)}`;
-      const res = await fetch(url, {
-        method: 'DELETE',
-        headers,
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout(url, {
+          method: 'DELETE',
+          headers,
+        });
+      } catch (err) {
+        unconfirmedMutationFatal({
+          operation: `DELETE /api/installer/${version}`,
+          idempotencyKey,
+          cause: err,
+        });
+        return;
+      }
       const data = (await res.json().catch(() => ({}))) as {
         version?: string;
         deletedAt?: number | null;
@@ -512,7 +561,7 @@ function fatal(msg: string): void {
 async function promptYesNo(question: string): Promise<boolean> {
   const { createInterface } = await import('readline');
   return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
     rl.question(question, (answer) => {
       rl.close();
       const normalized = answer.trim().toLowerCase();

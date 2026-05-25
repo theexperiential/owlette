@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
@@ -10,7 +10,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { collection, query, orderBy, limit, getDocs, where, startAfter, Query, DocumentData, Timestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Button } from '@/components/ui/button';
-import { ChevronDown, ChevronsUpDown, ChevronsDownUp, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle, Camera } from 'lucide-react';
+import { ChevronDown, ChevronsUpDown, ChevronsDownUp, Filter, X, Trash2, ScrollText, AlertTriangle, AlertCircle, Camera, Search } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Input } from '@/components/ui/input';
@@ -20,7 +20,8 @@ import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
-import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
+import { DatePicker } from '@/components/ui/date-picker';
+import { formatSiteScopedTimestamp, getDisplayTimezone, zonedTimeToUtcMs } from '@/lib/timeUtils';
 
 interface LogEvent {
   id: string;
@@ -114,6 +115,11 @@ function getDateRange(preset: DatePreset, customFrom?: string, customTo?: string
   }
 }
 
+// Bridge the native-string filter state (YYYY-MM-DD) <-> the DatePicker's Date value.
+const toYMD = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const fromYMD = (s: string): Date | undefined => (s ? new Date(s + 'T00:00:00') : undefined);
+
 // Action type labels for filtering
 const ACTION_TYPES = [
   { value: 'all', label: 'all actions' },
@@ -152,6 +158,66 @@ const formatAction = (action: string) => {
     .join(' ');
 };
 
+// When a search is active we load the full set of logs matching the current
+// server-side filters (not just the visible 50) so search covers the whole
+// scope. Bounded so a busy site can't trigger an unbounded read.
+const SEARCH_POOL_CAP = 2000;
+
+// Build the Firestore query for a site's logs honouring the active filters.
+// Always ordered by timestamp desc so the page shows the *most recent* matching
+// logs (not an arbitrary __name__-ordered slice). Every filter combination —
+// action/machine/level, optionally with a timestamp range — is backed by a
+// composite index in firestore.indexes.json, so the ordering, date window, and
+// equality filters are all resolved server-side.
+function buildLogsQuery(
+  logsRef: Query,
+  filters: {
+    action: string;
+    machine: string;
+    level: string;
+    datePreset: DatePreset;
+    dateFrom: string;
+    dateTo: string;
+  },
+  max: number
+): Query {
+  const dateRange = getDateRange(filters.datePreset, filters.dateFrom, filters.dateTo);
+
+  let q: Query = query(logsRef, orderBy('timestamp', 'desc'), limit(max));
+
+  if (filters.action !== 'all') q = query(q, where('action', '==', filters.action));
+  if (filters.machine !== 'all') q = query(q, where('machineId', '==', filters.machine));
+  if (filters.level !== 'all') q = query(q, where('level', '==', filters.level));
+  if (dateRange.from) q = query(q, where('timestamp', '>=', Timestamp.fromDate(dateRange.from)));
+  if (dateRange.to) q = query(q, where('timestamp', '<=', Timestamp.fromDate(dateRange.to)));
+
+  return q;
+}
+
+// Shared grid template so the column header and every log row line up exactly:
+// chevron · level · time · event · machine · process · details(flex, truncates).
+const LOG_GRID =
+  'grid grid-cols-[14px_76px_104px_150px_132px_116px_minmax(0,1fr)] items-center gap-3';
+
+// Compact relative time for the scannable time column ("2m ago", "3d ago"). The
+// absolute timestamp is shown on hover and in the expanded row.
+function relativeTime(date?: Date): string {
+  if (!date) return '';
+  const s = Math.round((Date.now() - date.getTime()) / 1000);
+  if (s < 45) return 'just now';
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  if (d < 7) return `${d}d ago`;
+  const w = Math.round(d / 7);
+  if (w < 5) return `${w}w ago`;
+  const mo = Math.round(d / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  return `${Math.round(d / 365)}y ago`;
+}
+
 // Extracted + memoized so toggling one row's expanded state doesn't re-render
 // every other row in the list. Without this, a click burns ~100–300ms on a
 // full page of logs before Radix can flip `data-state` and the animation can
@@ -180,64 +246,62 @@ const LogRow = React.memo(function LogRow({
       open={isExpanded}
       onOpenChange={() => onToggle(log.id)}
       data-testid={`log-row-${log.id}`}
-      className={`group/row hover:bg-muted/50 transition-colors border-b border-border last:border-b-0 ${isExpanded ? 'bg-muted/30' : ''}`}
+      className={`group/row hover:bg-card/40 transition-colors border-b border-border last:border-b-0`}
     >
       <CollapsibleTrigger asChild>
-        <button type="button" className="w-full px-4 py-3 text-left cursor-pointer">
-          <div className="flex items-center justify-between gap-4 text-sm">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <div className="flex items-center gap-3 flex-shrink-0">
-                <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
-                <div className="w-[60px] flex-shrink-0">{getLevelBadge(log.level)}</div>
+        <button type="button" className="w-full px-4 py-2.5 text-left cursor-pointer">
+          <div className={`${LOG_GRID} text-sm`}>
+            {/* chevron */}
+            <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
+            {/* level */}
+            <div>{getLevelBadge(log.level)}</div>
+            {/* time (relative; absolute on hover) */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-muted-foreground text-xs whitespace-nowrap truncate cursor-help">
+                  {relativeTime(log.timestamp?.toDate())}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {formatSiteScopedTimestamp(
+                  log.timestamp?.toDate(),
+                  timeDisplayMode,
+                  userTz,
+                  siteTz,
+                  timeFormat
+                )}
+              </TooltipContent>
+            </Tooltip>
+            {/* event */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-foreground font-medium truncate cursor-help">{formatAction(log.action)}</span>
+              </TooltipTrigger>
+              <TooltipContent>{formatAction(log.action)}</TooltipContent>
+            </Tooltip>
+            {/* machine */}
+            <span className="text-foreground truncate">{log.machineName}</span>
+            {/* process */}
+            <span className="text-muted-foreground truncate">{log.processName || '—'}</span>
+            {/* details preview (flex, truncates) + screenshot indicator — hidden once expanded, where the full details render below (avoids duplicating the text) */}
+            <div className="flex items-center gap-2 min-w-0">
+              {!isExpanded && log.screenshotUrl && <Camera className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
+              {!isExpanded && (log.details ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <span className="text-foreground font-medium truncate max-w-[140px] flex-shrink-0 text-left cursor-help">
-                      {formatAction(log.action)}
-                    </span>
+                    <span className="text-muted-foreground truncate min-w-0 cursor-help">{log.details}</span>
                   </TooltipTrigger>
-                  <TooltipContent>{formatAction(log.action)}</TooltipContent>
+                  <TooltipContent><p className="max-w-sm whitespace-pre-wrap break-words">{log.details}</p></TooltipContent>
                 </Tooltip>
-              </div>
-              <span className="text-muted-foreground">•</span>
-              <span className="text-foreground whitespace-nowrap">{log.machineName}</span>
-              {log.processName && (
-                <>
-                  <span className="text-muted-foreground">•</span>
-                  <span className="text-foreground whitespace-nowrap">{log.processName}</span>
-                </>
-              )}
-              {!isExpanded && log.screenshotUrl && (
-                <>
-                  <span className="text-muted-foreground">•</span>
-                  <Camera className="w-3 h-3 text-muted-foreground" />
-                </>
-              )}
-              {!isExpanded && log.details && (
-                <>
-                  <span className="text-muted-foreground">•</span>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="text-muted-foreground truncate min-w-0 cursor-help">{log.details}</span>
-                    </TooltipTrigger>
-                    <TooltipContent><p className="max-w-xs">{log.details}</p></TooltipContent>
-                  </Tooltip>
-                </>
-              )}
-            </div>
-            <div className="text-muted-foreground whitespace-nowrap text-xs">
-              {formatSiteScopedTimestamp(
-                log.timestamp?.toDate(),
-                timeDisplayMode,
-                userTz,
-                siteTz,
-                timeFormat
-              )}
+              ) : (
+                <span className="text-muted-foreground/40">—</span>
+              ))}
             </div>
           </div>
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-        <div className="px-4 pb-3 pt-3 border-t border-border/50 text-sm flex gap-6">
+        <div className="px-4 pb-3 pt-3 border-t border-border/50 text-sm flex gap-6 bg-card">
           <div className="flex-shrink-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 self-start">
             <span className="text-muted-foreground">machine id</span>
             <span className="text-foreground text-xs font-mono">{log.machineId}</span>
@@ -302,7 +366,26 @@ export default function LogsPage() {
   const [filterDatePreset, setFilterDatePreset] = useState<DatePreset>('all');
   const [filterDateFrom, setFilterDateFrom] = useState<string>('');
   const [filterDateTo, setFilterDateTo] = useState<string>('');
+  // Clear-logs dialog date window — independent of the page's view filters.
+  const [clearFrom, setClearFrom] = useState<Date | undefined>(undefined);
+  const [clearTo, setClearTo] = useState<Date | undefined>(undefined);
   const [showFilters, setShowFilters] = useState(false);
+
+  // Free-text search. `searchQuery` mirrors the input; `searchTerm` is the
+  // debounced, normalised value the filter actually runs against. `searchActive`
+  // toggles the collapsed button ↔ expanded field.
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [searchActive, setSearchActive] = useState(false);
+  const [searchCollapsedW, setSearchCollapsedW] = useState<number>();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchWrapperRef = useRef<HTMLDivElement>(null);
+  const searchBtnRef = useRef<HTMLButtonElement>(null);
+  // Full filtered scope loaded on demand while searching (see effect below).
+  const [searchPool, setSearchPool] = useState<LogEvent[] | null>(null);
+  const [searchPoolLoading, setSearchPoolLoading] = useState(false);
+  const [searchPoolTruncated, setSearchPoolTruncated] = useState(false);
+  const isSearching = searchTerm.length > 0;
 
   // Clear logs confirmation dialog
   const [showClearDialog, setShowClearDialog] = useState(false);
@@ -335,15 +418,67 @@ export default function LogsPage() {
     });
   }, []);
 
-  const allExpanded = logs.length > 0 && expandedLogIds.size === logs.length;
+  // Debounce the search input so typing doesn't re-filter/re-render on every
+  // keystroke once a large batch is loaded.
+  useEffect(() => {
+    const id = setTimeout(() => setSearchTerm(searchQuery.trim().toLowerCase()), 150);
+    return () => clearTimeout(id);
+  }, [searchQuery]);
+
+  // Focus the field as it expands.
+  useEffect(() => {
+    if (searchActive) searchInputRef.current?.focus();
+  }, [searchActive]);
+
+  // Measure the collapsed button's natural width so expand/collapse can animate
+  // between real pixel widths — CSS can't transition to/from `auto`. Measured
+  // after paint while the wrapper is hugging content, so the value is exact and
+  // there's no layout shift.
+  useEffect(() => {
+    if (searchBtnRef.current) setSearchCollapsedW(searchBtnRef.current.offsetWidth);
+  }, []);
+
+  // Collapse back to a button on outside click — but only when empty, so an
+  // active search is never silently hidden (e.g. clicking a log row to expand
+  // it while filtering).
+  useEffect(() => {
+    if (!searchActive) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (searchWrapperRef.current?.contains(e.target as Node)) return;
+      if (!searchQuery) setSearchActive(false);
+    };
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [searchActive, searchQuery]);
+
+  // Client-side substring filter. Firestore has no full-text query, so we match
+  // in JS against the search pool (the full set matching the active server-side
+  // filters, loaded on demand) — falling back to the on-screen logs until it
+  // arrives. Matches the formatted action label, raw action, machine, process,
+  // level, and details.
+  const filteredLogs = useMemo(() => {
+    if (!searchTerm) return logs;
+    const source = searchPool ?? logs;
+    return source.filter(log =>
+      formatAction(log.action).toLowerCase().includes(searchTerm) ||
+      log.action.toLowerCase().includes(searchTerm) ||
+      log.machineName?.toLowerCase().includes(searchTerm) ||
+      log.machineId?.toLowerCase().includes(searchTerm) ||
+      log.processName?.toLowerCase().includes(searchTerm) ||
+      log.details?.toLowerCase().includes(searchTerm) ||
+      log.level.toLowerCase().includes(searchTerm)
+    );
+  }, [logs, searchPool, searchTerm]);
+
+  const allExpanded = filteredLogs.length > 0 && filteredLogs.every(l => expandedLogIds.has(l.id));
 
   const toggleAllExpanded = useCallback(() => {
     if (allExpanded) {
       setExpandedLogIds(new Set());
     } else {
-      setExpandedLogIds(new Set(logs.map(l => l.id)));
+      setExpandedLogIds(new Set(filteredLogs.map(l => l.id)));
     }
-  }, [allExpanded, logs]);
+  }, [allExpanded, filteredLogs]);
 
   // Redirect if not logged in
   useEffect(() => {
@@ -376,66 +511,16 @@ export default function LogsPage() {
     setLogsLoading(true);
     setExpandedLogIds(new Set());
 
-    // Compute date range from preset
-    const dateRange = getDateRange(filterDatePreset, filterDateFrom, filterDateTo);
-
-    // Check if any non-date filters are active (date filters use orderBy-compatible where clauses)
-    const hasNonDateFilters = filterAction !== 'all' || filterMachine !== 'all' || filterLevel !== 'all';
-
-    // Build query with filters
     const logsRef = collection(db, 'sites', currentSiteId, 'logs');
-    let q: Query;
-
-    // Always use orderBy('timestamp', 'desc') — date range filters are compatible with it.
-    // Only skip orderBy when non-date filters are active without a composite index.
-    if (hasNonDateFilters) {
-      q = query(logsRef, limit(LOGS_PER_PAGE + 1));
-    } else {
-      q = query(logsRef, orderBy('timestamp', 'desc'), limit(LOGS_PER_PAGE + 1));
-    }
-
-    // Apply filters
-    if (filterAction !== 'all') {
-      q = query(q, where('action', '==', filterAction));
-    }
-    if (filterMachine !== 'all') {
-      q = query(q, where('machineId', '==', filterMachine));
-    }
-    if (filterLevel !== 'all') {
-      q = query(q, where('level', '==', filterLevel));
-    }
-    // Date range filters — applied client-side when non-date filters are active (no composite index),
-    // or via Firestore where clauses when only date filters are active
-    if (!hasNonDateFilters) {
-      if (dateRange.from) {
-        q = query(q, where('timestamp', '>=', Timestamp.fromDate(dateRange.from)));
-      }
-      if (dateRange.to) {
-        q = query(q, where('timestamp', '<=', Timestamp.fromDate(dateRange.to)));
-      }
-    }
+    const q = buildLogsQuery(
+      logsRef,
+      { action: filterAction, machine: filterMachine, level: filterLevel, datePreset: filterDatePreset, dateFrom: filterDateFrom, dateTo: filterDateTo },
+      LOGS_PER_PAGE + 1
+    );
 
     // Set up real-time listener
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      let docsData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as LogEvent));
-
-      // Sort client-side by timestamp if non-date filters are active
-      if (hasNonDateFilters) {
-        docsData.sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis());
-      }
-
-      // Apply date range client-side when non-date filters are active
-      if (hasNonDateFilters && (dateRange.from || dateRange.to)) {
-        docsData = docsData.filter(log => {
-          const ts = log.timestamp.toMillis();
-          if (dateRange.from && ts < dateRange.from.getTime()) return false;
-          if (dateRange.to && ts > dateRange.to.getTime()) return false;
-          return true;
-        });
-      }
+      const docsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEvent));
 
       // Check if there are more pages
       const hasMoreData = docsData.length > LOGS_PER_PAGE;
@@ -443,7 +528,6 @@ export default function LogsPage() {
 
       // Remove the extra document used for pagination check
       const displayLogs = hasMoreData ? docsData.slice(0, LOGS_PER_PAGE) : docsData;
-
       setLogs(displayLogs);
 
       // Set pagination marker for infinite scroll
@@ -461,6 +545,49 @@ export default function LogsPage() {
     return () => unsubscribe();
   }, [currentSiteId, filterAction, filterMachine, filterLevel, filterDatePreset, filterDateFrom, filterDateTo]);
 
+  // While searching, load the full set of logs matching the current server-side
+  // filters (capped) so search spans the whole scope, not just the visible 50.
+  // Re-runs when the filters change, not on every keystroke (the text filters
+  // the pool client-side in `filteredLogs`).
+  useEffect(() => {
+    if (!isSearching || !currentSiteId || !db) {
+      setSearchPool(null);
+      setSearchPoolTruncated(false);
+      setSearchPoolLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSearchPoolLoading(true);
+
+    (async () => {
+      try {
+        const logsRef = collection(db, 'sites', currentSiteId, 'logs');
+        const q = buildLogsQuery(
+          logsRef,
+          { action: filterAction, machine: filterMachine, level: filterLevel, datePreset: filterDatePreset, dateFrom: filterDateFrom, dateTo: filterDateTo },
+          SEARCH_POOL_CAP + 1
+        );
+        const snapshot = await getDocs(q);
+        if (cancelled) return;
+
+        const docsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEvent));
+        setSearchPoolTruncated(docsData.length > SEARCH_POOL_CAP);
+        setSearchPool(docsData.slice(0, SEARCH_POOL_CAP));
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Error loading search pool:', error);
+          setSearchPool(null);
+        }
+      } finally {
+        if (!cancelled) setSearchPoolLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+    // `isSearching` (not `searchTerm`) so we don't refetch on every keystroke.
+  }, [isSearching, currentSiteId, filterAction, filterMachine, filterLevel, filterDatePreset, filterDateFrom, filterDateTo]);
+
   // Infinite scroll — load more logs
   const loadMore = useCallback(async () => {
     if (!currentSiteId || !db || !lastDoc || !hasMore || isFetchingMore) return;
@@ -468,15 +595,16 @@ export default function LogsPage() {
     setIsFetchingMore(true);
 
     try {
-      const dateRange = getDateRange(filterDatePreset, filterDateFrom, filterDateTo);
+      // Same query as the initial page (identical ordering + filters), advanced
+      // past the last loaded doc — so page N+1 continues exactly where page N
+      // left off. Reusing buildLogsQuery keeps the two from drifting apart.
       const logsRef = collection(db, 'sites', currentSiteId, 'logs');
-      let q = query(logsRef, orderBy('timestamp', 'desc'), startAfter(lastDoc), limit(LOGS_PER_PAGE + 1));
-
-      if (filterAction !== 'all') q = query(q, where('action', '==', filterAction));
-      if (filterMachine !== 'all') q = query(q, where('machineId', '==', filterMachine));
-      if (filterLevel !== 'all') q = query(q, where('level', '==', filterLevel));
-      if (dateRange.from) q = query(q, where('timestamp', '>=', Timestamp.fromDate(dateRange.from)));
-      if (dateRange.to) q = query(q, where('timestamp', '<=', Timestamp.fromDate(dateRange.to)));
+      const baseQuery = buildLogsQuery(
+        logsRef,
+        { action: filterAction, machine: filterMachine, level: filterLevel, datePreset: filterDatePreset, dateFrom: filterDateFrom, dateTo: filterDateTo },
+        LOGS_PER_PAGE + 1
+      );
+      const q = query(baseQuery, startAfter(lastDoc));
 
       const snapshot = await getDocs(q);
       const docsData = snapshot.docs.map(doc => ({
@@ -503,7 +631,9 @@ export default function LogsPage() {
   // IntersectionObserver for infinite scroll sentinel
   useEffect(() => {
     const sentinel = sentinelRef.current;
-    if (!sentinel) return;
+    // Pause infinite scroll while searching: a short filtered list keeps the
+    // sentinel on-screen, which would otherwise auto-load every remaining page.
+    if (!sentinel || searchTerm) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -516,7 +646,7 @@ export default function LogsPage() {
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, isFetchingMore, loadMore]);
+  }, [hasMore, isFetchingMore, loadMore, searchTerm]);
 
   const resetFilters = () => {
     setFilterAction('all');
@@ -533,10 +663,29 @@ export default function LogsPage() {
     setIsClearing(true);
 
     try {
+      // Date window comes from the clear dialog's own from/to date pickers.
+      // Resolve the bounds in the SAME timezone the logs are displayed in (not
+      // browser-local) so clearing "May 25" deletes May 25 as the operator sees
+      // it — otherwise a cross-timezone admin over-/under-deletes at the day
+      // boundary. Mirrors the display resolution used to render each row.
+      const clearTz = getDisplayTimezone(
+        userPreferences.timeDisplayMode || 'machine',
+        userPreferences.timezone,
+        undefined,
+        siteTimezone,
+      );
+      const since = clearFrom
+        ? zonedTimeToUtcMs(clearFrom.getFullYear(), clearFrom.getMonth(), clearFrom.getDate(), 0, 0, 0, 0, clearTz)
+        : undefined;
+      const until = clearTo
+        ? zonedTimeToUtcMs(clearTo.getFullYear(), clearTo.getMonth(), clearTo.getDate(), 23, 59, 59, 999, clearTz)
+        : undefined;
       const hasFilters =
         filterAction !== 'all' ||
         filterMachine !== 'all' ||
-        filterLevel !== 'all';
+        filterLevel !== 'all' ||
+        since !== undefined ||
+        until !== undefined;
       const idempotencySuffix =
         typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
           ? crypto.randomUUID()
@@ -551,6 +700,8 @@ export default function LogsPage() {
           ...(filterAction !== 'all' ? { action: filterAction } : {}),
           ...(filterMachine !== 'all' ? { machineId: filterMachine } : {}),
           ...(filterLevel !== 'all' ? { level: filterLevel } : {}),
+          ...(since !== undefined ? { since } : {}),
+          ...(until !== undefined ? { until } : {}),
           ...(!hasFilters ? { all: true } : {}),
         }),
       });
@@ -571,8 +722,13 @@ export default function LogsPage() {
     }
   };
 
-  // Get unique machines for filter
+  // Get unique machines for filter — drawn from the full loaded set (not the
+  // search-filtered view) so the dropdown doesn't collapse as you type.
   const uniqueMachines = Array.from(new Set(logs.map(log => log.machineId)));
+
+  // Header stats reflect the currently shown (search-filtered) logs.
+  const warningCount = filteredLogs.filter(l => l.level === 'warning').length;
+  const errorCount = filteredLogs.filter(l => l.level === 'error').length;
 
   if (loading || sitesLoading) {
     return (
@@ -635,12 +791,12 @@ export default function LogsPage() {
 
             <div className="flex items-center gap-6 md:gap-8">
               <div className="flex items-center gap-2.5">
-                <div className={`rounded-md p-1.5 ${logs.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
+                <div className={`rounded-md p-1.5 ${filteredLogs.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
                   <ScrollText className="h-4 w-4" />
                 </div>
                 <div>
                   <div className="flex items-baseline gap-0.5">
-                    <span className="text-xl font-bold text-foreground">{logs.length}</span>
+                    <span className="text-xl font-bold text-foreground">{filteredLogs.length}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-tight">events</p>
                 </div>
@@ -649,12 +805,12 @@ export default function LogsPage() {
               <div className="h-8 w-px bg-border" />
 
               <div className="flex items-center gap-2.5">
-                <div className={`rounded-md p-1.5 ${logs.filter(l => l.level === 'warning').length > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-muted text-muted-foreground'}`}>
+                <div className={`rounded-md p-1.5 ${warningCount > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-muted text-muted-foreground'}`}>
                   <AlertTriangle className="h-4 w-4" />
                 </div>
                 <div>
                   <div className="flex items-baseline gap-0.5">
-                    <span className={`text-xl font-bold ${logs.filter(l => l.level === 'warning').length > 0 ? 'text-yellow-400' : 'text-foreground'}`}>{logs.filter(l => l.level === 'warning').length}</span>
+                    <span className={`text-xl font-bold ${warningCount > 0 ? 'text-yellow-400' : 'text-foreground'}`}>{warningCount}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-tight">warnings</p>
                 </div>
@@ -663,12 +819,12 @@ export default function LogsPage() {
               <div className="h-8 w-px bg-border" />
 
               <div className="flex items-center gap-2.5">
-                <div className={`rounded-md p-1.5 ${logs.filter(l => l.level === 'error').length > 0 ? 'bg-red-500/10 text-red-400' : 'bg-muted text-muted-foreground'}`}>
+                <div className={`rounded-md p-1.5 ${errorCount > 0 ? 'bg-red-500/10 text-red-400' : 'bg-muted text-muted-foreground'}`}>
                   <AlertCircle className="h-4 w-4" />
                 </div>
                 <div>
                   <div className="flex items-baseline gap-0.5">
-                    <span className={`text-xl font-bold ${logs.filter(l => l.level === 'error').length > 0 ? 'text-red-400' : 'text-foreground'}`}>{logs.filter(l => l.level === 'error').length}</span>
+                    <span className={`text-xl font-bold ${errorCount > 0 ? 'text-red-400' : 'text-foreground'}`}>{errorCount}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-tight">errors</p>
                 </div>
@@ -677,7 +833,7 @@ export default function LogsPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            {logs.length > 0 && (
+            {filteredLogs.length > 0 && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -685,7 +841,7 @@ export default function LogsPage() {
                     onClick={toggleAllExpanded}
                     aria-label={allExpanded ? 'collapse all logs' : 'expand all logs'}
                     data-testid="logs-expand-all"
-                    className="hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    className="transition-colors cursor-pointer"
                     size="icon"
                   >
                     {allExpanded ? <ChevronsDownUp className="w-4 h-4" /> : <ChevronsUpDown className="w-4 h-4" />}
@@ -696,10 +852,66 @@ export default function LogsPage() {
                 </TooltipContent>
               </Tooltip>
             )}
+            {/* Expanding search — collapsed it's a button styled like "show filters";
+                clicking morphs it into the field, click-outside (when empty) collapses it back. */}
+            <div
+              ref={searchWrapperRef}
+              style={!searchActive && searchCollapsedW ? { width: searchCollapsedW } : undefined}
+              className={`relative inline-flex h-9 items-center transition-[width] duration-200 ease-out ${searchActive ? 'w-56 md:w-72' : ''}`}
+            >
+              <Button
+                ref={searchBtnRef}
+                variant="outline"
+                onClick={() => setSearchActive(true)}
+                aria-label="search logs"
+                aria-hidden={searchActive}
+                tabIndex={searchActive ? -1 : 0}
+                className={`gap-2 transition-all duration-200 cursor-pointer ${searchActive ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+              >
+                <Search className="w-4 h-4" />
+                search
+              </Button>
+              <div
+                aria-hidden={!searchActive}
+                className={`absolute inset-0 transition-opacity duration-150 ${searchActive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+              >
+                <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  ref={searchInputRef}
+                  type="text"
+                  placeholder="search logs..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setSearchQuery('');
+                      setSearchActive(false);
+                    }
+                  }}
+                  tabIndex={searchActive ? 0 : -1}
+                  data-testid="logs-search"
+                  className="h-9 w-full pl-9 pr-9 bg-muted border-border"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery('');
+                      searchInputRef.current?.focus();
+                    }}
+                    aria-label="clear search"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
             <Button
               variant="outline"
               onClick={() => setShowFilters(!showFilters)}
-              className="gap-2 hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+              aria-expanded={showFilters}
+              className="gap-2 transition-colors cursor-pointer"
             >
               <Filter className="w-4 h-4" />
               {showFilters ? 'hide filters' : 'show filters'}
@@ -708,7 +920,7 @@ export default function LogsPage() {
               onClick={() => setShowClearDialog(true)}
               disabled={isClearing || logs.length === 0}
               variant="outline"
-              className="gap-2 border-red-400/60 text-red-400 hover:bg-red-950/50 hover:text-red-300 transition-colors cursor-pointer"
+              className="gap-2 border-red-400/60 text-red-400 hover:bg-red-950/50 hover:text-red-300 dark:hover:bg-red-950/50 dark:hover:text-red-300 transition-colors cursor-pointer"
             >
               <Trash2 className="w-4 h-4" />
               {isClearing ? 'clearing...' : 'clear logs'}
@@ -716,8 +928,10 @@ export default function LogsPage() {
           </div>
         </div>
 
-        {/* Filters */}
-        {showFilters && (
+        {/* Filters — animated expand/collapse via Radix Collapsible, reusing the
+            shared collapsible-down/up keyframes in globals.css */}
+        <Collapsible open={showFilters} onOpenChange={setShowFilters}>
+          <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
           <Card className="p-4 bg-card border-border mb-6">
             <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div>
@@ -801,41 +1015,62 @@ export default function LogsPage() {
             {filterDatePreset === 'custom' && (
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-4 pt-4 border-t border-border/50">
                 <div>
-                  <Label className="text-foreground text-sm mb-2">from</Label>
-                  <Input
-                    type="date"
-                    value={filterDateFrom}
-                    onChange={(e) => setFilterDateFrom(e.target.value)}
-                    className="bg-muted border-border"
+                  <Label className="text-foreground text-sm mb-2 block">from</Label>
+                  <DatePicker
+                    value={fromYMD(filterDateFrom)}
+                    onChange={(d) => setFilterDateFrom(d ? toYMD(d) : '')}
+                    placeholder="start date"
                   />
                 </div>
                 <div>
-                  <Label className="text-foreground text-sm mb-2">to</Label>
-                  <Input
-                    type="date"
-                    value={filterDateTo}
-                    onChange={(e) => setFilterDateTo(e.target.value)}
-                    className="bg-muted border-border"
+                  <Label className="text-foreground text-sm mb-2 block">to</Label>
+                  <DatePicker
+                    value={fromYMD(filterDateTo)}
+                    onChange={(d) => setFilterDateTo(d ? toYMD(d) : '')}
+                    placeholder="end date"
                   />
                 </div>
               </div>
             )}
           </Card>
+          </CollapsibleContent>
+        </Collapsible>
+
+        {/* Search scope notice — only when the matching scope exceeds the cap */}
+        {isSearching && searchPoolTruncated && (
+          <p className="mb-2 text-xs text-muted-foreground">
+            searching the most recent {SEARCH_POOL_CAP.toLocaleString()} logs in scope — add a date or machine filter to reach older entries.
+          </p>
         )}
 
         {/* Logs List */}
-        <Card className="bg-card border-border">
+        <Card className="bg-card-sunken border-border/60 overflow-hidden py-0 gap-0">
+          {!logsLoading && filteredLogs.length > 0 && (
+            <div className={`${LOG_GRID} px-4 py-3 border-b border-border bg-card-header rounded-t-xl text-[11px] font-medium tracking-wide text-muted-foreground`}>
+              <span aria-hidden />
+              <span>level</span>
+              <span>time</span>
+              <span>event</span>
+              <span>machine</span>
+              <span>process</span>
+              <span>details</span>
+            </div>
+          )}
           <div className="divide-y divide-border">
             {logsLoading ? (
               <div className="p-8 text-center text-muted-foreground">
                 loading logs...
               </div>
-            ) : logs.length === 0 ? (
+            ) : filteredLogs.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground">
-                no logs found for this site
+                {isSearching
+                  ? (searchPoolLoading && !searchPool
+                      ? 'searching…'
+                      : `no events match "${searchQuery.trim()}"`)
+                  : 'no logs found for this site'}
               </div>
             ) : (
-              logs.map((log) => (
+              filteredLogs.map((log) => (
                 <LogRow
                   key={log.id}
                   log={log}
@@ -852,8 +1087,8 @@ export default function LogsPage() {
           </div>
         </Card>
 
-        {/* Infinite scroll sentinel */}
-        <div ref={sentinelRef} className="h-1" />
+        {/* Infinite scroll sentinel — disabled while searching (see observer effect) */}
+        {!searchTerm && <div ref={sentinelRef} className="h-1" />}
         {isFetchingMore && (
           <div className="py-4 text-center text-sm text-muted-foreground">
             loading more...
@@ -887,18 +1122,54 @@ export default function LogsPage() {
       {/* Clear Logs Confirmation Dialog */}
       <ConfirmDialog
         open={showClearDialog}
-        onOpenChange={setShowClearDialog}
+        onOpenChange={(o) => {
+          setShowClearDialog(o);
+          if (!o) {
+            setClearFrom(undefined);
+            setClearTo(undefined);
+          }
+        }}
         title="clear event logs"
-        description={
-          filterAction !== 'all' || filterMachine !== 'all' || filterLevel !== 'all'
-            ? `this will permanently delete all logs matching the current filters.\n\nfilters active:\n${filterAction !== 'all' ? `• action: ${ACTION_TYPES.find(t => t.value === filterAction)?.label}\n` : ''}${filterMachine !== 'all' ? `• machine: ${filterMachine}\n` : ''}${filterLevel !== 'all' ? `• level: ${filterLevel}\n` : ''}\nthis action cannot be undone.`
-            : `this will permanently delete ALL event logs for this site (across all machines).\n\nthis action cannot be undone.`
-        }
+        description={(() => {
+          const scope: string[] = [];
+          if (filterAction !== 'all') scope.push(`• action: ${ACTION_TYPES.find(t => t.value === filterAction)?.label}`);
+          if (filterMachine !== 'all') scope.push(`• machine: ${filterMachine}`);
+          if (filterLevel !== 'all') scope.push(`• level: ${filterLevel}`);
+          if (clearFrom) scope.push(`• from: ${clearFrom.toLocaleDateString()}`);
+          if (clearTo) scope.push(`• to: ${clearTo.toLocaleDateString()}`);
+          const searchNote = searchTerm
+            ? `\n\nnote: the search box does NOT limit deletion — only the scope below applies.`
+            : '';
+          return scope.length > 0
+            ? `this will permanently delete logs matching this scope:\n${scope.join('\n')}${searchNote}\n\nthis action cannot be undone.`
+            : `with no date range or view filters set, this will permanently delete ALL event logs for this site (across all machines).${searchNote}\n\nthis action cannot be undone.`;
+        })()}
         confirmText="clear logs"
         cancelText="cancel"
         onConfirm={handleClearLogs}
         variant="destructive"
-      />
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label className="text-foreground text-sm mb-1.5 block">from (optional)</Label>
+            <DatePicker
+              value={clearFrom}
+              onChange={setClearFrom}
+              placeholder="any start"
+              disabled={(d) => (clearTo ? d > clearTo : false)}
+            />
+          </div>
+          <div>
+            <Label className="text-foreground text-sm mb-1.5 block">to (optional)</Label>
+            <DatePicker
+              value={clearTo}
+              onChange={setClearTo}
+              placeholder="any end"
+              disabled={(d) => (clearFrom ? d < clearFrom : false)}
+            />
+          </div>
+        </div>
+      </ConfirmDialog>
     </div>
   );
 }

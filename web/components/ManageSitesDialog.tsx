@@ -43,9 +43,9 @@ export function ManageSitesDialog({
   onDeleteSite,
   onCreateSite,
 }: ManageSitesDialogProps) {
-  // When admin, fetch all users so we can display the owner of foreign sites.
-  // Lazily resolve owner UIDs → emails for sites not owned by the current admin.
-  const { users: allUsers } = useUserManagement();
+  // When superadmin, fetch all users so we can display the owner of foreign sites.
+  // Lazily resolve owner UIDs to emails for sites not owned by the current admin.
+  const { users: allUsers } = useUserManagement(Boolean(isSuperadmin));
   const ownerEmailByUid = React.useMemo(() => {
     if (!isSuperadmin) return new Map<string, string>();
     const map = new Map<string, string>();

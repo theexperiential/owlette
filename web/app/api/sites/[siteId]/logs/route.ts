@@ -46,6 +46,8 @@ interface DeleteBody {
   action?: unknown;
   machineId?: unknown;
   level?: unknown;
+  since?: unknown;
+  until?: unknown;
   all?: unknown;
 }
 
@@ -103,6 +105,28 @@ function parseTimestampQuery(
     });
   }
   return parsed;
+}
+
+/** Parse a `since`/`until` value from a JSON body — unix-ms number or ISO 8601 string. */
+function parseTimestampBody(
+  body: DeleteBody,
+  field: 'since' | 'until',
+): number | undefined | NextResponse {
+  const raw = body[field];
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) return raw;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed !== '') {
+      const asNumber = Number(trimmed);
+      if (Number.isFinite(asNumber) && asNumber >= 0) return asNumber;
+      const parsed = Date.parse(trimmed);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+  }
+  return problemValidation(`${field} must be unix-ms or iso8601`, {
+    [`body.${field}`]: ['invalid date'],
+  });
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -248,7 +272,21 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
     if (machineId instanceof NextResponse) return machineId;
     const level = normalizeOptionalString(body, 'level');
     if (level instanceof NextResponse) return level;
-    const hasFilter = action !== undefined || machineId !== undefined || level !== undefined;
+    const sinceMs = parseTimestampBody(body, 'since');
+    if (sinceMs instanceof NextResponse) return sinceMs;
+    const untilMs = parseTimestampBody(body, 'until');
+    if (untilMs instanceof NextResponse) return untilMs;
+    if (sinceMs !== undefined && untilMs !== undefined && sinceMs > untilMs) {
+      return problemValidation('since must be <= until', {
+        'body.since': ['must be <= body.until'],
+      });
+    }
+    const hasFilter =
+      action !== undefined ||
+      machineId !== undefined ||
+      level !== undefined ||
+      sinceMs !== undefined ||
+      untilMs !== undefined;
     if (body.all !== undefined && body.all !== true) {
       return problemValidation('field `all` must be true when provided', {
         'body.all': ['must be true'],
@@ -261,7 +299,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
     }
     if (hasFilter && body.all === true) {
       return problemValidation('body.all must be omitted when filters are provided', {
-        'body.all': ['omit when action, machineId, or level is provided'],
+        'body.all': ['omit when any filter (action, machineId, level, since, until) is provided'],
       });
     }
 
@@ -280,6 +318,8 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
               action,
               machineId,
               level,
+              sinceMs,
+              untilMs,
             },
           );
           return applyAuthDeprecations(

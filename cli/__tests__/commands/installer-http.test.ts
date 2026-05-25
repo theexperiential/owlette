@@ -145,6 +145,14 @@ describe('owlette installer list', () => {
     expect(out).toContain('hint:');
     expect(process.exitCode).toBe(1);
   });
+
+  it('rejects a non-numeric --limit with exit 2 before firing fetch', async () => {
+    const calls = installFetchStub({});
+    const program = buildProgram();
+    await program.parseAsync(['installer', 'list', '--limit', 'banana'], { from: 'user' });
+    expect(calls).toHaveLength(0);
+    expect(process.exitCode).toBe(2);
+  });
 });
 
 /* --------------------------------------------------------------------- */
@@ -335,7 +343,7 @@ describe('owlette installer set-latest', () => {
       const program = buildProgram();
       await program.parseAsync(['installer', 'set-latest', '2.11.0'], { from: 'user' });
       expect(calls).toHaveLength(0);
-      expect(process.exitCode).toBe(1);
+      expect(process.exitCode).toBe(2);
     } finally {
       if (isTTY) Object.defineProperty(process.stdin, 'isTTY', isTTY);
     }
@@ -401,5 +409,19 @@ describe('owlette installer delete', () => {
     const out = stdout.join('');
     expect(out).toContain('already deleted');
     expect(process.exitCode).toBe(0);
+  });
+
+  it('refuses to run silently without --yes when stdin is not a tty using exit 2', async () => {
+    const calls = installFetchStub({}, 200);
+    const isTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdin, 'isTTY', { configurable: true, value: false });
+    try {
+      const program = buildProgram();
+      await program.parseAsync(['installer', 'delete', '2.10.0'], { from: 'user' });
+      expect(calls).toHaveLength(0);
+      expect(process.exitCode).toBe(2);
+    } finally {
+      if (isTTY) Object.defineProperty(process.stdin, 'isTTY', isTTY);
+    }
   });
 });

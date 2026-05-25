@@ -4,6 +4,35 @@ Owlette is a cloud-connected Windows process management and remote deployment sy
 
 **Version**: 2.12.3 | **License**: FSL-1.1-Apache-2.0
 
+---
+
+## Critical Guardrails (non-negotiable — read first)
+
+**Files you must not touch:**
+- `firestore.rules` — don't modify without explicit request
+- `.tokens.enc` / credential files — never read, log, or commit
+- `owlette_installer.iss` — only modify if you understand the full build pipeline (see `.claude/skills/build-system.md`)
+
+**Agent landmines:**
+- **Never import `firebase_admin`** — we use a custom REST client
+- **Never log OAuth tokens** — not even in debug, not even partially
+- **Never modify the `firebase` section** of `config.json` during remote config updates — breaks agent registration
+- **Never use blocking operations** in the 10-second main service loop — stalls all monitoring
+- **Never spawn reconnection logic** outside `ConnectionManager` — it has circuit breaker and backoff
+
+**Web landmines:**
+- **Never call Firestore directly from components** — use hooks in `web/hooks/`
+- **Never hardcode colors** — use CSS variables / Tailwind theme tokens
+- **Never add icon libraries** beyond `lucide-react`
+
+**Workflow:**
+- **Don't push to `main` directly** — all work through `dev`, then PR
+- **Don't create new `docs/*.md` files** without being asked
+- **Don't install new npm/pip packages** without confirming first
+- **Don't modify `.claude/hooks/` or `.claude/settings.json`** without explicit request
+
+---
+
 ## In-Flight Major Initiative: roost (project distribution v2)
 
 A multi-quarter rewrite of project distribution into a content-addressed sync platform (Cloudflare R2, immutable manifests, atomic deploy, rollback). Branded as "roost" (always lowercase). Plan + tasks live at `dev/active/project-distribution-v2/`. Memory: `project_roost.md`.
@@ -67,6 +96,10 @@ Version files: `/VERSION`, `agent/VERSION`, `web/package.json`, `firestore.rules
 
 **Lint as you go — don't let errors accumulate.** After editing any web file, run `npx eslint <file>` on that file (or `npm run lint` for a broader change) and fix every error and warning you introduced before moving on. Never commit new lint errors, and never rationalise them as "pre-existing" if your edit touched the same file. The repo has historical lint debt — your job is to not add to it, and to clean up any issues in lines you modified. Same principle for TypeScript: if `tsc` / IDE diagnostics flag your change, fix it before the next edit, not at commit time.
 
+**E2E verification (two layers).** The `playwright e2e` GitHub Action ([.github/workflows/e2e.yml](../.github/workflows/e2e.yml)) gates pushes to `dev`/`main` that touch `web/**`, `firestore.rules`, or `firebase.json`.
+- **Proactive (preferred):** before pushing such changes, run `/preflight` — it runs lint, typecheck, unit tests, and the local e2e suite (the exact mirror of CI, ~45s steady-state). Fix reds locally; don't ship them to a branch that auto-deploys.
+- **Reactive (safety net):** after a `git push` to `dev`/`main` in e2e scope, the `post-push-e2e.mjs` hook reminds you to watch the triggered run with `gh run watch <id> --exit-status` (run it in the background). On failure: `gh run view <id> --log-failed`, diagnose, and **propose** a fix — never auto-fix-and-repush (`dev` auto-deploys, `main` is protected).
+
 ---
 
 ## Agent Authentication (Device Code Pairing)
@@ -99,98 +132,23 @@ Agents authenticate via a device code flow — no browser login on the target ma
 
 **Failover load balancer**: `owlette.app` is fronted by a Cloudflare LB (Railway primary, Vercel standby) defined as Terraform in `infra/cloudflare/`. Health probe is `/api/health`. Apply workflow, token scope, and the origin-hostname gotchas: `.claude/skills/cf-load-balancing.md`.
 
-**IMPORTANT: Always version up AND update the changelog BEFORE building the installer.** Bump with `node scripts/sync-versions.js X.Y.Z` and commit BEFORE running `build_installer_full.bat` — the installer bakes the version into the exe filename and binary.
+**IMPORTANT — installer release order (do not reorder):** bump the version (`node scripts/sync-versions.js X.Y.Z`) **and** add the `## [X.Y.Z] - YYYY-MM-DD` entry to `docs/changelog.md`, then commit — *before* building. `build_installer_full.bat` bakes the version into the exe filename and binary, and an installer must never ship without a matching changelog entry.
 
-**IMPORTANT: `docs/changelog.md` MUST be updated before every installer build.** Add a new `## [X.Y.Z] - YYYY-MM-DD` section summarising all changes since the last release. Never build or upload an installer without a matching changelog entry.
-
-**Agent Installer Release** (build + upload to Firebase):
-```bash
-# 1. Update changelog, bump version, commit, push
-# Edit docs/changelog.md → add [X.Y.Z] section
-node scripts/sync-versions.js X.Y.Z
-git add -A && git commit -m "chore: bump version to X.Y.Z" && git push origin dev
-
-# 2. Build installer (~5 min, non-interactive)
-# build_installer_full.bat ends with `pause` and has `pause` on every error
-# branch, so it MUST be run with stdin redirected from NUL or it will hang
-# the harness forever. Invoke by FULL PATH (cmd /c won't reliably cd via
-# PowerShell quote-stripping) and capture the log explicitly. Run in the
-# background — exit code 0 means the .exe is built; check the log on failure.
-#
-#   powershell (foreground/background):
-#     cmd /c "C:\Users\admin\Documents\Git\Owlette\agent\build_installer_full.bat < NUL > C:\Users\admin\AppData\Local\Temp\installer-build.log 2>&1"
-#
-#   bash:
-#     cd c:/Users/admin/Documents/Git/Owlette/agent && cmd //c "build_installer_full.bat" < /dev/null > /tmp/installer-build.log 2>&1
-#     # (if //c gets mangled by Git Bash, fall back to the powershell cmd /c form above)
-#
-# DO NOT use `cd agent && powershell -Command "& './build_installer_full.bat'"` —
-# the trailing pause will hang non-interactive shells indefinitely.
-# Output: agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
-
-# 3. Compute checksum
-sha256sum agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
-
-# 4. Upload via API (3-step: request URL → upload binary → finalize)
-# Endpoint is `/api/installer/upload` (api-sprint route — old `/api/admin/installer/upload` was removed).
-# Auth: api key with `installer=*:write` scope (superadmin-only at minting). `x-api-key` or `Authorization: Bearer owk_…` both work.
-# Idempotency-Key REQUIRED on both POST and PUT — the route is wrapped in `withIdempotency(..., { requireKey: true })`.
-API_KEY=$(grep OWLETTE_API_KEY .claude/.env.local | cut -d= -f2)
-BASE_URL="https://dev.owlette.app"  # or https://owlette.app for prod
-
-# Step 1: Get signed upload URL
-curl -s -X POST "$BASE_URL/api/installer/upload" \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: $API_KEY" \
-  -H "Idempotency-Key: installer-upload-X.Y.Z-$(date +%s)" \
-  -d '{"version":"X.Y.Z","fileName":"Owlette-Installer-vX.Y.Z.exe","releaseNotes":"...","setAsLatest":true}'
-# → returns uploadUrl, uploadId, storagePath, expiresAt (15-min window)
-
-# Step 2: Upload binary to the signed GCS URL (no Idempotency-Key here — it's a direct GCS PUT)
-curl -X PUT "$UPLOAD_URL" -H "Content-Type: application/octet-stream" \
-  --data-binary @agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
-
-# Step 3: Finalize (verifies file in storage, computes/checks checksum, writes installer_metadata, sets as latest)
-curl -s -X PUT "$BASE_URL/api/installer/upload" \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: $API_KEY" \
-  -H "Idempotency-Key: installer-finalize-X.Y.Z-$(date +%s)" \
-  -d '{"uploadId":"<from step 1>","checksum_sha256":"<sha256 from earlier>"}'
-# checksum_sha256 is optional — server computes it if omitted, but providing it gets a 412 `checksum_mismatch` on corruption.
-```
+**Full release recipe** — the non-interactive build invocation (the `pause`-hang gotcha) plus the 3-step signed-URL upload → finalize API flow — lives in `.claude/skills/build-system.md` → "Agent Installer Release". That skill auto-activates on installer/release/version work.
 
 ---
 
-## Don'ts / Guardrails
-
-### Files You Must Not Touch
-- `web/components/ui/*` — auto-generated by shadcn/ui
-- `firestore.rules` — don't modify without explicit request
-- `.tokens.enc` / credential files — never read, log, or commit
-- `owlette_installer.iss` — only modify if you understand the full build pipeline
-
-### Agent Landmines
-- **Never import `firebase_admin`** — we use a custom REST client
-- **Never log OAuth tokens** — not even in debug, not even partially
-- **Never modify the `firebase` section** of `config.json` during remote config updates — breaks agent registration
-- **Never use blocking operations** in the 10-second main service loop — stalls all monitoring
-- **Never spawn reconnection logic** outside `ConnectionManager` — it has circuit breaker and backoff
+## Conventions & Review Discipline
 
 ### UI Copy Style
 - **All user-facing copy is lowercase** — page titles, buttons, dialog headings, labels, descriptions, tooltips, placeholder text, empty-state copy, toasts. Match the voice of the rest of the UI.
 - Exceptions (keep normal casing): proper nouns/product names in external contexts, acronyms (`LLM`, `API`, `URL`, `GPU`, `OAuth`), code identifiers, machine IDs / site IDs / user-entered strings, and legal/compliance text where casing is load-bearing.
 - When adding new copy, default to lowercase. When editing existing strings, match the surrounding casing — don't mix sentence case into a lowercase screen or vice versa.
 
-### Web Landmines
-- **Never call Firestore directly from components** — use hooks in `web/hooks/`
-- **Never hardcode colors** — use CSS variables / Tailwind theme tokens
-- **Never add icon libraries** beyond `lucide-react`
-
-### General
-- **Don't push to `main` directly** — all work through `dev`, then PR
-- **Don't create new `docs/*.md` files** without being asked
-- **Don't install new npm/pip packages** without confirming first
-- **Don't modify `.claude/hooks/` or `.claude/settings.json`** without explicit request
+### Design System (shadcn/ui)
+- `web/components/ui/*` are shadcn primitives **copied into the repo — we own them.** Editing them for theming, variants, hover/focus states, and standardization is the *intended* shadcn workflow (they're scaffolding you customize, not auto-generated black boxes — they've been hand-tuned before).
+- Caveats when editing: changes are **app-wide**, so verify broadly; re-running `npx shadcn add <component>` **overwrites** that file, so port upstream fixes by hand; prefer CSS-variable tokens (`web/app/globals.css`) over hardcoded values.
+- **`button.tsx` variants are the single source of truth for button styling.** Standardize there — don't sprinkle per-instance `hover:*`/`bg-*` overrides on individual `<Button>`s (that's how the styling diverged).
 
 ### Review Discipline (code review, security review, audits)
 Reviews are judged on calibration, not volume. Three accurate findings are more valuable than twenty marginal ones, and inflated severities devalue every subsequent review on this codebase. Apply the following standard on every pass.
@@ -257,4 +215,4 @@ Be real, not flattering. If something was mid, say so. If it was genuinely great
 
 ---
 
-**Last Updated**: 2026-05-19
+**Last Updated**: 2026-05-24

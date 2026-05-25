@@ -17,6 +17,7 @@
 
 import { Command } from 'commander';
 import { loadConfig } from '../config';
+import { fetchWithTimeout } from '../lib/http';
 import { errLine, isJson, printJson, printLine } from '../lib/output';
 
 interface ApiKeyScopeLite {
@@ -73,7 +74,7 @@ export async function runWhoami(cmd: Command): Promise<void> {
 
   let res: Response;
   try {
-    res = await fetch(`${apiUrl}/api/whoami`, {
+    res = await fetchWithTimeout(`${apiUrl}/api/whoami`, {
       headers: { Authorization: `Bearer ${token}` },
     });
   } catch (err) {

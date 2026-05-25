@@ -17,9 +17,9 @@
 
 'use client';
 
-import React, { memo, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { useMinuteTick } from '@/hooks/useMinuteTick';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -47,8 +47,8 @@ import { getUsageColorClass } from '@/lib/usageColorUtils';
 import { formatHeartbeatTime, formatMachineLocalClock, formatTimezoneShortName, getDisplayTimezone } from '@/lib/timeUtils';
 import { formatThroughput } from '@/lib/networkUtils';
 import { DISK_IO_COLORS, formatDiskIO } from '@/lib/diskIOUtils';
-import { resolveDevice, unionIds } from '@/lib/deviceResolvers';
-import { useDevicePrefs, type DeviceKind, type DeviceSelection } from '@/hooks/useDevicePrefs';
+import { resolveDevice } from '@/lib/deviceResolvers';
+import { type DeviceKind, type DeviceSelection } from '@/hooks/useDevicePrefs';
 import { useAllSparklineData } from '@/hooks/useSparklineData';
 import type { Machine, Process, LaunchMode, ScheduleBlock } from '@/hooks/useFirestore';
 import type { MetricType } from '@/components/charts';
@@ -131,8 +131,8 @@ function DeviceColumnHeader({
  */
 export const MemoizedTableHeader = memo(function MemoizedTableHeader() {
   return (
-    <TableHeader className="sticky top-0 z-10 bg-background">
-      <TableRow className="border-border hover:bg-transparent">
+    <TableHeader className="sticky top-0 z-10 bg-card-header">
+      <TableRow className="border-border/60 hover:bg-transparent">
         <TableHead className="text-foreground w-8"></TableHead>
         <TableHead className="text-foreground w-[140px]">hostname</TableHead>
         <TableHead className="text-foreground w-[72px]">status</TableHead>
@@ -166,8 +166,8 @@ export const MachineTableHeader = memo(function MachineTableHeader({
   setListPref,
 }: MachineTableHeaderProps) {
   return (
-    <TableHeader className="sticky top-0 z-10 bg-background">
-      <TableRow className="border-border hover:bg-transparent">
+    <TableHeader className="sticky top-0 z-10 bg-card-header">
+      <TableRow className="border-border/60 hover:bg-transparent">
         <TableHead className="text-foreground w-8"></TableHead>
         <TableHead className="text-foreground w-[140px]">hostname</TableHead>
         <TableHead className="text-foreground w-[72px]">status</TableHead>
@@ -218,23 +218,6 @@ export const MachineTableHeader = memo(function MachineTableHeader({
     </TableHeader>
   );
 });
-
-interface MachineListViewProps {
-  machines: Machine[];
-  processesExpanded: boolean;
-  currentSiteId: string;
-  siteTimezone?: string;
-  siteTimeFormat?: '12h' | '24h';
-  onToggleProcesses: () => void;
-  onEditProcess: (machineId: string, process: Process) => void;
-  onCreateProcess: (machineId: string) => void;
-  onKillProcess: (machineId: string, processId: string, processName: string) => void;
-  onRestartProcess: (machineId: string, processId: string, processName: string) => void;
-  onSetLaunchMode: (machineId: string, processId: string, processName: string, mode: LaunchMode, exePath: string, schedules?: ScheduleBlock[] | null) => void;
-  onConfigureSchedule?: (machineId: string, process: Process) => void;
-  onRemoveMachine: (machineId: string, machineName: string, isOnline: boolean) => void;
-  onMetricClick?: (machineId: string, metricType: MetricType) => void;
-}
 
 /**
  * Individual machine row component with sparkline support
@@ -390,7 +373,7 @@ export function MachineRow({
     <>
       <TableRow
         data-testid="machine-row"
-        className="border-border hover:bg-secondary/30 cursor-pointer"
+        className="border-border/50 bg-card-sunken hover:bg-secondary/30 cursor-pointer"
         onClick={handleRowClick}
       >
         <TableCell className="w-8 p-2">
@@ -551,7 +534,7 @@ export function MachineRow({
                     const io = machine.metrics?.diskio?.[diskDevice.id];
                     if (!io || (io.readBps === 0 && io.writeBps === 0)) return null;
                     return (
-                      <div className="flex-shrink-0 flex gap-1 text-xs font-medium">
+                      <div className="ml-auto flex-shrink-0 flex gap-1 text-xs font-medium">
                         <div className="flex flex-col text-right">
                           <span style={{ color: DISK_IO_COLORS.read }}>r</span>
                           <span style={{ color: DISK_IO_COLORS.write }}>w</span>
@@ -688,7 +671,7 @@ export function MachineRow({
           the close animation can play; the grid-template-rows transition on
           the inner wrapper animates the height in/out. */}
       {heldExpanded && (
-        <TableRow key={`${machine.machineId}-processes`} className="border-border">
+        <TableRow key={`${machine.machineId}-processes`} className="border-border/50">
           <TableCell colSpan={10} className="p-0 overflow-hidden">
             <div
               className={`grid transition-[grid-template-rows] duration-200 ease-out ${
@@ -696,31 +679,19 @@ export function MachineRow({
               }`}
             >
             <div className="overflow-hidden min-h-0">
-            <div className="pr-4 relative" style={{ paddingLeft: '12px', paddingTop: '8px', paddingBottom: '8px' }}>
+            {/* Sunken tray (bg-card-sunken) + raised bg-card enclosure — the
+                same surface scheme the card view uses for its sections, so the
+                processes panel clearly reads as offset from the bg-card machine
+                row above. */}
+            <div className="px-4 py-3 bg-card-sunken">
               {machine.processes && machine.processes.length > 0 ? (
                 <>
-                  <div className="space-y-2">
-                    {machine.processes.map((process, index) => (
-                      <div key={process.id} className="relative flex items-stretch">
-                        {/* Vertical line: from container top for first row, from row top for others */}
-                        <div
-                          className="absolute w-px bg-border/50"
-                          style={{
-                            left: '4px',
-                            top: index === 0 ? '-8px' : 0,
-                            height: index === 0 ? 'calc(50% + 8px)' : '50%'
-                          }}
-                        />
-                        {/* Extension for non-last rows bridging the gap */}
-                        {index < machine.processes!.length - 1 && (
-                          <div className="absolute w-px bg-border/50" style={{ left: '4px', top: '50%', bottom: '-8px' }} />
-                        )}
-                        {/* Horizontal branch */}
-                        <div className="relative w-5 flex-shrink-0">
-                          <div className="absolute h-px bg-border/50" style={{ left: '4px', top: '50%', width: '12px' }} />
-                          </div>
-                          {/* Process card */}
-                          <div className="flex-1 min-w-0 flex items-center justify-between p-3 rounded border border-border/50">
+                  {/* Section enclosure: one raised bg-card surface holding the
+                      process rows, separated by hairline dividers — mirrors the
+                      card view instead of the old floating bordered cards. */}
+                  <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
+                    {machine.processes.map((process) => (
+                      <div key={process.id} className="flex items-center justify-between p-3">
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
                               <Cog className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
@@ -939,7 +910,6 @@ export function MachineRow({
                             );
                           })()}
                         </div>
-                      </div>
                     ))}
                   </div>
                   {/* add process Button */}
@@ -976,88 +946,5 @@ export function MachineRow({
         </TableRow>
       )}
     </>
-  );
-}
-
-export function MachineListView({
-  machines,
-  processesExpanded,
-  currentSiteId,
-  siteTimezone = 'UTC',
-  siteTimeFormat = '12h',
-  onToggleProcesses,
-  onEditProcess,
-  onCreateProcess,
-  onKillProcess,
-  onRestartProcess,
-  onSetLaunchMode,
-  onConfigureSchedule,
-  onRemoveMachine,
-  onMetricClick,
-}: MachineListViewProps) {
-  const { userPreferences } = useAuth();
-  const { prefs, setListPref } = useDevicePrefs();
-  const listPref = prefs.listView;
-  const uniqueTimezones = new Set(machines.map(m => m.machineTimezone).filter(Boolean));
-  const showLocalClock = uniqueTimezones.size > 1;
-
-  // Union of device ids across visible machines — drives the column-header
-  // dropdown menus. Memoized so the memoized table header doesn't re-render
-  // on every metrics tick (only when the device set actually changes).
-  const deviceUnion = useMemo<DeviceUnion>(() => ({
-    cpus:  unionIds(machines.map(m => m.devices?.cpus?.map(c => c.id) ?? [])),
-    disks: unionIds(machines.map(m => m.devices?.disks?.map(d => d.id) ?? [])),
-    gpus:  unionIds(machines.map(m => m.devices?.gpus?.map(g => g.id) ?? [])),
-    nics:  unionIds(machines.map(m => m.devices?.nics?.map(n => n.id) ?? [])),
-  }), [machines]);
-
-  // A dropdown is worth showing only when at least one visible machine has
-  // more than one device of that kind — otherwise the selector would offer
-  // nothing meaningful beyond "auto".
-  const showDropdown = useMemo<ShowDropdownFlags>(() => ({
-    cpu:  machines.some(m => (m.devices?.cpus?.length  ?? 0) > 1),
-    disk: machines.some(m => (m.devices?.disks?.length ?? 0) > 1),
-    gpu:  machines.some(m => (m.devices?.gpus?.length  ?? 0) > 1),
-    nic:  machines.some(m => (m.devices?.nics?.length  ?? 0) > 1),
-  }), [machines]);
-
-
-  return (
-    <div className="rounded-lg border border-border bg-background overflow-hidden">
-      <Table className="table-fixed" style={{ contain: 'layout' }}>
-        <MachineTableHeader
-          deviceUnion={deviceUnion}
-          showDropdown={showDropdown}
-          listPref={listPref}
-          setListPref={setListPref}
-        />
-        <TableBody>
-          {machines.map((machine) => (
-            <MachineRow
-              key={machine.machineId}
-              machine={machine}
-              isExpanded={processesExpanded}
-              currentSiteId={currentSiteId}
-              siteTimezone={siteTimezone}
-              siteTimeFormat={siteTimeFormat}
-              userPreferences={userPreferences}
-              onToggleExpanded={onToggleProcesses}
-              onEditProcess={(process) => onEditProcess(machine.machineId, process)}
-              onCreateProcess={() => onCreateProcess(machine.machineId)}
-              onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}
-              onRestartProcess={(processId, processName) => onRestartProcess(machine.machineId, processId, processName)}
-              onSetLaunchMode={(processId, processName, mode, exePath, schedules) =>
-                onSetLaunchMode(machine.machineId, processId, processName, mode, exePath, schedules)
-              }
-              onConfigureSchedule={onConfigureSchedule ? (process) => onConfigureSchedule(machine.machineId, process) : undefined}
-              onRemoveMachine={() => onRemoveMachine(machine.machineId, machine.machineId, machine.online)}
-              onMetricClick={onMetricClick ? (metricType) => onMetricClick(machine.machineId, metricType) : undefined}
-              showLocalClock={showLocalClock}
-              listPref={listPref}
-            />
-          ))}
-        </TableBody>
-      </Table>
-    </div>
   );
 }

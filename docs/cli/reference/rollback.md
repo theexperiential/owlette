@@ -7,13 +7,14 @@ hide:
 
 roll a roost back to a previous version from the top-level `owlette rollback` helper. this command is site-scoped and route-backed.
 
-**synopsis** - `owlette rollback <roostId> --site <siteId> [--to <versionRef>] [--yes] [--json]`
+**synopsis** - `owlette rollback <roostId> --site <siteId> [--to <versionRef>] [--yes] [--idempotency-key <key>] [--json]`
 
 | flag | required | purpose |
 |---|---|---|
 | `--site <siteId>` | yes | site id that owns the roost |
 | `--to <versionRef>` | no | target version id, number, `#N`, `vN`, `current`, `previous`, or `first`; defaults to the roost's previous version |
 | `--yes` | no | skip the interactive confirmation; required when stdin is not a tty |
+| `--idempotency-key <key>` | no | pin the rollback mutation key; auto-generated when omitted |
 
 ```bash
 owlette rollback rst_my_project --site site-1
@@ -29,13 +30,15 @@ owlette --json rollback rst_my_project --site site-1 --to previous --yes
 
 The CLI always previews the diff before firing the mutation. In human mode it prompts `[y/N]`; in non-tty contexts pass `--yes` so scripts cannot roll back silently.
 
+Rollback mutations auto-generate an `Idempotency-Key`. If the POST times out or fails before the CLI receives a confirmed response, stderr prints the generated key and a retry command that includes `--to <resolvedVersionId>` and `--idempotency-key <key>`. Use that exact retry form. The `--to` value is the concrete version id resolved during the first attempt, so the replayed idempotent request body stays identical. A bare retry without the same idempotency key is unsafe because a committed-but-lost rollback can change which version `previous` resolves to.
+
 ---
 
 ## exit codes
 
 - `0` - rollback succeeded, or the operator declined the confirmation prompt
-- `1` - api call failed or the rollback target resolves to the current version
-- `2` - usage/auth problem, no rollback target, or non-tty execution without `--yes`
+- `1` - api call failed
+- `2` - usage/auth/refusal problem, no rollback target, rollback target resolves to the current version, or non-tty execution without `--yes`
 
 ---
 
