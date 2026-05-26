@@ -65,7 +65,7 @@ interface UseSlidePanelArgs<T> {
 }
 
 interface UseSlidePanelResult<T> {
-  wrapperRef: React.RefObject<HTMLDivElement | null>;
+  wrapperRef: React.RefCallback<HTMLDivElement>;
   contentRef: React.RefObject<HTMLDivElement | null>;
   held: T | null;
   slideAnimating: boolean;
@@ -95,25 +95,28 @@ export function useSlidePanel<T>({
     setHeld(next);
   }, []);
 
+  // Seed the wrapper's resting height the instant the DOM node attaches —
+  // `auto` if something is visually mounted (`held`), `0px` if collapsed.
+  // This MUST be a callback ref, not a `useLayoutEffect([])`: callers render
+  // the wrapper behind a `loading` / `mounted` gate, so it isn't in the DOM
+  // on the component's first commit. A one-shot mount effect latches against
+  // that wrapper-less first commit and never re-fires, leaving the wrapper at
+  // its default `height: auto` — its inner padding then shows as a phantom
+  // gap below the header. A callback ref fires whenever the node actually
+  // mounts, no matter how many gated renders precede it. Reads `heldRef`
+  // (always current) rather than a closed-over `value` so the stable callback
+  // can't go stale.
+  const wrapperRefCallback = useCallback((node: HTMLDivElement | null) => {
+    wrapperRef.current = node;
+    if (node) node.style.height = heldRef.current ? 'auto' : '0px';
+  }, []);
+
   const timersRef = useRef<{
     fallback: ReturnType<typeof setTimeout> | null;
     raf: number | null;
     cleanupListener: (() => void) | null;
     observer: ResizeObserver | null;
   }>({ fallback: null, raf: null, cleanupListener: null, observer: null });
-
-  // Seed wrapper height to match initial state synchronously, before
-  // first paint, so a persisted-open panel doesn't flash collapsed on
-  // mount and a closed panel doesn't render at full height before the
-  // first transition runs.
-  useLayoutEffect(() => {
-    const wrapper = wrapperRef.current;
-    if (!wrapper) return;
-    wrapper.style.height = value ? 'auto' : '0px';
-    // Initial-mount only — subsequent renders are driven by the
-    // animation effect below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useLayoutEffect(() => {
     const timers = timersRef.current;
@@ -296,5 +299,5 @@ export function useSlidePanel<T>({
     };
   }, []);
 
-  return { wrapperRef, contentRef, held, slideAnimating };
+  return { wrapperRef: wrapperRefCallback, contentRef, held, slideAnimating };
 }
