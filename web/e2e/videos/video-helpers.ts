@@ -183,3 +183,32 @@ export async function highlight(page: Page, locator: Locator, ms = 1400): Promis
     }, dur);
   }, ms);
 }
+
+/**
+ * Slowly pan the window from its current scroll position to the bottom over `seconds`,
+ * stepped manually (global animation-disable kills native smooth scroll, so a single
+ * scrollTo would jump-cut). No-op-safe: if the content already fits the viewport it just
+ * dwells for `seconds` so callers can use it in place of a narrate() gap.
+ */
+export async function slowScrollToBottom(page: Page, seconds: number, steps = 80): Promise<void> {
+  const distance = await page.evaluate(
+    () => document.documentElement.scrollHeight - window.innerHeight,
+  );
+  const totalMs = Math.round(seconds * 1000);
+  if (distance <= 8) {
+    await page.waitForTimeout(totalMs);
+    return;
+  }
+  const perStep = distance / steps;
+  const delay = Math.max(16, Math.round(totalMs / steps));
+  for (let i = 0; i < steps; i++) {
+    await page.evaluate((dy) => window.scrollBy(0, dy), perStep);
+    await page.waitForTimeout(delay);
+  }
+}
+
+/** Center an element in the viewport (for "zoom into one card" style framing). */
+export async function centerInView(page: Page, locator: Locator): Promise<void> {
+  await locator.scrollIntoViewIfNeeded();
+  await locator.evaluate((el: Element) => el.scrollIntoView({ block: 'center', behavior: 'instant' as ScrollBehavior }));
+}
