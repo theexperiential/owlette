@@ -49,6 +49,12 @@ All notable changes to owlette are documented here. The format is based on [Keep
 - CI: bumped checkout/setup-node/setup-java/cache to Node 24 action majors; py-sdk publish now runs pytest first.
 - Layperson video-tutorial series + Playwright video-capture harness.
 
+## [2.12.4] - 2026-05-27
+
+### fixed
+
+- **Agent `/ADD=` silent-install pairing (dashboard "generate code") could never connect — every Firestore call returned 403.** A dashboard-generated pairing code minted the agent token at *authorize* time with a placeholder `machine_id` claim (`pending_<phrase>`), because the target hostname is unknown when the code is generated. The installed agent uses its real hostname for every Firestore document path, and `firestore.rules` `agentCanAccessMachine` requires an exact `machine_id` match — so every machine-scoped read/write was denied. (The browser and "enter code" pairing flows were unaffected; they carry the real hostname before authorize runs.) Token minting is now **deferred to poll time**: `authorize` records only the admin-authorized site (`deferTokenMint`), and the agent's `/ADD=` poll supplies its real `machineId`, which the server binds into the token via a single-use claim-lease (mint outside the transaction, atomic delete + refresh-token write on finalize). The agent machine-id is also unified on `shared_utils.get_hostname()` across `AuthManager` and `FirebaseClient` so the poll value cannot diverge from the Firestore path identity. Requires the matching web deploy; machines already paired via `/ADD=` must re-pair.
+
 ## [2.12.3] - 2026-05-19
 
 ### fixed
