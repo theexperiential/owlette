@@ -26,7 +26,6 @@ import time
 import json
 import os
 import logging
-import socket
 import hashlib
 from typing import Dict, Any, Callable, Optional
 from datetime import datetime
@@ -107,7 +106,7 @@ class FirebaseClient:
         self.auth_manager = auth_manager
         self.project_id = project_id
         self.site_id = site_id
-        self.machine_id = socket.gethostname()
+        self.machine_id = shared_utils.get_hostname()
         self.config_cache_path = config_cache_path
 
         # Firestore REST client instance

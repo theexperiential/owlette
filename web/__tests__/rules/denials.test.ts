@@ -11,11 +11,13 @@ import { assertFails } from '@firebase/rules-unit-testing';
 import {
   deleteDoc,
   doc,
+  getDoc,
   serverTimestamp,
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
 import {
+  asAgent,
   asUser,
   cleanupRulesHarness,
   clearFirestoreData,
@@ -25,6 +27,7 @@ import {
 
 const SITE_A = 'site-A';
 const MACHINE_X = 'machine-X';
+const DESKTOP_HOST = 'DESKTOP-CRA2RC0';
 
 const MEMBER_UID = 'member-uid';
 const ADMIN_UID = 'admin-uid';
@@ -484,6 +487,16 @@ describe('machine control-plane writes', () => {
         },
         { merge: true },
       ),
+    );
+  });
+
+  test('agent with pending placeholder claim cannot read or write real machine config', async () => {
+    const db = asAgent(SITE_A, 'pending_test_pair_phrase');
+    const ref = doc(db, 'config', SITE_A, 'machines', DESKTOP_HOST);
+
+    await assertFails(getDoc(ref));
+    await assertFails(
+      setDoc(ref, { processes: [] }, { merge: true }),
     );
   });
 

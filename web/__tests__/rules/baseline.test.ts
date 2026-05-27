@@ -23,6 +23,7 @@ import {
 const SITE_A = 'site-A';
 const SITE_B = 'site-B';
 const MACHINE_X = 'machine-X';
+const DESKTOP_HOST = 'DESKTOP-CRA2RC0';
 
 const MEMBER_UID = 'member-uid';
 const ADMIN_UID = 'admin-uid';
@@ -154,6 +155,16 @@ describe('agent reads + writes', () => {
     await assertSucceeds(
       getDoc(doc(db, 'config', SITE_A, 'machines', MACHINE_X)),
     );
+  });
+
+  test('agent reads and writes machine config when machine claim matches host', async () => {
+    const db = asAgent(SITE_A, DESKTOP_HOST);
+    const ref = doc(db, 'config', SITE_A, 'machines', DESKTOP_HOST);
+
+    await assertSucceeds(
+      setDoc(ref, { processes: [] }, { merge: true }),
+    );
+    await assertSucceeds(getDoc(ref));
   });
 
   test('agent writes hardware profile for its own machine', async () => {
