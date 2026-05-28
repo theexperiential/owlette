@@ -57,6 +57,7 @@ export const POST = authorizedSiteHandler({
     const input: CreateRebootPresetInput = {
       name: body.name as string,
       description: body.description,
+      enabled: body.enabled,
       entries: body.entries ?? [],
       isBuiltIn: body.isBuiltIn ?? false,
       order: typeof body.order === 'number' ? body.order : 0,
@@ -81,6 +82,7 @@ function serializePreset(id: string, data: Record<string, unknown>) {
     id,
     name: typeof data.name === 'string' ? data.name : '',
     description: typeof data.description === 'string' ? data.description : null,
+    enabled: typeof data.enabled === 'boolean' ? data.enabled : null,
     entries: Array.isArray(data.entries) ? data.entries : [],
     isBuiltIn: data.isBuiltIn === true,
     order: typeof data.order === 'number' ? data.order : 0,

@@ -3,6 +3,7 @@ import type { RebootScheduleEntry } from '@/hooks/useFirestore';
 export interface RebootPresetDefinition {
   name: string;
   description?: string;
+  enabled?: boolean;
   entries: RebootScheduleEntry[];
 }
 
@@ -17,6 +18,7 @@ export const BUILT_IN_REBOOT_PRESETS: RebootPresetDefinition[] = [
   {
     name: '2am daily',
     description: 'reboot every day at 2:00 AM',
+    enabled: true,
     entries: [
       {
         id: 'builtin-2am-daily',

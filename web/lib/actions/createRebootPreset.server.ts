@@ -19,6 +19,8 @@ export interface RebootScheduleEntryInput {
 export interface CreateRebootPresetInput {
   name: string;
   description?: string;
+  /** Whether the schedule is active when this preset is applied. */
+  enabled?: boolean;
   entries: RebootScheduleEntryInput[];
   isBuiltIn: boolean;
   order: number;
@@ -54,6 +56,9 @@ export function validateRebootPresetInput(
   }
   if (input.description !== undefined && typeof input.description !== 'string') {
     throw new RebootPresetValidationError('description', 'description must be a string when provided');
+  }
+  if (input.enabled !== undefined && typeof input.enabled !== 'boolean') {
+    throw new RebootPresetValidationError('enabled', 'enabled must be a boolean when provided');
   }
   if (!allowPartial || input.entries !== undefined) {
     if (!Array.isArray(input.entries)) {
@@ -126,6 +131,7 @@ export async function createRebootPreset(
     createdAt: FieldValue.serverTimestamp(),
   };
   if (input.description !== undefined) payload.description = input.description;
+  if (input.enabled !== undefined) payload.enabled = input.enabled;
 
   await presetRef.set(payload);
 

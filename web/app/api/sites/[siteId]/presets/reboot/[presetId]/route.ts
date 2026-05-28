@@ -58,6 +58,7 @@ export const GET = authorizedSiteHandler<{ siteId: string; presetId: string }>({
       id: presetId,
       name: typeof data.name === 'string' ? data.name : '',
       description: typeof data.description === 'string' ? data.description : null,
+      enabled: typeof data.enabled === 'boolean' ? data.enabled : null,
       entries: Array.isArray(data.entries) ? data.entries : [],
       isBuiltIn: data.isBuiltIn === true,
       order: typeof data.order === 'number' ? data.order : 0,

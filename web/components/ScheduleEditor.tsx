@@ -32,8 +32,13 @@ function formatTimeDisplay(value: string, use24h: boolean): string {
   return `${h12}:${m.toString().padStart(2, '0')} ${ampm}`;
 }
 
-/** Parse typed time input into "HH:MM" 24h format. Returns null if unrecognizable. */
-function parseTimeInput(input: string, _use24h: boolean): string | null {
+/** Parse typed time input into "HH:MM" 24h format. Returns null if unrecognizable.
+ *
+ * In 12h mode, a bare "H:MM" (no am/pm) inherits the am/pm of `currentHour24`
+ * so editing "2:25 pm" to "3:25" stays in the afternoon instead of silently
+ * jumping back to 3:25 AM.
+ */
+function parseTimeInput(input: string, use24h: boolean, currentHour24?: number): string | null {
   const s = input.trim().toLowerCase().replace(/\s+/g, ' ');
 
   // "H:MM" or "HH:MM" with optional am/pm — e.g. "9:30", "17:00", "5:00 pm"
@@ -45,6 +50,11 @@ function parseTimeInput(input: string, _use24h: boolean): string | null {
     if (m > 59) return null;
     if (ampm === 'pm' && h !== 12) h = Math.min(h + 12, 23);
     else if (ampm === 'am' && h === 12) h = 0;
+    else if (!ampm && !use24h && h >= 1 && h <= 12 && typeof currentHour24 === 'number') {
+      const wasPM = currentHour24 >= 12;
+      if (wasPM && h !== 12) h += 12;
+      else if (!wasPM && h === 12) h = 0;
+    }
     if (h > 23) return null;
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
   }
@@ -90,7 +100,7 @@ export function TimePicker({ value, onChange, compact }: TimePickerProps) {
   };
 
   const commit = (text: string) => {
-    const parsed = parseTimeInput(text, use24h);
+    const parsed = parseTimeInput(text, use24h, h);
     if (parsed) onChange(parsed);
     setDraft(null);
   };
@@ -117,34 +127,22 @@ export function TimePicker({ value, onChange, compact }: TimePickerProps) {
         title="Type a time (e.g. 9:00, 5pm, 17:00) or use ↑↓ arrows"
       />
       <div className="flex flex-col">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onMouseDown={(e) => { e.preventDefault(); setDraft(formatTimeDisplay(adjust(15), use24h)); }}
-              className="text-muted-foreground hover:text-foreground cursor-pointer leading-none py-px"
-            >
-              <ChevronUp className="h-2.5 w-2.5" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>+15 min</p>
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onMouseDown={(e) => { e.preventDefault(); setDraft(formatTimeDisplay(adjust(-15), use24h)); }}
-              className="text-muted-foreground hover:text-foreground cursor-pointer leading-none py-px"
-            >
-              <ChevronDown className="h-2.5 w-2.5" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>-15 min</p>
-          </TooltipContent>
-        </Tooltip>
+        <button
+          type="button"
+          aria-label="+15 min"
+          onMouseDown={(e) => { e.preventDefault(); setDraft(formatTimeDisplay(adjust(15), use24h)); }}
+          className="text-muted-foreground hover:text-foreground cursor-pointer leading-none py-px"
+        >
+          <ChevronUp className="h-2.5 w-2.5" />
+        </button>
+        <button
+          type="button"
+          aria-label="-15 min"
+          onMouseDown={(e) => { e.preventDefault(); setDraft(formatTimeDisplay(adjust(-15), use24h)); }}
+          className="text-muted-foreground hover:text-foreground cursor-pointer leading-none py-px"
+        >
+          <ChevronDown className="h-2.5 w-2.5" />
+        </button>
       </div>
     </div>
   );

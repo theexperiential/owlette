@@ -22,6 +22,9 @@ export interface RebootPreset {
   id: string;
   name: string;
   description?: string;
+  /** Whether the schedule is active when this preset is applied. Optional for
+   * back-compat with presets written before this field existed. */
+  enabled?: boolean;
   entries: RebootScheduleEntry[];
   isBuiltIn: boolean;
   order: number;
@@ -101,6 +104,7 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
         id,
         name: bp.name,
         description: bp.description,
+        enabled: bp.enabled,
         entries: bp.entries,
         isBuiltIn: true,
         order: i,

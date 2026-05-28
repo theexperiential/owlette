@@ -37,7 +37,7 @@ interface TimezoneChipProps {
  * Falls back to "unknown" when `tz` is undefined (e.g. older agents that
  * have not yet deployed the IANA-aware build).
  */
-function tzAbbreviation(tz: string): string {
+export function tzAbbreviation(tz: string): string {
   try {
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: tz,
