@@ -49,6 +49,15 @@ All notable changes to owlette are documented here. The format is based on [Keep
 - CI: bumped checkout/setup-node/setup-java/cache to Node 24 action majors; py-sdk publish now runs pytest first.
 - Layperson video-tutorial series + Playwright video-capture harness.
 
+## [2.12.5] - 2026-05-28
+
+### fixed
+
+- **Installer "DeleteFile failed: code 5" when upgrading with the GUI/tray/service running.** The locked file was `C:\ProgramData\Owlette\python\libcrypto-3.dll` (OpenSSL — loaded by every Owlette Python process). The pre-existing kill logic in `InitializeSetup()` filtered processes by `.Path -like '*\Owlette\*'`, but `Get-Process.Path` returns `$null` for processes the elevated installer can't introspect (integrity-level restrictions), so those slipped through silently; the fixed 5 s sleep also wasn't long enough when AV scanners held the libcrypto handle after process exit. Three hardening passes (verified via 4-agent codex review):
+  1. **Service-state verification after `net stop`.** Without it, a `net stop` timeout left NSSM alive — and NSSM's `AppExit=Default Restart` policy respawned the python child immediately after the kill pass terminated it, re-locking libcrypto-3.dll mid-copy. The installer now checks `Get-Service OwletteService` reports `Stopped` before proceeding, and aborts cleanly otherwise. `ServiceWasStopped` is gated on this verify.
+  2. **Second kill pass by loaded modules.** Catches processes whose `.Path` is unreadable or whose exe lives outside Owlette but loaded an Owlette `.pyd`/`.dll`.
+  3. **Poll libcrypto-3.dll for exclusive-write availability** (up to 30 s, 250 ms retry) instead of a fixed `Sleep(5000)`. If still locked at 30 s, the installer aborts with a clear "please reboot" message rather than failing mid-copy. Service-restart on abort delegated to the existing `DeinitializeSetup` to avoid double-restart.
+
 ## [2.12.4] - 2026-05-27
 
 ### fixed

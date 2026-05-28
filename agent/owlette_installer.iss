@@ -381,6 +381,7 @@ function InitializeSetup(): Boolean;
 var
   ResultCode: Integer;
   UninstallString: String;
+  LibCryptoPath: String;
 begin
   Result := True;
 
@@ -430,6 +431,34 @@ begin
     Log('Stopping OwletteService via net stop (synchronous)...');
     Exec('net', 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Log('net stop returned with code: ' + IntToStr(ResultCode));
+
+    // Verify the service actually reached the Stopped state before continuing.
+    // Without this, a net stop timeout (e.g., service hung on shutdown) leaves
+    // NSSM alive — which would then respawn the python child when our PowerShell
+    // kill pass terminates it (NSSM AppExit=Default Restart from install.bat).
+    // The respawned process re-loads libcrypto-3.dll mid-copy and we end up back
+    // at "DeleteFile failed: code 5". exit 0 = stopped or non-existent (safe to
+    // proceed). exit 1 = still running (must abort).
+    Log('Verifying OwletteService reached Stopped state...');
+    Exec('powershell.exe',
+      '-NoProfile -ExecutionPolicy Bypass -Command ' +
+      '"$svc = Get-Service -Name OwletteService -ErrorAction SilentlyContinue; ' +
+      'if (-not $svc) { exit 0 }; ' +
+      'if ($svc.Status -eq ''Stopped'') { exit 0 } else { exit 1 }"',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Log('Service-state check returned: ' + IntToStr(ResultCode));
+
+    if ResultCode <> 0 then
+    begin
+      Log('OwletteService did not reach Stopped state - aborting upgrade');
+      if not WizardSilent() then
+        MsgBox('Cannot upgrade Owlette: the OwletteService could not be stopped.' + #13#10 + #13#10 +
+               'This usually means the service is hung. Please reboot the machine ' +
+               'and run the installer again.',
+               mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
     ServiceWasStopped := True;
 
     // Fallback: also tell NSSM directly in case net stop didn't fully clean up.
@@ -446,22 +475,70 @@ begin
   // locked files for next-reboot replacement (MoveFileEx DELAY_UNTIL_REBOOT) in silent
   // mode instead of replacing them immediately, leaving the agent on the old version.
   //
-  // WMIC is deprecated on Windows 11 and can fail silently. PowerShell Stop-Process
-  // is the reliable cross-session replacement.
-  Log('Killing any running Owlette Python processes (GUI, tray, service)...');
+  // Two-pass kill:
+  //   1. By .Path — fast, catches the common case in one pipeline.
+  //   2. By .Modules — defense in depth. Catches processes whose .Path returns null
+  //      (Get-Process can't read MainModule.FileName for processes with restricted
+  //      integrity-level access, even from an elevated admin) and processes whose
+  //      exe lives outside Owlette but loaded an Owlette .pyd/.dll.
+  Log('Killing Owlette Python processes by exe path...');
   Exec('powershell.exe',
     '-NoProfile -ExecutionPolicy Bypass -Command ' +
     '"Get-Process -Name python, pythonw -ErrorAction SilentlyContinue | ' +
     'Where-Object { $_.Path -like ''*\Owlette\*'' } | ' +
-    'Stop-Process -Force -ErrorAction SilentlyContinue; ' +
-    'Start-Sleep -Seconds 3; ' +
-    'Get-Process -Name python, pythonw -ErrorAction SilentlyContinue | ' +
-    'Where-Object { $_.Path -like ''*\Owlette\*'' } | ' +
     'Stop-Process -Force -ErrorAction SilentlyContinue"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Log('PowerShell Stop-Process returned: ' + IntToStr(ResultCode));
+  Log('Path-based kill returned: ' + IntToStr(ResultCode));
 
-  // Wait for file handles to fully release after process exit.
-  // Python DLLs (especially libcrypto) can lag briefly behind TerminateProcess().
-  Sleep(5000);
+  Log('Killing Python processes that loaded an Owlette DLL...');
+  Exec('powershell.exe',
+    '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"Get-Process -Name python, pythonw -ErrorAction SilentlyContinue | ' +
+    'Where-Object { try { $_.Modules | Where-Object { $_.FileName -like ''*\Owlette\*'' } } catch { $false } } | ' +
+    'Stop-Process -Force -ErrorAction SilentlyContinue"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log('Module-based kill returned: ' + IntToStr(ResultCode));
+
+  // Poll libcrypto-3.dll for exclusive-write availability instead of a fixed sleep.
+  // OpenSSL is loaded by every Owlette Python process (via _ssl / _hashlib) and is
+  // typically the last DLL to fully release after process exit — AV scanners often
+  // hold its handle for several seconds while inspecting the terminated process.
+  // If still locked after 30s, abort cleanly so the user sees a useful message
+  // instead of "DeleteFile failed: code 5" mid-copy.
+  //
+  // Use {commonappdata}\Owlette directly (not {app}) because {app} is not yet
+  // initialized inside InitializeSetup. DefaultDirName is {commonappdata}\Owlette,
+  // so this resolves to the same path the install will use.
+  LibCryptoPath := ExpandConstant('{commonappdata}\Owlette\python\libcrypto-3.dll');
+  Log('Polling for unlock: ' + LibCryptoPath);
+  Exec('powershell.exe',
+    '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"$p = ''' + LibCryptoPath + '''; ' +
+    'if (-not (Test-Path -LiteralPath $p)) { exit 0 }; ' +
+    '$deadline = (Get-Date).AddSeconds(30); ' +
+    'while ((Get-Date) -lt $deadline) { ' +
+      'try { $fs = [System.IO.File]::Open($p, ''Open'', ''Write'', ''None''); $fs.Close(); exit 0 } ' +
+      'catch { Start-Sleep -Milliseconds 250 } ' +
+    '}; exit 1"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log('libcrypto-3.dll unlock poll returned: ' + IntToStr(ResultCode));
+
+  if ResultCode <> 0 then
+  begin
+    Log('libcrypto-3.dll still locked after 30s — aborting to avoid mid-copy failure');
+    if not WizardSilent() then
+      MsgBox('Cannot upgrade Owlette: a process is still holding' + #13#10 +
+             LibCryptoPath + #13#10 + #13#10 +
+             'This DLL is loaded by every Owlette Python process. The installer ' +
+             'tried to terminate them but the handle was not released within 30 seconds.' + #13#10 + #13#10 +
+             'Please reboot the machine and run the installer again.',
+             mbError, MB_OK);
+
+    // Service restart on abort is handled by DeinitializeSetup, which fires
+    // even when InitializeSetup returns False (Inno Setup contract) and reads
+    // ServiceWasStopped + InstallSucceeded. Doing it here too would double-fire.
+
+    Result := False;
+    Exit;
+  end;
 end;
