@@ -1310,11 +1310,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
             return {'error': f'Unknown Cortex IPC tool: {tool_name}'}
 
     def _handle_cortex_process_command(self, command_type, process_name):
-        """Handle a process restart/kill/start command from Cortex IPC."""
+        """Handle a process restart/kill/start command from Cortex IPC.
+
+        Mirrors the dashboard command path (_execute_command): resolve the
+        running PID from self.last_started and operate on that integer PID via
+        the same kill/relaunch helpers. graceful_terminate() expects a PID, not
+        the process config dict — passing the dict raised TypeError on every
+        call, which the broad except swallowed into a silent 'failed' (so Cortex
+        Tier-2 self-healing never actually restarted/killed anything).
+        """
         config = shared_utils.read_config()
         processes = config.get('processes', [])
 
-        # Find the process
+        # Find the process by name
         target = None
         for proc in processes:
             if proc.get('name', '').lower() == process_name.lower():
@@ -1324,17 +1332,36 @@ class OwletteService(win32serviceutil.ServiceFramework):
         if not target:
             return {'error': f'Process not found: {process_name}'}
 
+        process_list_id = target['id']
+        last_info = self.last_started.get(process_list_id, {})
+        last_pid = last_info.get('pid')
+
         try:
             if command_type == 'kill_process':
-                shared_utils.graceful_terminate(target)
-                return {'status': 'completed', 'result': f'Process {process_name} terminated'}
+                if last_pid and Util.is_pid_running(last_pid):
+                    shared_utils.graceful_terminate(last_pid)
+                    shared_utils.update_process_status_in_json(
+                        last_pid, 'KILLED', self.firebase_client, process_id=process_list_id)
+                    # Mark as killed (not deleted) so the main loop doesn't treat
+                    # an empty last_started as "untracked -> needs launch".
+                    self.last_started[process_list_id] = {
+                        'killed': True, 'time': datetime.datetime.now()}
+                    return {'status': 'completed',
+                            'result': f'Process {process_name} terminated (PID {last_pid})'}
+                return {'status': 'completed',
+                        'result': f'Process {process_name} was not running'}
             else:
-                # restart_process (also used for start)
-                shared_utils.graceful_terminate(target)
-                time.sleep(1)
-                # The main loop will re-launch the process if autolaunch/launch_mode is set
-                return {'status': 'completed', 'result': f'Process {process_name} restarted'}
+                # restart_process (also used for start): relaunch if running, else launch.
+                if last_pid and Util.is_pid_running(last_pid):
+                    new_pid = self.kill_and_relaunch_process(last_pid, target)
+                    return {'status': 'completed',
+                            'result': f'Process {process_name} restarted (new PID {new_pid})'}
+                new_pid = self.handle_process_launch(target)
+                return {'status': 'completed',
+                        'result': f'Process {process_name} started (PID {new_pid})'}
         except Exception as e:
+            logging.exception(
+                f"Cortex process command '{command_type}' failed for '{process_name}'")
             return {'status': 'failed', 'error': str(e)}
 
     def _handle_cortex_set_launch_mode(self, process_name, mode, schedules=None):
