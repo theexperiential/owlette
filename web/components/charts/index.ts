@@ -8,7 +8,7 @@
 export { SparklineChart } from './SparklineChart';
 export type { SparklineDataPoint, MetricColor } from './SparklineChart';
 
-export { TimeRangeSelector, getTimeRangeStart, getTimeRangeLabel } from './TimeRangeSelector';
+export { TimeRangeSelector } from './TimeRangeSelector';
 export type { TimeRange } from './TimeRangeSelector';
 
 export { ChartTooltip, metricConfig } from './ChartTooltip';
