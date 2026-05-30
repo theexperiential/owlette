@@ -74,28 +74,6 @@ def _stop_flash():
     _flash_stop.set()
     _flash_active = False
 
-# Function to detect Windows theme (light or dark)
-def is_windows_dark_theme():
-    """
-    Detect if Windows is using dark theme.
-    Returns True for dark theme, False for light theme.
-    """
-    try:
-        key = winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER,
-            r'Software\Microsoft\Windows\CurrentVersion\Themes\Personalize',
-            0,
-            winreg.KEY_READ
-        )
-        value, _ = winreg.QueryValueEx(key, 'SystemUsesLightTheme')
-        winreg.CloseKey(key)
-        # 0 = dark theme, 1 = light theme
-        return value == 0
-    except Exception as e:
-        logging.debug(f"Could not detect Windows theme: {e}")
-        # Default to dark theme if detection fails
-        return True
-
 # Function to load icon image from file
 def load_icon(status='normal'):
     """

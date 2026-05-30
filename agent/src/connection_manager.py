@@ -920,13 +920,6 @@ class ConnectionManager:
         self._thread_factories[name] = factory
         self.logger.debug(f"[SUPERVISOR] Registered thread: {name}")
 
-    def unregister_thread(self, name: str):
-        """Remove a thread from supervision."""
-        if name in self._thread_factories:
-            del self._thread_factories[name]
-        if name in self._supervised_threads:
-            del self._supervised_threads[name]
-
     def _restart_all_threads(self):
         """Restart all supervised threads after successful connection."""
         for name, factory in self._thread_factories.items():

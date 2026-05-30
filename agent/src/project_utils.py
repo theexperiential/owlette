@@ -8,7 +8,7 @@ import time
 import zipfile
 import tempfile
 import shutil
-from typing import Optional, Callable, List, Dict
+from typing import Optional, Callable, List
 import subprocess
 
 # Reuse download function from installer_utils
@@ -161,37 +161,6 @@ def cleanup_project_zip(project_path: str) -> bool:
     except Exception as e:
         logging.warning(f"Failed to cleanup project ZIP {project_path}: {e}")
         return False
-
-
-def cancel_distribution(project_name: str, active_downloads: Dict[str, bool]) -> tuple[bool, str]:
-    """
-    Cancel an active project distribution.
-
-    Args:
-        project_name: Name of the project being cancelled
-        active_downloads: Dictionary tracking active downloads
-
-    Returns:
-        Tuple of (success, message)
-    """
-    try:
-        if project_name not in active_downloads:
-            return False, f"No active distribution found for {project_name}"
-
-        # Mark as cancelled (download/extraction threads should check this)
-        active_downloads[project_name] = False
-
-        # Cleanup project ZIP file
-        project_path = get_temp_project_path(project_name)
-        cleanup_project_zip(project_path)
-
-        logging.info(f"Distribution cancelled successfully: {project_name}")
-        return True, f"Distribution cancelled: {project_name}"
-
-    except Exception as e:
-        error_msg = f"Error cancelling distribution: {str(e)}"
-        logging.error(error_msg)
-        return False, error_msg
 
 
 def get_default_project_directory() -> str:
