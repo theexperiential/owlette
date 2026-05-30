@@ -695,43 +695,6 @@ export function getDemoHistoricalData(
   return data;
 }
 
-// ── Schedule presets ─────────────────────────────────────────────────
-
-export const DEMO_SCHEDULE_PRESETS = [
-  {
-    id: 'preset-museum-hours',
-    name: 'Museum Hours (9am–6pm)',
-    blocks: [
-      { id: 'b1', day: 1, start: '09:00', end: '18:00', colorIndex: 0 },
-      { id: 'b2', day: 2, start: '09:00', end: '18:00', colorIndex: 0 },
-      { id: 'b3', day: 3, start: '09:00', end: '18:00', colorIndex: 0 },
-      { id: 'b4', day: 4, start: '09:00', end: '18:00', colorIndex: 0 },
-      { id: 'b5', day: 5, start: '09:00', end: '18:00', colorIndex: 0 },
-      { id: 'b6', day: 6, start: '10:00', end: '17:00', colorIndex: 0 },
-      { id: 'b7', day: 0, start: '10:00', end: '17:00', colorIndex: 0 },
-    ],
-    isBuiltIn: false,
-    order: 1,
-    createdBy: 'demo',
-  },
-  {
-    id: 'preset-always-on',
-    name: '24/7 Always On',
-    blocks: [
-      { id: 'b1', day: 0, start: '00:00', end: '23:59', colorIndex: 1 },
-      { id: 'b2', day: 1, start: '00:00', end: '23:59', colorIndex: 1 },
-      { id: 'b3', day: 2, start: '00:00', end: '23:59', colorIndex: 1 },
-      { id: 'b4', day: 3, start: '00:00', end: '23:59', colorIndex: 1 },
-      { id: 'b5', day: 4, start: '00:00', end: '23:59', colorIndex: 1 },
-      { id: 'b6', day: 5, start: '00:00', end: '23:59', colorIndex: 1 },
-      { id: 'b7', day: 6, start: '00:00', end: '23:59', colorIndex: 1 },
-    ],
-    isBuiltIn: false,
-    order: 2,
-    createdBy: 'demo',
-  },
-];
-
 // ── Display topology ─────────────────────────────────────────────────
 
 /**

@@ -349,19 +349,3 @@ export function useOwletteUpdates(machines: Machine[]): UseOwletteUpdatesReturn 
     staleMachines,
   };
 }
-
-/**
- * Helper hook to get just the count of machines needing updates
- * (lighter weight if you only need the count)
- */
-export function useUpdateCount(machines: Machine[]): {
-  count: number;
-  isLoading: boolean;
-} {
-  const { totalMachinesNeedingUpdate, isLoading } = useOwletteUpdates(machines);
-
-  return {
-    count: totalMachinesNeedingUpdate,
-    isLoading
-  };
-}

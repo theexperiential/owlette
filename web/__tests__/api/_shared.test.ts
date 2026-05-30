@@ -44,7 +44,6 @@ import {
   validateHashList,
   validateResourceId,
   validateSiteIdBody,
-  notImplementedYet,
   requireAuthOrProblem,
   requireSiteScope,
   MAX_HASHES_PER_REQUEST,
@@ -305,19 +304,6 @@ describe('_shared.ts (v2 route helpers)', () => {
       const r = await parseJsonBody(req);
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.response.status).toBe(400);
-    });
-  });
-
-  // ─── notImplementedYet ──────────────────────────────────────────
-
-  describe('notImplementedYet', () => {
-    it('returns 503 (matching ServiceUnavailable type)', async () => {
-      const res = notImplementedYet('/api/v2/test', 'wave 1.0', 'wire X to Y');
-      expect(res.status).toBe(503);
-      const body = await res.json();
-      expect(body.title).toMatch(/not implemented/i);
-      expect(body.instance).toBe('/api/v2/test');
-      expect(body.todo).toBe('wire X to Y');
     });
   });
 });
