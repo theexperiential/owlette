@@ -88,7 +88,7 @@ export function CortexApprovalToggle({ siteId }: CortexApprovalToggleProps) {
         onOpenChange={setConfirmOpen}
         title="disable tier-3 approval site-wide?"
         description={
-          'privileged tool calls (run_powershell, execute_script, reboot, etc.) will run immediately without in-chat approval for everyone on this site. admin single-machine chats may also resume using local cortex. only turn this off if the approval prompts are getting in the way.'
+          'privileged tool calls (run_powershell, execute_script, restart, etc.) will run immediately without in-chat approval for everyone on this site. admin single-machine chats may also resume using local cortex. only turn this off if the approval prompts are getting in the way.'
         }
         confirmText="disable approval"
         cancelText="cancel"

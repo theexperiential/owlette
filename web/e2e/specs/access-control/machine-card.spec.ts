@@ -8,26 +8,26 @@
  * permission-model-split manual smoke checklist
  * (dev/active/permission-model-split/manual-smoke-checklist.md), namely:
  *
- *   - reboot/shutdown button visible on a machine card
- *   - cancel-countdown pill clickable during active reboot
+ *   - restart/shutdown button visible on a machine card
+ *   - cancel-countdown pill clickable during active restart
  *   - delete machine menu item visible
- *   - amber "reboot pending" reboot/cancel buttons visible
+ *   - amber "restart pending" restart/cancel buttons visible
  *
  * The actions live in three places:
- *   1. MachineContextMenu — renders the reboot / shutdown / cancel /
+ *   1. MachineContextMenu — renders the restart / shutdown / cancel /
  *      revoke-token / remove-machine items, now gated on `isSiteAdmin`
  *      (added as part of B3.2 — the menu previously rendered them to
  *      every viewer).
  *   2. MachineStatusPill — the countdown variant is only clickable when
  *      `isSiteAdmin && onCancel && remaining > 5`. Non-admins see the
- *      text-only "rebooting…" pill.
- *   3. MachineCardView's amber "reboot pending" banner — already gated on
+ *      text-only "restarting…" pill.
+ *   3. MachineCardView's amber "restart pending" banner — already gated on
  *      `isSiteAdmin` (site-admins see approve/dismiss buttons, members
  *      see the banner without the action buttons).
  *
  * We seed three machines on site-A to exercise the three states in parallel:
- *   - e2e-machine-baseline — online, no reboot in flight
- *   - e2e-machine-rebooting — online, in-flight reboot with a 120s-future
+ *   - e2e-machine-baseline — online, no restart in flight
+ *   - e2e-machine-rebooting — online, in-flight restart with a 120s-future
  *     scheduledAt (well above the 5s cancel-lockout threshold)
  *   - e2e-machine-pending — online, rebootPending.active = true (amber
  *     banner shown, card-view only)
@@ -116,25 +116,25 @@ test.describe('machine card — member on site-A', () => {
     await expect(card.getByTestId('machine-status-cancel-pill')).toHaveCount(0);
 
     // The pill itself is still rendered — it just shows the textual
-    // "rebooting…" state without interactivity. Spot-check that the amber
-    // "rebooting" copy is in the card so we're not accidentally asserting
+    // "restarting…" state without interactivity. Spot-check that the amber
+    // "restarting" copy is in the card so we're not accidentally asserting
     // on a missing pill.
-    await expect(card).toContainText(/rebooting/i);
+    await expect(card).toContainText(/restarting/i);
   });
 
-  test('context menu hides cancel-reboot item during active reboot', async ({ page }) => {
+  test('context menu hides cancel-restart item during active restart', async ({ page }) => {
     const card = await cardFor(page, REBOOTING_MACHINE_ID);
     const menu = await openContextMenu(page, card);
 
     await expect(menu.getByTestId('machine-context-menu-cancel-reboot')).toHaveCount(0);
   });
 
-  test('amber reboot-pending banner hides the approve/dismiss buttons', async ({ page }) => {
+  test('amber restart-pending banner hides the approve/dismiss buttons', async ({ page }) => {
     const card = await cardFor(page, PENDING_MACHINE_ID);
 
     // Banner itself is visible (members can see the reason); the gated
     // controls are approve + dismiss.
-    await expect(card).toContainText(/reboot pending/i);
+    await expect(card).toContainText(/restart pending/i);
     await expect(card.getByTestId('reboot-pending-approve')).toHaveCount(0);
     await expect(card.getByTestId('reboot-pending-dismiss')).toHaveCount(0);
   });
@@ -186,10 +186,10 @@ test.describe('machine card — admin on site-A', () => {
     await expect(menu.getByTestId('machine-context-menu-cancel-reboot')).toBeVisible();
   });
 
-  test('amber reboot-pending banner shows approve + dismiss buttons', async ({ page }) => {
+  test('amber restart-pending banner shows approve + dismiss buttons', async ({ page }) => {
     const card = await cardFor(page, PENDING_MACHINE_ID);
 
-    await expect(card).toContainText(/reboot pending/i);
+    await expect(card).toContainText(/restart pending/i);
     await expect(card.getByTestId('reboot-pending-approve')).toBeVisible();
     await expect(card.getByTestId('reboot-pending-dismiss')).toBeVisible();
   });

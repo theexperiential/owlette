@@ -319,10 +319,10 @@ export default function DemoPage() {
                   onSetLaunchMode={noop}
                   onRemoveMachine={noop}
                   onMetricClick={handleMetricClick}
-                  onReboot={noopAsync}
+                  onRestart={noopAsync}
                   onShutdown={noopAsync}
-                  onCancelReboot={noopAsync}
-                  onDismissRebootPending={noopAsync}
+                  onCancelRestart={noopAsync}
+                  onDismissRestartPending={noopAsync}
                 />
               </div>
             )}

@@ -7,8 +7,8 @@ import {
   onSnapshot,
   Timestamp,
 } from 'firebase/firestore';
-import type { RebootScheduleEntry } from '@/hooks/useFirestore';
-import { BUILT_IN_REBOOT_PRESETS } from '@/lib/rebootDefaults';
+import type { RestartScheduleEntry } from '@/hooks/useFirestore';
+import { BUILT_IN_RESTART_PRESETS } from '@/lib/restartDefaults';
 
 /** Deterministic ID for a built-in preset. */
 function builtInId(name: string): string {
@@ -16,16 +16,16 @@ function builtInId(name: string): string {
 }
 
 /** Stable empty array so useMemo deps don't churn while no site is loaded. */
-const EMPTY_REBOOT_PRESETS: RebootPreset[] = [];
+const EMPTY_RESTART_PRESETS: RestartPreset[] = [];
 
-export interface RebootPreset {
+export interface RestartPreset {
   id: string;
   name: string;
   description?: string;
   /** Whether the schedule is active when this preset is applied. Optional for
    * back-compat with presets written before this field existed. */
   enabled?: boolean;
-  entries: RebootScheduleEntry[];
+  entries: RestartScheduleEntry[];
   isBuiltIn: boolean;
   order: number;
   createdBy: string;
@@ -34,28 +34,33 @@ export interface RebootPreset {
   updatedAt?: Timestamp;
 }
 
-export interface UseRebootPresetsReturn {
-  presets: RebootPreset[];
+export interface UseRestartPresetsReturn {
+  presets: RestartPreset[];
   loading: boolean;
   error: string | null;
-  createPreset: (preset: Omit<RebootPreset, 'id' | 'createdAt' | 'updatedAt'>) => Promise<string>;
-  updatePreset: (id: string, updates: Partial<RebootPreset>) => Promise<void>;
+  createPreset: (preset: Omit<RestartPreset, 'id' | 'createdAt' | 'updatedAt'>) => Promise<string>;
+  updatePreset: (id: string, updates: Partial<RestartPreset>) => Promise<void>;
   deletePreset: (id: string) => Promise<void>;
 }
 
 /**
- * Hook to manage reboot schedule presets scoped to a site.
- * Firestore path: config/{siteId}/reboot_presets/{presetId}
+ * Hook to manage restart schedule presets scoped to a site.
+ *
+ * Storage note: the Firestore collection and API path keep the legacy `reboot`
+ * spelling on purpose — `config/{siteId}/reboot_presets/{presetId}` and
+ * `/api/sites/{siteId}/presets/reboot`. These are wire/storage contracts shared
+ * with deployed agents and the public API; only the UI and code identifiers were
+ * renamed to "restart". Do not rename them without a coordinated migration.
  *
  * Mirrors the pattern in useSchedulePresets — built-in presets are merged
- * client-side from BUILT_IN_REBOOT_PRESETS. If a user edits a built-in, the
+ * client-side from BUILT_IN_RESTART_PRESETS. If a user edits a built-in, the
  * override is saved to Firestore and takes precedence on next read.
  */
-export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn {
+export function useRestartPresets(siteId: string | null): UseRestartPresetsReturn {
   // loadedSiteId pins the loaded presets to the site they came from so that
   // loading can be derived at render (no sync setState in the effect body).
   const [state, setState] = useState<{
-    firestorePresets: RebootPreset[];
+    firestorePresets: RestartPreset[];
     loadedSiteId: string | null;
     error: string | null;
   }>({
@@ -72,14 +77,14 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
     const unsubscribe = onSnapshot(
       presetsRef,
       (snapshot) => {
-        const data: RebootPreset[] = [];
+        const data: RestartPreset[] = [];
         snapshot.forEach((docSnap) => {
-          data.push({ id: docSnap.id, ...docSnap.data() } as RebootPreset);
+          data.push({ id: docSnap.id, ...docSnap.data() } as RestartPreset);
         });
         setState({ firestorePresets: data, loadedSiteId: siteId, error: null });
       },
       (err) => {
-        console.error('Error fetching reboot presets:', err);
+        console.error('Error fetching restart presets:', err);
         setState((prev) => ({ ...prev, error: err.message }));
       }
     );
@@ -88,7 +93,7 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
   }, [siteId]);
 
   // Surface only data that matches the currently-requested site; derive loading.
-  const firestorePresets = state.loadedSiteId === siteId ? state.firestorePresets : EMPTY_REBOOT_PRESETS;
+  const firestorePresets = state.loadedSiteId === siteId ? state.firestorePresets : EMPTY_RESTART_PRESETS;
   const loading = !!db && !!siteId && state.loadedSiteId !== siteId;
   const error = state.error;
 
@@ -96,7 +101,7 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
   const presets = useMemo(() => {
     const firestoreById = new Map(firestorePresets.map(p => [p.id, p]));
 
-    const builtIns: RebootPreset[] = BUILT_IN_REBOOT_PRESETS.map((bp, i) => {
+    const builtIns: RestartPreset[] = BUILT_IN_RESTART_PRESETS.map((bp, i) => {
       const id = builtInId(bp.name);
       const override = firestoreById.get(id);
       if (override) return override;
@@ -113,7 +118,7 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
       };
     });
 
-    const builtInIds = new Set(BUILT_IN_REBOOT_PRESETS.map(bp => builtInId(bp.name)));
+    const builtInIds = new Set(BUILT_IN_RESTART_PRESETS.map(bp => builtInId(bp.name)));
     const custom = firestorePresets
       .filter(p => !builtInIds.has(p.id))
       .sort((a, b) => {
@@ -125,7 +130,7 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
   }, [firestorePresets]);
 
   const createPreset = useCallback(async (
-    preset: Omit<RebootPreset, 'id' | 'createdAt' | 'updatedAt'>
+    preset: Omit<RestartPreset, 'id' | 'createdAt' | 'updatedAt'>
   ): Promise<string> => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
@@ -134,7 +139,7 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(preset),
     });
-    if (!response.ok) throw new Error(await readApiError(response, 'Failed to create reboot preset'));
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to create restart preset'));
 
     const body = await response.json();
     return body.presetId;
@@ -142,7 +147,7 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
 
   const updatePreset = useCallback(async (
     id: string,
-    updates: Partial<RebootPreset>
+    updates: Partial<RestartPreset>
   ): Promise<void> => {
     if (!db || !siteId) throw new Error('Firebase not configured');
 
@@ -151,7 +156,7 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(updates),
     });
-    if (!response.ok) throw new Error(await readApiError(response, 'Failed to update reboot preset'));
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to update restart preset'));
   }, [siteId]);
 
   const deletePreset = useCallback(async (id: string): Promise<void> => {
@@ -160,7 +165,7 @@ export function useRebootPresets(siteId: string | null): UseRebootPresetsReturn 
     const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/presets/reboot/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
-    if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete reboot preset'));
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete restart preset'));
   }, [siteId]);
 
   return {

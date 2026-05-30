@@ -60,10 +60,10 @@ interface MachineCardViewProps {
   onConfigureSchedule?: (machineId: string, process: Process) => void;
   onRemoveMachine: (machineId: string, machineName: string, isOnline: boolean) => void;
   onMetricClick?: (machineId: string, metricType: MetricType) => void;
-  onReboot?: (machineId: string) => Promise<void>;
+  onRestart?: (machineId: string) => Promise<void>;
   onShutdown?: (machineId: string) => Promise<void>;
-  onCancelReboot?: (machineId: string) => Promise<void>;
-  onDismissRebootPending?: (machineId: string, processName: string) => Promise<void>;
+  onCancelRestart?: (machineId: string) => Promise<void>;
+  onDismissRestartPending?: (machineId: string, processName: string) => Promise<void>;
   onScreenshot?: (machineId: string) => void;
   onLiveView?: (machineId: string) => void;
 }
@@ -95,10 +95,10 @@ interface MachineCardProps {
   onConfigureSchedule?: (process: Process) => void;
   onRemoveMachine: () => void;
   onMetricClick?: (metricType: MetricType) => void;
-  onReboot?: () => Promise<void>;
+  onRestart?: () => Promise<void>;
   onShutdown?: () => Promise<void>;
-  onCancelReboot?: () => Promise<void>;
-  onDismissRebootPending?: (processName: string) => Promise<void>;
+  onCancelRestart?: () => Promise<void>;
+  onDismissRestartPending?: (processName: string) => Promise<void>;
   onScreenshot?: () => void;
   onLiveView?: () => void;
   showLocalClock?: boolean;
@@ -127,10 +127,10 @@ function MachineCard({
   onConfigureSchedule,
   onRemoveMachine,
   onMetricClick,
-  onReboot,
+  onRestart,
   onShutdown,
-  onCancelReboot,
-  onDismissRebootPending,
+  onCancelRestart,
+  onDismissRestartPending,
   onScreenshot,
   onLiveView,
   showLocalClock,
@@ -254,7 +254,7 @@ function MachineCard({
               rebootScheduledAt={machine.rebootScheduledAt}
               shutdownScheduledAt={machine.shutdownScheduledAt}
               isSiteAdmin={isSiteAdmin}
-              onCancel={onCancelReboot}
+              onCancel={onCancelRestart}
             />
             <Tooltip>
               <TooltipTrigger asChild>
@@ -280,9 +280,9 @@ function MachineCard({
                 shuttingDown={machine.shuttingDown}
                 isSiteAdmin={isSiteAdmin}
                 onRemoveMachine={onRemoveMachine}
-                onReboot={onReboot}
+                onRestart={onRestart}
                 onShutdown={onShutdown}
-                onCancelReboot={onCancelReboot}
+                onCancelRestart={onCancelRestart}
                 onScreenshot={onScreenshot}
                 onLiveView={onLiveView}
                 onViewDisplays={onMetricClick ? () => onMetricClick('display') : undefined}
@@ -292,14 +292,14 @@ function MachineCard({
           </div>
         </div>
       </CardHeader>
-      {/* Reboot Pending Banner */}
+      {/* Restart Pending Banner */}
       {machine.rebootPending?.active && (
         <div className="mx-4 mb-2 p-3 rounded-lg border border-amber-600/30 bg-amber-950/20">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0" />
               <span className="text-sm text-amber-300 truncate">
-                reboot pending: {machine.rebootPending.reason || 'process crashed'}
+                restart pending: {machine.rebootPending.reason || 'process crashed'}
               </span>
             </div>
             {isSiteAdmin && (
@@ -311,8 +311,8 @@ function MachineCard({
                   className="h-7 px-2.5 text-xs bg-amber-600 hover:bg-amber-700 text-white cursor-pointer"
                   onClick={async (e) => {
                     e.stopPropagation();
-                    if (onReboot) {
-                      try { await onReboot(); } catch {}
+                    if (onRestart) {
+                      try { await onRestart(); } catch {}
                     }
                   }}
                 >
@@ -326,8 +326,8 @@ function MachineCard({
                   className="h-7 px-2.5 text-xs text-muted-foreground hover:text-white hover:bg-accent cursor-pointer"
                   onClick={async (e) => {
                     e.stopPropagation();
-                    if (onDismissRebootPending && machine.rebootPending?.processName) {
-                      try { await onDismissRebootPending(machine.rebootPending.processName); } catch {}
+                    if (onDismissRestartPending && machine.rebootPending?.processName) {
+                      try { await onDismissRestartPending(machine.rebootPending.processName); } catch {}
                     }
                   }}
                 >
@@ -922,10 +922,10 @@ export function MachineCardView({
   onConfigureSchedule,
   onRemoveMachine,
   onMetricClick,
-  onReboot,
+  onRestart,
   onShutdown,
-  onCancelReboot,
-  onDismissRebootPending,
+  onCancelRestart,
+  onDismissRestartPending,
   onScreenshot,
   onLiveView,
 }: MachineCardViewProps) {
@@ -969,10 +969,10 @@ export function MachineCardView({
           onConfigureSchedule={onConfigureSchedule ? (process) => onConfigureSchedule(machine.machineId, process) : undefined}
           onRemoveMachine={() => onRemoveMachine(machine.machineId, machine.machineId, machine.online)}
           onMetricClick={onMetricClick ? (metricType) => onMetricClick(machine.machineId, metricType) : undefined}
-          onReboot={onReboot ? () => onReboot(machine.machineId) : undefined}
+          onRestart={onRestart ? () => onRestart(machine.machineId) : undefined}
           onShutdown={onShutdown ? () => onShutdown(machine.machineId) : undefined}
-          onCancelReboot={onCancelReboot ? () => onCancelReboot(machine.machineId) : undefined}
-          onDismissRebootPending={onDismissRebootPending ? (processName) => onDismissRebootPending(machine.machineId, processName) : undefined}
+          onCancelRestart={onCancelRestart ? () => onCancelRestart(machine.machineId) : undefined}
+          onDismissRestartPending={onDismissRestartPending ? (processName) => onDismissRestartPending(machine.machineId, processName) : undefined}
           onScreenshot={onScreenshot ? () => onScreenshot(machine.machineId) : undefined}
           onLiveView={onLiveView ? () => onLiveView(machine.machineId) : undefined}
           showLocalClock={showLocalClock}

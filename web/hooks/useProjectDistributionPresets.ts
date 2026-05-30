@@ -76,7 +76,7 @@ export function useProjectDistributionPresets(
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Mirrors useSchedulePresets / useRebootPresets — set-state-in-effect is
+    // Mirrors useSchedulePresets / useRestartPresets — set-state-in-effect is
     // the established pattern across all preset hooks for handling the
     // Firebase-not-ready and params-not-ready gates. Diverging here would
     // make preset behavior inconsistent across the app.

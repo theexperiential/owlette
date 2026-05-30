@@ -17,7 +17,7 @@ export interface SuggestedQuestion {
 
 export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   // ── system-health ──────────────────────────────────────────────────────
-  { text: 'when was the last time this machine rebooted?', category: 'system-health' },
+  { text: 'when was the last time this machine restarted?', category: 'system-health' },
   { text: 'how much RAM is being used right now?', category: 'system-health' },
   { text: 'give me a full system health report', category: 'system-health' },
   { text: 'what OS version is this machine running?', category: 'system-health' },
@@ -37,7 +37,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'what version of the owlette agent is running?', category: 'system-health' },
   { text: 'how much memory is available for new processes?', category: 'system-health' },
   { text: 'summarize the current state of this machine', category: 'system-health' },
-  { text: 'is a reboot pending on this machine?', category: 'system-health' },
+  { text: 'is a restart pending on this machine?', category: 'system-health' },
 
   // ── gpu-display ────────────────────────────────────────────────────────
   { text: 'which nvidia driver version is installed?', category: 'gpu-display' },
@@ -156,7 +156,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'are there any disk errors in the system log?', category: 'troubleshooting' },
   { text: 'what happened right before the screen froze?', category: 'troubleshooting' },
   { text: 'is the process crashing on startup or after running a while?', category: 'troubleshooting' },
-  { text: 'check if a Windows update rebooted the machine overnight', category: 'troubleshooting' },
+  { text: 'check if a Windows update restarted the machine overnight', category: 'troubleshooting' },
   { text: 'why did the main process stop responding?', category: 'troubleshooting' },
   { text: 'investigate why the display output went blank', category: 'troubleshooting' },
   { text: 'are there any hardware errors in the event log?', category: 'troubleshooting' },
@@ -165,7 +165,7 @@ export const SUGGESTED_QUESTIONS: SuggestedQuestion[] = [
   { text: 'did anything unusual happen in the last hour?', category: 'troubleshooting' },
   { text: 'show me any error or critical events from the system log in the last 24 hours', category: 'troubleshooting' },
   { text: 'restart the print spooler service', category: 'troubleshooting' },
-  { text: 'this machine\'s been slow — check for pending reboots, skim the last hour of critical events, and if nothing\'s urgent, clean up temp files', category: 'troubleshooting' },
+  { text: 'this machine\'s been slow — check for pending restarts, skim the last hour of critical events, and if nothing\'s urgent, clean up temp files', category: 'troubleshooting' },
 
   // ── scheduling-automation ──────────────────────────────────────────────
   { text: 'set all processes to only run weekdays 9am to 6pm', category: 'scheduling-automation' },

@@ -1,11 +1,16 @@
 /**
- * Action core: set the reboot schedule on a machine's config doc.
+ * Action core: set the restart schedule on a machine's config doc.
  *
- * Mirrors the client write at `useFirestore.updateRebootSchedule`. The
+ * Mirrors the client write at `useFirestore.updateRestartSchedule`. The
  * agent's existing config listener picks the new schedule up and propagates
  * it to local `config.json`, where the reboot state machine reads it. This
  * means the schedule survives Firestore disconnections — the agent fires
  * from local cache.
+ *
+ * Storage note: the `rebootSchedule` config field, the `set_reboot_schedule`
+ * audit verb, and the `reboot-schedule` endpoint id are wire/storage contracts
+ * shared with deployed agents — they intentionally keep the legacy `reboot`
+ * spelling. Only UI and code identifiers were renamed to "restart".
  *
  * No `configChangeFlag` is needed because the rule for the config doc
  * allows any user with site access to write directly. (Contrast: writes to
@@ -16,29 +21,29 @@ import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 import { ActionInputError, type ActionContext } from './createProcess.server';
 
-export interface RebootScheduleEntryInput {
+export interface RestartScheduleEntryInput {
   id: string;
   days: string[];
   time: string;
 }
 
-export interface RebootScheduleInput {
+export interface RestartScheduleInput {
   enabled: boolean;
-  entries: RebootScheduleEntryInput[];
+  entries: RestartScheduleEntryInput[];
 }
 
-export interface SetRebootScheduleInput {
+export interface SetRestartScheduleInput {
   machineId: string;
-  schedule: RebootScheduleInput;
+  schedule: RestartScheduleInput;
 }
 
-export interface SetRebootScheduleResult {
+export interface SetRestartScheduleResult {
   machineId: string;
 }
 
 const TIME_RE = /^\d{2}:\d{2}$/;
 
-function validateSchedule(s: unknown): asserts s is RebootScheduleInput {
+function validateSchedule(s: unknown): asserts s is RestartScheduleInput {
   if (!s || typeof s !== 'object' || Array.isArray(s)) {
     throw new ActionInputError(400, 'invalid_schedule', 'Field `schedule` must be an object.');
   }
@@ -90,10 +95,10 @@ function validateSchedule(s: unknown): asserts s is RebootScheduleInput {
   }
 }
 
-export async function setRebootSchedule(
+export async function setRestartSchedule(
   ctx: ActionContext,
-  input: SetRebootScheduleInput,
-): Promise<SetRebootScheduleResult> {
+  input: SetRestartScheduleInput,
+): Promise<SetRestartScheduleResult> {
   validateSchedule(input.schedule);
 
   const db = getAdminDb();
@@ -103,6 +108,7 @@ export async function setRebootSchedule(
     .collection('machines')
     .doc(input.machineId);
 
+  // `rebootSchedule` field name is a wire contract read by deployed agents — keep it.
   await configRef.set({ rebootSchedule: input.schedule }, { merge: true });
 
   emitMutation({
@@ -121,8 +127,8 @@ export async function setRebootSchedule(
   });
 
   logger.info(
-    `Reboot schedule set on ${input.machineId} (enabled=${input.schedule.enabled}, entries=${input.schedule.entries.length})`,
-    { context: 'actions/setRebootSchedule' },
+    `Restart schedule set on ${input.machineId} (enabled=${input.schedule.enabled}, entries=${input.schedule.entries.length})`,
+    { context: 'actions/setRestartSchedule' },
   );
 
   return { machineId: input.machineId };

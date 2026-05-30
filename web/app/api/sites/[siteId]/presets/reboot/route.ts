@@ -18,10 +18,10 @@ import { timestampToIso } from '@/lib/firestoreTime.server';
 import { authorizedSiteHandler, type SiteHandlerContext } from '@/lib/authorizedHandler.server';
 import { readAndParseJsonBody } from '@/app/api/_shared';
 import {
-  createRebootPreset,
-  RebootPresetValidationError,
-  type CreateRebootPresetInput,
-} from '@/lib/actions/createRebootPreset.server';
+  createRestartPreset,
+  RestartPresetValidationError,
+  type CreateRestartPresetInput,
+} from '@/lib/actions/createRestartPreset.server';
 
 export const GET = authorizedSiteHandler({
   capability: 'PRESET_MANAGE',
@@ -53,8 +53,8 @@ export const POST = authorizedSiteHandler({
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
-    const body = (parsed.body ?? {}) as Partial<CreateRebootPresetInput>;
-    const input: CreateRebootPresetInput = {
+    const body = (parsed.body ?? {}) as Partial<CreateRestartPresetInput>;
+    const input: CreateRestartPresetInput = {
       name: body.name as string,
       description: body.description,
       enabled: body.enabled,
@@ -64,13 +64,13 @@ export const POST = authorizedSiteHandler({
       createdBy: typeof body.createdBy === 'string' ? body.createdBy : ctx.actor.userId,
     };
 
-    const result = await createRebootPreset(ctx, input);
+    const result = await createRestartPreset(ctx, input);
     return NextResponse.json(
       { presetId: result.presetId, siteId: result.siteId },
       { status: 201 },
     );
   } catch (err) {
-    if (err instanceof RebootPresetValidationError) {
+    if (err instanceof RestartPresetValidationError) {
       return problemValidation(err.message, { [err.field]: [err.message] });
     }
     return problemFromError(err, 'sites/[siteId]/presets/reboot:POST');

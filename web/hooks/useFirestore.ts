@@ -133,16 +133,16 @@ export interface ScheduleBlock {
   ranges: TimeRange[];
 }
 
-/** A single scheduled reboot entry — fires once per matching day at the given time. */
-export interface RebootScheduleEntry {
+/** A single scheduled restart entry — fires once per matching day at the given time. */
+export interface RestartScheduleEntry {
   id: string;       // crypto.randomUUID() at creation, stable across edits
   days: string[];   // e.g. ['mon','tue','wed','thu','fri']
   time: string;     // "HH:MM" 24h
 }
 
-export interface RebootSchedule {
+export interface RestartSchedule {
   enabled: boolean;
-  entries: RebootScheduleEntry[];
+  entries: RestartScheduleEntry[];
 }
 
 export interface Process {
@@ -255,6 +255,8 @@ export interface Machine {
   agent_version?: string;  // Agent version for update detection (e.g., "2.0.0")
   machineTimezone?: string;  // IANA timezone (e.g. "America/Los_Angeles") from agent's tzlocal lookup. Undefined if the agent has not yet deployed the IANA-aware build.
   cortexEnabled?: boolean;  // User-controlled kill switch for Cortex tool-call delivery. Undefined/true = enabled.
+  // The `reboot*` fields below are agent-written wire/storage contracts and keep
+  // the legacy spelling on purpose (the UI/code refer to these as "restart").
   rebooting?: boolean;
   shuttingDown?: boolean;
   rebootScheduledAt?: number;    // Unix seconds — countdown anchor (matches lastHeartbeat convention)
@@ -265,7 +267,7 @@ export interface Machine {
     reason: string | null;
     timestamp: number | null;
   };
-  rebootSchedule?: RebootSchedule;
+  rebootSchedule?: RestartSchedule;
   /**
    * Mirrors `displays.autoRestore.circuitBreaker.tripped` from the config doc.
    * Surfaced on the dashboard list/card views as a small red dot next to the
@@ -894,9 +896,10 @@ export function useMachines(siteId: string) {
   // This prevents the 10-second flicker on page load where status doc has stale values
   const configOverridesRef = useRef<Record<string, Record<string, { launch_mode?: string; schedules?: ScheduleBlock[] | null; schedulePresetId?: string | null }>>>({});
 
-  // Reboot schedule lives in the config doc (not the status doc) so it can be
+  // Restart schedule lives in the config doc (not the status doc) so it can be
   // pushed down to the agent's local cache and survive Firestore disconnections.
-  const rebootScheduleOverridesRef = useRef<Record<string, RebootSchedule | undefined>>({});
+  // (The `rebootSchedule` field name is the agent-facing wire contract — kept as-is.)
+  const restartScheduleOverridesRef = useRef<Record<string, RestartSchedule | undefined>>({});
 
   // Display auto-restore circuit-breaker state lives in the same config doc
   // (`displays.autoRestore.circuitBreaker.tripped`). Mirrored onto each
@@ -912,7 +915,7 @@ export function useMachines(siteId: string) {
     const configCol = collection(db, 'config', siteId, 'machines');
     const unsubConfig = onSnapshot(configCol, (snapshot) => {
       const overrides: typeof configOverridesRef.current = {};
-      const rebootOverrides: typeof rebootScheduleOverridesRef.current = {};
+      const restartOverrides: typeof restartScheduleOverridesRef.current = {};
       const breakerOverrides: typeof displayBreakerTrippedOverridesRef.current = {};
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
@@ -929,9 +932,10 @@ export function useMachines(siteId: string) {
           }
           overrides[docSnap.id] = processMap;
         }
-        // Reboot schedule lives in the config doc per the offline-capable design.
+        // Restart schedule lives in the config doc per the offline-capable design.
+        // `data.rebootSchedule` is the agent-written wire field — keep the key.
         if (data.rebootSchedule) {
-          rebootOverrides[docSnap.id] = data.rebootSchedule as RebootSchedule;
+          restartOverrides[docSnap.id] = data.rebootSchedule as RestartSchedule;
         }
         // Display auto-restore breaker state lives under `displays.autoRestore`.
         // Only record `true` so the absent-entry == false invariant holds; when
@@ -942,15 +946,15 @@ export function useMachines(siteId: string) {
         }
       });
       configOverridesRef.current = overrides;
-      rebootScheduleOverridesRef.current = rebootOverrides;
+      restartScheduleOverridesRef.current = restartOverrides;
       displayBreakerTrippedOverridesRef.current = breakerOverrides;
 
       // Apply overrides to any already-loaded machines
       setMachines(prev => prev.map(machine => {
         const machineOverrides = overrides[machine.machineId];
-        const rebootSchedule = rebootOverrides[machine.machineId];
+        const restartSchedule = restartOverrides[machine.machineId];
         const displayBreakerTripped = breakerOverrides[machine.machineId] === true;
-        const next: Machine = { ...machine, rebootSchedule, displayBreakerTripped };
+        const next: Machine = { ...machine, rebootSchedule: restartSchedule, displayBreakerTripped };
         if (machineOverrides && next.processes) {
           next.processes = next.processes.map(p => {
             const override = machineOverrides[p.id];
@@ -1185,9 +1189,10 @@ export function useMachines(siteId: string) {
           //   - JS Date instance
           const lastHeartbeat = parseFirestoreSeconds(data.lastHeartbeat);
 
-          // Convert reboot/shutdown countdown anchors using the same robust parser.
-          const rebootScheduledAtParsed = parseFirestoreSeconds(data.rebootScheduledAt);
-          const rebootScheduledAt = rebootScheduledAtParsed > 0 ? rebootScheduledAtParsed : undefined;
+          // Convert restart/shutdown countdown anchors using the same robust parser.
+          // `data.rebootScheduledAt` is the agent-written wire field — keep the key.
+          const restartScheduledAtParsed = parseFirestoreSeconds(data.rebootScheduledAt);
+          const restartScheduledAt = restartScheduledAtParsed > 0 ? restartScheduledAtParsed : undefined;
           const shutdownScheduledAtParsed = parseFirestoreSeconds(data.shutdownScheduledAt);
           const shutdownScheduledAt = shutdownScheduledAtParsed > 0 ? shutdownScheduledAtParsed : undefined;
 
@@ -1219,16 +1224,16 @@ export function useMachines(siteId: string) {
               machineTimezone: typeof data.machine_timezone_iana === 'string' ? data.machine_timezone_iana : undefined,
               rebooting: data.rebooting,
               shuttingDown: data.shuttingDown,
-              rebootScheduledAt,
+              rebootScheduledAt: restartScheduledAt,
               shutdownScheduledAt,
-              // rebootSchedule lives in the config doc — sourced from rebootScheduleOverridesRef
-              rebootSchedule: rebootScheduleOverridesRef.current[doc.id],
+              // rebootSchedule (config-doc wire field) — sourced from restartScheduleOverridesRef
+              rebootSchedule: restartScheduleOverridesRef.current[doc.id],
               // displayBreakerTripped also lives in the config doc — sourced from
               // the same single collection-wide listener so the dashboard can
               // render the breaker indicator without per-row subscriptions.
               displayBreakerTripped: displayBreakerTrippedOverridesRef.current[doc.id] === true,
               rebootState: data.rebootState,
-              // rebootPending is the agent-published "needs reboot" banner
+              // rebootPending is the agent-published "needs restart" banner
               // payload — surfaced on the card view as the amber approve /
               // dismiss row. Passed through verbatim; the shape is guarded
               // by the Machine type declaration above.
@@ -1613,17 +1618,18 @@ export function useMachines(siteId: string) {
     return response.data.commandId;
   };
 
-  const rebootMachine = async (machineId: string) => {
+  const restartMachine = async (machineId: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
-    // Pre-compute the target reboot time so the dashboard renders the
+    // Pre-compute the target restart time so the dashboard renders the
     // countdown immediately while the API queues the command.
-    const targetReboot = Math.floor(Date.now() / 1000) + 30;
+    const targetRestart = Math.floor(Date.now() / 1000) + 30;
+    // 'reboot_machine' is the wire command verb the agent matches on — keep it.
     await sendMachineCommand(machineId, 'reboot_machine', { delay_seconds: 30 });
     setMachines(prevMachines =>
       prevMachines.map(machine =>
         machine.machineId === machineId ? {
           ...machine,
-          rebootScheduledAt: targetReboot,
+          rebootScheduledAt: targetRestart,
         } : machine
       )
     );
@@ -1631,7 +1637,7 @@ export function useMachines(siteId: string) {
 
   const shutdownMachine = async (machineId: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
-    // Same pattern as rebootMachine: render the countdown optimistically while
+    // Same pattern as restartMachine: render the countdown optimistically while
     // the API queues the command.
     const targetShutdown = Math.floor(Date.now() / 1000) + 30;
     await sendMachineCommand(machineId, 'shutdown_machine', { delay_seconds: 30 });
@@ -1645,11 +1651,13 @@ export function useMachines(siteId: string) {
     );
   };
 
-  const cancelReboot = async (machineId: string) => {
+  const cancelRestart = async (machineId: string) => {
+    // 'cancel_reboot' is the wire command verb the agent matches on — keep it.
     await sendMachineCommand(machineId, 'cancel_reboot');
   };
 
-  const dismissRebootPending = async (machineId: string, processName: string) => {
+  const dismissRestartPending = async (machineId: string, processName: string) => {
+    // 'dismiss_reboot_pending' is the wire command verb the agent matches on — keep it.
     await sendMachineCommand(machineId, 'dismiss_reboot_pending', { process_name: processName });
   };
 
@@ -1666,18 +1674,20 @@ export function useMachines(siteId: string) {
   };
 
   /**
-   * Save a reboot schedule for a machine.
+   * Save a restart schedule for a machine.
    *
-   * Writes to `config/{siteId}/machines/{machineId}.rebootSchedule` with merge.
-   * The agent's existing config listener picks this up and propagates to local
-   * config.json, where the reboot state machine reads it. This means the schedule
-   * survives Firestore disconnections — the agent fires from local cache.
+   * Writes to `config/{siteId}/machines/{machineId}.rebootSchedule` with merge
+   * (the `rebootSchedule` field and `reboot-schedule` endpoint keep the legacy
+   * spelling — they are wire contracts read by deployed agents). The agent's
+   * existing config listener picks this up and propagates to local config.json,
+   * where the reboot state machine reads it. This means the schedule survives
+   * Firestore disconnections — the agent fires from local cache.
    *
    * No `configChangeFlag` is needed because the rule for the config doc allows
    * any user with site access to write directly. (Contrast: writes to the
    * machine status doc require configChangeFlag.)
    */
-  const updateRebootSchedule = async (machineId: string, schedule: RebootSchedule) => {
+  const updateRestartSchedule = async (machineId: string, schedule: RestartSchedule) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
     await apiJson(
       `/api/sites/${encodeURIComponent(siteId)}/machines/${encodeURIComponent(machineId)}/reboot-schedule`,
@@ -1706,5 +1716,5 @@ export function useMachines(siteId: string) {
   const machinesForCurrentSite = loadedSiteId === siteId ? joinedMachines : EMPTY_MACHINES;
   const loading = !!db && !!siteId && loadedSiteId !== siteId;
 
-  return { machines: machinesForCurrentSite, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView, updateRebootSchedule };
+  return { machines: machinesForCurrentSite, loading, error, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, restartMachine, shutdownMachine, cancelRestart, dismissRestartPending, captureScreenshot, startLiveView, stopLiveView, updateRestartSchedule };
 }

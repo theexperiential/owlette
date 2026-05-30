@@ -12,7 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { useMachines, type RebootSchedule } from '@/hooks/useFirestore';
+import { useMachines, type RestartSchedule } from '@/hooks/useFirestore';
 import { toast } from 'sonner';
 
 interface ApplyScheduleToMachinesDialogProps {
@@ -22,11 +22,11 @@ interface ApplyScheduleToMachinesDialogProps {
   /** The machine the user is editing — pre-checked + disabled (saved by the parent dialog). */
   currentMachineId: string;
   /** The schedule to apply to other machines. */
-  schedule: RebootSchedule;
+  schedule: RestartSchedule;
 }
 
 /**
- * Bulk-apply modal for reboot schedules. Lets the operator copy the current
+ * Bulk-apply modal for restart schedules. Lets the operator copy the current
  * schedule to many machines at once. Mirrors DeploymentDialog's checkbox-list
  * pattern. Per-machine `Promise.all` writes — no batch, since each write is
  * an independent setDoc with merge.
@@ -63,7 +63,7 @@ function ApplyScheduleToMachinesDialogBody({
   currentMachineId,
   schedule,
 }: Omit<ApplyScheduleToMachinesDialogProps, 'open'>) {
-  const { machines, updateRebootSchedule } = useMachines(siteId);
+  const { machines, updateRestartSchedule } = useMachines(siteId);
   const [selected, setSelected] = useState<Set<string>>(() => new Set([currentMachineId]));
   const [applying, setApplying] = useState(false);
 
@@ -103,14 +103,14 @@ function ApplyScheduleToMachinesDialogBody({
 
     setApplying(true);
     const results = await Promise.allSettled(
-      targets.map(machineId => updateRebootSchedule(machineId, schedule))
+      targets.map(machineId => updateRestartSchedule(machineId, schedule))
     );
 
     const successCount = results.filter(r => r.status === 'fulfilled').length;
     const failCount = results.length - successCount;
 
     if (failCount === 0) {
-      toast.success(`reboot schedule applied to ${successCount} machine${successCount > 1 ? 's' : ''}`);
+      toast.success(`restart schedule applied to ${successCount} machine${successCount > 1 ? 's' : ''}`);
       onOpenChange(false);
     } else if (successCount === 0) {
       toast.error(`failed to apply schedule to all ${failCount} machine${failCount > 1 ? 's' : ''}`);
@@ -124,9 +124,9 @@ function ApplyScheduleToMachinesDialogBody({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>apply reboot schedule to...</DialogTitle>
+        <DialogTitle>apply restart schedule to...</DialogTitle>
         <DialogDescription className="text-muted-foreground text-pretty">
-          this will overwrite the reboot schedule on the selected machines.
+          this will overwrite the restart schedule on the selected machines.
         </DialogDescription>
       </DialogHeader>
 

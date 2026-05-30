@@ -21,13 +21,13 @@ import {
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import RebootScheduleDialog from '@/components/RebootScheduleDialog';
-import type { RebootSchedule } from '@/hooks/useFirestore';
+import RestartScheduleDialog from '@/components/RestartScheduleDialog';
+import type { RestartSchedule } from '@/hooks/useFirestore';
 
 interface MachineContextMenuProps {
   machineId: string;
   machineName: string;
-  /** IANA timezone for this machine — passed through to RebootScheduleDialog
+  /** IANA timezone for this machine — passed through to RestartScheduleDialog
    * so the schedule editor's chip + "next at" preview reflect the machine's
    * own local time, not the browser's. */
   machineTimezone?: string;
@@ -37,20 +37,20 @@ interface MachineContextMenuProps {
   shuttingDown?: boolean;
   /**
    * Site-scoped admin gate. When false, the menu hides every write action
-   * (reboot/shutdown/cancel, revoke token, remove machine) and keeps only
+   * (restart/shutdown/cancel, revoke token, remove machine) and keeps only
    * the user-scoped + read-only items (mute alerts, screenshot, live view).
    * Matches the permission-model-split contract in
    * dev/active/permission-model-split/manual-smoke-checklist.md.
    */
   isSiteAdmin?: boolean;
   onRemoveMachine: () => void;
-  onReboot?: () => Promise<void>;
+  onRestart?: () => Promise<void>;
   onShutdown?: () => Promise<void>;
-  onCancelReboot?: () => Promise<void>;
+  onCancelRestart?: () => Promise<void>;
   onScreenshot?: () => void;
   onLiveView?: () => void;
   onViewDisplays?: () => void;
-  rebootSchedule?: RebootSchedule;
+  rebootSchedule?: RestartSchedule;
 }
 
 export function MachineContextMenu({
@@ -63,20 +63,20 @@ export function MachineContextMenu({
   shuttingDown,
   isSiteAdmin,
   onRemoveMachine,
-  onReboot,
+  onRestart,
   onShutdown,
-  onCancelReboot,
+  onCancelRestart,
   onScreenshot,
   onLiveView,
   onViewDisplays,
   rebootSchedule,
 }: MachineContextMenuProps) {
   const [showRevokeDialog, setShowRevokeDialog] = useState(false);
-  const [showRebootDialog, setShowRebootDialog] = useState(false);
+  const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [showShutdownDialog, setShowShutdownDialog] = useState(false);
   const [isRevoking, setIsRevoking] = useState(false);
   const [isSendingCommand, setIsSendingCommand] = useState(false);
-  const [showRebootScheduleDialog, setShowRebootScheduleDialog] = useState(false);
+  const [showRestartScheduleDialog, setShowRestartScheduleDialog] = useState(false);
   const { userPreferences, updateUserPreferences } = useAuth();
   const isMuted = userPreferences.mutedMachines.includes(machineId);
 
@@ -119,20 +119,20 @@ export function MachineContextMenu({
     }
   };
 
-  const handleReboot = async () => {
-    if (!onReboot) return;
+  const handleRestart = async () => {
+    if (!onRestart) return;
     setIsSendingCommand(true);
     try {
-      await onReboot();
-      toast.success(`Reboot command sent to ${machineName}`, {
-        description: 'Reboot starting. Click the countdown to cancel.',
+      await onRestart();
+      toast.success(`Restart command sent to ${machineName}`, {
+        description: 'Restart starting. Click the countdown to cancel.',
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      toast.error('Failed to send reboot command', { description: message });
+      toast.error('Failed to send restart command', { description: message });
     } finally {
       setIsSendingCommand(false);
-      setShowRebootDialog(false);
+      setShowRestartDialog(false);
     }
   };
 
@@ -153,11 +153,11 @@ export function MachineContextMenu({
     }
   };
 
-  const handleCancelReboot = async () => {
-    if (!onCancelReboot) return;
+  const handleCancelRestart = async () => {
+    if (!onCancelRestart) return;
     setIsSendingCommand(true);
     try {
-      await onCancelReboot();
+      await onCancelRestart();
       toast.success(`Cancel sent to ${machineName}`);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -198,20 +198,20 @@ export function MachineContextMenu({
                 <DropdownMenuItem
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleCancelReboot();
+                    handleCancelRestart();
                   }}
                   disabled={isSendingCommand}
                   data-testid="machine-context-menu-cancel-reboot"
                   className="text-red-400 focus:bg-red-950/30 focus:text-red-300 cursor-pointer"
                 >
                   <XCircle className="mr-2 h-4 w-4" />
-                  cancel reboot
+                  cancel restart
                 </DropdownMenuItem>
               ) : shuttingDown ? (
                 <DropdownMenuItem
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleCancelReboot();
+                    handleCancelRestart();
                   }}
                   disabled={isSendingCommand}
                   data-testid="machine-context-menu-cancel-shutdown"
@@ -226,20 +226,20 @@ export function MachineContextMenu({
                     <DropdownMenuItem
                       onClick={(e) => {
                         e.stopPropagation();
-                        setShowRebootDialog(true);
+                        setShowRestartDialog(true);
                       }}
                       data-testid="machine-context-menu-reboot"
                       className="flex-1 p-0 text-cyan-400 focus:bg-transparent focus:text-cyan-300 cursor-pointer"
                     >
                       <RotateCcw className="mr-2 h-4 w-4" />
-                      reboot machine
+                      restart machine
                     </DropdownMenuItem>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setShowRebootScheduleDialog(true);
+                            setShowRestartScheduleDialog(true);
                           }}
                           className="ml-2 p-0.5 rounded hover:bg-cyan-950/50 transition-colors cursor-pointer"
                         >
@@ -247,7 +247,7 @@ export function MachineContextMenu({
                         </button>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>schedule reboots</p>
+                        <p>schedule restarts</p>
                       </TooltipContent>
                     </Tooltip>
                   </div>
@@ -264,6 +264,26 @@ export function MachineContextMenu({
                   </DropdownMenuItem>
                 </>
               )}
+              <DropdownMenuSeparator className="bg-accent" />
+            </>
+          )}
+          {!isOnline && isSiteAdmin && (
+            <>
+              {/* Offline machines can still be scheduled: the restart schedule is
+                  written to the config doc and the agent applies it from local
+                  cache once it reconnects. The live restart/shutdown commands
+                  above stay gated on `isOnline` because they need the agent up. */}
+              <DropdownMenuItem
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowRestartScheduleDialog(true);
+                }}
+                data-testid="machine-context-menu-schedule-restarts"
+                className="text-cyan-400 focus:bg-cyan-950/30 focus:text-cyan-300 cursor-pointer"
+              >
+                <Settings2 className="mr-2 h-4 w-4" />
+                schedule restarts
+              </DropdownMenuItem>
               <DropdownMenuSeparator className="bg-accent" />
             </>
           )}
@@ -377,11 +397,11 @@ export function MachineContextMenu({
         </DialogContent>
       </Dialog>
 
-      {/* Reboot Confirmation Dialog */}
-      <Dialog open={showRebootDialog} onOpenChange={setShowRebootDialog}>
+      {/* Restart Confirmation Dialog */}
+      <Dialog open={showRestartDialog} onOpenChange={setShowRestartDialog}>
         <DialogContent className="bg-card border-border">
           <DialogHeader>
-            <DialogTitle>reboot {machineName}?</DialogTitle>
+            <DialogTitle>restart {machineName}?</DialogTitle>
             <DialogDescription className="text-muted-foreground">
               this will restart the machine in 30 seconds. all running processes will be interrupted.
               you&apos;ll have 30 seconds to cancel from the dashboard.
@@ -390,17 +410,17 @@ export function MachineContextMenu({
           <DialogFooter>
             <Button
               variant="ghost"
-              onClick={() => setShowRebootDialog(false)}
+              onClick={() => setShowRestartDialog(false)}
               className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
             <Button
-              onClick={handleReboot}
+              onClick={handleRestart}
               disabled={isSendingCommand}
               className="bg-red-600 hover:bg-red-700"
             >
-              {isSendingCommand ? 'sending...' : 'reboot'}
+              {isSendingCommand ? 'sending...' : 'restart'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -435,14 +455,14 @@ export function MachineContextMenu({
         </DialogContent>
       </Dialog>
 
-      {/* Reboot Schedule Dialog */}
-      <RebootScheduleDialog
+      {/* Restart Schedule Dialog */}
+      <RestartScheduleDialog
         siteId={siteId}
         machineId={machineId}
         machineName={machineName}
         machineTimezone={machineTimezone}
-        open={showRebootScheduleDialog}
-        onOpenChange={setShowRebootScheduleDialog}
+        open={showRestartScheduleDialog}
+        onOpenChange={setShowRestartScheduleDialog}
         currentSchedule={rebootSchedule}
       />
     </>

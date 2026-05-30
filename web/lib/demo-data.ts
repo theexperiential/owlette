@@ -210,7 +210,7 @@ const machineDefs: MachineDef[] = [
   {
     id: 'stage-right-media',
     online: true,
-    rebooting: true, // Rebooting machine for realism
+    rebooting: true, // Restarting machine for realism (field name is the wire contract)
     cpuName: 'AMD Ryzen 7 7700X',
     cpuBase: 35, memBase: 50, memTotal: 32, diskBase: 48, diskTotal: 1000,
     gpu: { name: 'NVIDIA RTX PRO 4000 (Blackwell)', usageBase: 40, vramTotal: 8, vramUsed: 4.2 },
@@ -397,7 +397,7 @@ function buildMachine(def: MachineDef): Machine {
   // ── Per-volume disk IO ───────────────────────────────────────────
   // Synthesize plausible read/write rates so the cards' arrow rates and
   // the detail-panel disk-IO chart aren't blank. Skipped for offline
-  // and rebooting machines (their panels render the empty state).
+  // and restarting machines (their panels render the empty state).
   const diskio: NonNullable<Machine['metrics']>['diskio'] = {};
   if (def.online && !def.rebooting) {
     // Activity scales with cpu+gpu workload.
@@ -941,7 +941,7 @@ const displayTopologies: Record<
     ],
   },
   'stage-right-media': {
-    // Rebooting — leave the last-known profile so the panel isn't blank.
+    // Restarting — leave the last-known profile so the panel isn't blank.
     live: [
       makeMonitor('stage-right-media', 0, {
         friendlyName: 'preview',

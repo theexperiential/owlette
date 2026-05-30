@@ -1,23 +1,23 @@
-import type { RebootScheduleEntry } from '@/hooks/useFirestore';
+import type { RestartScheduleEntry } from '@/hooks/useFirestore';
 
-export interface RebootPresetDefinition {
+export interface RestartPresetDefinition {
   name: string;
   description?: string;
   enabled?: boolean;
-  entries: RebootScheduleEntry[];
+  entries: RestartScheduleEntry[];
 }
 
 /**
- * Built-in reboot presets shipped with the app.
- * Merged client-side with site-level custom presets in useRebootPresets.
+ * Built-in restart presets shipped with the app.
+ * Merged client-side with site-level custom presets in useRestartPresets.
  *
  * Built-in entry IDs use a stable `builtin-*` prefix so they don't collide with
  * crypto.randomUUID()-generated IDs from user-created entries.
  */
-export const BUILT_IN_REBOOT_PRESETS: RebootPresetDefinition[] = [
+export const BUILT_IN_RESTART_PRESETS: RestartPresetDefinition[] = [
   {
     name: '2am daily',
-    description: 'reboot every day at 2:00 AM',
+    description: 'restart every day at 2:00 AM',
     enabled: true,
     entries: [
       {

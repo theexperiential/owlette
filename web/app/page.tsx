@@ -60,7 +60,7 @@ const jsonLd = {
     'Public REST API with scoped keys',
     'CLI and TypeScript SDK',
     'Display topology management with auto-revert',
-    'Scheduled reboots and dependency-aware restarts',
+    'Scheduled machine restarts and dependency-aware process restarts',
   ],
 };
 

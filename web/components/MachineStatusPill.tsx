@@ -7,7 +7,7 @@ interface MachineStatusPillProps {
   online: boolean;
   rebooting?: boolean;
   shuttingDown?: boolean;
-  rebootScheduledAt?: number;    // Unix seconds — TARGET reboot time (when the OS will actually restart)
+  rebootScheduledAt?: number;    // Unix seconds — TARGET restart time (when the OS will actually restart). Field name kept as the agent-written wire contract.
   shutdownScheduledAt?: number;  // Unix seconds — TARGET shutdown time
   onCancel?: () => Promise<void>;
   isSiteAdmin?: boolean;
@@ -38,13 +38,13 @@ export function MachineStatusPill({
   // scheduledAt as "active" means the countdown shows up the moment the
   // listener sees the doc — no waiting for the boolean flag to round-trip
   // through Firestore separately.
-  const hasUpcomingReboot = !!(rebootScheduledAt && rebootScheduledAt > now);
+  const hasUpcomingRestart = !!(rebootScheduledAt && rebootScheduledAt > now);
   const hasUpcomingShutdown = !!(shutdownScheduledAt && shutdownScheduledAt > now);
-  const showRebootMode = !!rebooting || hasUpcomingReboot;
+  const showRestartMode = !!rebooting || hasUpcomingRestart;
   const showShutdownMode = !!shuttingDown || hasUpcomingShutdown;
-  const isActive = showRebootMode || showShutdownMode;
-  const scheduledAt = showRebootMode ? rebootScheduledAt : showShutdownMode ? shutdownScheduledAt : undefined;
-  const actionLabel = showShutdownMode ? 'shutting down' : 'rebooting';
+  const isActive = showRestartMode || showShutdownMode;
+  const scheduledAt = showRestartMode ? rebootScheduledAt : showShutdownMode ? shutdownScheduledAt : undefined;
+  const actionLabel = showShutdownMode ? 'shutting down' : 'restarting';
 
   useEffect(() => {
     if (!isActive) return;
@@ -72,9 +72,9 @@ export function MachineStatusPill({
   }
 
   // Active state: red pulsing pill with countdown.
-  // scheduledAt is the TARGET reboot/shutdown time in Unix seconds; remaining
+  // scheduledAt is the TARGET restart/shutdown time in Unix seconds; remaining
   // is simply (target - now). This is what the agent writes for both scheduled
-  // reboots (announce phase) and dashboard-initiated reboots (optimistic write).
+  // restarts (announce phase) and dashboard-initiated restarts (optimistic write).
   const remaining = scheduledAt
     ? Math.max(0, scheduledAt - now)
     : null;
