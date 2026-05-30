@@ -33,5 +33,8 @@ export { exportSecurityBoundaryAuditDevDaily } from './securityBoundaryAuditExpo
 export { emitWebhook, processRetryQueue } from './webhookDispatch';
 export { sweepExpiredApiKeysDaily } from './apiKeyExpire';
 export { sweepExpiredIdempotencyCacheDaily } from './idempotencyCleanup';
-export { reconcileDeploymentStatus } from './reconcileDeploymentStatus';
-export { reconcileDistributionStatus } from './reconcileDistributionStatus';
+// reconcileDeploymentStatus / reconcileDistributionStatus (wave-2.4) removed
+// 2026-05-30: both triggered on commands/pending, but the agent only ever
+// writes command status to commands/completed, so they never fired (inert).
+// onCommandCompleted (deploymentStatus.ts, on commands/completed) is the
+// canonical deployment reconciler. v1 project-distribution is deprecated (roost).

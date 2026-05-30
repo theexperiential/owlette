@@ -13,6 +13,12 @@
  * This replaces the client-side status mutation that previously lived in
  * the useDeployments React hook, making deployment status observable by
  * any consumer (API, tests, scripts) without requiring the dashboard.
+ *
+ * CANONICAL: this is the authoritative deployment-status reconciler. The
+ * wave-2.4 reconcileDeploymentStatus / reconcileDistributionStatus functions
+ * were removed 2026-05-30 — they triggered on commands/pending but the agent
+ * only writes status to commands/completed, so they were inert. Do NOT delete
+ * this function as "superseded": nothing supersedes it.
  */
 
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
