@@ -42,6 +42,23 @@ dev/**/codex-*
 dev/**/claude-*
 !dev/codex-dev-audit-*.output.md
 dev/build-failure-context.md
+
+# Ad-hoc multi-agent review/dispatch scratch — per-agent findings, briefings,
+# prompts, raw stdout/patches, trigger payloads. Durable conclusions live in
+# commits and dev/findings-ledger.md; these one-off dispatches aren't committed.
+dev/**/*-findings.md
+dev/**/agent*.md
+dev/**/BRIEFING.md
+dev/**/_briefing.md
+dev/**/_prompt-*
+dev/**/*.out
+dev/**/*.patch
+dev/**/findings.md
+dev/**/dryrun*.txt
+dev/**/event.json
+dev/**/issue.json
+dev/findings-ledger.md
+dev/whole-app-review-*.md
 *.output.txt
 .claude/codex-prompts/
 

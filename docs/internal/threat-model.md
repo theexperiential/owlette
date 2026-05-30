@@ -450,7 +450,7 @@ this section is the **schedule**, not the procedure. procedures live in `docs/in
 | gcp workload identity federation oidc trust | annual review | any github org-level change; ci pipeline change | owner |
 | cloudflare api tokens | every 6 months | r2 policy change attempt detected; cloudflare account access change | owner |
 | encryption key for `.tokens.enc` (machine-bound fernet) | per-machine, on first install + on os reinstall detection | machine ownership change | agent (automatic) |
-| device pairing phrase wordlist | never (must stay in sync between agent + web — see `pair_phrases.py` / `pairPhrases.ts`); additions append-only | n/a | dev team |
+| device pairing phrase wordlist | never (canonical list lives in web `pairPhrases.ts`); additions append-only | n/a | dev team |
 
 emergency-rotation invariant: **every key class above has a documented procedure that one engineer can execute end-to-end without consulting another engineer.** if a procedure requires two-person knowledge, that is itself a security defect (single-person bus factor on incident response).
 
