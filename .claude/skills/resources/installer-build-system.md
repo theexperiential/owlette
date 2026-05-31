@@ -273,7 +273,7 @@ C:\ProgramData\Owlette\                  Installation + data directory
 
 Start Menu\Programs\Owlette\             Shortcuts
 ├── Owlette Configuration                → launch_gui.bat
-├── Owlette Tray Icon                    → launch_tray.bat
+├── Owlette                              → launch_tray.bat
 ├── View Logs                            → C:\ProgramData\Owlette\logs\
 ├── Edit Configuration                   → config.json
 └── Uninstall Owlette

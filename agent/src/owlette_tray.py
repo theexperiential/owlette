@@ -126,9 +126,110 @@ def check_service_running():
         logging.debug(f"Service status check failed: {e}")
         return False
 
+# Function to check whether the service start type is disabled
+def service_is_disabled():
+    """True if OwletteService's start type is 'disabled' (Start=4 in the registry).
+
+    `net start` cannot start a disabled service — it fails with error 1058 — so
+    an elevated start attempt would pop a UAC prompt and then silently fail.
+    Detecting this lets start_service_elevated() skip the pointless prompt. On
+    any read error we return False (i.e. don't suppress the start) so a transient
+    registry hiccup can't block a legitimate resume.
+    """
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                             'SYSTEM\\CurrentControlSet\\Services\\OwletteService', 0, winreg.KEY_READ)
+        start_type, _ = winreg.QueryValueEx(key, 'Start')
+        winreg.CloseKey(key)
+        return start_type == 0x4  # SERVICE_DISABLED
+    except Exception as e:
+        logging.debug(f"Could not read service start type: {e}")
+        return False
+
+# Function to start the Windows service (using UAC elevation)
+def start_service_elevated():
+    """Start OwletteService via SCM with elevation (one UAC prompt).
+
+    Mirrors exit_action's elevated `net stop`. NSSM only auto-restarts the
+    service after a *crash* (non-zero exit), NOT after the controlled `net stop`
+    that exit_action issues — so once the user exits owlette the service stays
+    down until something explicitly starts it again. `net start` requires admin
+    rights, hence the ShellExecuteW 'runas' elevation.
+
+    Returns False without prompting when the service is disabled (a UAC there
+    would just fail with error 1058 — see service_is_disabled()). Otherwise
+    ShellExecuteW returns an HINSTANCE cast to int; a value > 32 means the
+    process launched (UAC accepted), <= 32 means it failed to launch or the
+    user cancelled the prompt. Returns True only when the start was issued.
+    Note > 32 confirms the elevated cmd.exe launched, not that `net start`
+    itself succeeded — callers needing confirmation poll check_service_running().
+    """
+    if service_is_disabled():
+        logging.warning("[TRAY] OwletteService start type is 'disabled' — skipping elevated start "
+                        "(net start would fail 1058); enable 'start on login' to resume owlette")
+        return False
+    try:
+        rc = ctypes.windll.shell32.ShellExecuteW(
+            None,
+            "runas",
+            "cmd.exe",
+            "/c net start OwletteService",
+            None,
+            0,  # SW_HIDE — no console window flash
+        )
+        if rc > 32:
+            logging.info("Issued elevated 'net start OwletteService' (UAC prompt shown)")
+            return True
+        logging.warning(f"Elevated 'net start' not issued (ShellExecuteW returned {rc}; UAC cancelled?)")
+        return False
+    except Exception as e:
+        logging.error(f"Failed to issue elevated service start: {e}")
+        return False
+
+def ensure_service_running():
+    """Start OwletteService when the user explicitly relaunches owlette to resume it.
+
+    Called only on the explicit-resume path — the Start-menu 'owlette' shortcut
+    passes --resume via launch_tray.bat (see __main__). exit_action stops the
+    service with a controlled `net stop`, which NSSM will not auto-restart, so
+    after an exit the service stays down; without this, clicking 'owlette' would
+    only show a tray icon flashing red 'Service: Stopped' instead of actually
+    bringing owlette back. Here we start it (one UAC prompt) so the shortcut
+    genuinely resumes owlette.
+
+    This is deliberately NOT called on the passive launch paths:
+      - the service launches the tray itself (service already running → nothing
+        to do), and
+      - the {userstartup} startup shortcut fires at login, BEFORE the
+        delayed-auto service has started (~2 min after boot); forcing a start
+        there would pop an unwanted UAC prompt on every boot for a service that
+        is about to start on its own.
+
+    Only attempts a start when the service is confirmed not running, so even on
+    the --resume path a UAC prompt appears only when the service is truly down.
+    """
+    if check_service_running():
+        return
+
+    logging.info("[TRAY] Service is not running at startup — attempting elevated start")
+    if not start_service_elevated():
+        # UAC cancelled or the start could not be issued. Leave the status
+        # monitor to surface 'Service: Stopped'; don't loop on UAC prompts.
+        return
+
+    # SCM start + service init takes a few seconds; wait for RUNNING so the
+    # initial icon reflects the real state instead of a transient 'error' flash.
+    for _ in range(20):  # up to ~10s
+        time.sleep(0.5)
+        if check_service_running():
+            logging.info("[TRAY] Service reached RUNNING after tray-initiated start")
+            return
+    logging.warning("[TRAY] Service did not reach RUNNING within 10s of tray-initiated start")
+
 # Function to read service status from IPC file
 _last_good_status = None  # Cache last successful read to ride through atomic-rename races
 _last_good_status_time = 0  # Timestamp of last successful read
+_stale_warned = False  # True once we've logged the current stale episode (de-spams the log)
 
 def read_service_status():
     """
@@ -142,7 +243,7 @@ def read_service_status():
     atomic rename), returns the last successfully read status to avoid
     false-positive "Starting" flickers in determine_status().
     """
-    global _last_good_status, _last_good_status_time
+    global _last_good_status, _last_good_status_time, _stale_warned
     try:
         status_path = shared_utils.get_data_path('tmp/service_status.json')
 
@@ -154,7 +255,17 @@ def read_service_status():
         file_age = time.time() - os.path.getmtime(status_path)
 
         if file_age > 120:
-            logging.warning(f"[STATUS] Service status file is stale ({int(file_age)}s old)")
+            # Log once per stale episode. read_service_status() is called more
+            # than once per monitor cycle (determine_status() + generate_menu()),
+            # and the monitor loop runs every second, so logging on every call
+            # would double each line and spam the log once a second while the
+            # service is down. _stale_warned resets ONLY on the next fresh read
+            # below (not on the file-missing/exception paths) — the service
+            # always rewrites the file fresh via atomic os.replace, so a real
+            # recovery always clears the flag and the next stale episode re-logs.
+            if not _stale_warned:
+                logging.warning(f"[STATUS] Service status file is stale ({int(file_age)}s old) — service may be stopped")
+                _stale_warned = True
             return None
 
         # Parse JSON
@@ -162,6 +273,9 @@ def read_service_status():
             status_data = json.load(f)
             _last_good_status = status_data
             _last_good_status_time = time.time()
+            if _stale_warned:
+                logging.info(f"[STATUS] Service status file is fresh again ({int(file_age)}s old)")
+                _stale_warned = False
             return status_data
 
     except NameError as e:
@@ -291,6 +405,23 @@ def restart_service(icon, item):
     """
     try:
         logging.info("Starting service restart procedure...")
+
+        # If the service is fully stopped (not just degraded), the restart-flag
+        # mechanism can't help: there's no running service loop to read the flag
+        # and exit-42 for NSSM to restart. Worse, the code below would stop the
+        # tray too, leaving the user with neither. Start the service directly and
+        # keep the tray alive so the menu stays available.
+        if not check_service_running():
+            logging.info("Service is stopped — starting it directly instead of writing the restart flag")
+            if start_service_elevated():
+                try:
+                    icon.notify(
+                        title="owlette — starting",
+                        message="starting service — will return momentarily"
+                    )
+                except Exception:
+                    pass
+            return
 
         # Show notification immediately for user feedback
         try:
@@ -835,6 +966,11 @@ if __name__ == "__main__":
     try:
         # Check if this is a restart (--restarted flag passed)
         is_restarted = '--restarted' in sys.argv
+        # --resume is passed by the Start-menu "Owlette" shortcut (launch_tray.bat)
+        # to mark an EXPLICIT user request to resume owlette. Only then do we start
+        # a stopped service (see the resume gate below); the passive launch paths
+        # (service-launched tray, {userstartup} startup shortcut) don't pass it.
+        is_resume = '--resume' in sys.argv
 
         if not _acquire_pid_lock():
             logging.info('Tray icon is already running (PID lock)...')
@@ -857,6 +993,18 @@ if __name__ == "__main__":
         logging.info("[TRAY] Explorer found, waiting 2s for notification area...")
         _flush_logs()
         time.sleep(2)
+
+        # Resume owlette only on an EXPLICIT user resume (--resume, set by the
+        # Start-menu "Owlette" shortcut). If the user exited owlette and clicked it
+        # to come back, start the stopped service so the tray reflects a live
+        # service instead of a 'Service: Stopped' error it can't recover from.
+        # We intentionally skip this on the passive paths — the service-launched
+        # tray (service already running) and the {userstartup} startup shortcut,
+        # which fires at login BEFORE the delayed-auto service has started — so it
+        # can't pop an unwanted UAC prompt on every boot.
+        if is_resume:
+            ensure_service_running()
+            _flush_logs()
 
         # Retry with backoff — pystray can still fail if the shell notification area
         # is not fully initialised (common during Windows boot).

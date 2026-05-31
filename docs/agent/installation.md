@@ -226,7 +226,7 @@ The machine should appear in the selected site with:
 
 ### check system tray
 
-The owlette tray icon starts through the user's Startup folder. If it is not visible, check the hidden-icons overflow menu or launch **Owlette Tray Icon** from the Start menu.
+The owlette tray icon starts through the user's Startup folder. If it is not visible, check the hidden-icons overflow menu or launch **Owlette** from the Start menu.
 
 ---
 

@@ -133,10 +133,23 @@ Name: "{commonappdata}\Owlette\logs"; Permissions: users-modify
 Name: "{commonappdata}\Owlette\cache"; Permissions: users-modify
 Name: "{commonappdata}\Owlette\tmp"; Permissions: users-modify
 
+[InstallDelete]
+; Clean up shortcuts from earlier versions that have since been renamed, so an
+; upgrade doesn't leave a confusing duplicate in the Start menu. The single
+; Start-menu tray entry is now "{group}\Owlette" (it was "Owlette Tray Icon"),
+; and the user clicks it to launch/resume owlette. Runs before [Icons] are
+; (re)created, so the canonical "Owlette" shortcut below is unaffected.
+Type: files; Name: "{group}\Owlette Tray Icon.lnk"
+; Also remove the legacy DESKTOP tray shortcut left by installs that opted into
+; the long-removed "desktopicon" task (it pointed at launch_tray.bat). Exact
+; name, no wildcard — a harmless no-op when absent, and it can't touch a
+; user-created desktop shortcut of any other name.
+Type: files; Name: "{autodesktop}\Owlette Tray Icon.lnk"
+
 [Icons]
 ; Start Menu shortcuts (now pointing to ProgramData for user data)
 Name: "{group}\Owlette Configuration"; Filename: "{app}\scripts\launch_gui.bat"; IconFilename: "{app}\agent\icons\normal.png"; WorkingDir: "{app}"
-Name: "{group}\Owlette Tray Icon"; Filename: "{app}\scripts\launch_tray.bat"; IconFilename: "{app}\agent\icons\normal.png"; WorkingDir: "{app}"
+Name: "{group}\Owlette"; Filename: "{app}\scripts\launch_tray.bat"; IconFilename: "{app}\agent\icons\normal.png"; WorkingDir: "{app}"
 Name: "{group}\View Logs"; Filename: "{commonappdata}\Owlette\logs"; IconFilename: "{sys}\shell32.dll"; IconIndex: 4
 Name: "{group}\Edit Configuration"; Filename: "{commonappdata}\Owlette\config\config.json"; IconFilename: "{sys}\shell32.dll"; IconIndex: 70
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"

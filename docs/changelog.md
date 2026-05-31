@@ -49,6 +49,18 @@ All notable changes to owlette are documented here. The format is based on [Keep
 - CI: bumped checkout/setup-node/setup-java/cache to Node 24 action majors; py-sdk publish now runs pytest first.
 - Layperson video-tutorial series + Playwright video-capture harness.
 
+## [2.12.6] - 2026-05-31
+
+### fixed
+
+- **Exiting owlette and relaunching the tray left the machine offline behind a flashing red tray icon.** The tray's *exit* action issues a controlled `net stop OwletteService`, which NSSM intentionally does not auto-restart. Relaunching from the Start-menu "Owlette" shortcut started only the tray — not the service — so monitoring stayed down (the machine showed offline in the dashboard) and the tray flashed its red "Service: Stopped" alarm with no way to recover from the shortcut. Now, when owlette is **explicitly relaunched to resume it** (the Start-menu "Owlette" shortcut passes `--resume`), the tray starts the stopped service with a single UAC prompt, so clicking "Owlette" actually brings owlette back. The start is deliberately *not* triggered on the passive launch paths — the service launching the tray itself, or the startup-folder shortcut firing at login before the delayed-auto service has started — so it never pops an unwanted UAC prompt at boot. A disabled service (start-on-login turned off) is detected and the futile prompt skipped.
+- **Tray "restart" did nothing when the service was fully stopped — and took the tray down with it.** "Restart" wrote a restart flag for the *running* service to detect and exit-42 on (so NSSM respawns it), then stopped the tray. With the service already stopped there was no service loop to read the flag, so nothing restarted and the user lost the tray as well. It now detects the stopped state and starts the service directly, leaving the tray running.
+- **Tray log spammed the "service status file is stale" warning twice a second.** `read_service_status()` is called more than once per monitor cycle (status check + menu refresh) and logged on every stale read, doubling each line and bloating `tray.log`. The warning now logs once when the file goes stale and once when it recovers.
+
+### changed
+
+- **Installer: consolidated the Start-menu tray shortcut.** Upgrades now remove the stale "Owlette Tray Icon" shortcut left by older versions; the single click-to-launch/resume entry is "Owlette". The in-session startup auto-launch is retained.
+
 ## [2.12.5] - 2026-05-28
 
 ### fixed
