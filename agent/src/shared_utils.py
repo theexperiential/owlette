@@ -1282,7 +1282,12 @@ def initialize_logging(log_file_name, level=logging.INFO):
     # log file size of 10 MB, keeping 5 old log files.
     # Mode 'a' appends to existing file instead of overwriting
     # Total retention: 60 MB (current + 5 backups of 10 MB each)
-    log_handler = RotatingFileHandler(log_file_path, mode='a', maxBytes=10*1024*1024, backupCount=5, encoding=None, delay=0)
+    # encoding='utf-8' so non-ASCII log content (e.g. the '→' arrow used in
+    # several status messages) doesn't raise UnicodeEncodeError on Windows,
+    # where encoding=None defaults to cp1252. errors='backslashreplace' makes
+    # the handler unable to ever crash on an unencodable char. Matches the
+    # utf-8 reader in get_log_tail() and the cortex.log handler.
+    log_handler = RotatingFileHandler(log_file_path, mode='a', maxBytes=10*1024*1024, backupCount=5, encoding='utf-8', errors='backslashreplace', delay=0)
 
     # Set the formatter for the handler
     log_handler.setFormatter(log_formatter)
