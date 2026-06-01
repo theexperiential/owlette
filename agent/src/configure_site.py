@@ -266,7 +266,11 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                 try:
                     response = http_requests.post(
                         poll_url,
-                        json={'pairPhrase': add_phrase},
+                        json={
+                            'pairPhrase': add_phrase,
+                            'machineId': auth_manager.machine_id,
+                            'version': shared_utils.APP_VERSION,
+                        },
                         timeout=15,
                     )
 

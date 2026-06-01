@@ -28,7 +28,7 @@ interface DayPillSelectorProps {
   value: string[];
   onChange: (days: string[]) => void;
   /**
-   * 'rect' = three-letter labels in rounded rectangles (default — used in RebootScheduleDialog)
+   * 'rect' = three-letter labels in rounded rectangles (default — used in RestartScheduleDialog)
    * 'pill' = single-letter labels in circles (used in ScheduleEditor blocks)
    */
   variant?: 'rect' | 'pill';
@@ -43,7 +43,7 @@ interface DayPillSelectorProps {
 }
 
 /**
- * Day-of-week toggle row used by both RebootScheduleDialog and ScheduleEditor.
+ * Day-of-week toggle row used by both RestartScheduleDialog and ScheduleEditor.
  * Supports click-drag selection on desktop (mouseDown captures the new mode,
  * mouseEnter applies it across pills, window mouseUp ends the drag).
  */

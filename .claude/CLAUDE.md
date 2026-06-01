@@ -2,7 +2,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. Monorepo: Python Windows service (agent) + Next.js web dashboard (web) + Firebase/Firestore backend.
 
-**Version**: 2.12.3 | **License**: FSL-1.1-Apache-2.0
+**Version**: 2.12.6 | **License**: FSL-1.1-Apache-2.0
 
 ---
 
@@ -118,7 +118,7 @@ Agents authenticate via a device code flow — no browser login on the target ma
 - `web/app/dashboard/components/AddMachineButton.tsx` — dashboard "+" button + modal
 - `agent/src/configure_site.py` — agent-side pairing flow (browser open + polling)
 - `agent/src/auth_manager.py` — token exchange, refresh, device code polling
-- `web/lib/pairPhrases.ts` / `agent/src/pair_phrases.py` — shared word list (must stay in sync)
+- `web/lib/pairPhrases.ts` — pairing-phrase word list (web-canonical)
 
 **Token lifecycle (unchanged):** Access token (1h, Firebase ID token) + refresh token (never expires, admin-revocable). Stored encrypted in `C:\ProgramData\Owlette\.tokens.enc` with machine-bound Fernet key.
 
@@ -215,4 +215,4 @@ Be real, not flattering. If something was mid, say so. If it was genuinely great
 
 ---
 
-**Last Updated**: 2026-05-24
+**Last Updated**: 2026-05-31

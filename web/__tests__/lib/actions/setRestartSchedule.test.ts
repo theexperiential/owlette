@@ -24,7 +24,7 @@ jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
-import { setRebootSchedule } from '@/lib/actions/setRebootSchedule.server';
+import { setRestartSchedule } from '@/lib/actions/setRestartSchedule.server';
 import { ActionInputError, type ActionContext } from '@/lib/actions/createProcess.server';
 
 const SITE = 'site-a';
@@ -36,9 +36,9 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-describe('setRebootSchedule', () => {
+describe('setRestartSchedule', () => {
   it('writes the schedule with merge:true', async () => {
-    await setRebootSchedule(CTX, {
+    await setRestartSchedule(CTX, {
       machineId: MACHINE,
       schedule: {
         enabled: true,
@@ -58,7 +58,7 @@ describe('setRebootSchedule', () => {
 
   it('rejects non-boolean enabled', async () => {
     await expect(
-      setRebootSchedule(CTX, {
+      setRestartSchedule(CTX, {
         machineId: MACHINE,
         // @ts-expect-error — testing runtime validation
         schedule: { enabled: 'yes', entries: [] },
@@ -68,7 +68,7 @@ describe('setRebootSchedule', () => {
 
   it('rejects non-array entries', async () => {
     await expect(
-      setRebootSchedule(CTX, {
+      setRestartSchedule(CTX, {
         machineId: MACHINE,
         // @ts-expect-error — testing runtime validation
         schedule: { enabled: true, entries: 'nope' },
@@ -78,7 +78,7 @@ describe('setRebootSchedule', () => {
 
   it('rejects entry missing id', async () => {
     await expect(
-      setRebootSchedule(CTX, {
+      setRestartSchedule(CTX, {
         machineId: MACHINE,
         schedule: {
           enabled: true,
@@ -91,7 +91,7 @@ describe('setRebootSchedule', () => {
 
   it('rejects entry with invalid time format', async () => {
     await expect(
-      setRebootSchedule(CTX, {
+      setRestartSchedule(CTX, {
         machineId: MACHINE,
         schedule: {
           enabled: true,
@@ -103,7 +103,7 @@ describe('setRebootSchedule', () => {
 
   it('rejects entry with empty days array', async () => {
     await expect(
-      setRebootSchedule(CTX, {
+      setRestartSchedule(CTX, {
         machineId: MACHINE,
         schedule: {
           enabled: true,
@@ -114,7 +114,7 @@ describe('setRebootSchedule', () => {
   });
 
   it('emits an audit with the entry count', async () => {
-    await setRebootSchedule(CTX, {
+    await setRestartSchedule(CTX, {
       machineId: MACHINE,
       schedule: {
         enabled: false,
@@ -136,7 +136,7 @@ describe('setRebootSchedule', () => {
   });
 
   it('accepts disabled schedule with empty entries', async () => {
-    await setRebootSchedule(CTX, {
+    await setRestartSchedule(CTX, {
       machineId: MACHINE,
       schedule: { enabled: false, entries: [] },
     });

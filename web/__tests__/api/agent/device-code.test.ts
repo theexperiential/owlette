@@ -62,15 +62,20 @@ const mockRunTransaction = jest.fn();
 const mockCreateCustomToken = jest.fn().mockResolvedValue('mock-custom-token');
 const mockSetCustomUserClaims = jest.fn().mockResolvedValue(undefined);
 
-const mockDocRef = {
+const mockMakeDocRef = (collectionPath: string, id: string) => ({
+  id,
+  path: `${collectionPath}/${id}`,
+  collectionPath,
   get: mockDocGet,
   set: mockDocSet,
-};
+});
+
+const mockDocRef = mockMakeDocRef('device_codes', 'test-pair-phrase');
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
-    collection: (_name: string) => ({
-      doc: (_id: string) => mockDocRef,
+    collection: (name: string) => ({
+      doc: (id: string) => mockMakeDocRef(name, id),
       where: (..._args: unknown[]) => ({
         limit: (_n: number) => ({
           get: mockWhereGet,
@@ -183,12 +188,25 @@ describe('POST /api/agent/auth/device-code/poll', () => {
     update: mockTransactionUpdate,
     delete: mockTransactionDelete,
   };
+  const originalFetch = global.fetch;
 
   beforeEach(() => {
     jest.clearAllMocks();
     mockRunTransaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
       fn(mockTransaction),
     );
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY = 'test-api-key';
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        idToken: 'mock-id-token',
+        refreshToken: 'mock-refresh',
+      }),
+    });
+  });
+
+  afterAll(() => {
+    global.fetch = originalFetch;
   });
 
   it('returns 400 when neither deviceCode nor pairPhrase provided', async () => {
@@ -199,16 +217,18 @@ describe('POST /api/agent/auth/device-code/poll', () => {
     expect(body.error).toContain('Missing required field');
   });
 
-  it('returns 404 for invalid pairPhrase', async () => {
-    mockDocGet.mockResolvedValue({ exists: false });
+  it('returns 400 for invalid pairPhrase format', async () => {
+    const { normalizePairPhrase } = jest.requireMock('@/lib/pairPhrases');
+    normalizePairPhrase.mockReturnValueOnce(null);
 
     const req = makeRequest('/api/agent/auth/device-code/poll', {
-      pairPhrase: 'bad-phrase-here',
+      pairPhrase: 'bad',
     });
     const { status, body } = await parseResponse(await pollPOST(req));
 
-    expect(status).toBe(404);
-    expect(body.error).toContain('Invalid pairing phrase');
+    expect(status).toBe(400);
+    expect(body.error).toContain('Invalid pairing phrase format');
+    expect(mockDocGet).not.toHaveBeenCalled();
   });
 
   it('returns 404 for invalid deviceCode', async () => {
@@ -269,6 +289,194 @@ describe('POST /api/agent/auth/device-code/poll', () => {
     expect(body.expiresIn).toBe(3600);
     expect(body.siteId).toBe('site-1');
     expect(mockTransactionDelete).toHaveBeenCalled();
+  });
+
+  it('mints deferred pre-authorized tokens with the supplied machineId and consumes the doc', async () => {
+    const host = 'DESKTOP-CRA2RC0';
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'authorized',
+        deferTokenMint: true,
+      }),
+    });
+    const futureTime = Date.now() + 600_000;
+    mockTransactionGet
+      .mockResolvedValueOnce({
+        exists: true,
+        data: () => ({
+          status: 'authorized',
+          deferTokenMint: true,
+          siteId: 'site-1',
+          authorizedBy: 'user-123',
+          expiresAt: { toMillis: () => futureTime },
+        }),
+      })
+      .mockResolvedValueOnce({
+        exists: true,
+        data: () => ({
+          status: 'authorized',
+          deferTokenMint: true,
+          siteId: 'site-1',
+          authorizedBy: 'user-123',
+          expiresAt: { toMillis: () => futureTime },
+          mintMachineId: host,
+          mintClaimExpiresAt: Date.now() + 60_000,
+        }),
+      });
+
+    const req = makeRequest('/api/agent/auth/device-code/poll', {
+      pairPhrase: 'test-pair-phrase',
+      machineId: host,
+      version: '2.5.9',
+    });
+    const { status, body } = await parseResponse(await pollPOST(req));
+
+    expect(status).toBe(200);
+    expect(body.accessToken).toBe('mock-id-token');
+    expect(body.refreshToken).toBeDefined();
+    expect(body.siteId).toBe('site-1');
+    expect(mockRunTransaction).toHaveBeenCalledTimes(2);
+    expect(mockTransactionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        collectionPath: 'device_codes',
+        id: 'test-pair-phrase',
+      }),
+      expect.objectContaining({
+        mintMachineId: host,
+        mintVersion: '2.5.9',
+        mintClaimExpiresAt: expect.any(Number),
+      }),
+    );
+
+    expect(mockCreateCustomToken).toHaveBeenCalledTimes(2);
+    for (const call of mockCreateCustomToken.mock.calls) {
+      expect(call[1]).toEqual(expect.objectContaining({ machine_id: host }));
+      expect(String(call[1].machine_id)).not.toMatch(/^pending_/);
+    }
+    expect(mockSetCustomUserClaims).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ machine_id: host }),
+    );
+
+    const refreshWrite = mockTransactionSet.mock.calls.find(
+      ([ref]) => ref.collectionPath === 'agent_refresh_tokens',
+    );
+    expect(refreshWrite).toBeDefined();
+    const [refreshRef, refreshPayload] = refreshWrite!;
+    const crypto = await import('crypto');
+    const expectedHash = crypto.createHash('sha256').update(body.refreshToken).digest('hex');
+    expect(refreshRef).toEqual(
+      expect.objectContaining({
+        collectionPath: 'agent_refresh_tokens',
+        id: expectedHash,
+      }),
+    );
+    expect(refreshPayload).toEqual(
+      expect.objectContaining({
+        siteId: 'site-1',
+        machineId: host,
+        version: '2.5.9',
+        createdBy: 'user-123',
+        agentUid: 'agent_site_1_DESKTOP_CRA2RC0',
+      }),
+    );
+
+    expect(mockTransactionDelete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        collectionPath: 'device_codes',
+        id: 'test-pair-phrase',
+      }),
+    );
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['slash', 'DESKTOP/CRA2RC0'],
+    ['control char', 'DESKTOP\u0001CRA2RC0'],
+    ['too long', 'A'.repeat(129)],
+    ['empty after trim', '   '],
+  ])('returns 400 for %s deferred machineId without minting or consuming', async (_case, value) => {
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'authorized',
+        deferTokenMint: true,
+      }),
+    });
+
+    const payload: Record<string, unknown> = {
+      pairPhrase: 'test-pair-phrase',
+      version: '2.5.9',
+    };
+    if (value !== undefined) {
+      payload.machineId = value;
+    }
+
+    const req = makeRequest('/api/agent/auth/device-code/poll', payload);
+    const { status } = await parseResponse(await pollPOST(req));
+
+    expect(status).toBe(400);
+    expect(mockCreateCustomToken).not.toHaveBeenCalled();
+    expect(mockSetCustomUserClaims).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockTransactionSet).not.toHaveBeenCalled();
+    expect(mockDocSet).not.toHaveBeenCalled();
+    expect(mockTransactionDelete).not.toHaveBeenCalled();
+  });
+
+  it('returns 410 for an expired deferred pairing phrase without minting', async () => {
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'authorized',
+        deferTokenMint: true,
+      }),
+    });
+    const pastTime = Date.now() - 1000;
+    mockTransactionGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'authorized',
+        deferTokenMint: true,
+        siteId: 'site-1',
+        authorizedBy: 'user-123',
+        expiresAt: { toMillis: () => pastTime },
+      }),
+    });
+
+    const req = makeRequest('/api/agent/auth/device-code/poll', {
+      pairPhrase: 'test-pair-phrase',
+      machineId: 'DESKTOP-CRA2RC0',
+      version: '2.5.9',
+    });
+    const { status, body } = await parseResponse(await pollPOST(req));
+
+    expect(status).toBe(410);
+    expect(body.error).toBe('expired');
+    expect(mockCreateCustomToken).not.toHaveBeenCalled();
+    expect(mockSetCustomUserClaims).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockTransactionDelete).toHaveBeenCalled();
+    expect(mockTransactionSet).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 when a deferred pairing phrase has already been consumed', async () => {
+    mockDocGet.mockResolvedValue({ exists: false });
+
+    const req = makeRequest('/api/agent/auth/device-code/poll', {
+      pairPhrase: 'test-pair-phrase',
+      machineId: 'DESKTOP-CRA2RC0',
+      version: '2.5.9',
+    });
+    const { status, body } = await parseResponse(await pollPOST(req));
+
+    expect(status).toBe(404);
+    expect(body.error).toContain('Invalid pairing phrase');
+    expect(mockCreateCustomToken).not.toHaveBeenCalled();
+    expect(mockSetCustomUserClaims).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockTransactionDelete).not.toHaveBeenCalled();
   });
 
   it('rejects phrase-based polling for an interactive (v1) doc', async () => {
@@ -527,7 +735,7 @@ describe('POST /api/agent/auth/device-code/authorize', () => {
     expect(update.deviceCode).toBe('__DELETE__');
   });
 
-  it('authorizes pre-authorised docs (no deviceCode on doc) with plaintext + preauthorized flag', async () => {
+  it('defers token minting for pre-authorised docs', async () => {
     const futureTime = Date.now() + 600_000;
     mockTransactionGet.mockResolvedValue({
       exists: true,
@@ -550,11 +758,46 @@ describe('POST /api/agent/auth/device-code/authorize', () => {
 
     expect(status).toBe(200);
     expect(body.success).toBe(true);
+    expect(body.machineId).toBeNull();
     const update = mockTransactionUpdate.mock.calls[0]![1] as Record<string, unknown>;
     expect(update.status).toBe('authorized');
-    expect(update.preauthorized).toBe(true);
-    expect(typeof update.accessToken).toBe('string');
-    expect(typeof update.refreshToken).toBe('string');
+    expect(update.siteId).toBe('site-1');
+    expect(update.authorizedBy).toBe('user-123');
+    expect(update.authorizedAt).toBe('SERVER_TIMESTAMP');
+    expect(update.deferTokenMint).toBe(true);
+    expect(update.accessToken).toBeUndefined();
+    expect(update.refreshToken).toBeUndefined();
     expect(update.encryptedCredentials).toBeUndefined();
+    expect(mockCreateCustomToken).not.toHaveBeenCalled();
+    expect(mockSetCustomUserClaims).not.toHaveBeenCalled();
+    expect(mockTransactionSet).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects pending docs without encryption support as invalid state', async () => {
+    const futureTime = Date.now() + 600_000;
+    mockTransactionGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        status: 'pending',
+        machineId: null,
+        version: '2.5.9',
+        expiresAt: { toMillis: () => futureTime },
+      }),
+    });
+
+    const req = makeRequest('/api/agent/auth/device-code/authorize', {
+      pairPhrase: 'test-pair-phrase',
+      siteId: 'site-1',
+    });
+    const { status, body } = await parseResponse(await authorizePOST(req));
+
+    expect(status).toBe(400);
+    expect(body.error).toContain('Invalid device code state');
+    expect(mockCreateCustomToken).not.toHaveBeenCalled();
+    expect(mockSetCustomUserClaims).not.toHaveBeenCalled();
+    expect(mockTransactionSet).not.toHaveBeenCalled();
+    expect(mockTransactionUpdate).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });

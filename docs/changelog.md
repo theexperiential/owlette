@@ -49,6 +49,36 @@ All notable changes to owlette are documented here. The format is based on [Keep
 - CI: bumped checkout/setup-node/setup-java/cache to Node 24 action majors; py-sdk publish now runs pytest first.
 - Layperson video-tutorial series + Playwright video-capture harness.
 
+## [2.12.6] - 2026-05-31
+
+### fixed
+
+- **Exiting owlette and relaunching the tray left the machine offline behind a flashing red tray icon.** The tray's *exit* action issues a controlled `net stop OwletteService`, which NSSM intentionally does not auto-restart. Relaunching from the Start-menu "Owlette" shortcut started only the tray — not the service — so monitoring stayed down (the machine showed offline in the dashboard) and the tray flashed its red "Service: Stopped" alarm with no way to recover from the shortcut. Now, when owlette is **explicitly relaunched to resume it** (the Start-menu "Owlette" shortcut passes `--resume`), the tray starts the stopped service with a single UAC prompt, so clicking "Owlette" actually brings owlette back. The start is deliberately *not* triggered on the passive launch paths — the service launching the tray itself, or the startup-folder shortcut firing at login before the delayed-auto service has started — so it never pops an unwanted UAC prompt at boot. A disabled service (start-on-login turned off) is detected and the futile prompt skipped.
+- **Tray "restart" did nothing when the service was fully stopped — and took the tray down with it.** "Restart" wrote a restart flag for the *running* service to detect and exit-42 on (so NSSM respawns it), then stopped the tray. With the service already stopped there was no service loop to read the flag, so nothing restarted and the user lost the tray as well. It now detects the stopped state and starts the service directly, leaving the tray running.
+- **Tray log spammed the "service status file is stale" warning twice a second.** `read_service_status()` is called more than once per monitor cycle (status check + menu refresh) and logged on every stale read, doubling each line and bloating `tray.log`. The warning now logs once when the file goes stale and once when it recovers.
+- **Cortex tier-2 process control was silently doing nothing (OWL-03).** `_handle_cortex_process_command` passed the process-config dict to `graceful_terminate()`, which expects a PID — raising a `TypeError` that a broad `except` swallowed. Every Cortex tier-2 kill / restart / start (and autonomous self-healing) failed without surfacing an error. It now resolves the running PID and mirrors the proven dashboard kill/restart paths; covered by a regression test.
+- **`cancel_sync` can now interrupt an active roost sync (OWL-06).** It previously sat behind the running sync in the normal command lane; it is now routed to the fast lane so a cancel is processed promptly.
+- **Logging can no longer crash on non-ASCII content on Windows.** The log file handler is opened utf-8 with `errors='backslashreplace'`, so a non-ASCII character (e.g. the `→` used in several status messages) can't raise `UnicodeEncodeError` under the cp1252 default and take down logging.
+
+### changed
+
+- **Installer: consolidated the Start-menu tray shortcut.** Upgrades now remove the stale "Owlette Tray Icon" shortcut left by older versions; the single click-to-launch/resume entry is "Owlette". The in-session startup auto-launch is retained.
+
+## [2.12.5] - 2026-05-28
+
+### fixed
+
+- **Installer "DeleteFile failed: code 5" when upgrading with the GUI/tray/service running.** The locked file was `C:\ProgramData\Owlette\python\libcrypto-3.dll` (OpenSSL — loaded by every Owlette Python process). The pre-existing kill logic in `InitializeSetup()` filtered processes by `.Path -like '*\Owlette\*'`, but `Get-Process.Path` returns `$null` for processes the elevated installer can't introspect (integrity-level restrictions), so those slipped through silently; the fixed 5 s sleep also wasn't long enough when AV scanners held the libcrypto handle after process exit. Three hardening passes (verified via 4-agent codex review):
+  1. **Service-state verification after `net stop`.** Without it, a `net stop` timeout left NSSM alive — and NSSM's `AppExit=Default Restart` policy respawned the python child immediately after the kill pass terminated it, re-locking libcrypto-3.dll mid-copy. The installer now checks `Get-Service OwletteService` reports `Stopped` before proceeding, and aborts cleanly otherwise. `ServiceWasStopped` is gated on this verify.
+  2. **Second kill pass by loaded modules.** Catches processes whose `.Path` is unreadable or whose exe lives outside Owlette but loaded an Owlette `.pyd`/`.dll`.
+  3. **Poll libcrypto-3.dll for exclusive-write availability** (up to 30 s, 250 ms retry) instead of a fixed `Sleep(5000)`. If still locked at 30 s, the installer aborts with a clear "please reboot" message rather than failing mid-copy. Service-restart on abort delegated to the existing `DeinitializeSetup` to avoid double-restart.
+
+## [2.12.4] - 2026-05-27
+
+### fixed
+
+- **Agent `/ADD=` silent-install pairing (dashboard "generate code") could never connect — every Firestore call returned 403.** A dashboard-generated pairing code minted the agent token at *authorize* time with a placeholder `machine_id` claim (`pending_<phrase>`), because the target hostname is unknown when the code is generated. The installed agent uses its real hostname for every Firestore document path, and `firestore.rules` `agentCanAccessMachine` requires an exact `machine_id` match — so every machine-scoped read/write was denied. (The browser and "enter code" pairing flows were unaffected; they carry the real hostname before authorize runs.) Token minting is now **deferred to poll time**: `authorize` records only the admin-authorized site (`deferTokenMint`), and the agent's `/ADD=` poll supplies its real `machineId`, which the server binds into the token via a single-use claim-lease (mint outside the transaction, atomic delete + refresh-token write on finalize). The agent machine-id is also unified on `shared_utils.get_hostname()` across `AuthManager` and `FirebaseClient` so the poll value cannot diverge from the Firestore path identity. Requires the matching web deploy; machines already paired via `/ADD=` must re-pair.
+
 ## [2.12.3] - 2026-05-19
 
 ### fixed

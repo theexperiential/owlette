@@ -81,23 +81,3 @@ const GPU_COLORS: { usage: string; temp: string }[] = [
 export function getGpuColors(index: number): { usage: string; temp: string } {
   return GPU_COLORS[index % GPU_COLORS.length];
 }
-
-/**
- * Get the primary NIC from an interfaces record (highest combined utilization).
- */
-export function getPrimaryNic(
-  interfaces: Record<string, { tx_bps: number; rx_bps: number; tx_util: number; rx_util: number; link_speed: number }>
-): { name: string; data: typeof interfaces[string] } | null {
-  let best: { name: string; data: typeof interfaces[string] } | null = null;
-  let bestUtil = -1;
-
-  for (const [name, data] of Object.entries(interfaces)) {
-    const util = Math.max(data.tx_util, data.rx_util);
-    if (util > bestUtil || (util === bestUtil && (data.tx_bps + data.rx_bps) > ((best?.data.tx_bps ?? 0) + (best?.data.rx_bps ?? 0)))) {
-      best = { name, data };
-      bestUtil = util;
-    }
-  }
-
-  return best;
-}

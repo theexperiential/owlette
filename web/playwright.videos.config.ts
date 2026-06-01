@@ -1,4 +1,4 @@
-import { defineConfig, devices } from '@playwright/test';
+import { defineConfig } from '@playwright/test';
 
 /**
  * Playwright config for the tutorial VIDEO-capture pipeline.
@@ -47,18 +47,54 @@ export default defineConfig({
     baseURL: BASE_URL,
     trace: 'retain-on-failure',
     screenshot: 'off',
-    // Scenes record video via their own context (recordScene); the per-test fixture
-    // video stays off so we don't get duplicate downscaled captures.
+    // Scenes record via an external ffmpeg subprocess (see e2e/videos/ffmpeg-recorder.ts);
+    // Playwright's built-in video is off so we don't get a parallel downscaled VP8.
     video: 'off',
     actionTimeout: 15_000,
     navigationTimeout: 20_000,
-    viewport: { width: 1920, height: 1080 },
+    // viewport: null — chromium honors the explicit --window-size launch arg below.
+    viewport: null,
   },
 
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1920, height: 1080 } },
+      use: {
+        // Explicit viewport: Playwright resizes the chrome window so the page's
+        // inner content area is EXACTLY 1920×1080 — irrespective of how tall the
+        // chrome UI (tabs + address bar) ends up. recordScene then measures the
+        // chrome UI offset at runtime and feeds it to ffmpeg's ddagrab capture
+        // region, so the captured frame contains the page content only — no
+        // address bar, no tab strip. (We can't reliably go chromeless via flags:
+        // --kiosk lands in an exclusive-presentation path that DXGI can't capture,
+        // --start-fullscreen gets overridden by --window-size, and --app= doesn't
+        // compose with Playwright's newContext().newPage() window-spawning model.)
+        viewport: { width: 1920, height: 1080 },
+        deviceScaleFactor: 1,
+        launchOptions: {
+          headless: false,
+          // Drop the `--enable-automation` default arg so Chromium doesn't paint
+          // the yellow "Chrome is being controlled by automation" banner across
+          // the top of every frame.
+          ignoreDefaultArgs: ['--enable-automation'],
+          args: [
+            // Leave room for the chrome UI on top of the 1080p content; Playwright
+            // will resize to make inner === 1920×1080, but the outer window won't
+            // exceed this initial allowance, so we know the chrome UI stays
+            // within the first ~120 vertical pixels.
+            '--window-position=0,0',
+            '--window-size=1920,1200',
+            '--force-device-scale-factor=1',
+            '--force-color-profile=srgb',
+            '--disable-blink-features=AutomationControlled',
+            // Quiet things that would otherwise paint over the page mid-capture:
+            '--disable-notifications',
+            '--disable-background-timer-throttling',
+            '--disable-renderer-backgrounding',
+            '--disable-features=TranslateUI',
+          ],
+        },
+      },
     },
   ],
 

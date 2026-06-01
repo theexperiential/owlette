@@ -17,7 +17,7 @@ export function DisplaySection({ nonce }: DisplaySectionProps) {
           </h2>
           <p className="section-subheadline text-balance max-w-xl mx-auto">
             windows can lose your display layout after a driver update, a
-            reboot, or an accidental change. owlette captures the layout you
+            restart, or an accidental change. owlette captures the layout you
             want, watches for drift, and restores it automatically.
           </p>
         </div>
@@ -165,7 +165,7 @@ export function DisplaySection({ nonce }: DisplaySectionProps) {
               drift detection
             </h3>
             <p className="text-sm text-muted-foreground leading-relaxed">
-              owlette watches for changes after reboots, driver updates, and
+              owlette watches for changes after restarts, driver updates, and
               accidental config edits. when something drifts, you&apos;ll know.
             </p>
           </div>

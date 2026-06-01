@@ -29,7 +29,6 @@ Usage:
 import base64
 import requests
 import time
-import socket
 import logging
 import json
 import threading
@@ -156,7 +155,7 @@ class AuthManager:
         if not api_base:
             raise ValueError("api_base is required for AuthManager initialization")
         self.api_base = api_base.rstrip('/')
-        self.machine_id = machine_id or socket.gethostname()
+        self.machine_id = machine_id or shared_utils.get_hostname()
         self.storage = storage or get_storage()
 
         # Token state

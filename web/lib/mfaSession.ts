@@ -53,15 +53,6 @@ export function setMfaVerifiedForSession(_userId: string): void {
 }
 
 /**
- * Legacy read of the sessionStorage flag. New code should not rely on
- * this — call GET /api/auth/session instead and read `mfaVerified`.
- */
-export function isMfaVerifiedInSession(userId: string): boolean {
-  if (typeof window === 'undefined') return false;
-  return sessionStorage.getItem(MFA_VERIFIED_KEY) === userId;
-}
-
-/**
  * Clear the legacy sessionStorage flag on sign-out. Sign-out also
  * destroys the iron-session cookie via DELETE /api/auth/session, which is
  * the real teardown — this just removes the now-obsolete client flag so
@@ -122,14 +113,5 @@ export function isDeviceTrusted(userId: string): boolean {
     // Corrupted or tampered data — remove it
     localStorage.removeItem(MFA_TRUSTED_DEVICE_KEY);
     return false;
-  }
-}
-
-/**
- * Remove device trust (user can manually revoke).
- */
-export function untrustDevice(): void {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem(MFA_TRUSTED_DEVICE_KEY);
   }
 }

@@ -136,7 +136,7 @@ export default function DashboardPage() {
     schedules: null,
   });
 
-  const { machines, loading: machinesLoading, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, rebootMachine, shutdownMachine, cancelReboot, dismissRebootPending, captureScreenshot, startLiveView, stopLiveView } = useMachines(currentSiteId);
+  const { machines, loading: machinesLoading, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, restartMachine, shutdownMachine, cancelRestart, dismissRestartPending, captureScreenshot, startLiveView, stopLiveView } = useMachines(currentSiteId);
   const { prefs: devicePrefs, setListPref } = useDevicePrefs();
   const listPref = devicePrefs.listView;
   const deviceUnion = useMemo<DeviceUnion>(() => ({
@@ -1032,10 +1032,10 @@ export default function DashboardPage() {
                   onConfigureSchedule={handleConfigureSchedule}
                   onRemoveMachine={openRemoveMachineDialog}
                   onMetricClick={handleMetricClick}
-                  onReboot={rebootMachine}
+                  onRestart={restartMachine}
                   onShutdown={shutdownMachine}
-                  onCancelReboot={cancelReboot}
-                  onDismissRebootPending={dismissRebootPending}
+                  onCancelRestart={cancelRestart}
+                  onDismissRestartPending={dismissRestartPending}
                   onScreenshot={(machineId) => {
                     const m = machines.find(m => m.machineId === machineId);
                     setScreenshotTarget({ machineId, machineName: machineId, isOnline: m?.online ?? false });
@@ -1082,9 +1082,9 @@ export default function DashboardPage() {
                         onConfigureSchedule={(process) => handleConfigureSchedule(machine.machineId, process)}
                         onRemoveMachine={() => openRemoveMachineDialog(machine.machineId, machine.machineId, machine.online)}
                         onMetricClick={(metricType) => handleMetricClick(machine.machineId, metricType)}
-                        onReboot={() => rebootMachine(machine.machineId)}
+                        onRestart={() => restartMachine(machine.machineId)}
                         onShutdown={() => shutdownMachine(machine.machineId)}
-                        onCancelReboot={() => cancelReboot(machine.machineId)}
+                        onCancelRestart={() => cancelRestart(machine.machineId)}
                         onScreenshot={() => {
                           setScreenshotTarget({ machineId: machine.machineId, machineName: machine.machineId, isOnline: machine.online });
                           setScreenshotDialogOpen(true);

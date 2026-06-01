@@ -1,8 +1,10 @@
 /** @jest-environment node */
 
 /**
- * Tests for the reboot preset action cores
- * (web/lib/actions/{create,update,delete}RebootPreset.server.ts).
+ * Tests for the restart preset action cores
+ * (web/lib/actions/{create,update,delete}RestartPreset.server.ts).
+ * The `reboot_presets` collection name and `reboot-`/`builtin-` preset-id
+ * prefixes are storage contracts and intentionally keep the legacy spelling.
  *
  * security-boundary-migration wave 3.6.
  */
@@ -53,14 +55,14 @@ jest.mock('firebase-admin/firestore', () => ({
 }));
 
 import {
-  createRebootPreset,
-  RebootPresetValidationError,
-} from '@/lib/actions/createRebootPreset.server';
+  createRestartPreset,
+  RestartPresetValidationError,
+} from '@/lib/actions/createRestartPreset.server';
 import {
-  updateRebootPreset,
-  RebootPresetNotFoundError,
-} from '@/lib/actions/updateRebootPreset.server';
-import { deleteRebootPreset } from '@/lib/actions/deleteRebootPreset.server';
+  updateRestartPreset,
+  RestartPresetNotFoundError,
+} from '@/lib/actions/updateRestartPreset.server';
+import { deleteRestartPreset } from '@/lib/actions/deleteRestartPreset.server';
 import type { SiteHandlerContext } from '@/lib/authorizedHandler.server';
 
 const ctx: SiteHandlerContext = {
@@ -78,9 +80,9 @@ beforeEach(() => {
   docState.clear();
 });
 
-describe('createRebootPreset', () => {
+describe('createRestartPreset', () => {
   it('creates a custom preset under config/{siteId}/reboot_presets', async () => {
-    const result = await createRebootPreset(ctx, {
+    const result = await createRestartPreset(ctx, {
       name: 'Weekday 3am',
       entries: [{ id: 'entry-1', days: ['mon', 'tue'], time: '03:00' }],
       isBuiltIn: false,
@@ -101,32 +103,32 @@ describe('createRebootPreset', () => {
 
   it('rejects bad time string', async () => {
     await expect(
-      createRebootPreset(ctx, {
+      createRestartPreset(ctx, {
         name: 'Bad',
         entries: [{ id: 'e', days: ['mon'], time: '25:99' }],
         isBuiltIn: false,
         order: 0,
         createdBy: 'uid_alice',
       }),
-    ).rejects.toBeInstanceOf(RebootPresetValidationError);
+    ).rejects.toBeInstanceOf(RestartPresetValidationError);
   });
 
   it('rejects invalid day code', async () => {
     await expect(
-      createRebootPreset(ctx, {
+      createRestartPreset(ctx, {
         name: 'Bad',
         entries: [{ id: 'e', days: ['noday'], time: '03:00' }],
         isBuiltIn: false,
         order: 0,
         createdBy: 'uid_alice',
       }),
-    ).rejects.toBeInstanceOf(RebootPresetValidationError);
+    ).rejects.toBeInstanceOf(RestartPresetValidationError);
   });
 });
 
-describe('updateRebootPreset — built-in override path', () => {
+describe('updateRestartPreset — built-in override path', () => {
   it('uses setDoc({merge: true}) and pins isBuiltIn:true', async () => {
-    const result = await updateRebootPreset(ctx, 'builtin-weekly-reboot', {
+    const result = await updateRestartPreset(ctx, 'builtin-weekly-reboot', {
       name: 'Weekly reboot (custom)',
     });
     expect(result.isBuiltInOverride).toBe(true);
@@ -138,51 +140,51 @@ describe('updateRebootPreset — built-in override path', () => {
   });
 });
 
-describe('updateRebootPreset — custom edit path', () => {
+describe('updateRestartPreset — custom edit path', () => {
   it('uses updateDoc when the preset exists', async () => {
     docState.set('config/site-a/reboot_presets/reboot-custom-1', {
       exists: true,
       data: () => ({ name: 'old', isBuiltIn: false }),
     });
-    const result = await updateRebootPreset(ctx, 'reboot-custom-1', { name: 'new name' });
+    const result = await updateRestartPreset(ctx, 'reboot-custom-1', { name: 'new name' });
     expect(result.isBuiltInOverride).toBe(false);
     expect(updateCalls).toHaveLength(1);
     expect(updateCalls[0].payload.name).toBe('new name');
   });
 
-  it('throws RebootPresetNotFoundError when missing', async () => {
+  it('throws RestartPresetNotFoundError when missing', async () => {
     await expect(
-      updateRebootPreset(ctx, 'reboot-missing-1', { name: 'x' }),
-    ).rejects.toBeInstanceOf(RebootPresetNotFoundError);
+      updateRestartPreset(ctx, 'reboot-missing-1', { name: 'x' }),
+    ).rejects.toBeInstanceOf(RestartPresetNotFoundError);
   });
 
   it('rejects empty body', async () => {
     await expect(
-      updateRebootPreset(ctx, 'reboot-x-1', {}),
-    ).rejects.toBeInstanceOf(RebootPresetValidationError);
+      updateRestartPreset(ctx, 'reboot-x-1', {}),
+    ).rejects.toBeInstanceOf(RestartPresetValidationError);
   });
 });
 
-describe('deleteRebootPreset', () => {
+describe('deleteRestartPreset', () => {
   it('deletes an existing preset', async () => {
     docState.set('config/site-a/reboot_presets/reboot-x-1', {
       exists: true,
       data: () => ({ name: 'x' }),
     });
-    const result = await deleteRebootPreset(ctx, 'reboot-x-1');
+    const result = await deleteRestartPreset(ctx, 'reboot-x-1');
     expect(result.presetId).toBe('reboot-x-1');
     expect(deleteCalls).toHaveLength(1);
   });
 
   it('treats missing docs as a successful idempotent delete', async () => {
-    const result = await deleteRebootPreset(ctx, 'reboot-missing-1');
+    const result = await deleteRestartPreset(ctx, 'reboot-missing-1');
     expect(result.presetId).toBe('reboot-missing-1');
     expect(deleteCalls).toHaveLength(1);
   });
 
   it('rejects invalid preset id', async () => {
     await expect(
-      deleteRebootPreset(ctx, 'bad id'),
-    ).rejects.toBeInstanceOf(RebootPresetValidationError);
+      deleteRestartPreset(ctx, 'bad id'),
+    ).rejects.toBeInstanceOf(RestartPresetValidationError);
   });
 });

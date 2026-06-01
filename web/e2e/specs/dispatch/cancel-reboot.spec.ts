@@ -1,15 +1,15 @@
 /**
- * Dispatch — cancel pending reboot (D2.4)
+ * Dispatch — cancel pending restart (D2.4)
  *
  * Flow:
- *   1. Seed a machine that's mid-reboot (rebootingInSec=120 sets
+ *   1. Seed a machine that's mid-restart (rebootingInSec=120 sets
  *      `rebooting: true` + `rebootScheduledAt: now+120s`).
  *   2. UI: dashboard shows the red cancel-countdown pill instead of the
- *      green online pill (per MachineStatusPill: hasUpcomingReboot is
+ *      green online pill (per MachineStatusPill: hasUpcomingRestart is
  *      true while rebootScheduledAt > now).
- *   3. Click the pill → useFirestore.cancelReboot writes a
+ *   3. Click the pill → useFirestore.cancelRestart writes a
  *      `cancel_reboot_{ts}` command to `commands/pending`. NOTE:
- *      cancelReboot does NOT directly clear rebootScheduledAt — the
+ *      cancelRestart does NOT directly clear rebootScheduledAt — the
  *      agent does that after consuming the command.
  *   4. Stub the agent: completeCommand for cancel_reboot AND clear
  *      rebootScheduledAt + rebooting on the machine doc (the agent

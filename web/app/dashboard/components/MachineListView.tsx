@@ -239,9 +239,9 @@ interface MachineRowProps {
   onConfigureSchedule?: (process: Process) => void;
   onRemoveMachine: () => void;
   onMetricClick?: (metricType: MetricType) => void;
-  onReboot?: () => Promise<void>;
+  onRestart?: () => Promise<void>;
   onShutdown?: () => Promise<void>;
-  onCancelReboot?: () => Promise<void>;
+  onCancelRestart?: () => Promise<void>;
   onScreenshot?: () => void;
   onLiveView?: () => void;
   showLocalClock?: boolean;
@@ -271,9 +271,9 @@ export function MachineRow({
   onConfigureSchedule,
   onRemoveMachine,
   onMetricClick,
-  onReboot,
+  onRestart,
   onShutdown,
-  onCancelReboot,
+  onCancelRestart,
   onScreenshot,
   onLiveView,
   showLocalClock,
@@ -453,7 +453,7 @@ export function MachineRow({
             rebootScheduledAt={machine.rebootScheduledAt}
             shutdownScheduledAt={machine.shutdownScheduledAt}
             isSiteAdmin={isSiteAdmin}
-            onCancel={onCancelReboot}
+            onCancel={onCancelRestart}
           />
         </TableCell>
         {/* CPU with Sparkline */}
@@ -655,9 +655,9 @@ export function MachineRow({
               shuttingDown={machine.shuttingDown}
               isSiteAdmin={isSiteAdmin}
               onRemoveMachine={onRemoveMachine}
-              onReboot={onReboot}
+              onRestart={onRestart}
               onShutdown={onShutdown}
-              onCancelReboot={onCancelReboot}
+              onCancelRestart={onCancelRestart}
               onScreenshot={onScreenshot}
               onLiveView={onLiveView}
               onViewDisplays={onMetricClick ? () => onMetricClick('display') : undefined}

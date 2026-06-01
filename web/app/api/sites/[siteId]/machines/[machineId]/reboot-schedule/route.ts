@@ -23,9 +23,9 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { resolveAuth } from '@/lib/apiAuth.server';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import {
-  setRebootSchedule,
-  type RebootScheduleInput,
-} from '@/lib/actions/setRebootSchedule.server';
+  setRestartSchedule,
+  type RestartScheduleInput,
+} from '@/lib/actions/setRestartSchedule.server';
 import { ActionInputError } from '@/lib/actions/createProcess.server';
 
 const putWrapped = authorizedSiteHandler<{ siteId: string; machineId: string }>({
@@ -55,11 +55,11 @@ const putWrapped = authorizedSiteHandler<{ siteId: string; machineId: string }>(
       : `user:${auth.userId}`;
 
     try {
-      const result = await setRebootSchedule(
+      const result = await setRestartSchedule(
         { siteId: ctx.siteId, actor: ctx.actor, auditActor },
         {
           machineId,
-          schedule: body.schedule as RebootScheduleInput,
+          schedule: body.schedule as RestartScheduleInput,
         },
       );
       return NextResponse.json({ ok: true, data: result });

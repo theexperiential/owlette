@@ -84,9 +84,33 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         return { error: 'This pairing phrase has already been used.', status: 409 } as const;
       }
 
-      // Generate machine ID from the device code data, or use a placeholder
-      // for pre-authorized codes (generated from dashboard)
-      const machineId = data.machineId || `pending_${pairPhrase.replace(/-/g, '_')}`;
+      // Pre-authorized (dashboard "generate code") doc: the target hostname is
+      // unknown here. Record ONLY the admin-authorized site; the agent token is
+      // minted at poll time, bound to the real machineId the agent supplies.
+      if (data.preauthorizedIntent === true) {
+        transaction.update(docRef, {
+          status: 'authorized',
+          siteId,
+          authorizedBy: userId,
+          authorizedAt: FieldValue.serverTimestamp(),
+          deferTokenMint: true,
+        });
+        return { success: true, machineId: null } as const;
+      }
+
+      const supportsEncryption =
+        data.wrapVersion === DEVICE_CODE_WRAP_VERSION &&
+        typeof data.deviceCode === 'string' &&
+        data.deviceCode.length > 0;
+
+      if (!supportsEncryption) {
+        return { error: 'Invalid device code state for authorization.', status: 400 } as const;
+      }
+
+      const machineId = data.machineId;
+      if (!machineId) {
+        return { error: 'Invalid device code state for authorization.', status: 400 } as const;
+      }
 
       // Generate unique agent user ID (same pattern as exchange endpoint)
       const agentUid = `agent_${siteId}_${machineId}`.replace(/[^a-zA-Z0-9_]/g, '_');
@@ -171,26 +195,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         agentUid,
       });
 
-      // Update device code document with tokens and authorization info.
-      //
-      // For v1 docs (interactive pairing) we encrypt the credential
-      // bundle with a key derived from the deviceCode the polling agent
-      // holds, then wipe the cleartext deviceCode from the doc in the
-      // same write. The doc at rest then contains only the ciphertext
-      // and the deviceCodeHash — neither of which is useful without the
-      // agent's in-memory secret.
-      //
-      // For pre-v1 docs (no wrapVersion, i.e. created before the deploy
-      // that introduced this code path) or pre-authorised codes whose
-      // deviceCode has already been discarded (Generate Code on the
-      // dashboard), we fall back to storing the credentials in
-      // plaintext. The legacy poll path still supports plaintext for
-      // those documents only.
-      const supportsEncryption =
-        data.wrapVersion === DEVICE_CODE_WRAP_VERSION &&
-        typeof data.deviceCode === 'string' &&
-        data.deviceCode.length > 0;
-
       const credentialBundle = {
         accessToken: finalIdToken,
         refreshToken,
@@ -198,46 +202,28 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         siteId,
       };
 
-      if (supportsEncryption) {
-        const encryptedCredentials = encryptDeviceCodeCredentials(
-          credentialBundle,
-          data.deviceCode,
-          pairPhrase,
-        );
-        transaction.update(docRef, {
-          status: 'authorized',
-          siteId,
-          authorizedBy: userId,
-          authorizedAt: FieldValue.serverTimestamp(),
-          encryptedCredentials,
-          wrapVersion: DEVICE_CODE_WRAP_VERSION,
-          // Wipe the deviceCode and any legacy plaintext fields so the
-          // doc at rest cannot leak credentials or key material.
-          deviceCode: FieldValue.delete(),
-          accessToken: FieldValue.delete(),
-          refreshToken: FieldValue.delete(),
-        });
-      } else {
-        // Legacy / pre-authorised flow — plaintext credentials are the
-        // only option because no client holds an HKDF key. Poll-by-phrase
-        // is restricted to this path.
-        transaction.update(docRef, {
-          status: 'authorized',
-          siteId,
-          authorizedBy: userId,
-          authorizedAt: FieldValue.serverTimestamp(),
-          accessToken: finalIdToken,
-          refreshToken,
-          // Mark preauthorized=true so the poll-by-phrase fallback can
-          // distinguish this from an interactive doc whose deviceCode
-          // was simply missing (defence-in-depth).
-          preauthorized: true,
-        });
-      }
+      const encryptedCredentials = encryptDeviceCodeCredentials(
+        credentialBundle,
+        data.deviceCode,
+        pairPhrase,
+      );
+      transaction.update(docRef, {
+        status: 'authorized',
+        siteId,
+        authorizedBy: userId,
+        authorizedAt: FieldValue.serverTimestamp(),
+        encryptedCredentials,
+        wrapVersion: DEVICE_CODE_WRAP_VERSION,
+        // Wipe the deviceCode and any legacy plaintext fields so the
+        // doc at rest cannot leak credentials or key material.
+        deviceCode: FieldValue.delete(),
+        accessToken: FieldValue.delete(),
+        refreshToken: FieldValue.delete(),
+      });
 
       logger.info(
         `Device code authorized: phrase=${pairPhrase}, site=${siteId}, machine=${machineId}, ` +
-          `by=${userId}, wrap=${supportsEncryption ? DEVICE_CODE_WRAP_VERSION : 'plaintext'}`,
+          `by=${userId}, wrap=${DEVICE_CODE_WRAP_VERSION}`,
       );
 
       return { success: true, machineId: data.machineId || null } as const;

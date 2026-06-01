@@ -54,7 +54,7 @@ export function EmptyStateUpload({
           : 'drop a folder to chunk, hash, and deploy it across your machines. only changed chunks are uploaded, so follow-up deploys are fast.'}
       </p>
       <p className="mt-2 max-w-md text-xs text-muted-foreground/80">
-        roost is in developer preview — automatic webhook events, in-flight cancel, and post-reboot resume are still being hardened. data is durable.
+        roost is in developer preview — automatic webhook events, in-flight cancel, and post-restart resume are still being hardened. data is durable.
       </p>
 
       <div className="mt-6 flex flex-wrap items-center justify-center gap-2">

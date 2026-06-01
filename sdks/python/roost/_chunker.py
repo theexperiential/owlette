@@ -7,7 +7,7 @@ same chunk size, same sort order, same zero-byte skip, same ignore defaults.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import AsyncIterator, Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -183,19 +183,6 @@ def unique_hashes(files: Sequence[ChunkedFileEntry]) -> list[str]:
         for c in f.chunks:
             seen.setdefault(c.hash)
     return list(seen)
-
-
-async def _stream_chunk(abs_path: Path, offset: int, size: int) -> AsyncIterator[bytes]:
-    """Async generator yielding bytes of one chunk from a file (unused today but handy for streaming uploads)."""
-    with abs_path.open("rb") as fh:
-        fh.seek(offset)
-        remaining = size
-        while remaining > 0:
-            buf = fh.read(min(remaining, 64 * 1024))
-            if not buf:
-                break
-            remaining -= len(buf)
-            yield buf
 
 
 __all__ = [

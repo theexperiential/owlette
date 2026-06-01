@@ -198,7 +198,7 @@ export default function ProjectDistributionDialog({
   const uploadProgress = upload.state.progress;
   const uploading = upload.state.status === 'uploading';
 
-  // Preset bar state (mirrors RebootScheduleDialog pattern)
+  // Preset bar state (mirrors RestartScheduleDialog pattern)
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const [savingNewPreset, setSavingNewPreset] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');

@@ -54,38 +54,3 @@ export function TimeRangeSelector({ value, onChange, className }: TimeRangeSelec
     </div>
   );
 }
-
-/**
- * Get the start timestamp for a given time range
- * @param range - The time range to calculate
- * @returns Start timestamp in seconds (Unix time)
- */
-export function getTimeRangeStart(range: TimeRange): number {
-  const now = Date.now();
-  const MS_PER_HOUR = 60 * 60 * 1000;
-  const MS_PER_DAY = 24 * MS_PER_HOUR;
-
-  switch (range) {
-    case '1h':
-      return Math.floor((now - MS_PER_HOUR) / 1000);
-    case '1d':
-      return Math.floor((now - MS_PER_DAY) / 1000);
-    case '1w':
-      return Math.floor((now - 7 * MS_PER_DAY) / 1000);
-    case '1m':
-      return Math.floor((now - 30 * MS_PER_DAY) / 1000);
-    case '1y':
-      return Math.floor((now - 365 * MS_PER_DAY) / 1000);
-    case 'all':
-      return 0; // Beginning of time
-    default:
-      return Math.floor((now - MS_PER_DAY) / 1000);
-  }
-}
-
-/**
- * Get human-readable label for a time range
- */
-export function getTimeRangeLabel(range: TimeRange): string {
-  return ranges.find(r => r.value === range)?.label ?? 'day';
-}

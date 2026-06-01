@@ -16,8 +16,9 @@
  *   6. emit `deployment_mutated` audit event
  *
  * Wave 4.3 will delete the listener-driven `transaction.set` writes from
- * `useDeployments.ts` — the cloud function `reconcileDeploymentStatus` (wave
- * 2.4) is now the authoritative source of status reconciliation. We do NOT
+ * `useDeployments.ts` — the cloud function `onCommandCompleted`
+ * (functions/src/deploymentStatus.ts, triggered on commands/completed) is the
+ * authoritative source of deployment status reconciliation. We do NOT
  * replicate that logic here.
  */
 

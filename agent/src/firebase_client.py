@@ -26,7 +26,6 @@ import time
 import json
 import os
 import logging
-import socket
 import hashlib
 from typing import Dict, Any, Callable, Optional
 from datetime import datetime
@@ -107,7 +106,7 @@ class FirebaseClient:
         self.auth_manager = auth_manager
         self.project_id = project_id
         self.site_id = site_id
-        self.machine_id = socket.gethostname()
+        self.machine_id = shared_utils.get_hostname()
         self.config_cache_path = config_cache_path
 
         # Firestore REST client instance
@@ -1402,8 +1401,13 @@ class FirebaseClient:
             self.logger.error(f"Error uploading metrics: {e}")
             self.connection_manager.report_error(e, "Metrics upload")
 
-    # Command types that execute fast (< 30s) and can run concurrently
-    _FAST_COMMAND_TYPES = frozenset({'mcp_tool_call', 'capture_screenshot'})
+    # Command types that execute fast (< 30s) and can run concurrently.
+    # cancel_sync is an interrupt command: it only sets a thread-safe
+    # cancellation Event, so it MUST run on the fast lane — otherwise it
+    # serialises behind the in-flight sync_pull on the single slow worker and
+    # cannot cancel until the sync it is meant to stop has already finished
+    # (OWL-06). Heavy roost work (sync_pull, rollback) stays on the slow lane.
+    _FAST_COMMAND_TYPES = frozenset({'mcp_tool_call', 'capture_screenshot', 'cancel_sync'})
 
     def _process_command(self, cmd_id: str, cmd_data: Dict[str, Any]):
         """Dispatch a command to the appropriate execution lane.

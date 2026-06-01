@@ -77,8 +77,6 @@ Quick reference of everything that exists. Check here before creating new files 
 | `MachineCardView.tsx` | Card grid view of machines with metrics |
 | `MachineListView.tsx` | Table list view of machines |
 | `ProcessDialog.tsx` | Add/edit process configuration dialog |
-| `DeleteProcessDialog.tsx` | Confirm process deletion |
-| `GettingStartedCard.tsx` | Onboarding card for new users |
 
 ### App Components (`web/components/`)
 | Component | Purpose |

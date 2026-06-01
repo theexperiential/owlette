@@ -18,13 +18,13 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { timestampToIso } from '@/lib/firestoreTime.server';
 import { authorizedSiteHandler, type SiteHandlerContext } from '@/lib/authorizedHandler.server';
 import { readAndParseJsonBody } from '@/app/api/_shared';
-import { RebootPresetValidationError } from '@/lib/actions/createRebootPreset.server';
+import { RestartPresetValidationError } from '@/lib/actions/createRestartPreset.server';
 import {
-  updateRebootPreset,
-  RebootPresetNotFoundError,
-  type UpdateRebootPresetInput,
-} from '@/lib/actions/updateRebootPreset.server';
-import { deleteRebootPreset } from '@/lib/actions/deleteRebootPreset.server';
+  updateRestartPreset,
+  RestartPresetNotFoundError,
+  type UpdateRestartPresetInput,
+} from '@/lib/actions/updateRestartPreset.server';
+import { deleteRestartPreset } from '@/lib/actions/deleteRestartPreset.server';
 
 const PRESET_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -52,12 +52,13 @@ export const GET = authorizedSiteHandler<{ siteId: string; presetId: string }>({
       .doc(presetId)
       .get();
 
-    if (!presetSnap.exists) return problemNotFound('reboot preset not found');
+    if (!presetSnap.exists) return problemNotFound('restart preset not found');
     const data = presetSnap.data() ?? {};
     return NextResponse.json({
       id: presetId,
       name: typeof data.name === 'string' ? data.name : '',
       description: typeof data.description === 'string' ? data.description : null,
+      enabled: typeof data.enabled === 'boolean' ? data.enabled : null,
       entries: Array.isArray(data.entries) ? data.entries : [],
       isBuiltIn: data.isBuiltIn === true,
       order: typeof data.order === 'number' ? data.order : 0,
@@ -80,19 +81,19 @@ export const PATCH = authorizedSiteHandler<{ siteId: string; presetId: string }>
 
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
-    const body = (parsed.body ?? {}) as UpdateRebootPresetInput;
+    const body = (parsed.body ?? {}) as UpdateRestartPresetInput;
 
-    const result = await updateRebootPreset(ctx, presetId, body);
+    const result = await updateRestartPreset(ctx, presetId, body);
     return NextResponse.json({
       presetId: result.presetId,
       siteId: result.siteId,
       isBuiltInOverride: result.isBuiltInOverride,
     });
   } catch (err) {
-    if (err instanceof RebootPresetValidationError) {
+    if (err instanceof RestartPresetValidationError) {
       return problemValidation(err.message, { [err.field]: [err.message] });
     }
-    if (err instanceof RebootPresetNotFoundError) {
+    if (err instanceof RestartPresetNotFoundError) {
       return problemNotFound(err.message);
     }
     return problemFromError(err, 'sites/[siteId]/presets/reboot/[presetId]:PATCH');
@@ -106,13 +107,13 @@ export const DELETE = authorizedSiteHandler<{ siteId: string; presetId: string }
 })(async (_request: NextRequest, ctx: SiteHandlerContext, routeContext: RouteParams) => {
   try {
     const { presetId } = await routeContext.params;
-    await deleteRebootPreset(ctx, presetId);
+    await deleteRestartPreset(ctx, presetId);
     return new NextResponse(null, { status: 204 });
   } catch (err) {
-    if (err instanceof RebootPresetValidationError) {
+    if (err instanceof RestartPresetValidationError) {
       return problemValidation(err.message, { [err.field]: [err.message] });
     }
-    if (err instanceof RebootPresetNotFoundError) {
+    if (err instanceof RestartPresetNotFoundError) {
       return problemNotFound(err.message);
     }
     return problemFromError(err, 'sites/[siteId]/presets/reboot/[presetId]:DELETE');

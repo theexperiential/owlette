@@ -133,7 +133,7 @@ const ACTION_TYPES = [
   { value: 'deployment_completed', label: 'deployment completed' },
   { value: 'deployment_failed', label: 'deployment failed' },
   { value: 'deployment_cancelled', label: 'deployment cancelled' },
-  { value: 'scheduled_reboot', label: 'scheduled reboot' },
+  { value: 'scheduled_reboot', label: 'scheduled restart' },
 ];
 
 // Level badges styling

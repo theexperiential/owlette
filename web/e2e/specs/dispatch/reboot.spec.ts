@@ -5,7 +5,7 @@
  * written → 30s countdown pill appears. No time-travel here (E1.x
  * covers the tick / lockout / revert behavior).
  *
- * Contract (from useFirestore.ts::rebootMachine):
+ * Contract (from useFirestore.ts::restartMachine):
  *   1. `sendMachineCommand(...)` writes to
  *      `sites/{siteId}/machines/{machineId}/commands/pending` at key
  *      `reboot_machine_{Date.now()}` with
@@ -42,10 +42,10 @@ test.beforeEach(async () => {
   await clearMachineCommands();
 });
 
-test('admin can dispatch reboot — command written + rebootScheduledAt populated + countdown pill renders', async ({ page }) => {
+test('admin can dispatch restart — command written + rebootScheduledAt populated + countdown pill renders', async ({ page }) => {
   await page.goto('/dashboard');
 
-  // Open the machine's context menu and pick "reboot machine".
+  // Open the machine's context menu and pick "restart machine".
   const card = page.getByTestId('machine-card').filter({ hasText: MACHINE_ID });
   await expect(card).toBeVisible();
   await card.getByTestId('machine-context-menu-trigger').click();
@@ -54,22 +54,22 @@ test('admin can dispatch reboot — command written + rebootScheduledAt populate
   const menu = page.getByRole('menu');
   await menu.getByTestId('machine-context-menu-reboot').click();
 
-  // Confirm dialog — title matches `reboot {machineName}?` where machineName
+  // Confirm dialog — title matches `restart {machineName}?` where machineName
   // defaults to the raw machineId when no displayName is set.
-  const confirmDialog = page.getByRole('dialog', { name: new RegExp(`reboot ${MACHINE_ID}\\?`, 'i') });
+  const confirmDialog = page.getByRole('dialog', { name: new RegExp(`restart ${MACHINE_ID}\\?`, 'i') });
   await expect(confirmDialog).toBeVisible();
 
-  await confirmDialog.getByRole('button', { name: /^reboot$/i }).click();
+  await confirmDialog.getByRole('button', { name: /^restart$/i }).click();
 
   // The confirm dialog stays open with "sending..." state until BOTH
   // Firestore writes in Promise.all resolve. Waiting for it to close is
   // the most reliable signal that the dispatch completed — without it,
   // subsequent Admin SDK reads race ahead of the client writes.
-  await expect(page.getByText('Reboot command sent to', { exact: false })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('Restart command sent to', { exact: false })).toBeVisible({ timeout: 10_000 });
 
   // UI: the cancel-countdown pill replaces the healthy status pill once the
   // snapshot listener picks up the write (rebootScheduledAt > now triggers
-  // hasUpcomingReboot). admin role renders the cancel variant (has testid);
+  // hasUpcomingRestart). admin role renders the cancel variant (has testid);
   // member would render a text-only badge with no testid (covered in B3.2).
   await expect(card.getByTestId('machine-status-cancel-pill')).toBeVisible({ timeout: 5_000 });
 

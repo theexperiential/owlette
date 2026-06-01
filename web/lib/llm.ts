@@ -10,7 +10,6 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { type LanguageModel } from 'ai';
-import { type McpToolDefinition } from './mcp-tools';
 
 export type LlmProvider = 'anthropic' | 'openai';
 
@@ -112,22 +111,6 @@ Use your tools to get real data. If a tool returns an error, explain what happen
 LANGUAGE: You manage remote machines, not the operator's personal computer. Always refer to "the machine", "the computer", or "${machineName}" — never say "your screen", "your desktop", or "your files".
 
 FORMATTING: Your responses are rendered with full Markdown support. Use proper Markdown syntax: tables with | delimiters and separator rows, **bold**, ## headers, \`code blocks\`, and bullet lists. Never use plain-text column alignment — always use Markdown tables.`;
-}
-
-/**
- * Convert McpToolDefinition[] to the format expected by Vercel AI SDK's streamText.
- */
-export function buildToolDefinitions(tools: McpToolDefinition[]) {
-  const result: Record<string, { description: string; parameters: { type: 'object'; properties: Record<string, unknown>; required?: string[] } }> = {};
-
-  for (const tool of tools) {
-    result[tool.name] = {
-      description: tool.description,
-      parameters: tool.parameters,
-    };
-  }
-
-  return result;
 }
 
 // ─── Cheapest Models (for lightweight tasks like categorization) ─────────────

@@ -297,5 +297,3 @@ export function normalizePairPhrase(phrase: string): string | null {
   if (!isValidPairPhrase(normalized)) return null;
   return normalized;
 }
-
-export { WORD_LIST };

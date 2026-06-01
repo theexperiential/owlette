@@ -1,9 +1,9 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines } from '@/hooks/useFirestore';
-import { useRebootPresets, type RebootPreset } from '@/hooks/useRebootPresets';
+import { useRestartPresets, type RestartPreset } from '@/hooks/useRestartPresets';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,10 +22,10 @@ import { toast } from 'sonner';
 import DayPillSelector from '@/components/DayPillSelector';
 import { TimePicker } from '@/components/ScheduleEditor';
 import ApplyScheduleToMachinesDialog from '@/components/ApplyScheduleToMachinesDialog';
-import { TimezoneChip } from '@/components/TimezoneChip';
-import type { RebootSchedule, RebootScheduleEntry } from '@/hooks/useFirestore';
+import { tzAbbreviation } from '@/components/TimezoneChip';
+import type { RestartSchedule, RestartScheduleEntry } from '@/hooks/useFirestore';
 
-interface RebootScheduleDialogProps {
+interface RestartScheduleDialogProps {
   siteId: string;
   machineId: string;
   machineName: string;
@@ -36,17 +36,17 @@ interface RebootScheduleDialogProps {
   machineTimezone?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  currentSchedule?: RebootSchedule;
+  currentSchedule?: RestartSchedule;
 }
 
-/** Generate a stable ID for a new reboot entry. */
+/** Generate a stable ID for a new restart entry. */
 function newEntryId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**
- * Compute the next scheduled reboot across all entries for the preview line.
+ * Compute the next scheduled restart across all entries for the preview line.
  *
  * The returned text is from the perspective of the MACHINE'S local timezone —
  * a "14:00" entry on a Tokyo kiosk reads "today at 14:00" (or "tomorrow at
@@ -60,9 +60,9 @@ function newEntryId(): string {
  * "unknown" so the user knows the preview may not match what the agent will
  * actually do.
  */
-function getNextScheduledReboot(
+function getNextScheduledRestart(
   enabled: boolean,
-  entries: RebootScheduleEntry[],
+  entries: RestartScheduleEntry[],
   timeFormat: '12h' | '24h' = '12h',
   machineTimezone?: string
 ): string {
@@ -140,13 +140,13 @@ function getNextScheduledReboot(
 }
 
 /** Stable JSON key for entries — used to detect "is current state == preset state?" */
-function entriesKey(entries: RebootScheduleEntry[]): string {
+function entriesKey(entries: RestartScheduleEntry[]): string {
   return JSON.stringify(
     entries.map(e => ({ days: [...e.days].sort(), time: e.time }))
   );
 }
 
-export default function RebootScheduleDialog({
+export default function RestartScheduleDialog({
   siteId,
   machineId,
   machineName,
@@ -154,13 +154,13 @@ export default function RebootScheduleDialog({
   open,
   onOpenChange,
   currentSchedule,
-}: RebootScheduleDialogProps) {
+}: RestartScheduleDialogProps) {
   const { userPreferences } = useAuth();
-  const { updateRebootSchedule } = useMachines(siteId);
-  const { presets, createPreset, updatePreset, deletePreset } = useRebootPresets(siteId);
+  const { updateRestartSchedule } = useMachines(siteId);
+  const { presets, createPreset, updatePreset, deletePreset } = useRestartPresets(siteId);
 
   const [enabled, setEnabled] = useState(false);
-  const [entries, setEntries] = useState<RebootScheduleEntry[]>([]);
+  const [entries, setEntries] = useState<RestartScheduleEntry[]>([]);
   const [saving, setSaving] = useState(false);
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const [savingNewPreset, setSavingNewPreset] = useState(false);
@@ -168,44 +168,62 @@ export default function RebootScheduleDialog({
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null);
   const [editPresetName, setEditPresetName] = useState('');
   const [confirmDeletePresetId, setConfirmDeletePresetId] = useState<string | null>(null);
-  const [pendingReplacePreset, setPendingReplacePreset] = useState<RebootPreset | null>(null);
+  const [pendingReplacePreset, setPendingReplacePreset] = useState<RestartPreset | null>(null);
   const [showApplyToMachines, setShowApplyToMachines] = useState(false);
+  const [updatingPreset, setUpdatingPreset] = useState(false);
 
-  // Initialize from currentSchedule when dialog opens
+  // Initialize from currentSchedule and detect matching preset in a SINGLE
+  // effect that runs once per opening. Two separate effects both depending on
+  // `open` raced: the auto-detect ran with the previous session's `entries`
+  // closure and stamped a wrong activePresetId before init's setEntries
+  // materialized, which then locked the dialog into the wrong preset on every
+  // reopen.
+  //
+  // Initialization happens only on the open→true transition; after that,
+  // activePresetId is mutated only by user actions (applyPreset, etc.) so
+  // editing entries no longer auto-clears or auto-snaps the selection.
+  const initOnceRef = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    if (currentSchedule) {
-      setEnabled(currentSchedule.enabled ?? false);
-      setEntries(
-        (currentSchedule.entries ?? []).map(e => ({
+    if (!open) {
+      initOnceRef.current = false;
+      return;
+    }
+    if (initOnceRef.current) return;
+    initOnceRef.current = true;
+
+    const initialEntries: RestartScheduleEntry[] = currentSchedule
+      ? (currentSchedule.entries ?? []).map(e => ({
           id: e.id || newEntryId(),
           days: e.days || [],
           time: e.time || '03:00',
         }))
-      );
-    } else {
-      setEnabled(false);
-      setEntries([]);
-    }
-    setActivePresetId(null);
+      : [];
+
+    setEnabled(currentSchedule?.enabled ?? false);
+    setEntries(initialEntries);
+
+    const key = entriesKey(initialEntries);
+    const match = presets.find(p => entriesKey(p.entries) === key);
+    setActivePresetId(match?.id ?? null);
+
     setSavingNewPreset(false);
     setNewPresetName('');
     setEditingPresetId(null);
     setConfirmDeletePresetId(null);
     setPendingReplacePreset(null);
-  }, [open, currentSchedule]);
+  }, [open, currentSchedule, presets]);
 
-  // Auto-detect which preset matches the current state (if any)
-  useEffect(() => {
-    if (!open) return;
-    const key = entriesKey(entries);
-    const match = presets.find(p => entriesKey(p.entries) === key);
-    setActivePresetId(match?.id ?? null);
-  }, [open, entries, presets]);
-
-  const nextReboot = useMemo(
-    () => getNextScheduledReboot(enabled, entries, userPreferences.timeFormat || '12h', machineTimezone),
+  const nextRestart = useMemo(
+    () => getNextScheduledRestart(enabled, entries, userPreferences.timeFormat || '12h', machineTimezone),
     [enabled, entries, userPreferences.timeFormat, machineTimezone]
+  );
+
+  // Short timezone abbreviation (e.g. "PDT") used as an inline label next to
+  // every time field and the next-restart line. Empty when we don't know the
+  // machine's IANA timezone — we just omit the suffix in that case.
+  const tzShort = useMemo(
+    () => (machineTimezone ? tzAbbreviation(machineTimezone) : ''),
+    [machineTimezone]
   );
 
   const addEntry = () => {
@@ -219,11 +237,11 @@ export default function RebootScheduleDialog({
     setEntries(prev => prev.filter(e => e.id !== id));
   };
 
-  const updateEntry = (id: string, patch: Partial<RebootScheduleEntry>) => {
+  const updateEntry = (id: string, patch: Partial<RestartScheduleEntry>) => {
     setEntries(prev => prev.map(e => (e.id === id ? { ...e, ...patch } : e)));
   };
 
-  const applyPreset = (preset: RebootPreset) => {
+  const applyPreset = (preset: RestartPreset) => {
     // Clone entries with fresh IDs so the per-machine state doesn't share IDs across machines
     setEntries(
       preset.entries.map(e => ({
@@ -232,6 +250,10 @@ export default function RebootScheduleDialog({
         time: e.time,
       }))
     );
+    // Adopt the preset's enabled state when defined — keeps the toggle in sync
+    // with the schedule the user just picked. Legacy presets without this field
+    // leave the current toggle alone.
+    if (preset.enabled !== undefined) setEnabled(preset.enabled);
     setActivePresetId(preset.id);
   };
 
@@ -242,7 +264,7 @@ export default function RebootScheduleDialog({
     }
     const validEntries = entries.filter(e => e.days.length > 0);
     if (validEntries.length === 0) {
-      toast.error('add at least one reboot entry first');
+      toast.error('add at least one restart entry first');
       return;
     }
 
@@ -256,8 +278,9 @@ export default function RebootScheduleDialog({
     }
 
     try {
-      await createPreset({
+      const presetId = await createPreset({
         name: trimmedName,
+        enabled,
         entries: validEntries,
         isBuiltIn: false,
         order: 100,
@@ -266,6 +289,7 @@ export default function RebootScheduleDialog({
       toast.success('preset saved');
       setNewPresetName('');
       setSavingNewPreset(false);
+      setActivePresetId(presetId);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       toast.error('failed to save preset', { description: message });
@@ -305,19 +329,68 @@ export default function RebootScheduleDialog({
       // Validate: all entries must have at least one day selected
       const invalid = entries.find(e => e.days.length === 0);
       if (invalid) {
-        toast.error('every reboot entry needs at least one day');
+        toast.error('every restart entry needs at least one day');
+        return;
+      }
+    }
+
+    // If a preset name is pending in the inline form but the user hasn't
+    // explicitly submitted it, persist it now so it isn't silently dropped
+    // when the dialog closes. Name collision short-circuits to the existing
+    // replace-confirm flow.
+    if (pendingReplacePreset) {
+      toast.error('resolve the preset name conflict before saving');
+      return;
+    }
+    if (savingNewPreset && newPresetName.trim()) {
+      const trimmedName = newPresetName.trim();
+      const validEntries = entries.filter(e => e.days.length > 0);
+      if (validEntries.length === 0) {
+        toast.error('add at least one restart entry first');
+        return;
+      }
+      const existing = presets.find(p => p.name.toLowerCase() === trimmedName.toLowerCase());
+      if (existing) {
+        setPendingReplacePreset(existing);
+        return;
+      }
+      try {
+        const presetId = await createPreset({
+          name: trimmedName,
+          enabled,
+          entries: validEntries,
+          isBuiltIn: false,
+          order: 100,
+          createdBy: '',
+        });
+        toast.success('preset saved');
+        setNewPresetName('');
+        setSavingNewPreset(false);
+        setActivePresetId(presetId);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error('failed to save preset', { description: message });
         return;
       }
     }
 
     setSaving(true);
     try {
-      await updateRebootSchedule(machineId, { enabled, entries });
-      toast.success('reboot schedule saved');
+      // If a custom preset is selected and entries have drifted, persist the
+      // edits back to the preset so the user doesn't have to click both
+      // "update preset" and "save" separately.
+      let didUpdatePreset = false;
+      if (selectedPreset && !selectedPreset.isBuiltIn && presetIsModified) {
+        const validEntries = entries.filter(e => e.days.length > 0);
+        await updatePreset(selectedPreset.id, { entries: validEntries, enabled });
+        didUpdatePreset = true;
+      }
+      await updateRestartSchedule(machineId, { enabled, entries });
+      toast.success(didUpdatePreset ? 'preset and restart schedule saved' : 'restart schedule saved');
       onOpenChange(false);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      toast.error('failed to save reboot schedule', {
+      toast.error('failed to save restart schedule', {
         description: message,
       });
     } finally {
@@ -326,21 +399,23 @@ export default function RebootScheduleDialog({
   };
 
   const selectedPreset = activePresetId ? presets.find(p => p.id === activePresetId) : null;
-  const presetIsModified = selectedPreset && entriesKey(selectedPreset.entries) !== entriesKey(entries);
+  // Compare entries always; only compare enabled if the preset has one stored
+  // (legacy presets predate this field — don't mark them dirty on toggle).
+  const presetIsModified = !!selectedPreset && (
+    entriesKey(selectedPreset.entries) !== entriesKey(entries) ||
+    (selectedPreset.enabled !== undefined && selectedPreset.enabled !== enabled)
+  );
 
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="bg-card border-border sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>reboot schedule — {machineName}</DialogTitle>
+            <DialogTitle>restart schedule — {machineName}</DialogTitle>
             <DialogDescription className="text-muted-foreground text-pretty">
-              automatically reboot this machine on a recurring schedule.
+              automatically restart this machine on a recurring schedule.
               the machine must have been up for at least 30 minutes.
             </DialogDescription>
-            <div className="pt-1">
-              <TimezoneChip tz={machineTimezone} source="machine" />
-            </div>
           </DialogHeader>
 
           <div className="space-y-5 py-2">
@@ -454,18 +529,23 @@ export default function RebootScheduleDialog({
                           {presetIsModified && (
                             <button
                               type="button"
+                              disabled={updatingPreset}
                               onClick={async () => {
+                                setUpdatingPreset(true);
                                 try {
-                                  await updatePreset(selectedPreset.id, { entries });
+                                  await updatePreset(selectedPreset.id, { entries, enabled });
                                   toast.success('preset updated');
                                 } catch (err: unknown) {
                                   const message = err instanceof Error ? err.message : String(err);
                                   toast.error('failed to update preset', { description: message });
+                                } finally {
+                                  setUpdatingPreset(false);
                                 }
                               }}
-                              className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300 cursor-pointer transition-colors"
+                              className="flex items-center gap-1 text-cyan-400 hover:text-cyan-300 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              <Save className="h-3 w-3" /> update preset
+                              <Save className={`h-3 w-3 ${updatingPreset ? 'animate-pulse' : ''}`} />
+                              {updatingPreset ? 'updating...' : 'update preset'}
                             </button>
                           )}
                           <button
@@ -557,11 +637,11 @@ export default function RebootScheduleDialog({
 
             {/* Enable toggle */}
             <div className="flex items-center justify-between">
-              <Label htmlFor="reboot-enabled" className="text-sm">
-                enable scheduled reboots
+              <Label htmlFor="restart-enabled" className="text-sm">
+                enable scheduled restarts
               </Label>
               <Switch
-                id="reboot-enabled"
+                id="restart-enabled"
                 checked={enabled}
                 onCheckedChange={setEnabled}
               />
@@ -571,7 +651,7 @@ export default function RebootScheduleDialog({
             <div className={`space-y-2 ${enabled ? '' : 'opacity-50 pointer-events-none'}`}>
               {entries.length === 0 && (
                 <div className="text-xs text-muted-foreground italic px-1 py-3 text-center">
-                  no reboots scheduled
+                  no restarts scheduled
                 </div>
               )}
               {entries.map((entry) => (
@@ -590,6 +670,11 @@ export default function RebootScheduleDialog({
                       value={entry.time}
                       onChange={(time) => updateEntry(entry.id, { time })}
                     />
+                    {tzShort && (
+                      <span className="text-[11px] font-medium text-muted-foreground tabular-nums">
+                        {tzShort}
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => removeEntry(entry.id)}
@@ -609,15 +694,17 @@ export default function RebootScheduleDialog({
                 className="w-full border-dashed border-border text-muted-foreground hover:text-foreground cursor-pointer"
               >
                 <Plus className="h-3 w-3 mr-1" />
-                add reboot
+                add restart
               </Button>
             </div>
 
-            {/* Next reboot preview */}
+            {/* Next restart preview */}
             {enabled && entries.length > 0 && (
               <div className="text-sm text-muted-foreground">
-                next scheduled reboot:{' '}
-                <span className="text-cyan-400">{nextReboot}</span>
+                next scheduled restart:{' '}
+                <span className="text-cyan-400">
+                  {nextRestart === 'none' || !tzShort ? nextRestart : `${nextRestart} ${tzShort}`}
+                </span>
               </div>
             )}
           </div>

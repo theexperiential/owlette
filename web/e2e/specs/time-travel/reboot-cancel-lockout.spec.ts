@@ -65,7 +65,7 @@ test('cancel-pill disappears in the final 5 seconds — only text badge remains'
   await expect(cancelPill).toHaveCount(0, { timeout: 5_000 });
 
   // The text-only badge renders in its place. The Badge shows
-  // `{actionLabel}…` which is "rebooting…" for a reboot flow.
+  // `{actionLabel}…` which is "restarting…" for a restart flow.
   // Scope to the machine card so we don't match the same text elsewhere.
-  await expect(card.getByText(/^rebooting…$/)).toBeVisible();
+  await expect(card.getByText(/^restarting…$/)).toBeVisible();
 });

@@ -14,8 +14,6 @@ import {
   problemNotFound,
   problemScopeInsufficient,
   problemTokenExpired,
-  problem,
-  ProblemType,
 } from '@/lib/apiErrors';
 import {
   ApiAuthError,
@@ -179,21 +177,6 @@ export function validateHashList(value: unknown, fieldName: string):
     };
   }
   return { ok: true, hashes: value as string[] };
-}
-
-export function notImplementedYet(
-  endpoint: string,
-  wave: string,
-  todo: string,
-): NextResponse {
-  return problem({
-    type: ProblemType.ServiceUnavailable,
-    title: 'not implemented yet (stub)',
-    status: 503,
-    detail: `${endpoint} is scaffolded but not yet wired to backing services. roost ${wave}.`,
-    instance: endpoint,
-    todo,
-  });
 }
 
 export async function parseJsonBody(
