@@ -80,22 +80,33 @@ def _determine_environment(url_hint: str = '') -> tuple:
     """
     Determine environment (dev/prod) from URL hint or existing config.
 
+    An explicit URL hint (installer ``--url``, GUI server choice) is the operator
+    deliberately selecting a server, so it MUST win over the existing config.
+    Otherwise an agent already paired to one environment can never be switched to
+    the other: a dev-paired agent re-running with ``--url https://owlette.app/api``
+    used to be silently re-locked to dev (the dev->prod switch bug). The check
+    was asymmetric — only an existing *development* config short-circuited — so
+    prod->dev happened to work while dev->prod did not.
+
     Returns:
         (environment, api_base, project_id)
     """
-    # Check existing config first
+    DEV = ('development', 'https://dev.owlette.app/api', 'owlette-dev-3838a')
+    PROD = ('production', 'https://owlette.app/api', 'owlette-prod-90a12')
+
+    # 1. An explicit URL hint wins — the operator is choosing the server.
+    if url_hint:
+        return DEV if 'dev.owlette.app' in url_hint else PROD
+
+    # 2. No hint: honor the environment the existing config is bound to.
     try:
-        existing_env = shared_utils.get_environment()
-        if existing_env == 'development':
-            return ('development', 'https://dev.owlette.app/api', 'owlette-dev-3838a')
+        if shared_utils.get_environment() == 'development':
+            return DEV
     except Exception:
         pass
 
-    # Check URL hint
-    if 'dev.owlette.app' in url_hint:
-        return ('development', 'https://dev.owlette.app/api', 'owlette-dev-3838a')
-
-    return ('production', 'https://owlette.app/api', 'owlette-prod-90a12')
+    # 3. Default to production.
+    return PROD
 
 
 def _save_config(site_id: str, environment: str, api_base: str, project_id: str):

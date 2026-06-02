@@ -16,6 +16,7 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ### added
 
+- **Site members can view screenshots and live view.** Screenshot / live-view are now authorized by a new read-class `MACHINE_VIEW` capability (granted to members on their assigned sites) rather than the mutating `MACHINE_EXEC_COMMAND`. The machine-commands route dispatches the three view-only command types (`capture_screenshot` / `start_live_view` / `stop_live_view`) to a `MACHINE_VIEW`-gated handler; all other commands stay behind `MACHINE_EXEC_COMMAND`, and api-key scope is unchanged.
 - **Cortex tier-3 tool-approval gate.** Tier-3 tool calls now require explicit in-chat approval. `/api/cortex` migrated to the UIMessage protocol (`convertToModelMessages`); the per-site approval flag is default-on and forces the server-side path. Includes Cortex sidebar/UX fixes and a persistent chat layout.
 - **Scoped full-text search on the logs page**, plus an animated filters panel.
 - **Date-scoped log clearing.** Clear-logs deletion accepts a `since`/`until` range, with the date window computed in the display timezone.
@@ -28,6 +29,8 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ### fixed
 
+- **Dashboard no longer shows members process write-controls they can't use.** The per-process launch-mode toggle and the edit / restart / kill / add-process actions were rendered to every viewer in both the card and list views, so a member would click them and get a 403. They're now gated on `isSiteAdmin`: non-admins see the current launch mode as a read-only pill, and the write actions are hidden.
+- **Expected authorization failures are no longer reported to Sentry as errors.** A member's launch-mode 403 was logged via `logger.firestore.error` → `Sentry.captureMessage(level: error)`, polluting error tracking with an expected outcome. `apiJson` now carries the HTTP status and `setLaunchMode` treats 401/403 as an expected denial (surfaced to the user as a toast, not a Sentry error).
 - **Dashboard "Missing or insufficient permissions" error (Sentry OWLETTE-WEB-3R).** `useUserManagement` opened a realtime listener over the whole `users` collection (superadmin-only per `firestore.rules`) for *every* user, via `ManageSitesDialog` mounted on the dashboard/roosts/logs/deployments pages — so every non-superadmin tripped a permission-denied on load. The listener is now gated to superadmins (client-side; rules unchanged).
 - **Quieted expected `permission-denied` noise** on the site-availability check (`CreateSiteDialog`) and Cortex chat-URL load, and **blocked agent ID tokens from minting user API keys** (`POST /api/keys`).
 - **Logs are ordered by timestamp across all filter combinations.**
@@ -48,6 +51,18 @@ All notable changes to owlette are documented here. The format is based on [Keep
 - `/preflight` pre-push gate + `post-push-e2e` watch hook; build-system skill expanded with the installer-release + version-bump flow.
 - CI: bumped checkout/setup-node/setup-java/cache to Node 24 action majors; py-sdk publish now runs pytest first.
 - Layperson video-tutorial series + Playwright video-capture harness.
+
+## [2.12.7] - 2026-06-02
+
+### fixed
+
+- **Scheduled restarts were silently skipped for ~30 minutes after any boot.** The reboot scheduler refused to fire *any* entry while machine uptime was under 30 minutes, and a separate 30-minute "manual-reboot grace" counted a recent boot as already satisfying an upcoming entry. Together these blocked legitimate short-interval / back-to-back scheduled restarts — a restart scheduled shortly after a boot would never fire. Both guards are removed. Reboot loops are still prevented structurally: the per-entry, per-day `lastFiredByEntry` dedup means each entry fires at most once per local day, the stale-attempt handler clears interrupted attempts, and the 5-minute missed-fire grace is retained.
+- **An already-paired agent could not be switched between dev and prod via the installer.** Two causes: (1) `configure_site._determine_environment` consulted the existing config *before* the explicit `--url` and hard-returned `development` whenever the current env was dev, so a dev-paired agent re-run with `--url https://owlette.app/api` was silently re-locked to dev (asymmetric — prod→dev worked, dev→prod did not); (2) the installer's `ShouldConfigureSite` skipped pairing entirely whenever a valid config existed, ignoring `/SERVER` and `/ADD`. Now an explicit `--url` wins, and the installer re-runs pairing when `/ADD=` is supplied or `/SERVER=` names a different environment than the config is bound to. Also tightened: an empty `site_id` no longer counts as "paired", and an explicit `/SERVER=` against a config with no recognizable `environment` field re-pairs rather than silently skipping.
+- **A stale Firestore/cache config could clobber the local dev/prod routing selection.** Firestore config sync preserved the `firebase` section but not the top-level `environment` field, so a config doc seeded while a machine was on one environment could, after a server switch, leave `config.json` with a prod `firebase` section but a dev top-level `environment` — split-brain routing (the Firebase client talks to prod while `get_api_base_url()` routes to dev). `environment` is now treated as local-only during sync, alongside `firebase`/`sentry`.
+
+### changed
+
+- **Installer docs corrected: production is the default when `/SERVER` is omitted.** The installer header comment and `INSTALLER-USAGE.md` stated dev was the default; the code has always defaulted to prod (`{param:SERVER|prod}`).
 
 ## [2.12.6] - 2026-05-31
 

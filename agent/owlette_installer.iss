@@ -36,8 +36,8 @@
 ;
 ; BUILD PARAMETERS:
 ; -----------------
-; /SERVER=dev   → Uses dev.owlette.app (default)
-; /SERVER=prod  → Uses owlette.app (production)
+; /SERVER=prod  → Uses owlette.app (production) — DEFAULT when /SERVER is omitted
+; /SERVER=dev   → Uses dev.owlette.app (development)
 ;
 ; Example:
 ;   Owlette-Installer-v2.0.0.exe /SERVER=prod
@@ -226,42 +226,92 @@ function ShouldConfigureSite(): Boolean;
 var
   ConfigPath: String;
   ConfigContent: AnsiString;
+  AddPhrase: String;
+  ServerParam: String;
+  RequestedEnv: String;
+  ConfigIsDev: Boolean;
+  ConfigIsProd: Boolean;
 begin
+  // An explicit /ADD= pairing phrase means the operator is deliberately
+  // (re)pairing this machine now (bulk deploy or site/server switch). Always
+  // run pairing — never silently skip an explicit pairing request.
+  AddPhrase := ExpandConstant('{param:ADD|}');
+  if AddPhrase <> '' then
+  begin
+    Log('ADD phrase supplied - running OAuth (explicit pairing)');
+    Result := True;
+    Exit;
+  end;
+
   // Skip OAuth only if config has a valid firebase section with a site_id.
   // A config.json can exist WITHOUT firebase (e.g., service created a default,
   // or a previous install failed mid-OAuth). In those cases, OAuth must still run.
   ConfigPath := ExpandConstant('{commonappdata}\Owlette\config\config.json');
 
-  if FileExists(ConfigPath) then
-  begin
-    if LoadStringFromFile(ConfigPath, ConfigContent) then
-    begin
-      // Check for a populated site_id in the firebase section.
-      // A valid config has: "site_id": "<actual-value>" (not empty string)
-      // We look for "site_id": " followed by a non-empty character (not just "site_id": "")
-      if (Pos('"site_id"', ConfigContent) > 0) and
-         (Pos('"enabled": true', ConfigContent) > 0) then
-      begin
-        Log('Config has valid firebase section - skipping OAuth (upgrade)');
-        Result := False;
-      end
-      else
-      begin
-        Log('Config exists but firebase section missing/incomplete - running OAuth');
-        Result := True;
-      end;
-    end
-    else
-    begin
-      Log('Config exists but unreadable - running OAuth');
-      Result := True;
-    end;
-  end
-  else
+  if not FileExists(ConfigPath) then
   begin
     Log('No config found - running OAuth (fresh install)');
     Result := True;
+    Exit;
   end;
+
+  if not LoadStringFromFile(ConfigPath, ConfigContent) then
+  begin
+    Log('Config exists but unreadable - running OAuth');
+    Result := True;
+    Exit;
+  end;
+
+  // Check for a populated site_id in the firebase section.
+  // A valid config has a NON-EMPTY "site_id" and "enabled": true. The
+  // `"site_id": ""` exclusion guards against a default/half-written config
+  // (enabled flag flipped but no site bound yet) being treated as paired.
+  if not ((Pos('"site_id"', ConfigContent) > 0) and
+          (Pos('"site_id": ""', ConfigContent) = 0) and
+          (Pos('"enabled": true', ConfigContent) > 0)) then
+  begin
+    Log('Config exists but firebase section missing/incomplete - running OAuth');
+    Result := True;
+    Exit;
+  end;
+
+  // Valid config exists — normally an upgrade, so skip OAuth. BUT if the
+  // operator EXPLICITLY passed /SERVER= for a different environment than the
+  // one this config is bound to, that's a server switch and we must re-pair.
+  // Empty default lets us distinguish "explicitly passed" from "defaulted".
+  ServerParam := ExpandConstant('{param:SERVER|}');
+  if ServerParam <> '' then
+  begin
+    if ServerParam = 'dev' then
+      RequestedEnv := 'development'
+    else
+      RequestedEnv := 'production';
+
+    ConfigIsDev := Pos('"environment": "development"', ConfigContent) > 0;
+    ConfigIsProd := Pos('"environment": "production"', ConfigContent) > 0;
+
+    if ((RequestedEnv = 'development') and ConfigIsProd) or
+       ((RequestedEnv = 'production') and ConfigIsDev) then
+    begin
+      Log('Requested server (' + RequestedEnv + ') differs from config environment - running OAuth (server switch)');
+      Result := True;
+      Exit;
+    end;
+
+    // /SERVER= was explicitly requested but the config has no recognizable
+    // "environment" field (e.g. an old config predating that field). We cannot
+    // confirm the current server matches the request, so re-pair rather than
+    // silently leave the agent on an unknown/unintended server.
+    if (not ConfigIsDev) and (not ConfigIsProd) then
+    begin
+      Log('Requested server (' + RequestedEnv + ') but config environment is undeterminable - running OAuth');
+      Result := True;
+      Exit;
+    end;
+  end;
+
+  Log('Config has valid firebase section - skipping OAuth (upgrade)');
+  Result := False;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

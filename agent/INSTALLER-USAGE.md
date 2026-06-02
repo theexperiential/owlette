@@ -8,7 +8,7 @@ Double-click the installer and follow the prompts:
 Owlette-Installer-v2.0.0.exe
 ```
 
-This will install Owlette configured for the **development environment** (dev.owlette.app) by default.
+This will install Owlette configured for the **production environment** (owlette.app) by default. Pass `/SERVER=dev` to target the development environment instead.
 
 ## Environment Selection
 
@@ -16,19 +16,20 @@ This will install Owlette configured for the **development environment** (dev.ow
 
 The installer supports switching between development and production environments using the `/SERVER` flag:
 
-#### Development Environment (Default)
-```bash
-Owlette-Installer-v2.0.0.exe /SERVER=dev
-```
-- Connects to: `https://dev.owlette.app`
-- Use for testing, development, and staging
-
-#### Production Environment
+#### Production Environment (Default)
 ```bash
 Owlette-Installer-v2.0.0.exe /SERVER=prod
 ```
 - Connects to: `https://owlette.app`
 - Use for production deployments
+- This is the default when `/SERVER` is omitted
+
+#### Development Environment
+```bash
+Owlette-Installer-v2.0.0.exe /SERVER=dev
+```
+- Connects to: `https://dev.owlette.app`
+- Use for testing, development, and staging
 
 ### How It Works
 

@@ -141,9 +141,6 @@ DISPLAY_CHECK_ITERATIONS = max(1, DISPLAY_CHECK_INTERVAL_SECONDS // SLEEP_INTERV
 # runs on a daemon thread so it never stalls the main 5-second loop.
 ROOST_SCRUB_CHECK_INTERVAL_SECONDS = 3600
 ROOST_SCRUB_CHECK_ITERATIONS = max(1, ROOST_SCRUB_CHECK_INTERVAL_SECONDS // SLEEP_INTERVAL)
-# Manual-reboot grace: a manual reboot within this many seconds before a
-# scheduled instant counts as fulfilling that entry for the day
-REBOOT_MANUAL_GRACE_SECONDS = 30 * 60
 # Missed-fire grace: if a scheduled instant is more than this many seconds in
 # the past at the moment the scheduler observes it, the entry is treated as
 # MISSED and silently skipped (marked as fired-for-the-day so it never retries).
@@ -2730,8 +2727,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
             # CRITICAL: Preserve local-only config sections during Firestore sync
             # These keys contain local settings that don't exist in Firestore
-            # and should NEVER be overwritten by Firestore config updates
-            LOCAL_ONLY_KEYS = ('firebase', 'sentry')
+            # and should NEVER be overwritten by Firestore config updates.
+            # `environment` is the local dev/prod routing selection — it MUST stay
+            # local-only, otherwise a stale Firestore/cache config doc (e.g. one
+            # seeded while the machine was on dev) can clobber it after a server
+            # switch, leaving config.json with a prod `firebase` section but a dev
+            # top-level `environment` → split-brain routing (firebase client →
+            # prod, get_api_base_url()/get_environment() → dev).
+            LOCAL_ONLY_KEYS = ('firebase', 'sentry', 'environment')
             if old_config:
                 for key in LOCAL_ONLY_KEYS:
                     if key in old_config:
@@ -4828,10 +4831,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 return
 
             # Branch 2: schedule check — should we fire any entry now?
-            uptime_seconds = time.time() - psutil.boot_time()
-            if uptime_seconds < 1800:  # 30 minutes
-                logging.debug("Scheduled reboot skipped: machine uptime < 30 minutes")
-                return
+            #
+            # NOTE: there is intentionally NO machine-uptime floor and NO
+            # manual-reboot grace here. A scheduled reboot fires on its
+            # configured instant regardless of how recently the machine
+            # booted. Reboot loops are prevented structurally — the per-entry,
+            # per-day lastFiredByEntry dedup means each entry fires at most
+            # once per local day, and the stale-attempt handler clears any
+            # interrupted attempt — so suppressing fires near a recent boot is
+            # unnecessary (and blocked legitimate back-to-back schedules).
 
             # Prune orphaned entries from lastFiredByEntry
             current_ids = {e.get('id') for e in entries if e.get('id')}
@@ -4843,7 +4851,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
             today_date_iso = self._today_iso_in_local_tz()
             now_tz = self._now_in_local_tz()
             current_dayname = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][now_tz.weekday()]
-            boot_dt_tz = self._boot_time_in_local_tz()
 
             for entry in entries:
                 entry_id = entry.get('id')
@@ -4899,20 +4906,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         except Exception as e:
                             logging.debug(f"Failed to mirror missed reboot (non-critical): {e}")
                     continue
-
-                # Manual-reboot grace: did the machine boot within the grace
-                # window before the scheduled instant? If so, count it as fulfilled.
-                if boot_dt_tz is not None:
-                    delta = (scheduled_instant - boot_dt_tz).total_seconds()
-                    if 0 <= delta <= REBOOT_MANUAL_GRACE_SECONDS:
-                        logging.info(
-                            f"Manual reboot satisfies entry {entry_id} (boot was {int(delta)}s before scheduled)"
-                        )
-                        state.setdefault('lastFiredByEntry', {})[entry_id] = today_date_iso
-                        reboot_state.write_state(state)
-                        if self.firebase_client:
-                            self.firebase_client.mirror_reboot_state(state)
-                        continue
 
                 # FIRE
                 self._fire_scheduled_reboot(state, entry_id, scheduled_instant)
@@ -5155,11 +5148,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
     def _today_iso_in_local_tz(self):
         """Return today's date in the machine's local timezone as 'YYYY-MM-DD'."""
         return self._now_in_local_tz().date().isoformat()
-
-    def _boot_time_in_local_tz(self):
-        """Return psutil.boot_time() as a tz-aware datetime in the machine's local timezone."""
-        boot_utc = datetime.datetime.fromtimestamp(psutil.boot_time(), tz=datetime.timezone.utc)
-        return boot_utc.astimezone()
 
     def _classify_startup_session(self):
         """Detect anomalous prior shutdowns and queue a warning event if needed.
