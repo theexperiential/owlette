@@ -572,6 +572,37 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     setChatLoadError(null);
   }, [inputValue, pendingImages, chat]);
 
+  // Edit a prior user message and re-send from that point: drop the edited
+  // message and everything after it, then send the new text as a fresh turn.
+  // This branches the conversation linearly — the discarded tail is replaced
+  // by the new assistant response and overwritten in Firestore on the next
+  // onFinish persist. Any images on the original message are carried over.
+  const editMessage = useCallback(
+    (messageId: string, newText: string) => {
+      const trimmed = newText.trim();
+      if (!trimmed) return;
+
+      const index = chat.messages.findIndex((m) => m.id === messageId);
+      if (index === -1) return;
+      const original = chat.messages[index];
+      if (original.role !== 'user') return;
+
+      const files = original.parts.filter(
+        (p): p is FileUIPart => p.type === 'file',
+      );
+
+      chat.setMessages(chat.messages.slice(0, index));
+      setChatLoadError(null);
+
+      if (files.length > 0) {
+        chat.sendMessage({ text: trimmed, files });
+      } else {
+        chat.sendMessage({ text: trimmed });
+      }
+    },
+    [chat],
+  );
+
   const handlePasteImage = useCallback(
     async (blob: Blob) => {
       if (!user) return;
@@ -636,6 +667,11 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     setMessages: chat.setMessages,
     stop: chat.stop,
     status: chat.status,
+    // Re-run the last turn — used to recover from a dropped/failed stream
+    // (clears the stuck in-flight tool card and regenerates the response).
+    regenerate: chat.regenerate,
+    // Edit a prior user message and branch the conversation from there.
+    editMessage,
 
     // Tier-3 tool approval (human-in-the-loop). Pass the approvalId from a
     // tool part in `approval-requested` state. `sendAutomaticallyWhen` resumes
