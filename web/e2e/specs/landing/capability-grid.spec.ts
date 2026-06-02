@@ -47,23 +47,11 @@ test.describe('landing capability grid', () => {
     // Open a card so the shared preview area appears below the grid.
     await desktop.getByRole('button', { name: /^monitor/i }).click();
 
-    // Wait for the monitor preview to fade in (rowHasActive transitions
-    // the wrapper from max-h-0/opacity-0 to max-h-[800px]/opacity-100
-    // over 500ms).
-    const monitorImg = desktop.locator('img[alt="monitor preview"]');
-    await expect(monitorImg).toBeVisible();
+    const monitorPreview = desktop.getByRole('button', { name: 'open monitor preview' });
+    await expect(monitorPreview).toBeVisible();
+    await monitorPreview.click();
 
-    // Click the image with force:true. Without it, the row's other preview
-    // images (deploy, control) — which are absolutely positioned at the
-    // same coordinates with opacity 0 — intercept pointer events because
-    // they're later siblings in the DOM. The onClick handler is on the
-    // shared cursor-zoom-in wrapper, so any click inside the stack opens
-    // the lightbox at openIndex regardless of which image actually receives
-    // the event.
-    await monitorImg.click({ force: true });
-
-    // Lightbox is a fixed full-screen overlay outside the desktop block.
-    const lightbox = page.locator('div.fixed.inset-0.z-\\[100\\]');
+    const lightbox = page.getByRole('dialog', { name: 'monitor preview' });
     await expect(lightbox).toBeVisible();
 
     await page.keyboard.press('Escape');
