@@ -18,7 +18,7 @@ import {
 } from '@/lib/apiErrors';
 import { applyAuthDeprecations, readAndParseJsonBody } from '../../../../../_shared';
 import { withIdempotency } from '@/lib/idempotency';
-import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
+import { authorizedSiteHandler, type SiteRouteHandler } from '@/lib/authorizedHandler.server';
 import { Capability } from '@/lib/capabilities';
 import {
   ALLOWED_COMMAND_TYPES,
@@ -334,13 +334,20 @@ function commandErrorToProblem(err: ExecuteMachineCommandError): NextResponse {
   });
 }
 
-export const POST = authorizedSiteHandler<RouteParams>({
-  capability: Capability.MACHINE_EXEC_COMMAND,
-  siteIdParam: 'path',
-  targetKind: 'machine',
-  targetIdParam: 'machineId',
-  apiKeyScope: { resource: 'machine', idParam: 'machineId', permission: 'write' },
-})(async (request: NextRequest, ctx, { params }) => {
+/**
+ * View-only command types. These observe a machine's screen (single-shot
+ * screenshot or live-view session control) without mutating it, so they are
+ * authorized under the read-class MACHINE_VIEW capability — which members hold
+ * on their assigned sites — rather than MACHINE_EXEC_COMMAND. Every other
+ * command type stays behind MACHINE_EXEC_COMMAND (admin/superadmin).
+ */
+const VIEW_COMMAND_TYPES: ReadonlySet<string> = new Set<string>([
+  'capture_screenshot',
+  'start_live_view',
+  'stop_live_view',
+]);
+
+const coreHandler: SiteRouteHandler<RouteParams> = async (request, ctx, { params }) => {
   try {
     const { machineId } = await params;
     const siteId = ctx.siteId;
@@ -399,4 +406,49 @@ export const POST = authorizedSiteHandler<RouteParams>({
   } catch (err) {
     return problemFromError(err, 'sites/[siteId]/machines/[machineId]/commands:POST');
   }
-});
+};
+
+const sharedHandlerOptions = {
+  siteIdParam: 'path' as const,
+  targetKind: 'machine' as const,
+  targetIdParam: 'machineId',
+  apiKeyScope: {
+    resource: 'machine' as const,
+    idParam: 'machineId',
+    permission: 'write' as const,
+  },
+};
+
+// Mutating commands (reboot, process control, display topology, ...) require
+// MACHINE_EXEC_COMMAND.
+const execHandler = authorizedSiteHandler<RouteParams>({
+  capability: Capability.MACHINE_EXEC_COMMAND,
+  ...sharedHandlerOptions,
+})(coreHandler);
+
+// View-only commands (screenshot / live view) require only MACHINE_VIEW, so
+// read-only members can use them. The api-key scope is unchanged (machine:write),
+// so api-key behavior is identical — only the user-role capability bar is lowered.
+const viewHandler = authorizedSiteHandler<RouteParams>({
+  capability: Capability.MACHINE_VIEW,
+  ...sharedHandlerOptions,
+})(coreHandler);
+
+export async function POST(
+  request: NextRequest,
+  routeContext: { params: Promise<RouteParams> },
+): Promise<NextResponse> {
+  // Peek the command type on a CLONE so the chosen handler still receives an
+  // unconsumed request body. View commands route to the MACHINE_VIEW handler;
+  // anything else (including an unparseable body or unknown type) routes to the
+  // stricter MACHINE_EXEC_COMMAND handler, which also surfaces the right 400.
+  let cmdType = '';
+  try {
+    const peek = (await request.clone().json()) as { type?: unknown };
+    if (typeof peek?.type === 'string') cmdType = peek.type.trim();
+  } catch {
+    // Fall through to execHandler; coreHandler returns the proper validation error.
+  }
+  const handler = VIEW_COMMAND_TYPES.has(cmdType) ? viewHandler : execHandler;
+  return handler(request, routeContext);
+}
