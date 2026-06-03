@@ -1,6 +1,35 @@
 # Native (windows) capture tooling for the installer / agent GUI / tray.
 # Windows-only. Install into a throwaway venv on the demo machine.
 #   python -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt
-pywinauto>=0.6.9
-# ffmpeg is optional and NOT a pip package — install separately if you want
-# recorder.ScreenRecorder; otherwise just record with OBS by hand.
+#
+# IMPORTANT: upgrade pip FIRST — psutil's cp37-abi3 wheel selection requires pip>=21.3
+# on a CPython 3.9 interpreter:
+#   python -m pip install --upgrade pip
+#
+# Pins verified against PyPI on 2026-05-31 for Python 3.9 / Windows 11 x64.
+
+# Latest stable on PyPI (2025-01-06); only modern release line; pure-Python so the
+# 3.7-max classifiers don't block install on 3.9. On Win11 always instantiate via
+# Application(backend="uia") — the win32 backend lacks Win11 high-DPI / modern shell
+# control coverage and has known regressions on Win11.
+pywinauto==0.6.9
+
+# Pinned to 306 — the last build that loads cleanly on Python 3.9 + Win11 22H2+.
+# Builds 310 and 311 install + run their post-install script successfully on cp39,
+# but `import win32api` then fails with "DLL load failed: The specified procedure
+# could not be found" on this Win11 box (verified 2026-05-31). 306 supplies the
+# same win32gui / win32con / shell types we need to call Shell_NotifyIconGetRect
+# via ctypes against shell32.dll for tray-icon location (Spike 3). Do NOT float
+# without re-running spike-4 + the GUI/tray spikes on the target build to confirm
+# the cp39+Win11 ABI symbols still resolve.
+pywin32==306
+
+# Stable-ABI cp37-abi3 wheel (2026-01-28) loads cleanly under CPython 3.9; requires_python
+# >=3.6. Used for PID-level tracking of the launched installer EXE so we can detect a
+# clean exit / kill orphans without title-string matching. Interpreter and Win-version
+# agnostic for our use case.
+psutil==7.2.2
+
+# ffmpeg is a system binary, not a pip package — install separately (winget install
+# Gyan.FFmpeg, or a full build from gyan.dev) and verify with `ffmpeg -version` showing
+# --enable-nvenc in the configuration line. Required by Spike 4 and the Wave 1 recorder.
