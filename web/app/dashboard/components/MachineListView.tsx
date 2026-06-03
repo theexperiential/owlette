@@ -735,6 +735,14 @@ export function MachineRow({
                               <>
                                 {/* Desktop controls (lg+) */}
                                 <div className="hidden lg:flex items-center gap-3 ml-4 flex-shrink-0">
+                                  {!isSiteAdmin ? (
+                                    // Non-admins are read-only: static mode pill, no toggle (which would 403).
+                                    <div className="flex items-center h-8">
+                                      <span className={`flex items-center px-3 text-sm font-medium rounded-md border bg-card ${currentMode === 'always' ? 'text-emerald-400 border-emerald-600/40' : currentMode === 'scheduled' ? 'text-blue-400 border-blue-600/40' : 'text-muted-foreground border-border'}`}>
+                                        {currentMode === 'always' ? 'Always On' : currentMode === 'scheduled' ? 'Scheduled' : 'Off'}
+                                      </span>
+                                    </div>
+                                  ) : (
                                   <div className="flex items-stretch rounded-md overflow-hidden border border-border h-8">
                                     {(['off', 'always', 'scheduled'] as const).map((mode) => {
                                       const isActive = currentMode === mode;
@@ -783,6 +791,9 @@ export function MachineRow({
                                       );
                                     })}
                                   </div>
+                                  )}
+                                  {isSiteAdmin && (
+                                    <>
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -812,9 +823,18 @@ export function MachineRow({
                                     <Square className="h-3 w-3 mr-1" />
                                     kill
                                   </Button>
+                                    </>
+                                  )}
                                 </div>
                                 {/* Compact controls (<lg) */}
                                 <div className="flex lg:hidden items-center gap-2 ml-2 flex-shrink-0">
+                                  {!isSiteAdmin ? (
+                                    // Non-admins are read-only: static mode pill, no write menu.
+                                    <span className={`flex items-center px-2.5 h-8 text-xs font-medium rounded-md border bg-card ${currentMode === 'always' ? 'text-emerald-400 border-emerald-600/40' : currentMode === 'scheduled' ? 'text-blue-400 border-blue-600/40' : 'text-muted-foreground border-border'}`}>
+                                      {currentMode === 'always' ? 'Always On' : currentMode === 'scheduled' ? 'Scheduled' : 'Off'}
+                                    </span>
+                                  ) : (
+                                    <>
                                   <DropdownMenu>
                                     <Tooltip>
                                       <TooltipTrigger asChild>
@@ -905,6 +925,8 @@ export function MachineRow({
                                       <p>kill process</p>
                                     </TooltipContent>
                                   </Tooltip>
+                                    </>
+                                  )}
                                 </div>
                               </>
                             );
@@ -912,8 +934,25 @@ export function MachineRow({
                         </div>
                     ))}
                   </div>
-                  {/* add process Button */}
-                  <div className="flex justify-center pt-3">
+                  {/* add process Button — admin-only write action */}
+                  {isSiteAdmin && (
+                    <div className="flex justify-center pt-3">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={onCreateProcess}
+                        className="bg-card border border-border text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
+                      >
+                        <Plus className="h-3 w-3 mr-1" />
+                        add process
+                      </Button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                  <p className="mb-4 text-sm">No processes configured for this machine</p>
+                  {isSiteAdmin && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -923,20 +962,7 @@ export function MachineRow({
                       <Plus className="h-3 w-3 mr-1" />
                       add process
                     </Button>
-                  </div>
-                </>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                  <p className="mb-4 text-sm">No processes configured for this machine</p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={onCreateProcess}
-                    className="bg-card border border-border text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
-                  >
-                    <Plus className="h-3 w-3 mr-1" />
-                    add process
-                  </Button>
+                  )}
                 </div>
               )}
             </div>

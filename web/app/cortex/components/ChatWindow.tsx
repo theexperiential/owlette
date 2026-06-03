@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { type UIMessage } from 'ai';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUp, Brain, X } from 'lucide-react';
+import { ArrowUp, Brain, X, Pencil } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserAvatar } from '@/components/UserAvatar';
 import { ToolCallCard } from './ToolCallCard';
@@ -27,11 +27,13 @@ interface ChatWindowProps {
   onOpenSettings?: () => void;
   /** Approve/deny a pending tier-3 tool call by its approvalId. */
   onToolApproval?: (approvalId: string, approved: boolean) => void;
+  /** Edit a prior user message and re-send, branching from that point. */
+  onEditMessage?: (messageId: string, newText: string) => void;
   /** Where tool calls run, shown in the approval prompt (machine / "all machines"). */
   approvalTargetLabel?: string;
 }
 
-export function ChatWindow({ messages, isLoading, onToolApproval, approvalTargetLabel }: ChatWindowProps) {
+export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage, approvalTargetLabel }: ChatWindowProps) {
   const { user } = useAuth();
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -39,7 +41,21 @@ export function ChatWindow({ messages, isLoading, onToolApproval, approvalTarget
   const isUserScrolledUp = useRef(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
   const suggestions = useMemo(() => getRandomSuggestions(4), []);
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditText('');
+  };
+
+  const saveEdit = (messageId: string) => {
+    const text = editText.trim();
+    if (!text) return;
+    onEditMessage?.(messageId, text);
+    cancelEdit();
+  };
 
   const handleScroll = () => {
     const el = containerRef.current;
@@ -153,6 +169,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, approvalTarget
 
       {messages.map((message) => {
         const isUser = message.role === 'user';
+        const isEditing = isUser && editingId === message.id;
         return (
         <div key={message.id} className="max-w-3xl mx-auto">
           <div className={`group flex gap-3 ${isUser ? 'justify-end' : ''}`}>
@@ -181,6 +198,25 @@ export function ChatWindow({ messages, isLoading, onToolApproval, approvalTarget
                       className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-cyan focus-visible:outline-offset-2 rounded-sm transition-opacity"
                     />
                   ) : null;
+                  // Edit pencil — user messages only, hidden while streaming or
+                  // already editing. Branches the conversation on save.
+                  const editBtn = isUser && onEditMessage && !isLoading && !isEditing ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => { setEditText(fullText); setEditingId(message.id); }}
+                          aria-label="edit message"
+                          className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-cyan focus-visible:outline-offset-2 rounded-sm transition-opacity text-muted-foreground hover:text-foreground cursor-pointer"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>edit &amp; resend</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null;
                   const label = isUser ? (() => {
                     const t = pickYouTranslation(message.id);
                     return (
@@ -194,10 +230,46 @@ export function ChatWindow({ messages, isLoading, onToolApproval, approvalTarget
                       </Tooltip>
                     );
                   })() : <span>cortex</span>;
-                  return isUser ? <>{copyBtn}{label}</> : <>{label}{copyBtn}</>;
+                  return isUser ? <>{editBtn}{copyBtn}{label}</> : <>{label}{copyBtn}</>;
                 })()}
               </div>
 
+              {isEditing ? (
+                <div className="flex flex-col gap-2">
+                  <textarea
+                    autoFocus
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        saveEdit(message.id);
+                      } else if (e.key === 'Escape') {
+                        cancelEdit();
+                      }
+                    }}
+                    rows={2}
+                    className="w-full resize-none rounded-lg border border-border bg-secondary px-3 py-2 text-sm leading-normal text-foreground text-left focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 focus:border-accent-cyan"
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      className="text-xs px-3 py-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+                    >
+                      cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => saveEdit(message.id)}
+                      disabled={!editText.trim()}
+                      className="text-xs px-3 py-1.5 rounded-md bg-accent-cyan text-gray-900 font-medium hover:bg-accent-cyan/90 disabled:opacity-50 transition-colors cursor-pointer"
+                    >
+                      save &amp; resend
+                    </button>
+                  </div>
+                </div>
+              ) : (
               <div className={isUser ? 'opacity-80 text-right' : ''}>
               {/* Render parts (text + images + tool calls) */}
               {message.parts.map((part, i) => {
@@ -278,6 +350,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, approvalTarget
               return null;
               })}
               </div>
+              )}
             </div>
 
             {/* User: avatar + rail column on the right */}

@@ -102,6 +102,28 @@ function parseFirestoreSeconds(value: unknown): number {
   return 0;
 }
 
+/**
+ * Error thrown by {@link apiJson} for non-2xx responses. Carries the HTTP
+ * status (and RFC-7807 `code` when present) so callers can distinguish an
+ * expected authorization outcome (401/403) from a genuine fault and avoid
+ * reporting the former to Sentry as an error.
+ */
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  constructor(status: number, message: string, code?: string) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** True for expected authorization outcomes that should not be logged as errors. */
+function isExpectedAuthzError(error: unknown): boolean {
+  return error instanceof ApiRequestError && (error.status === 401 || error.status === 403);
+}
+
 async function apiJson<T>(
   url: string,
   init: RequestInit,
@@ -110,7 +132,11 @@ async function apiJson<T>(
   const text = await res.text();
   const body = text ? JSON.parse(text) : null;
   if (!res.ok) {
-    throw new Error(body?.detail || body?.title || `Request failed with ${res.status}`);
+    throw new ApiRequestError(
+      res.status,
+      body?.detail || body?.title || `Request failed with ${res.status}`,
+      body?.code,
+    );
   }
   return body as T;
 }
@@ -1386,7 +1412,17 @@ export function useMachines(siteId: string) {
       if (configOverridesRef.current[machineId]) {
         delete configOverridesRef.current[machineId][processId];
       }
-      logger.firestore.error('Failed to set launch mode', error);
+      // A 401/403 here is an expected authorization outcome (e.g. a member
+      // without MACHINE_CONFIG_WRITE), not a system fault — surface it to the
+      // user via the rethrow below, but don't pollute Sentry with an error.
+      if (isExpectedAuthzError(error)) {
+        logger.debug('Launch mode denied (authorization)', {
+          context: 'setLaunchMode',
+          data: { machineId, processId, status: (error as ApiRequestError).status },
+        });
+      } else {
+        logger.firestore.error('Failed to set launch mode', error);
+      }
       throw error;
     }
   };

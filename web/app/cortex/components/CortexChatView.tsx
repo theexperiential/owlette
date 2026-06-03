@@ -9,7 +9,7 @@ import { useCortexSidebarPrefs } from '@/hooks/useCortexSidebarPrefs';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Button } from '@/components/ui/button';
-import { Plus, MessageSquare, Trash2, Brain, KeyRound, Check, X, Zap, Search, Loader2, Pencil, ChevronRight, ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Brain, KeyRound, Check, X, Zap, Search, Loader2, Pencil, ChevronRight, ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen, RotateCw } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
 import { doc, getDoc } from 'firebase/firestore';
@@ -678,6 +678,7 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
               hasApiKey={hasApiKey}
               onOpenSettings={() => setAccountSettingsOpen(true)}
               onToolApproval={(id, approved) => chat.addToolApprovalResponse({ id, approved })}
+              onEditMessage={chat.editMessage}
               approvalTargetLabel={isSiteMode ? 'all machines' : selectedMachineId}
             />
           )}
@@ -697,8 +698,19 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
                     }
                   })()}
                 </p>
+                {/* Re-run the failed turn: regenerate() drops the interrupted
+                    assistant message (and any stuck "executing…" tool card) and
+                    streams a fresh response from the last user message. */}
+                <button
+                  onClick={() => { setErrorDismissed(true); void chat.regenerate(); }}
+                  className="flex items-center gap-1 text-xs text-red-300 hover:text-red-200 transition-colors cursor-pointer flex-shrink-0"
+                >
+                  <RotateCw className="h-3 w-3" />
+                  retry
+                </button>
                 <button
                   onClick={() => setErrorDismissed(true)}
+                  aria-label="dismiss error"
                   className="text-red-400 hover:text-red-300 transition-colors cursor-pointer flex-shrink-0"
                 >
                   <X className="h-3.5 w-3.5" />

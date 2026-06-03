@@ -1,5 +1,10 @@
 export const Capability = {
   MACHINE_EXEC_COMMAND: 'MACHINE_EXEC_COMMAND',
+  // View-only machine commands (screenshot, live view). Read-class: granted to
+  // members so non-admins can observe a machine's screen without holding the
+  // mutating MACHINE_EXEC_COMMAND capability. Site-scoped like the other
+  // machine capabilities.
+  MACHINE_VIEW: 'MACHINE_VIEW',
   MACHINE_CONFIG_WRITE: 'MACHINE_CONFIG_WRITE',
   MACHINE_REMOVE: 'MACHINE_REMOVE',
   DEPLOYMENT_MANAGE: 'DEPLOYMENT_MANAGE',
@@ -47,6 +52,9 @@ export type Actor = UserActor | SystemActor;
 const MEMBER_CAPABILITIES: readonly Capability[] = [
   Capability.USER_SELF_PREFS,
   Capability.USER_SELF_DELETE,
+  // Members are read-only operators but may observe a machine's screen
+  // (screenshot / live view). Site-scoped: only on sites they're assigned to.
+  Capability.MACHINE_VIEW,
 ];
 
 const SITE_ADMIN_CAPABILITIES: readonly Capability[] = [
@@ -69,6 +77,7 @@ const SUPERADMIN_CAPABILITIES: readonly Capability[] = Object.values(Capability)
 
 const SITE_SCOPED_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   Capability.MACHINE_EXEC_COMMAND,
+  Capability.MACHINE_VIEW,
   Capability.MACHINE_CONFIG_WRITE,
   Capability.MACHINE_REMOVE,
   Capability.DEPLOYMENT_MANAGE,

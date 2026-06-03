@@ -18,6 +18,7 @@ const ALL_CAPABILITIES: Capability[] = Object.values(Capability);
 
 const SITE_SCOPED: Capability[] = [
   Capability.MACHINE_EXEC_COMMAND,
+  Capability.MACHINE_VIEW,
   Capability.MACHINE_CONFIG_WRITE,
   Capability.MACHINE_REMOVE,
   Capability.DEPLOYMENT_MANAGE,
@@ -57,6 +58,7 @@ describe('Capability enum', () => {
     expect(new Set(ALL_CAPABILITIES)).toEqual(
       new Set([
         'MACHINE_EXEC_COMMAND',
+        'MACHINE_VIEW',
         'MACHINE_CONFIG_WRITE',
         'MACHINE_REMOVE',
         'DEPLOYMENT_MANAGE',
@@ -79,9 +81,9 @@ describe('Capability enum', () => {
 });
 
 describe('RoleCapabilityMatrix', () => {
-  it('member gets only self-prefs + self-delete', () => {
+  it('member gets self-prefs + self-delete + machine-view (read-only)', () => {
     expect([...RoleCapabilityMatrix.member].sort()).toEqual(
-      ['USER_SELF_DELETE', 'USER_SELF_PREFS'].sort()
+      ['USER_SELF_DELETE', 'USER_SELF_PREFS', 'MACHINE_VIEW'].sort()
     );
   });
 
@@ -90,6 +92,7 @@ describe('RoleCapabilityMatrix', () => {
       [
         'USER_SELF_PREFS',
         'USER_SELF_DELETE',
+        'MACHINE_VIEW',
         'MACHINE_EXEC_COMMAND',
         'MACHINE_CONFIG_WRITE',
         'MACHINE_REMOVE',
@@ -220,11 +223,21 @@ describe('hasCapability — site-scope enforcement edge cases', () => {
     }
   });
 
-  it('member is denied site-scoped capabilities even on their assigned site', () => {
+  it('member is denied site-scoped WRITE capabilities even on their assigned site (but MACHINE_VIEW is allowed)', () => {
     const actor = userActor({ role: 'member', sites: ['site_a'] });
     for (const cap of SITE_SCOPED) {
-      expect(hasCapability(actor, cap, 'site_a')).toBe(false);
+      // MACHINE_VIEW is the one site-scoped capability members hold (read-only
+      // screenshot / live view); every other site-scoped cap is a write and denied.
+      const expected = cap === Capability.MACHINE_VIEW;
+      expect(hasCapability(actor, cap, 'site_a')).toBe(expected);
     }
+  });
+
+  it('member gets MACHINE_VIEW only on assigned sites, never unscoped', () => {
+    const actor = userActor({ role: 'member', sites: ['site_a'] });
+    expect(hasCapability(actor, Capability.MACHINE_VIEW, 'site_a')).toBe(true);
+    expect(hasCapability(actor, Capability.MACHINE_VIEW, 'site_other')).toBe(false);
+    expect(hasCapability(actor, Capability.MACHINE_VIEW)).toBe(false);
   });
 
   it('member retains self-prefs and self-delete (global, no siteId required)', () => {

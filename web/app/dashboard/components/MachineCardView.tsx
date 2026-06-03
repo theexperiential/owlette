@@ -771,6 +771,23 @@ function MachineCard({
                         <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">
                           {(() => {
                             const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
+                            const modeLabels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' } as const;
+                            // Non-admins are read-only: show the current launch mode as a
+                            // static pill instead of the interactive toggle (which would 403).
+                            if (!isSiteAdmin) {
+                              const readOnlyColor = currentMode === 'always'
+                                ? 'text-emerald-400 border-emerald-600/40'
+                                : currentMode === 'scheduled'
+                                ? 'text-blue-400 border-blue-600/40'
+                                : 'text-muted-foreground border-border/50';
+                              return (
+                                <div className="hidden md:flex items-center h-8">
+                                  <span className={`flex items-center px-3 text-sm font-medium rounded-md border bg-card ${readOnlyColor}`}>
+                                    {modeLabels[currentMode]}
+                                  </span>
+                                </div>
+                              );
+                            }
                             return (
                               <div className="hidden md:flex items-stretch rounded-md overflow-hidden border border-border/50 h-8">
                                 {(['off', 'always', 'scheduled'] as const).map((mode) => {
@@ -822,71 +839,77 @@ function MachineCard({
                               </div>
                             );
                           })()}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => onEditProcess(process)}
-                            className="bg-card border border-border/50 text-foreground p-2"
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </Button>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
+                          {isSiteAdmin && (
+                            <>
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => onRestartProcess(process.id, process.name)}
-                                aria-label={`restart ${process.name}`}
-                                className="bg-card border border-border/50 text-foreground disabled:cursor-not-allowed disabled:opacity-50 p-2"
-                                disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                onClick={() => onEditProcess(process)}
+                                className="bg-card border border-border/50 text-foreground p-2"
                               >
-                                <RotateCw className="h-3 w-3" />
+                                <Pencil className="h-3 w-3" />
                               </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>restart process</p>
-                            </TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => onKillProcess(process.id, process.name)}
-                                aria-label={`kill ${process.name}`}
-                                className="bg-card border border-border/50 text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 p-2"
-                                disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
-                              >
-                                <Square className="h-3 w-3" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>kill process</p>
-                            </TooltipContent>
-                          </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => onRestartProcess(process.id, process.name)}
+                                    aria-label={`restart ${process.name}`}
+                                    className="bg-card border border-border/50 text-foreground disabled:cursor-not-allowed disabled:opacity-50 p-2"
+                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                  >
+                                    <RotateCw className="h-3 w-3" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>restart process</p>
+                                </TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => onKillProcess(process.id, process.name)}
+                                    aria-label={`kill ${process.name}`}
+                                    className="bg-card border border-border/50 text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 p-2"
+                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                  >
+                                    <Square className="h-3 w-3" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>kill process</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </>
+                          )}
                         </div>
                       </div>
                   ))}
                 </div>
-                {/* add process Button */}
-                <div className="flex justify-center pt-3">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={onCreateProcess}
-                    className="bg-card border border-border/50 text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
-                  >
-                    <Plus className="h-3 w-3 mr-1" />
-                    add process
-                  </Button>
-                </div>
+                {/* add process Button — admin-only write action */}
+                {isSiteAdmin && (
+                  <div className="flex justify-center pt-3">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={onCreateProcess}
+                      className="bg-card border border-border/50 text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan"
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      add process
+                    </Button>
+                  </div>
+                )}
             </div>
           </CollapsibleContent>
         </Collapsible>
       )}
 
-      {/* add process button for machines with no processes */}
-      {(!machine.processes || machine.processes.length === 0) && (
+      {/* add process button for machines with no processes — admin-only */}
+      {isSiteAdmin && (!machine.processes || machine.processes.length === 0) && (
         <div className="border-t border-border/50 p-4">
           <Button
             variant="outline"

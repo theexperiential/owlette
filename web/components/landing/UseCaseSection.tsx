@@ -225,13 +225,19 @@ export function UseCaseSection() {
               </button>
 
               {/* Expanded content inline below the card */}
-              <div className={`overflow-hidden transition-all duration-500 ease-out ${openIndex === i ? 'max-h-[800px] opacity-100' : 'max-h-0 opacity-0'}`}>
+              <div
+                aria-hidden={openIndex !== i}
+                className={`overflow-hidden transition-all duration-500 ease-out ${openIndex === i ? 'max-h-[800px] opacity-100' : 'max-h-0 opacity-0'}`}
+              >
                 <p className="text-base text-foreground/80 leading-loose text-center px-6 pb-4 animate-in fade-in duration-300">
                   {cap.expanded}
                 </p>
                 <div className="px-2 pb-4">
-                  <div
-                    className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in"
+                  <button
+                    type="button"
+                    aria-label={`open ${cap.label} preview`}
+                    tabIndex={openIndex === i ? 0 : -1}
+                    className="block w-full relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in border-0 bg-transparent p-0"
                     style={{
                       maskImage: 'linear-gradient(to bottom, black 80%, transparent)',
                       WebkitMaskImage: 'linear-gradient(to bottom, black 80%, transparent)',
@@ -247,7 +253,7 @@ export function UseCaseSection() {
                       priority
                       unoptimized
                     />
-                  </div>
+                  </button>
                 </div>
               </div>
             </div>
@@ -311,10 +317,14 @@ export function UseCaseSection() {
 
                 {/* Preview image — slides down below this row when its card is active */}
                 <div
+                  aria-hidden={!rowHasActive}
                   className={`overflow-hidden transition-all duration-500 ease-out ${rowHasActive ? 'max-h-[800px] opacity-100 mt-8' : 'max-h-0 opacity-0 mt-0'}`}
                 >
-                  <div
-                    className="relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in"
+                  <button
+                    type="button"
+                    aria-label={openIndex !== null ? `open ${capabilities[openIndex].label} preview` : 'open capability preview'}
+                    tabIndex={rowHasActive ? 0 : -1}
+                    className="block w-full relative rounded-xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/5 cursor-zoom-in border-0 bg-transparent p-0"
                     style={{
                       maskImage: 'linear-gradient(to bottom, black 80%, transparent), linear-gradient(to right, transparent, black 25px, black calc(100% - 25px), transparent)',
                       maskComposite: 'intersect',
@@ -349,7 +359,7 @@ export function UseCaseSection() {
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </button>
                 </div>
               </div>
             );
@@ -362,6 +372,9 @@ export function UseCaseSection() {
       {lightboxOpen && lightboxSrc && (
         <div
           ref={overlayRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${capabilities[lightboxIndex].label} preview`}
           className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center overflow-hidden touch-none animate-in fade-in duration-200"
           onClick={(e) => {
             if (e.target === e.currentTarget) closeLightbox();

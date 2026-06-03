@@ -72,6 +72,7 @@ export interface CapabilityLimit {
  */
 export const USER_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
   [CapabilityEnum.MACHINE_EXEC_COMMAND]: { perMinute: 60 },
+  [CapabilityEnum.MACHINE_VIEW]: { perMinute: 60 },
   [CapabilityEnum.MACHINE_CONFIG_WRITE]: { perMinute: 30 },
   [CapabilityEnum.MACHINE_REMOVE]: { perMinute: 5 },
   [CapabilityEnum.DEPLOYMENT_MANAGE]: { perMinute: 30 },
@@ -98,6 +99,7 @@ export const USER_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
  */
 export const SYSTEM_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
   [CapabilityEnum.MACHINE_EXEC_COMMAND]: { perMinute: 300 },
+  [CapabilityEnum.MACHINE_VIEW]: { perMinute: 300 },
   [CapabilityEnum.MACHINE_CONFIG_WRITE]: { perMinute: 150 },
   [CapabilityEnum.MACHINE_REMOVE]: { perMinute: 25 },
   [CapabilityEnum.DEPLOYMENT_MANAGE]: { perMinute: 150 },

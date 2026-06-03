@@ -737,6 +737,57 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
     expect(mocks.set).not.toHaveBeenCalled();
   });
 
+  it('202 — member may capture_screenshot (routed to MACHINE_VIEW handler)', async () => {
+    mocks.get.mockReset();
+    mocks.get.mockResolvedValueOnce(docSnapshot('user-1', { role: 'member', sites: [SITE] }));
+    mocks.get.mockResolvedValueOnce(docSnapshot('idem', null));
+    mocks.get.mockResolvedValueOnce(docSnapshot(MACHINE, { online: true }));
+    mocks.get.mockImplementation(() => {
+      throw new Error('unexpected extra firestore read on commands POST');
+    });
+
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-member-cap' },
+        body: { type: 'capture_screenshot', params: { monitor: 'primary' } },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(202);
+    expect(lastMergedCommand().type).toBe('capture_screenshot');
+  });
+
+  it('403 — member may NOT reboot_machine (MACHINE_EXEC_COMMAND still required)', async () => {
+    // Capability denial happens in the wrapper before the handler runs, so only
+    // the actor-load read is consumed and no command is queued.
+    mocks.get.mockReset();
+    mocks.get.mockResolvedValueOnce(docSnapshot('user-1', { role: 'member', sites: [SITE] }));
+    mocks.get.mockImplementation(() => {
+      throw new Error('unexpected extra firestore read on commands POST');
+    });
+
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-member-reboot' },
+        body: { type: 'reboot_machine' },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(403);
+    const mergeCalls = mocks.set.mock.calls.filter(
+      (c: unknown[]) => (c[1] as { merge?: boolean })?.merge === true,
+    );
+    expect(mergeCalls).toHaveLength(0);
+  });
+
   it('422 idempotency_key_mismatch when same key, different body', async () => {
     queueIdemOnly({
       userId: 'user-1',
