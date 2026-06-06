@@ -1,0 +1,111 @@
+"""
+tests for the heartbeat-honesty contract of FirebaseClient._upload_metrics.
+
+regression guard for the false "machine offline" alerts: _upload_metrics IS the
+periodic heartbeat (it writes online + lastHeartbeat). Previously it swallowed a
+failed write and the metrics loop / start() then called
+connection_manager.report_success() unconditionally — which reset the circuit
+breaker and the self-restart watchdog's "last success" clock, leaving a machine
+stuck online=true with a frozen lastHeartbeat (and never reconnecting). The cron
+health-check then emailed a spurious offline alert.
+
+Contract now enforced:
+  - _upload_metrics returns True when the Firestore write lands, False when it raises.
+  - on failure it reports the error to the connection manager (so reconnect can fire).
+  - it never reports SUCCESS itself — that is the caller's job, gated on the bool.
+
+We bypass __init__ (FirebaseClient.__new__) so we don't pull in real auth /
+connection setup; only the handful of attributes _upload_metrics touches are stubbed.
+"""
+import sys
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+# pre-mock win32 so the import works on non-windows CI as well as locally.
+_MOCK_MODULES = {
+    "win32api": MagicMock(),
+    "win32con": MagicMock(),
+    "win32event": MagicMock(),
+    "win32service": MagicMock(),
+    "win32serviceutil": MagicMock(),
+    "servicemanager": MagicMock(),
+    "win32ts": MagicMock(),
+    "win32process": MagicMock(),
+    "win32gui": MagicMock(),
+    "win32security": MagicMock(),
+    "pywintypes": MagicMock(),
+    "wmi": MagicMock(),
+}
+_patches = {m: mock for m, mock in _MOCK_MODULES.items() if m not in sys.modules}
+
+try:
+    with patch.dict("sys.modules", _patches):
+        from firebase_client import FirebaseClient
+except ImportError as exc:
+    pytest.skip(f"firebase_client not importable: {exc}", allow_module_level=True)
+except Exception as exc:
+    pytest.skip(f"firebase_client import failed: {exc}", allow_module_level=True)
+
+
+def _make_client():
+    """A FirebaseClient with only the attributes _upload_metrics reads stubbed."""
+    fc = FirebaseClient.__new__(FirebaseClient)
+    # `connected` is a read-only property -> connection_manager.is_connected.
+    fc.db = MagicMock()
+    fc.logger = MagicMock()
+    fc.connection_manager = MagicMock()
+    fc.connection_manager.is_connected = True
+    fc.machine_id = "INF-FLEX-3"
+    fc.site_id = "node-pa"
+    fc._last_primary = None
+    fc._cached_display_profile = None
+    # Profile lookups are not under test — stub them to no-ops.
+    fc._ensure_profile = MagicMock(return_value=None)
+    fc._ensure_display_profile = MagicMock(return_value=None)
+    return fc
+
+
+def _metrics():
+    return {"memory": {}, "processes": {}}
+
+
+def test_returns_true_when_write_lands():
+    fc = _make_client()
+
+    assert fc._upload_metrics(_metrics()) is True
+
+    # the heartbeat doc was written, and we did NOT touch the connection manager
+    # (reporting *success* is the caller's responsibility, gated on the return).
+    metrics_ref = (
+        fc.db.collection.return_value.document.return_value
+        .collection.return_value.document.return_value
+    )
+    metrics_ref.update.assert_called_once()
+    fc.connection_manager.report_error.assert_not_called()
+    fc.connection_manager.report_success.assert_not_called()
+
+
+def test_returns_false_and_reports_error_when_write_raises():
+    fc = _make_client()
+    metrics_ref = (
+        fc.db.collection.return_value.document.return_value
+        .collection.return_value.document.return_value
+    )
+    metrics_ref.update.side_effect = RuntimeError("firestore unavailable")
+
+    assert fc._upload_metrics(_metrics()) is False
+
+    # a failed heartbeat write must surface as an error (so reconnect can fire) and
+    # must NOT be reported as a success.
+    fc.connection_manager.report_error.assert_called_once()
+    fc.connection_manager.report_success.assert_not_called()
+
+
+def test_returns_false_when_not_connected():
+    fc = _make_client()
+    fc.connection_manager.is_connected = False
+
+    assert fc._upload_metrics(_metrics()) is False
+    fc.connection_manager.report_error.assert_not_called()
+    fc.connection_manager.report_success.assert_not_called()

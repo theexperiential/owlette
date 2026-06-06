@@ -461,11 +461,13 @@ class FirebaseClient:
                 self.logger.info("Initial heartbeat sent - machine is now online")
 
                 metrics = shared_utils.get_system_metrics()
-                self._upload_metrics(metrics)
+                upload_ok = self._upload_metrics(metrics)
                 self.logger.debug("Initial metrics uploaded")
 
-                # Report success to reset any failure counters
-                self.connection_manager.report_success()
+                # Report success to reset any failure counters — only when the
+                # initial heartbeat write actually landed (see _metrics_loop).
+                if upload_ok:
+                    self.connection_manager.report_success()
             except Exception as e:
                 self.logger.error(f"Failed to send initial heartbeat/metrics: {e}")
                 self.connection_manager.report_error(e, "Initial heartbeat/metrics")
@@ -596,9 +598,11 @@ class FirebaseClient:
                             time.sleep(60)
                             continue
 
-                        # Upload metrics
+                        # Upload metrics (this is the heartbeat — it writes
+                        # online + lastHeartbeat). Capture whether the write
+                        # landed so we only report success on a real success.
                         metrics = shared_utils.get_system_metrics()
-                        self._upload_metrics(metrics)
+                        upload_ok = self._upload_metrics(metrics)
 
                         # Refresh session_state.json last_alive — this is the
                         # canonical heartbeat path. Used by the next startup
@@ -609,8 +613,14 @@ class FirebaseClient:
                         except Exception as e:
                             self.logger.debug(f"session_state.update_alive failed in metrics loop: {e}")
 
-                        # Report success to connection manager
-                        self.connection_manager.report_success()
+                        # Report success to connection manager — ONLY when the
+                        # heartbeat write actually landed. Reporting success on a
+                        # failed write masks an online-but-stale machine: it resets
+                        # the circuit breaker and the watchdog's last-success clock,
+                        # so the agent never reconnects while the dashboard keeps
+                        # showing online=true with a frozen lastHeartbeat.
+                        if upload_ok:
+                            self.connection_manager.report_success()
 
                         # Adaptive interval based on activity
                         gui_running = shared_utils.is_script_running('owlette_gui.py')
@@ -1288,7 +1298,7 @@ class FirebaseClient:
 
         return profile
 
-    def _upload_metrics(self, metrics: Dict[str, Any]):
+    def _upload_metrics(self, metrics: Dict[str, Any]) -> bool:
         """Upload system metrics to Firestore.
 
         The `metrics` argument provides the lean in-line dict from
@@ -1296,9 +1306,16 @@ class FirebaseClient:
         Dynamic hardware metrics (cpus/disks/gpus/nics/network) are collected
         here from the current hardware_profile so the shape stays aligned with
         the uploaded schemaVersion 1 profile document.
+
+        Returns True if the heartbeat/metrics write landed, False otherwise.
+        This IS the periodic heartbeat (it writes `online` + `lastHeartbeat`), so
+        callers MUST NOT report connection success when it returns False — doing
+        so resets the circuit breaker and the self-restart watchdog's "last
+        success" clock, which would leave a machine sitting online=true with a
+        frozen heartbeat and never reconnecting.
         """
         if not self.connected or not self.db:
-            return
+            return False
 
         metrics_ref = self.db.collection('sites').document(self.site_id)\
             .collection('machines').document(self.machine_id)
@@ -1397,9 +1414,12 @@ class FirebaseClient:
                 'metrics.gpu': DELETE_FIELD,
             })
 
+            return True
+
         except Exception as e:
             self.logger.error(f"Error uploading metrics: {e}")
             self.connection_manager.report_error(e, "Metrics upload")
+            return False
 
     # Command types that execute fast (< 30s) and can run concurrently.
     # cancel_sync is an interrupt command: it only sets a thread-safe

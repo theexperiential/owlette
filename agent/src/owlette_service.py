@@ -5446,6 +5446,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         'rebooting': False,
                         'shuttingDown': False,
                         'rebootScheduledAt': None,
+                        'shutdownScheduledAt': None,
                         'rebootCancellable': False,
                     })
                     self.firebase_client.log_event(
