@@ -85,6 +85,13 @@ export function Footer() {
           </Link>
           <span>&middot;</span>
           <Link
+            href="/for-ai"
+            className="hover:text-muted-foreground transition-colors"
+          >
+            for AI
+          </Link>
+          <span>&middot;</span>
+          <Link
             href="https://github.com/theexperiential/Owlette"
             target="_blank"
             rel="noopener noreferrer"

@@ -56,6 +56,12 @@ export const metadata: Metadata = {
   },
   metadataBase: new URL(siteUrl),
   manifest: '/manifest.json',
+  alternates: {
+    // AI-legible context: a plain-text map for LLM agents (see /llms.txt)
+    types: {
+      'text/plain': '/llms.txt',
+    },
+  },
   other: {
     'theme-color': '#0a0f1a',
   },

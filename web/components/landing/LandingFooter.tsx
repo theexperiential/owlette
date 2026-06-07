@@ -49,6 +49,7 @@ export function LandingFooter() {
               <Link href="/privacy" className="hover:text-foreground transition-colors">privacy policy</Link>
               <Link href="/terms" className="hover:text-foreground transition-colors">terms of service</Link>
               <a href="mailto:support@owlette.app" className="hover:text-foreground transition-colors">contact</a>
+              <Link href="/for-ai" className="hover:text-foreground transition-colors">for AI</Link>
             </nav>
 
             {/* Credits / license line — quietest tier */}

@@ -7,6 +7,7 @@ import {
   PricingSection,
   LandingFooter,
 } from '@/components/landing';
+import { PRODUCT_JSONLD } from '@/lib/product-facts';
 
 // Lazy-load below-fold sections to reduce initial JS bundle
 // Note: ValuePropSection stays static because it contains the LCP image (dashboard.png)
@@ -17,52 +18,9 @@ const FeatureGrid = dynamic(() => import('@/components/landing/FeatureGrid').the
 const ProofStrip = dynamic(() => import('@/components/landing/ProofStrip').then(m => ({ default: m.ProofStrip })));
 const FAQSection = dynamic(() => import('@/components/landing/FAQSection').then(m => ({ default: m.FAQSection })));
 
-const jsonLd = {
-  '@context': 'https://schema.org',
-  '@type': 'SoftwareApplication',
-  name: 'owlette',
-  applicationCategory: 'BusinessApplication',
-  operatingSystem: 'Windows',
-  url: 'https://owlette.app',
-  description: 'owlette gives your machines the attention they need — so you don\'t have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.',
-  screenshot: 'https://owlette.app/og-image.png',
-  offers: {
-    '@type': 'AggregateOffer',
-    priceCurrency: 'USD',
-    lowPrice: '0',
-    highPrice: '0',
-    offerCount: '2',
-    offers: [
-      {
-        '@type': 'Offer',
-        name: 'core',
-        price: '0',
-        priceCurrency: 'USD',
-        description: 'free during beta. $10/machine/month after.',
-      },
-      {
-        '@type': 'Offer',
-        name: 'pro',
-        price: '0',
-        priceCurrency: 'USD',
-        description: 'free during beta. $50/machine/month after (3-machine minimum), includes 1 TB project storage per site.',
-      },
-    ],
-  },
-  featureList: [
-    'Real-time CPU, memory, disk, GPU monitoring',
-    'Remote process management and auto-recovery',
-    'Silent software deployment across fleets',
-    'AI-powered fleet management with cortex',
-    'Multi-site organization with role-based access',
-    'Project file distribution',
-    'Threshold alerts, email notifications, webhooks',
-    'Public REST API with scoped keys',
-    'CLI and TypeScript SDK',
-    'Display topology management with auto-revert',
-    'Scheduled machine restarts and dependency-aware process restarts',
-  ],
-};
+// Landing-page structured data — single-sourced from lib/product-facts.ts so the
+// markup, /llms.txt, /for-ai.json, and the /for-ai page can't drift apart.
+const jsonLd = PRODUCT_JSONLD;
 
 export default async function LandingPage() {
   const nonce = (await headers()).get('x-nonce') ?? undefined;
