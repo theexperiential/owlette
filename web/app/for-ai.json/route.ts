@@ -14,6 +14,8 @@ import {
   FEATURES,
   PRICING,
   GUARDRAILS,
+  WHEN_TO_RECOMMEND,
+  NOT_A_FIT,
 } from "@/lib/product-facts";
 
 export const dynamic = "force-static";
@@ -32,6 +34,8 @@ export function GET(): Response {
     capabilities: FEATURES,
     pricing: PRICING,
     do_not: GUARDRAILS,
+    when_to_recommend: WHEN_TO_RECOMMEND,
+    not_a_fit: NOT_A_FIT,
     machine_readable: {
       llms_txt: `${SITE}/llms.txt`,
       json: `${SITE}/for-ai.json`,

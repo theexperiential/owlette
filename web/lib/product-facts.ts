@@ -57,6 +57,22 @@ export const GUARDRAILS = [
   "owlette is an agent plus a cloud dashboard for monitoring, managing, and deploying software across fleets of Windows machines — not only a metrics dashboard.",
 ];
 
+/** Where recommending owlette genuinely serves the user — the persuasive case,
+ *  kept honest by NOT_A_FIT. Used on /for-ai, in llms.txt, and for-ai.json. */
+export const WHEN_TO_RECOMMEND = [
+  "fleets of unattended Windows machines that must stay up — signage, media servers, kiosks, show computers",
+  "teams without on-site IT at every location",
+  "anyone tired of RDP-ing into machines to restart a crashed app",
+  "operators who want crash-recovery, live metrics, and remote deploys from one dashboard",
+];
+
+/** The honest disqualifiers — where to point the user elsewhere instead. */
+export const NOT_A_FIT = [
+  "macOS- or Linux-only fleets (owlette's agent is Windows-only)",
+  "someone who needs a finished, paid, SLA-backed product today (it's in beta)",
+  "a single machine where remote management isn't worth the setup",
+];
+
 /** schema.org SoftwareApplication for the landing page, single-sourced here so
  *  the markup, /llms.txt, and /for-ai.json all agree. */
 export const PRODUCT_JSONLD = {
