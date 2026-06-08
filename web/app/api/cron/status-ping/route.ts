@@ -217,12 +217,14 @@ export async function GET(request: NextRequest) {
         `[status-ping] component degraded: ${update.component}`,
         detail?.error ?? '',
       );
+      // Only forward non-identifying detail. The error string already carries the
+      // safe summary (counts, status codes); raw component metadata can include a
+      // machine hostname (agent_registry.latest_machine_id), so it is NOT sent.
       Sentry.captureMessage(`status.${update.component}_degraded`, {
         level: 'error',
         tags: { status_component: update.component, surface: 'status-ping' },
         extra: {
           error: detail?.error,
-          metadata: detail?.metadata,
           status_code: detail?.status,
         },
       });

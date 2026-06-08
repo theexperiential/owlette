@@ -253,6 +253,24 @@ describe('status health checks', () => {
     expect(result.metadata).toMatchObject({ stale_process_alerts: 2, stale_display_alerts: 0 });
   });
 
+  it('marks alert delivery degraded when only the display queue is backed up', async () => {
+    mockDisplayAlertGet.mockResolvedValueOnce(querySnapshot([
+      { id: 'd', data: { timestamp: { toMillis: () => 1 } } },
+    ]));
+
+    const result = await alertDeliveryHealth({ now: () => 2_000_000 });
+
+    expect(result.ok).toBe(false);
+    expect(result.metadata).toMatchObject({ stale_process_alerts: 0, stale_display_alerts: 1 });
+  });
+
+  it('queries each digest queue for docs older than the threshold', async () => {
+    await alertDeliveryHealth({ now: () => 2_000_000 });
+
+    expect(mockProcessAlertQuery.where).toHaveBeenCalledWith('timestamp', '<=', expect.any(Date));
+    expect(mockDisplayAlertQuery.where).toHaveBeenCalledWith('timestamp', '<=', expect.any(Date));
+  });
+
   it('marks alert delivery degraded when Firestore throws', async () => {
     mockProcessAlertGet.mockRejectedValueOnce(new Error('queue query failed'));
 
