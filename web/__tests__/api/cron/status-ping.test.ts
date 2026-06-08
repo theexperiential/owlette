@@ -7,6 +7,7 @@ const mockRunStatusHealthChecks = jest.fn();
 const mockSetInstatusComponentStatus = jest.fn();
 const mockStatusSet = jest.fn().mockResolvedValue(undefined);
 const mockStatusGet = jest.fn();
+const mockCaptureMessage = jest.fn();
 
 const mockStatusCollection = {
   orderBy: jest.fn(() => mockStatusCollection),
@@ -44,6 +45,10 @@ jest.mock('@/lib/instatusClient', () => {
     setInstatusComponentStatus: (...args: unknown[]) => mockSetInstatusComponentStatus(...args),
   };
 });
+
+jest.mock('@sentry/nextjs', () => ({
+  captureMessage: (...args: unknown[]) => mockCaptureMessage(...args),
+}));
 
 import {
   GET,
@@ -202,6 +207,13 @@ describe('GET /api/cron/status-ping', () => {
     expect(res.status).toBe(200);
     expect(body.updates).toHaveLength(1);
     expect(mockSetInstatusComponentStatus).toHaveBeenCalledWith('api', 'DEGRADEDPERFORMANCE');
+    expect(mockCaptureMessage).toHaveBeenCalledWith(
+      'status.api_degraded',
+      expect.objectContaining({
+        level: 'error',
+        tags: expect.objectContaining({ status_component: 'api' }),
+      }),
+    );
   });
 
   it('does not publish degraded on a single transient failure', async () => {
@@ -217,6 +229,7 @@ describe('GET /api/cron/status-ping', () => {
     expect(res.status).toBe(200);
     expect(body.updates).toEqual([]);
     expect(mockSetInstatusComponentStatus).not.toHaveBeenCalled();
+    expect(mockCaptureMessage).not.toHaveBeenCalled();
   });
 
   it('publishes operational when a component recovers', async () => {

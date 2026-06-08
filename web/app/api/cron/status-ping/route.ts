@@ -13,6 +13,7 @@ import {
   validateInstatusConfig,
 } from '@/lib/instatusClient';
 import { getAdminDb } from '@/lib/firebase-admin';
+import * as Sentry from '@sentry/nextjs';
 
 interface StatusPingDoc {
   id: string;
@@ -205,6 +206,28 @@ export async function GET(request: NextRequest) {
       previousPings[0]?.results,
       previousPings[1]?.results,
     );
+
+    // Fail loud: when a component newly degrades, raise it to Sentry (+ logs) so
+    // it reaches a human even when nobody is watching the status page. Fires only
+    // on the degrade transition (second consecutive failure), not every cycle.
+    for (const update of updates) {
+      if (update.reason !== 'second_consecutive_failure') continue;
+      const detail = results.find((entry) => entry.component === update.component);
+      console.error(
+        `[status-ping] component degraded: ${update.component}`,
+        detail?.error ?? '',
+      );
+      Sentry.captureMessage(`status.${update.component}_degraded`, {
+        level: 'error',
+        tags: { status_component: update.component, surface: 'status-ping' },
+        extra: {
+          error: detail?.error,
+          metadata: detail?.metadata,
+          status_code: detail?.status,
+        },
+      });
+    }
+
     const publishResults = await publishStatusUpdates(updates);
     const configValidation = validateInstatusConfig();
 

@@ -19,10 +19,25 @@ const mockWebhookQuery = {
   get: mockWebhookGet,
 };
 
+const mockProcessAlertGet = jest.fn();
+const mockProcessAlertQuery = {
+  where: jest.fn(() => mockProcessAlertQuery),
+  limit: jest.fn(() => mockProcessAlertQuery),
+  get: mockProcessAlertGet,
+};
+const mockDisplayAlertGet = jest.fn();
+const mockDisplayAlertQuery = {
+  where: jest.fn(() => mockDisplayAlertQuery),
+  limit: jest.fn(() => mockDisplayAlertQuery),
+  get: mockDisplayAlertGet,
+};
+
 const mockDb = {
   collectionGroup: jest.fn(() => mockMachineQuery),
   collection: jest.fn((name: string) => {
     if (name === 'webhook_deliveries') return mockWebhookQuery;
+    if (name === 'pending_process_alerts') return mockProcessAlertQuery;
+    if (name === 'pending_display_alerts') return mockDisplayAlertQuery;
     if (name === 'system_status') {
       return {
         doc: jest.fn(() => ({ get: mockSystemGet })),
@@ -40,6 +55,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 
 import {
   agentRegistryHealth,
+  alertDeliveryHealth,
   apiHealth,
   cortexChatHealth,
   dashboardHealth,
@@ -73,6 +89,8 @@ describe('status health checks', () => {
       { id: 'machine-1', data: { lastHeartbeat: { toMillis: () => 1_000_000 } } },
     ]));
     mockWebhookGet.mockResolvedValue(querySnapshot([]));
+    mockProcessAlertGet.mockResolvedValue(querySnapshot([]));
+    mockDisplayAlertGet.mockResolvedValue(querySnapshot([]));
     mockSystemGet.mockResolvedValue({ exists: true });
   });
 
@@ -211,6 +229,39 @@ describe('status health checks', () => {
     expect(result.error).toBe('delivery query failed');
   });
 
+  it('passes alert delivery when the digest queues are drained', async () => {
+    const result = await alertDeliveryHealth({ now: () => 2_000_000 });
+
+    expect(result.component).toBe('alert_delivery');
+    expect(result.ok).toBe(true);
+    expect(result.metadata).toMatchObject({
+      stale_process_alerts: 0,
+      stale_display_alerts: 0,
+    });
+  });
+
+  it('marks alert delivery degraded when a digest queue is backed up', async () => {
+    mockProcessAlertGet.mockResolvedValueOnce(querySnapshot([
+      { id: 'a', data: { timestamp: { toMillis: () => 1 } } },
+      { id: 'b', data: { timestamp: { toMillis: () => 2 } } },
+    ]));
+
+    const result = await alertDeliveryHealth({ now: () => 2_000_000 });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('undelivered');
+    expect(result.metadata).toMatchObject({ stale_process_alerts: 2, stale_display_alerts: 0 });
+  });
+
+  it('marks alert delivery degraded when Firestore throws', async () => {
+    mockProcessAlertGet.mockRejectedValueOnce(new Error('queue query failed'));
+
+    const result = await alertDeliveryHealth();
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('queue query failed');
+  });
+
   it('checks Firestore with a small heartbeat read', async () => {
     const result = await firestoreHealth();
 
@@ -254,7 +305,7 @@ describe('status health checks', () => {
     });
   });
 
-  it('runs the seven planned status components', async () => {
+  it('runs the planned status components', async () => {
     const results = await runStatusHealthChecks({ baseUrl: 'https://example.test' });
 
     expect(results.map((entry) => entry.component)).toEqual([
@@ -262,6 +313,7 @@ describe('status health checks', () => {
       'api',
       'agent_registry',
       'webhook_delivery',
+      'alert_delivery',
       'r2_uploads',
       'firestore',
       'cortex_chat',
