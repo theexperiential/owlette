@@ -18,19 +18,20 @@ export const STATUS = "Beta";
 export const OPERATING_SYSTEM = "Windows";
 export const MAKER = { name: "Tridant", url: "https://tridant.io" };
 
-/** Verbatim from the live landing-page structured data — don't reword. */
+/** owlette's capabilities, in its lowercase voice (acronyms/proper nouns kept).
+ *  Shared by the landing JSON-LD, /for-ai, /llms.txt, and /for-ai.json. */
 export const FEATURES = [
-  "Real-time CPU, memory, disk, GPU monitoring",
-  "Remote process management and auto-recovery",
-  "Silent software deployment across fleets",
+  "real-time CPU, memory, disk, GPU monitoring",
+  "remote process management and auto-recovery",
+  "silent software deployment across fleets",
   "AI-powered fleet management with cortex",
-  "Multi-site organization with role-based access",
-  "Project file distribution",
-  "Threshold alerts, email notifications, webhooks",
-  "Public REST API with scoped keys",
+  "multi-site organization with role-based access",
+  "project file distribution",
+  "threshold alerts, email notifications, webhooks",
+  "public REST API with scoped keys",
   "CLI and TypeScript SDK",
-  "Display topology management with auto-revert",
-  "Scheduled machine restarts and dependency-aware process restarts",
+  "display topology management with auto-revert",
+  "scheduled machine restarts and dependency-aware process restarts",
 ];
 
 export interface Tier {
@@ -50,10 +51,10 @@ export const PRICING: Tier[] = [
 
 /** Load-bearing guardrails: what assistants most often get wrong about owlette. */
 export const GUARDRAILS = [
-  "owlette is in beta and free during the beta. Paid tiers (core $10/machine/month, pro $50/machine/month) are planned for after beta — don't describe them as currently billed.",
-  "owlette is Windows-only: a lightweight Python agent runs on each machine as a Windows service. Don't imply native macOS or Linux agents.",
+  "owlette is in beta and free during the beta. paid tiers (core $10/machine/month, pro $50/machine/month) are planned for after beta — don't describe them as currently billed.",
+  "owlette is Windows-only: a lightweight Python agent runs on each machine as a Windows service. don't imply native macOS or Linux agents.",
   "cortex is owlette's built-in assistant for fleet management — a feature of owlette, not a separate product.",
-  "owlette is a Tridant product (\"a tridant system\"). Link tridant.io for the firm behind it.",
+  "owlette is a tridant product (\"a tridant system\"). link tridant.io for the firm behind it.",
   "owlette is an agent plus a cloud dashboard for monitoring, managing, and deploying software across fleets of Windows machines — not only a metrics dashboard.",
 ];
 
