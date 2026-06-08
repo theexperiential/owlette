@@ -31,6 +31,98 @@ const OFFLINE_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
 // Don't re-alert for the same machine within this window
 const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 
+// Suppress offline alerts while a machine is inside an announced reboot/shutdown
+// window. Before issuing the OS restart the agent atomically publishes a boolean
+// (`rebooting` / `shuttingDown`) AND the target instant (`rebootScheduledAt` /
+// `shutdownScheduledAt`, Unix seconds), and clears them on the first post-boot
+// heartbeat (or on cancel). We require BOTH the boolean (the agent currently
+// claims downtime) AND the target instant to fall inside a bounded window around
+// "now": up to GRACE *after* the target (cold boot + delayed autostart + auth) and
+// up to GRACE *before* it (tolerate modest agent-clock skew on the agent-computed
+// instant). Bounding both sides means a stuck boolean paired with a far-future
+// (clock-skewed) instant can't suppress a real outage indefinitely; requiring the
+// boolean means a stale instant left behind by a cancel won't suppress either.
+const PLANNED_DOWNTIME_GRACE_MS = 15 * 60 * 1000; // 15 minutes, applied symmetrically
+
+// Debounce: the idle heartbeat cadence is 120s, so a single missed beat can push a
+// healthy machine just past OFFLINE_THRESHOLD_MS. Require the machine to still be
+// stale on a later scan — at least this long after first observed stale — before
+// emailing, so a one-off blip never pages.
+const STALE_CONFIRM_MS = OFFLINE_THRESHOLD_MS; // ~one extra cron interval of confirmed staleness
+
+function timestampToMillis(value: unknown): number {
+  return (value as FirebaseFirestore.Timestamp | null)?.toMillis?.() ?? 0;
+}
+
+function unixSecondsOrZero(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+export interface MachineHealthSnapshot {
+  online: boolean;
+  lastHeartbeatMs: number;
+  lastCronAlertAtMs: number;
+  staleSinceMs: number;
+  rebooting: boolean;
+  shuttingDown: boolean;
+  rebootScheduledAtSec: number; // Unix seconds, 0 when unset
+  shutdownScheduledAtSec: number; // Unix seconds, 0 when unset
+}
+
+/**
+ * True when the machine is inside an announced reboot/shutdown window. Requires
+ * the agent's in-progress boolean AND the target instant within ±GRACE of `now`
+ * (see PLANNED_DOWNTIME_GRACE_MS) — so neither a stale instant left behind by a
+ * cancel nor a clock-skewed far-future instant can suppress a real outage.
+ */
+function plannedDowntimeActive(inProgress: boolean, scheduledAtSec: number, now: number): boolean {
+  if (inProgress !== true || scheduledAtSec <= 0) return false;
+  const scheduledAtMs = scheduledAtSec * 1000;
+  return (
+    now >= scheduledAtMs - PLANNED_DOWNTIME_GRACE_MS &&
+    now < scheduledAtMs + PLANNED_DOWNTIME_GRACE_MS
+  );
+}
+
+export type HealthDecision =
+  | { action: 'ok' } // online + fresh heartbeat — clear any stale marker
+  | { action: 'ignore'; reason: 'offline-flag' | 'planned-downtime' | 'cooldown' }
+  | { action: 'debounce' } // stale but not yet confirmed — record staleSince, don't alert yet
+  | { action: 'alert'; heartbeatAgeMinutes: number };
+
+/**
+ * Pure per-machine offline decision. Kept side-effect-free so it can be unit
+ * tested directly (the GET handler maps the decision to Firestore writes/emails).
+ */
+export function classifyMachineHealth(m: MachineHealthSnapshot, now: number): HealthDecision {
+  // Only machines the agent last reported online can transition to "offline".
+  if (m.online !== true) return { action: 'ignore', reason: 'offline-flag' };
+
+  const heartbeatAge = now - m.lastHeartbeatMs;
+  if (heartbeatAge <= OFFLINE_THRESHOLD_MS) return { action: 'ok' };
+
+  // Planned downtime: the agent announced a reboot/shutdown that is plausibly
+  // happening right now (boolean set + target instant within ±grace). Don't page.
+  if (
+    plannedDowntimeActive(m.rebooting, m.rebootScheduledAtSec, now) ||
+    plannedDowntimeActive(m.shuttingDown, m.shutdownScheduledAtSec, now)
+  ) {
+    return { action: 'ignore', reason: 'planned-downtime' };
+  }
+
+  // Already alerted within the cooldown window.
+  if (now - m.lastCronAlertAtMs <= ALERT_COOLDOWN_MS) {
+    return { action: 'ignore', reason: 'cooldown' };
+  }
+
+  // Debounce: require sustained staleness across scans before paging.
+  if (m.staleSinceMs <= 0 || now - m.staleSinceMs < STALE_CONFIRM_MS) {
+    return { action: 'debounce' };
+  }
+
+  return { action: 'alert', heartbeatAgeMinutes: Math.floor(heartbeatAge / 60000) };
+}
+
 interface OfflineAlert {
   siteId: string;
   machineId: string;
@@ -104,22 +196,51 @@ export async function GET(request: NextRequest) {
       for (const machineDoc of machinesSnap.docs) {
         const machine = machineDoc.data();
 
-        // Only alert for machines that were previously online
-        if (machine.online !== true) continue;
+        const lastHeartbeatMs = timestampToMillis(machine.lastHeartbeat);
+        const staleSinceMs = timestampToMillis(machine.health?.staleSince);
 
-        const lastHeartbeatMs: number =
-          (machine.lastHeartbeat as FirebaseFirestore.Timestamp | null)?.toMillis?.() ?? 0;
-        const heartbeatAge = now - lastHeartbeatMs;
+        const decision = classifyMachineHealth(
+          {
+            online: machine.online === true,
+            lastHeartbeatMs,
+            lastCronAlertAtMs: timestampToMillis(machine.health?.lastCronAlertAt),
+            staleSinceMs,
+            rebooting: machine.rebooting === true,
+            shuttingDown: machine.shuttingDown === true,
+            rebootScheduledAtSec: unixSecondsOrZero(machine.rebootScheduledAt),
+            shutdownScheduledAtSec: unixSecondsOrZero(machine.shutdownScheduledAt),
+          },
+          now
+        );
 
-        if (heartbeatAge <= OFFLINE_THRESHOLD_MS) continue;
+        if (decision.action === 'ignore') continue;
 
-        // Check dedup cooldown
-        const lastAlertedMs: number =
-          (machine.health?.lastCronAlertAt as FirebaseFirestore.Timestamp | null)?.toMillis?.() ?? 0;
+        if (decision.action === 'ok') {
+          // Heartbeat recovered — drop any stale marker so the next outage
+          // debounces cleanly from scratch.
+          if (staleSinceMs > 0) {
+            await machineDoc.ref.set(
+              { health: { staleSince: FieldValue.delete() } },
+              { merge: true }
+            );
+          }
+          continue;
+        }
 
-        if (now - lastAlertedMs <= ALERT_COOLDOWN_MS) continue;
+        if (decision.action === 'debounce') {
+          // First scan we've seen this machine stale — record when. We only
+          // alert if it's still stale on a later scan (guards against a single
+          // missed 120s idle heartbeat).
+          if (staleSinceMs <= 0) {
+            await machineDoc.ref.set(
+              { health: { staleSince: FieldValue.serverTimestamp() } },
+              { merge: true }
+            );
+          }
+          continue;
+        }
 
-        // Mark as alerted to prevent duplicate emails this hour
+        // decision.action === 'alert' — mark as alerted to dedup this hour.
         await machineDoc.ref.set(
           { health: { lastCronAlertAt: FieldValue.serverTimestamp() } },
           { merge: true }
@@ -129,7 +250,7 @@ export async function GET(request: NextRequest) {
           siteId,
           machineId: machineDoc.id,
           lastHeartbeatMs,
-          heartbeatAgeMinutes: Math.floor(heartbeatAge / 60000),
+          heartbeatAgeMinutes: decision.heartbeatAgeMinutes,
           timezone: machine.machine_timezone || undefined,
         });
       }

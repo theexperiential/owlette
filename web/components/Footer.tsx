@@ -54,12 +54,12 @@ export function Footer() {
           <span className="text-base leading-none -translate-y-0.4">{emoji}</span>
           <span>in california by</span>
           <Link
-            href="https://tec.design"
+            href="https://tridant.io"
             target="_blank"
             rel="noopener noreferrer"
             className="text-muted-foreground hover:text-muted-foreground hover:underline transition-colors"
           >
-            TEC
+            tridant
           </Link>
         </p>
         <p className="text-center text-xs text-muted-foreground mt-2 flex items-center justify-center gap-2">
@@ -82,6 +82,13 @@ export function Footer() {
             className="hover:text-muted-foreground transition-colors"
           >
             terms
+          </Link>
+          <span>&middot;</span>
+          <Link
+            href="/for-ai"
+            className="hover:text-muted-foreground transition-colors"
+          >
+            for AI
           </Link>
           <span>&middot;</span>
           <Link

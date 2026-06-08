@@ -158,7 +158,7 @@ export function PricingSection() {
         <div className="text-center max-w-3xl mx-auto">
           <p className="mt-10 section-subheadline">
             need volume pricing or an enterprise agreement?{' '}
-            <a href="mailto:support@owlette.app" className="text-foreground hover:underline underline-offset-4">
+            <a href="mailto:hey@tridant.io" className="text-foreground hover:underline underline-offset-4">
               get in touch
             </a>
           </p>

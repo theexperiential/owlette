@@ -9,13 +9,12 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
-## [Unreleased]
-
-> Web/dashboard changes shipped to prod since 2.12.3. No version bump — the
-> version number tracks the agent, and this batch contains no agent changes.
+## [2.12.8] - 2026-06-07
 
 ### added
 
+- **`/for-ai` page** with `/llms.txt`, `/for-ai.json`, and structured data — an honest, machine-readable pitch to AI assistants evaluating owlette.
+- **tridant brand mark** and restructured landing footer ("a tridant system").
 - **Site members can view screenshots and live view.** Screenshot / live-view are now authorized by a new read-class `MACHINE_VIEW` capability (granted to members on their assigned sites) rather than the mutating `MACHINE_EXEC_COMMAND`. The machine-commands route dispatches the three view-only command types (`capture_screenshot` / `start_live_view` / `stop_live_view`) to a `MACHINE_VIEW`-gated handler; all other commands stay behind `MACHINE_EXEC_COMMAND`, and api-key scope is unchanged.
 - **Cortex tier-3 tool-approval gate.** Tier-3 tool calls now require explicit in-chat approval. `/api/cortex` migrated to the UIMessage protocol (`convertToModelMessages`); the per-site approval flag is default-on and forces the server-side path. Includes Cortex sidebar/UX fixes and a persistent chat layout.
 - **Scoped full-text search on the logs page**, plus an animated filters panel.
@@ -29,6 +28,7 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ### fixed
 
+- **False "machines offline" emails during scheduled reboots are fixed.** The health-check cron is now reboot-aware: it suppresses offline alerts while a machine is inside an announced reboot/shutdown window — gated on the agent's `rebooting`/`shuttingDown` flag plus the scheduled instant within a bounded ±15-minute grace, so neither a clock-skewed far-future anchor nor a stale anchor left behind by a cancel can mute a real outage — and it debounces transient staleness (`health.staleSince`) so a single missed 120-second heartbeat never pages. Agent-side, the periodic heartbeat (`_upload_metrics`) no longer reports connection success when its Firestore write fails — which had left a machine `online: true` with a frozen `lastHeartbeat` and no reconnect — and cancelling a scheduled reboot/shutdown now also clears `shutdownScheduledAt` (it had kept the dashboard countdown pill alive).
 - **Dashboard no longer shows members process write-controls they can't use.** The per-process launch-mode toggle and the edit / restart / kill / add-process actions were rendered to every viewer in both the card and list views, so a member would click them and get a 403. They're now gated on `isSiteAdmin`: non-admins see the current launch mode as a read-only pill, and the write actions are hidden.
 - **Expected authorization failures are no longer reported to Sentry as errors.** A member's launch-mode 403 was logged via `logger.firestore.error` → `Sentry.captureMessage(level: error)`, polluting error tracking with an expected outcome. `apiJson` now carries the HTTP status and `setLaunchMode` treats 401/403 as an expected denial (surfaced to the user as a toast, not a Sentry error).
 - **Dashboard "Missing or insufficient permissions" error (Sentry OWLETTE-WEB-3R).** `useUserManagement` opened a realtime listener over the whole `users` collection (superadmin-only per `firestore.rules`) for *every* user, via `ManageSitesDialog` mounted on the dashboard/roosts/logs/deployments pages — so every non-superadmin tripped a permission-denied on load. The listener is now gated to superadmins (client-side; rules unchanged).
