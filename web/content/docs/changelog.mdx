@@ -5,13 +5,12 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
-## [Unreleased]
-
-> Web/dashboard changes shipped to prod since 2.12.3. No version bump — the
-> version number tracks the agent, and this batch contains no agent changes.
+## [2.12.8] - 2026-06-07
 
 ### added
 
+- **`/for-ai` page** with `/llms.txt`, `/for-ai.json`, and structured data — an honest, machine-readable pitch to AI assistants evaluating owlette.
+- **tridant brand mark** and restructured landing footer ("a tridant system").
 - **Cortex tier-3 tool-approval gate.** Tier-3 tool calls now require explicit in-chat approval. `/api/cortex` migrated to the UIMessage protocol (`convertToModelMessages`); the per-site approval flag is default-on and forces the server-side path. Includes Cortex sidebar/UX fixes and a persistent chat layout.
 - **Scoped full-text search on the logs page**, plus an animated filters panel.
 - **Date-scoped log clearing.** Clear-logs deletion accepts a `since`/`until` range, with the date window computed in the display timezone.
@@ -24,6 +23,7 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ### fixed
 
+- **False "machines offline" emails during scheduled reboots are fixed.** The health-check cron is now reboot-aware: it suppresses offline alerts while a machine is inside an announced reboot/shutdown window — gated on the agent's `rebooting`/`shuttingDown` flag plus the scheduled instant within a bounded ±15-minute grace, so neither a clock-skewed far-future anchor nor a stale anchor left behind by a cancel can mute a real outage — and it debounces transient staleness (`health.staleSince`) so a single missed 120-second heartbeat never pages. Agent-side, the periodic heartbeat (`_upload_metrics`) no longer reports connection success when its Firestore write fails — which had left a machine `online: true` with a frozen `lastHeartbeat` and no reconnect — and cancelling a scheduled reboot/shutdown now also clears `shutdownScheduledAt` (it had kept the dashboard countdown pill alive).
 - **Dashboard "Missing or insufficient permissions" error (Sentry OWLETTE-WEB-3R).** `useUserManagement` opened a realtime listener over the whole `users` collection (superadmin-only per `firestore.rules`) for *every* user, via `ManageSitesDialog` mounted on the dashboard/roosts/logs/deployments pages — so every non-superadmin tripped a permission-denied on load. The listener is now gated to superadmins (client-side; rules unchanged).
 - **Quieted expected `permission-denied` noise** on the site-availability check (`CreateSiteDialog`) and Cortex chat-URL load, and **blocked agent ID tokens from minting user API keys** (`POST /api/keys`).
 - **Logs are ordered by timestamp across all filter combinations.**
