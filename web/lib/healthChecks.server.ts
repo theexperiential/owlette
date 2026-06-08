@@ -5,6 +5,7 @@ export const STATUS_COMPONENTS = [
   'api',
   'agent_registry',
   'webhook_delivery',
+  'alert_delivery',
   'r2_uploads',
   'firestore',
   'cortex_chat',
@@ -35,6 +36,11 @@ const AGENT_HEARTBEAT_WINDOW_MS = 5 * 60 * 1000;
 const WEBHOOK_WINDOW_MS = 60 * 60 * 1000;
 const WEBHOOK_SUCCESS_FLOOR = 0.95;
 const FIRESTORE_LATENCY_LIMIT_MS = 500;
+// Process/display alert digests are drained by 3-min crons with a 2-min
+// accumulation window, so a healthy queue clears within ~5 min. Anything older
+// than this means a digest cron is down (disabled job, stale secret, route error)
+// and alerts are silently piling up undelivered — fail loud.
+const ALERT_DELIVERY_STALE_MS = 15 * 60 * 1000;
 
 function publicBaseUrl(baseUrl?: string): string {
   const configured =
@@ -255,6 +261,49 @@ export async function webhookDeliveryHealth(
   }
 }
 
+/**
+ * Detects a stalled alert-digest pipeline: the agent queues process/display
+ * alerts into `pending_process_alerts` / `pending_display_alerts`, and dedicated
+ * 3-min crons drain them into emails. If those crons stop (a disabled cron-job,
+ * a rotated secret, a route error), the queues silently grow and nobody is
+ * paged. This surfaces that as a degraded status component within minutes.
+ */
+export async function alertDeliveryHealth(
+  options: HealthCheckOptions = {},
+): Promise<HealthCheckResult> {
+  const started = Date.now();
+  const now = options.now?.() ?? Date.now();
+  const cutoff = new Date(now - ALERT_DELIVERY_STALE_MS);
+
+  try {
+    const db = getAdminDb();
+    const [processSnap, displaySnap] = await Promise.all([
+      db.collection('pending_process_alerts').where('timestamp', '<=', cutoff).limit(10).get(),
+      db.collection('pending_display_alerts').where('timestamp', '<=', cutoff).limit(10).get(),
+    ]);
+    const staleProcess = processSnap.docs.length;
+    const staleDisplay = displaySnap.docs.length;
+    const ok = staleProcess === 0 && staleDisplay === 0;
+
+    return result('alert_delivery', started, ok, {
+      metadata: {
+        stale_process_alerts: staleProcess,
+        stale_display_alerts: staleDisplay,
+        threshold_minutes: ALERT_DELIVERY_STALE_MS / 60_000,
+      },
+      ...(ok
+        ? {}
+        : {
+            error:
+              `${staleProcess + staleDisplay} alert(s) undelivered for >${ALERT_DELIVERY_STALE_MS / 60_000}m ` +
+              `(process=${staleProcess}, display=${staleDisplay}) — a digest cron is likely down`,
+          }),
+    });
+  } catch (error) {
+    return result('alert_delivery', started, false, { error: errorMessage(error) });
+  }
+}
+
 export async function firestoreHealth(): Promise<HealthCheckResult> {
   const started = Date.now();
 
@@ -307,6 +356,7 @@ export async function runStatusHealthChecks(
     apiHealth(options),
     agentRegistryHealth(options),
     webhookDeliveryHealth(options),
+    alertDeliveryHealth(options),
     r2UploadsHealth(),
     firestoreHealth(),
     cortexChatHealth(),

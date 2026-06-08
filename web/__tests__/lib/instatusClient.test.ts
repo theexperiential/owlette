@@ -51,6 +51,8 @@ describe('instatusClient', () => {
     expect(result.ok).toBe(false);
     expect(result.missing).toContain('INSTATUS_COMPONENT_DASHBOARD_ID');
     expect(result.missing).not.toContain('INSTATUS_COMPONENT_API_ID');
+    // alert_delivery's status-page id is optional — never required for `configured`.
+    expect(result.missing).not.toContain('INSTATUS_COMPONENT_ALERT_DELIVERY_ID');
   });
 
   it('skips publishing when required config is missing', async () => {

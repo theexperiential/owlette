@@ -177,6 +177,23 @@ Use cron expression `*/5 * * * *` when the host accepts cron syntax.
 Use spaces between fields: `*/5 * * * *`. No spaces (`*/5****`) will fail.
 
 </Callout>
+
+### alert digest crons
+
+Two routes batch-and-send the agent's queued alerts. **If they are not scheduled, those
+emails never go out** — the agent only *queues* alerts (into `pending_process_alerts` /
+`pending_display_alerts`); these crons are what actually email them. Schedule **both, in
+every environment**, every 3 minutes:
+
+```text
+GET https://<your-app>/api/cron/process-alerts
+GET https://<your-app>/api/cron/display-alerts
+X-Cron-Secret: <CRON_SECRET value>
+```
+
+Use cron expression `*/3 * * * *`. A missing schedule here fails **silently** — the queue
+just grows and nobody is notified — so confirm it per environment (dev *and* prod).
+
 ### public status-page ping
 
 External public launch also needs a 60-second HTTP cron that calls:
@@ -253,7 +270,7 @@ Requirements:
 - [ ] Build command is `npm run build`
 - [ ] Start command is `npm start` where the host requires one
 - [ ] `CRON_SECRET` configured
-- [ ] Cron calls configured for `/api/cron/health-check` and `/api/cron/status-ping`
+- [ ] Cron calls configured for **all four** routes, in **each** environment — `/api/cron/health-check` (every 5 min), `/api/cron/process-alerts` (every 3 min), `/api/cron/display-alerts` (every 3 min), `/api/cron/status-ping` (every 60 s)
 
 ### post-deployment
 
