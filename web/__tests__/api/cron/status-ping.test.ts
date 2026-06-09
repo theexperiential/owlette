@@ -207,11 +207,31 @@ describe('GET /api/cron/status-ping', () => {
     expect(res.status).toBe(200);
     expect(body.updates).toHaveLength(1);
     expect(mockSetInstatusComponentStatus).toHaveBeenCalledWith('api', 'DEGRADEDPERFORMANCE');
+    // Sentry is scoped to alert_delivery — an api degrade still publishes to Instatus
+    // but does NOT page Sentry (avoids noise from the pre-existing api probe failures).
+    expect(mockCaptureMessage).not.toHaveBeenCalled();
+  });
+
+  it('raises Sentry for an alert_delivery degrade (scoped to that component)', async () => {
+    mockStatusGet.mockResolvedValueOnce(querySnapshot([
+      pingDoc('2', [health('alert_delivery', false)]),
+      pingDoc('1', [health('alert_delivery', true)]),
+    ]));
+    mockRunStatusHealthChecks.mockResolvedValueOnce([health('alert_delivery', false)]);
+    mockSetInstatusComponentStatus.mockResolvedValueOnce({
+      component: 'alert_delivery',
+      status: 'DEGRADEDPERFORMANCE',
+      ok: true,
+    });
+
+    const res = await GET(request('cron-secret'));
+
+    expect(res.status).toBe(200);
     expect(mockCaptureMessage).toHaveBeenCalledWith(
-      'status.api_degraded',
+      'status.alert_delivery_degraded',
       expect.objectContaining({
         level: 'error',
-        tags: expect.objectContaining({ status_component: 'api' }),
+        tags: expect.objectContaining({ status_component: 'alert_delivery' }),
       }),
     );
   });
