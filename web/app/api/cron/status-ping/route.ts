@@ -15,6 +15,12 @@ import {
 import { getAdminDb } from '@/lib/firebase-admin';
 import * as Sentry from '@sentry/nextjs';
 
+// Components whose degrade transition pages Sentry. Scoped to alert_delivery for
+// now: the HTTP-probe components (dashboard/api/agent_registry) currently produce
+// server-side-probe false-negatives, so paging on them would be noise. Broaden
+// this set once those probes are fixed.
+const SENTRY_ALERTING_COMPONENTS = new Set<StatusComponent>(['alert_delivery']);
+
 interface StatusPingDoc {
   id: string;
   observedAtMs: number;
@@ -217,6 +223,10 @@ export async function GET(request: NextRequest) {
         `[status-ping] component degraded: ${update.component}`,
         detail?.error ?? '',
       );
+      // Sentry is scoped to alert_delivery (see SENTRY_ALERTING_COMPONENTS): the
+      // HTTP-probe components have pre-existing server-side-probe false-negatives,
+      // so paging on them would be noise. Broaden the set once those are fixed.
+      if (!SENTRY_ALERTING_COMPONENTS.has(update.component)) continue;
       // Only forward non-identifying detail. The error string already carries the
       // safe summary (counts, status codes); raw component metadata can include a
       // machine hostname (agent_registry.latest_machine_id), so it is NOT sent.
