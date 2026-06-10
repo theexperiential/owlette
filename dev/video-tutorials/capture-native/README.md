@@ -9,6 +9,12 @@ Windows-only. Run on the disposable demo machine.
 
 ## Setup
 
+**Machine-level prep first** — display/DPI pinning, lock/sleep/power, RDP discipline, UAC,
+and the `pywin32==306` pin (why it must never be upgraded) are documented once in
+[dev/active/full-machine-e2e/machine-setup.md](../../active/full-machine-e2e/machine-setup.md)
+(Profiles A + B). That doc is canonical for machine prep; this README only covers the
+capture workflow itself.
+
 ```powershell
 cd dev\video-tutorials\capture-native
 python -m venv .venv

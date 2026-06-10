@@ -78,3 +78,4 @@ For specific operational procedures, see the dedicated runbooks:
 - [docs/agent/installation.md](agent/installation.md)
 - [web/e2e/README.md](../web/e2e/README.md)
 - [docs/internal/version-management.md](internal/version-management.md)
+- GUI automation machine setup (internal, repo-only): [dev/active/full-machine-e2e/machine-setup.md](../dev/active/full-machine-e2e/machine-setup.md) — provisioning a Windows box for native GUI automation (video capture + the full-machine e2e gate)
