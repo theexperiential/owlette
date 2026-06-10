@@ -154,22 +154,29 @@ test('POST /api/users/{uid}/demote — flips superadmin → member', async ({ re
 
 test('POST /api/users/{uid}/demote — 409 last_superadmin when demoting the only superadmin', async ({ request }) => {
   // Promote the target to superadmin, then ensure the canonical super-uid is
-  // soft-deleted so target is the only active superadmin.
+  // soft-deleted so target is the only active superadmin and can exercise the
+  // last-superadmin guard with its own still-active credentials.
   await seedUser(TARGET_UID, 'superadmin');
+  const targetSuperKey = await mintApiKey({
+    ownerUid: TARGET_UID,
+    name: `e2e-users-target-super-${SUFFIX}`,
+    scopes: [{ resource: 'user', id: '*', permissions: ['read', 'write', 'admin'] }],
+  });
   const db = getAdminDb();
   const superSnap = await db.collection('users').doc('super-uid').get();
   const previousRole = superSnap.data()?.role;
-  await db.collection('users').doc('super-uid').update({ deletedAt: Date.now() });
 
   try {
+    await db.collection('users').doc('super-uid').update({ deletedAt: Date.now() });
     const res = await request.post(`/api/users/${TARGET_UID}/demote`, {
-      headers: authHeaders(superKey),
+      headers: authHeaders(targetSuperKey),
       data: {},
     });
     expect(res.status()).toBe(409);
     const body = await res.json();
     expect(body.code).toBe('last_superadmin');
   } finally {
+    await revokeApiKey(targetSuperKey);
     // Restore canonical superadmin so other specs in the suite keep working.
     await db
       .collection('users')
