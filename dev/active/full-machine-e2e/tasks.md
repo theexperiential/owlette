@@ -13,7 +13,7 @@ Status legend: [ ] not started · [x] done · [~] in progress
 
 ## Wave 1 — Fresh-install smoke (no GUI; stages 0–3, 7–8)
 
-- [ ] 1.1 Build the golden Win11 image per `machine-setup.md` (Profiles A + C: autologon, no lock/sleep, WU pinned, 100% DPI + fixed res/theme, toolchain, UAC ON). Record the pinned resolution/theme in machine-setup.md so the image is reproducible. When the harness directory is created, promote machine-setup.md to its README (leave a pointer).
+- [ ] 1.1 Build the golden Win11 image per `docs/internal/gui-automation-machine-setup.md` (Profiles A + C: autologon, no lock/sleep, WU pinned, 100% DPI + fixed res/theme, toolchain, UAC ON), using `scripts/bootstrap-gui-automation.ps1 -Rig E2eRunner` to validate. Record the pinned resolution/theme in that doc so the image is reproducible; the harness README links to it (permanent home in docs/internal/).
 - [ ] 1.2 Create the dedicated e2e site in dev; confirm zero alert subscribers; decide + apply the Sentry tag/filter for the e2e machine.
 - [ ] 1.3 Pytest controller skeleton: per-stage JSON logging, artifact collection, **cloud teardown in `finally`**.
 - [ ] 1.4 Stage 0 preflight (empty-machine asserts + interactive-session hard-fail via `WTSGetActiveConsoleSessionId`).

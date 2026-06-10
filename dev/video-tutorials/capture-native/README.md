@@ -11,8 +11,9 @@ Windows-only. Run on the disposable demo machine.
 
 **Machine-level prep first** — display/DPI pinning, lock/sleep/power, RDP discipline, UAC,
 and the `pywin32==306` pin (why it must never be upgraded) are documented once in
-[dev/active/full-machine-e2e/machine-setup.md](../../active/full-machine-e2e/machine-setup.md)
-(Profiles A + B). That doc is canonical for machine prep; this README only covers the
+[docs/internal/gui-automation-machine-setup.md](../../../docs/internal/gui-automation-machine-setup.md)
+(Profiles A + B), with `scripts/bootstrap-gui-automation.ps1 -Rig CaptureRig` as the
+executable check. That doc is canonical for machine prep; this README only covers the
 capture workflow itself.
 
 ```powershell
