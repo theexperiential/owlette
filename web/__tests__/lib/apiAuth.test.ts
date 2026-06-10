@@ -55,6 +55,7 @@ import {
   requireScope,
   requireSessionUser,
   resolveAuth,
+  assertActiveUser,
   assertUserHasSiteAccess,
   type ApiKeyContext,
   type ResolvedAuth,
@@ -375,6 +376,22 @@ describe('requireAdminOrIdToken', () => {
       expect.objectContaining({ status: 403 }),
     );
   });
+
+  it('throws 403 when a superadmin user doc is soft-deleted', async () => {
+    mockGetSession.mockResolvedValue(validSession({ userId: 'deleted-super' }));
+    mockDocGet.mockImplementation((col: string) => {
+      if (col === 'users')
+        return Promise.resolve({
+          exists: true,
+          data: () => ({ role: 'superadmin', deletedAt: 1700000000000 }),
+        });
+      return Promise.resolve({ exists: false });
+    });
+
+    await expect(requireAdminOrIdToken(makeRequest())).rejects.toThrow(
+      expect.objectContaining({ status: 403, code: 'user_inactive' }),
+    );
+  });
 });
 
 // ─── requireAdmin ──────────────────────────────────────────────────────────
@@ -418,6 +435,39 @@ describe('requireSessionUser', () => {
 });
 
 // ─── assertUserHasSiteAccess ───────────────────────────────────────────────
+
+describe('assertActiveUser', () => {
+  it('returns user data when the user doc exists and is not deleted', async () => {
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ role: 'member', sites: ['site-1'] }),
+    });
+
+    await expect(assertActiveUser('user-active')).resolves.toMatchObject({
+      role: 'member',
+      sites: ['site-1'],
+    });
+  });
+
+  it('throws user_inactive when the user doc is missing', async () => {
+    mockDocGet.mockResolvedValue({ exists: false, data: () => undefined });
+
+    await expect(assertActiveUser('user-missing')).rejects.toThrow(
+      expect.objectContaining({ status: 403, code: 'user_inactive' }),
+    );
+  });
+
+  it('throws user_inactive when the user doc is soft-deleted', async () => {
+    mockDocGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ role: 'superadmin', deletedAt: 1700000000000 }),
+    });
+
+    await expect(assertActiveUser('user-deleted')).rejects.toThrow(
+      expect.objectContaining({ status: 403, code: 'user_inactive' }),
+    );
+  });
+});
 
 describe('assertUserHasSiteAccess', () => {
   it('allows access when user is site owner', async () => {
@@ -497,7 +547,7 @@ describe('assertUserHasSiteAccess', () => {
     );
   });
 
-  it('tolerates user doc missing (treats as no admin roles / no assigned sites)', async () => {
+  it('rejects when the user doc is missing', async () => {
     mockDocGet.mockImplementation((col: string) => {
       if (col === 'sites')
         return Promise.resolve({ exists: true, data: () => ({ owner: 'other' }) });
@@ -507,6 +557,29 @@ describe('assertUserHasSiteAccess', () => {
 
     await expect(assertUserHasSiteAccess('user-6', 'site-6')).rejects.toThrow(
       expect.objectContaining({ status: 403 }),
+    );
+  });
+
+  it('rejects a soft-deleted user even when they own the site', async () => {
+    mockDocGet.mockImplementation((col: string) => {
+      if (col === 'sites')
+        return Promise.resolve({ exists: true, data: () => ({ owner: 'user-deleted' }) });
+      if (col === 'users')
+        return Promise.resolve({
+          exists: true,
+          data: () => ({
+            role: 'superadmin',
+            sites: ['site-deleted'],
+            deletedAt: 1700000000000,
+          }),
+        });
+      return Promise.resolve({ exists: false });
+    });
+
+    await expect(
+      assertUserHasSiteAccess('user-deleted', 'site-deleted'),
+    ).rejects.toThrow(
+      expect.objectContaining({ status: 403, code: 'user_inactive' }),
     );
   });
 

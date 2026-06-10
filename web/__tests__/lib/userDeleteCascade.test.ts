@@ -52,6 +52,9 @@ function makeDocRef(path: string): Record<string, unknown> {
         data: { ...(prev?.data ?? {}), ...payload },
       });
     },
+    delete: async () => {
+      docs.set(path, { exists: false });
+    },
   };
 }
 
@@ -82,6 +85,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 jest.mock('firebase-admin/firestore', () => ({
   FieldValue: {
     arrayUnion: (...vals: unknown[]) => ({ __op: 'arrayUnion', vals }),
+    delete: () => '__FIELD_DELETE__',
   },
 }));
 
@@ -120,6 +124,18 @@ describe('performUserDeleteCascade — Firebase Auth revoke side-effect', () => 
     });
 
     expect(outcome.authDisabled).toBe(true);
+    const softDelete = updateCalls.find((call) => call.path === 'users/uid-victim');
+    expect(softDelete?.payload).toMatchObject({
+      sites: [],
+      passkeyEnrolled: false,
+      mfaEnrolled: false,
+      mfaSecret: '__FIELD_DELETE__',
+      backupCodes: [],
+      mfaEnrolledAt: '__FIELD_DELETE__',
+      requiresMfaSetup: false,
+      deletedBy: 'superadmin',
+    });
+    expect(softDelete?.payload.deletedAt).toEqual(expect.any(Number));
   });
 
   it('treats auth/user-not-found from updateUser as already-disabled (no rollback)', async () => {

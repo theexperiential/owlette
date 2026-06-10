@@ -56,6 +56,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import {
   ApiAuthError,
+  assertActiveUser,
   requireSession,
 } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
@@ -89,14 +90,10 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     // route can never be redirected against another account.
     const userId = await requireSession(request);
 
+    const userData = await assertActiveUser(userId);
     const db = getAdminDb();
     const userRef = db.collection('users').doc(userId);
 
-    const userDoc = await userRef.get();
-    if (!userDoc.exists) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-    const userData = userDoc.data() ?? {};
     if (!userData.mfaEnrolled) {
       return NextResponse.json(
         { error: 'MFA is not enrolled for this account' },

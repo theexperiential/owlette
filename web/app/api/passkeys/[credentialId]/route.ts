@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
+import { ApiAuthError, assertActiveUser, requireSessionUser } from '@/lib/apiAuth.server';
 import {
   renamePasskey,
   deletePasskey,
@@ -40,6 +40,7 @@ export const PATCH = withRateLimit(async (request: NextRequest) => {
     }
 
     await requireSessionUser(request, userId);
+    await assertActiveUser(userId);
 
     await renamePasskey(userId, credentialId, friendlyName.trim());
 
@@ -67,6 +68,7 @@ export const DELETE = withRateLimit(async (request: NextRequest) => {
     }
 
     await requireSessionUser(request, userId);
+    await assertActiveUser(userId);
 
     await deletePasskey(userId, credentialId);
 

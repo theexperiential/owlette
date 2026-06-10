@@ -54,6 +54,50 @@ def test_cancel_sync_returns_message_when_no_inflight():
         fake._sync_state.close()
 
 
+def test_sync_pull_reuses_pending_cancel_registered_before_handler():
+    """A cancel set while sync_pull is queued is observed when handler starts."""
+    from sync_commands import (
+        _handle_cancel_sync,
+        _handle_sync_pull,
+        _setup_cancel_refcounts,
+        _setup_cancels,
+        discard_pending_sync,
+        register_pending_sync,
+    )
+
+    class FakeService:
+        firebase_client = None
+
+    key = ('s', 'r', 'v')
+    event = register_pending_sync(*key)
+    try:
+        cancel_result = _handle_cancel_sync(
+            {'site_id': 's', 'roost_id': 'r', 'version_id': 'v'},
+            'cancel-1',
+            FakeService(),
+        )
+        assert 'pending sync' in cancel_result
+        assert event.is_set()
+
+        result = _handle_sync_pull(
+            {
+                'site_id': 's',
+                'roost_id': 'r',
+                'version_id': 'v',
+                'version_url': 'https://example.invalid/version.json',
+                'extract_root': 'C:\\tmp\\owlette-test',
+            },
+            'sync-1',
+            FakeService(),
+        )
+
+        assert result == 'sync_pull cancelled before distribution start (accepted)'
+        assert key not in _setup_cancels
+        assert key not in _setup_cancel_refcounts
+    finally:
+        discard_pending_sync(*key, event)
+
+
 # ─── chunk url provider wiring (batch contract) ─────────────────────
 
 

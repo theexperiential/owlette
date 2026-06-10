@@ -60,6 +60,7 @@ jest.mock('firebase-admin/firestore', () => ({
     arrayUnion: (...items: unknown[]) => ({ __op: 'arrayUnion', items }),
     arrayRemove: (...items: unknown[]) => ({ __op: 'arrayRemove', items }),
     serverTimestamp: () => ({ __op: 'serverTimestamp' }),
+    delete: () => ({ __op: 'delete' }),
   },
   Timestamp: { fromDate: (d: Date) => ({ toMillis: () => d.getTime() }) },
 }));
@@ -103,6 +104,8 @@ function applyFieldOps(
         next[key] = current.filter((x) => !items.includes(x));
       } else if (op === 'serverTimestamp') {
         next[key] = Date.now();
+      } else if (op === 'delete') {
+        delete next[key];
       } else {
         next[key] = value;
       }

@@ -282,7 +282,9 @@ export async function requireAdminOrIdToken(request: NextRequest): Promise<strin
 
   const db = getAdminDb();
   const userDoc = await db.collection('users').doc(userId).get();
-  const role = userDoc.exists ? userDoc.data()?.role : null;
+  const userData = userDoc.exists ? userDoc.data() ?? null : null;
+  assertUserDataActive(userData);
+  const role = userData?.role ?? null;
 
   if (role !== 'superadmin') {
     throw new ApiAuthError(403, 'Forbidden: Superadmin access required');
@@ -393,6 +395,26 @@ export async function requireSessionUser(
   return sessionUserId;
 }
 
+function assertUserDataActive(
+  userData: FirebaseFirestore.DocumentData | null
+): asserts userData is FirebaseFirestore.DocumentData {
+  if (!userData || typeof userData.deletedAt === 'number') {
+    throw new ApiAuthError(403, 'Forbidden: User is deleted or inactive', {
+      code: 'user_inactive',
+    });
+  }
+}
+
+export async function assertActiveUser(
+  uid: string
+): Promise<FirebaseFirestore.DocumentData> {
+  const db = getAdminDb();
+  const userDoc = await db.collection('users').doc(uid).get();
+  const userData = userDoc.exists ? userDoc.data() ?? null : null;
+  assertUserDataActive(userData);
+  return userData;
+}
+
 export async function assertUserHasSiteAccess(
   userId: string,
   siteId: string
@@ -408,7 +430,8 @@ export async function assertUserHasSiteAccess(
   const isOwner = siteData?.owner === userId;
 
   const userDoc = await db.collection('users').doc(userId).get();
-  const userData = userDoc.exists ? userDoc.data() : null;
+  const userData = userDoc.exists ? userDoc.data() ?? null : null;
+  assertUserDataActive(userData);
   const isSuperadmin = userData?.role === 'superadmin';
   const assignedSites = Array.isArray(userData?.sites) ? userData?.sites : [];
   const isAssigned = assignedSites.includes(siteId);

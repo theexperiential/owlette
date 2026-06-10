@@ -19,7 +19,7 @@ import { verifyTOTP, verifyBackupCode } from '@/lib/totp';
 import { decrypt, isEncryptionConfigured } from '@/lib/encryption.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
+import { ApiAuthError, assertActiveUser, requireSessionUser } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
 import { markSessionMfaVerified } from '@/lib/sessionManager.server';
 
@@ -51,26 +51,10 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     await requireSessionUser(request, userId);
+    const userData = await assertActiveUser(userId);
 
     const db = getAdminDb();
     const userRef = db.collection('users').doc(userId);
-
-    // Get user's MFA configuration
-    const userDoc = await userRef.get();
-    if (!userDoc.exists) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
-    }
-
-    const userData = userDoc.data();
-    if (!userData) {
-      return NextResponse.json(
-        { error: 'Invalid user data' },
-        { status: 400 }
-      );
-    }
 
     // Check if MFA is enrolled
     if (!userData.mfaEnrolled) {

@@ -3025,11 +3025,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # forces auto-revert, defeating the confirmation flow).
             if cmd_type not in ('mcp_tool_call', 'ack_display_topology'):
                 now = time.time()
-                last_time = self._command_rate_limits.get(cmd_type, 0)
+                rate_key = f"{cmd_type}:{cmd_data.get('process_id') or cmd_data.get('processId') or cmd_data.get('process_name') or ''}"
+                last_time = self._command_rate_limits.get(rate_key, 0)
                 if now - last_time < self.COMMAND_RATE_LIMIT_SECONDS:
                     logging.warning(f"Command rate-limited: {cmd_type} (last executed {now - last_time:.1f}s ago)")
-                    return f"Rate limited: {cmd_type} executed too recently, try again in a few seconds"
-                self._command_rate_limits[cmd_type] = now
+                    return f"Error: rate limited - {cmd_type} executed too recently, try again in a few seconds"
+                self._command_rate_limits[rate_key] = now
 
             # CommandRouter dispatch (new-style handlers, roost v2 onwards).
             # Falls through to legacy if/elif chain if no handler is registered

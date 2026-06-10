@@ -9,6 +9,20 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [2.12.9] - 2026-06-09
+
+### fixed
+
+- **Distribution management is now capability-gated end-to-end.** `roost` deploy / rollback / versions / resync / delete and chunk upload-url routes now require the distribution-manage capability; they were previously reachable by read-only site members.
+- **Soft-deleted users are blocked across the control plane.** A shared active-user guard now rejects tombstoned users on control-plane and self-service credential routes, and the delete cascade clears site membership and revokes passkeys + MFA.
+- **Alert emails no longer send to soft-deleted users.**
+- **Agent `cancel_sync` is honored during the sync setup window.** Cancels that arrived before the active sync handler was ready were previously dropped.
+- **Agent command dispatch now keys rate limits per target.** A dropped duplicate command is surfaced as failed instead of silently completed.
+- **Machine removal now revokes the agent refresh token** so a removed machine cannot keep reporting with an existing refresh session.
+- **roost rollback now re-dispatches to machines** instead of only flipping the version pointer.
+- **The one-click unsubscribe link disables all alert categories**, not just health alerts.
+- **Firestore rules block cross-tenant autonomous Cortex conversation forgery.**
+
 ## [2.12.8] - 2026-06-07
 
 ### added

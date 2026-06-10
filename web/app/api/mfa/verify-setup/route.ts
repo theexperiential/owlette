@@ -19,7 +19,7 @@ import { encrypt, isEncryptionConfigured } from '@/lib/encryption.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
+import { ApiAuthError, assertActiveUser, requireSessionUser } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
 import { markSessionMfaVerified } from '@/lib/sessionManager.server';
 
@@ -51,6 +51,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     await requireSessionUser(request, userId);
+    const userDataPre = await assertActiveUser(userId);
 
     // Check encryption is configured
     if (!isEncryptionConfigured()) {
@@ -72,8 +73,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     // session mfaVerified — full MFA bypass. Re-enrollment must go
     // through /api/mfa/disable first (which requires proof of current
     // factor possession), and only then through setup+verify-setup.
-    const userDocPre = await db.collection('users').doc(userId).get();
-    if (userDocPre.exists && userDocPre.data()?.mfaEnrolled === true) {
+    if (userDataPre.mfaEnrolled === true) {
       return NextResponse.json(
         {
           error:

@@ -29,6 +29,7 @@ import {
   auditActorIdentifier,
   applyAuthDeprecations,
   parseJsonBody,
+  requireDistributionManageCapability,
   requireSiteAuthAndScope,
   validateResourceId,
   validateSiteIdBody,
@@ -106,6 +107,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    const capabilityError = await requireDistributionManageCapability(auth.auth, site.siteId);
+    if (capabilityError) return capabilityError;
 
     const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
     if (gateRes) return gateRes;

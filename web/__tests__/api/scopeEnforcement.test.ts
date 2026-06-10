@@ -46,6 +46,7 @@ import {
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitApiKeyUsed } from '@/lib/auditLogClient';
 import {
+  requireDistributionManageCapability,
   requireSiteAuthAndScope,
   requireRoostAuthAndScope,
   requireAgentOrSiteAuthAndScope,
@@ -93,17 +94,48 @@ function sessionAuth(): ResolvedAuth {
   return { userId: 'user-test', keyContext: null };
 }
 
-function mockPlatformRole(role: 'superadmin' | 'admin' | 'member' | null): void {
+type PlatformUserData = {
+  role?: 'superadmin' | 'admin' | 'member';
+  sites?: string[];
+  deletedAt?: number;
+};
+
+type SiteData = Record<string, unknown>;
+
+function mockFirestoreDocs(
+  opts: { user?: PlatformUserData | null; site?: SiteData | null } = {},
+): void {
+  const userData: PlatformUserData | null =
+    opts.user === undefined ? { role: 'superadmin' } : opts.user;
+  const siteData: SiteData | null =
+    opts.site === undefined ? { owner: 'site-owner' } : opts.site;
+
   mockedGetAdminDb.mockReturnValue({
-    collection: () => ({
+    collection: (collectionName: string) => ({
       doc: () => ({
-        get: async () => ({
-          exists: role !== null,
-          data: () => (role === null ? undefined : { role }),
-        }),
+        get: async () => {
+          const data =
+            collectionName === 'users'
+              ? userData
+              : collectionName === 'sites'
+                ? siteData
+                : null;
+          return {
+            exists: data !== null,
+            data: () => data ?? undefined,
+          };
+        },
       }),
     }),
   } as unknown as ReturnType<typeof getAdminDb>);
+}
+
+function mockPlatformUser(data: PlatformUserData | null): void {
+  mockFirestoreDocs({ user: data });
+}
+
+function mockPlatformRole(role: 'superadmin' | 'admin' | 'member' | null): void {
+  mockPlatformUser(role === null ? null : { role });
 }
 
 beforeEach(() => {
@@ -245,6 +277,35 @@ describe('requireRoostAuthAndScope — roost resource matrix', () => {
   });
 });
 
+describe('requireDistributionManageCapability', () => {
+  it('allows a site owner without a users.sites[] assignment', async () => {
+    mockFirestoreDocs({
+      site: { owner: 'user-test' },
+      user: null,
+    });
+
+    const result = await requireDistributionManageCapability(sessionAuth(), SITE_ID);
+
+    expect(result).toBeNull();
+  });
+
+  it('denies a non-owner member without a users.sites[] assignment', async () => {
+    mockFirestoreDocs({
+      site: { owner: 'someone-else' },
+      user: { role: 'member', sites: [] },
+    });
+
+    const result = await requireDistributionManageCapability(sessionAuth(), SITE_ID);
+
+    expect(result).not.toBeNull();
+    if (result) {
+      expect(result.status).toBe(403);
+      const body = await result.json();
+      expect(body.detail).toBe('capability not granted');
+    }
+  });
+});
+
 describe('machine-scope enforcement (via scopeMatches directly)', () => {
   it.each(ALL_PERMISSIONS)('machine scope accepts %s on exact machine id', async (permission) => {
     // Routes don't currently call requireScope with 'machine', but the
@@ -378,6 +439,24 @@ describe('requirePlatformAuthAndScope', () => {
       expect(body.code).toBe('forbidden');
       expect(body.detail).toBe('superadmin access required');
     }
+  });
+
+  it('rejects a soft-deleted superadmin before platform scope checks', async () => {
+    mockedResolveAuth.mockResolvedValue(
+      authFromScopes([{ resource: 'user', id: '*', permissions: ['admin'] }]),
+    );
+    mockPlatformUser({ role: 'superadmin', deletedAt: Date.now() });
+
+    const result = await requirePlatformAuthAndScope(makeRequest(), 'user', 'admin');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
+      expect(body.code).toBe('forbidden');
+      expect(body.detail).toBe('user is deleted or inactive');
+    }
+    expect(mockedAuditEmit).not.toHaveBeenCalled();
   });
 
   it('rejects a legacy superadmin key without required platform scope', async () => {

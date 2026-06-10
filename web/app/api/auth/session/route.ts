@@ -24,7 +24,7 @@ import {
   getSessionData,
 } from '@/lib/sessionManager.server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { getAdminAuth } from '@/lib/firebase-admin';
+import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
 
 /**
@@ -79,6 +79,14 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       return NextResponse.json(
         { error: 'Invalid duration (must be 1-30 days)' },
         { status: 400 }
+      );
+    }
+
+    const userDoc = await getAdminDb().collection('users').doc(verifiedUserId).get();
+    if (userDoc.exists && typeof userDoc.data()?.deletedAt === 'number') {
+      return NextResponse.json(
+        { error: 'User is deleted or inactive' },
+        { status: 403 }
       );
     }
 

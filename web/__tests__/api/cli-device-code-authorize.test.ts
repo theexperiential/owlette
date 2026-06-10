@@ -7,20 +7,31 @@ jest.mock('@/lib/withRateLimit', () => ({
 }));
 
 const mockRequireSessionOrIdToken = jest.fn();
+const mockAssertActiveUser = jest.fn();
 const mockAssertUserHasSiteAccess = jest.fn();
 
 jest.mock('@/lib/apiAuth.server', () => {
   class ApiAuthError extends Error {
     status: number;
-    constructor(message: string, status = 401) {
+    code?: string;
+    details?: Record<string, unknown>;
+
+    constructor(
+      status: number,
+      message: string,
+      opts?: { code?: string; details?: Record<string, unknown> },
+    ) {
       super(message);
       this.status = status;
+      this.code = opts?.code;
+      this.details = opts?.details;
     }
   }
 
   return {
     ApiAuthError,
     requireSessionOrIdToken: (...args: unknown[]) => mockRequireSessionOrIdToken(...args),
+    assertActiveUser: (...args: unknown[]) => mockAssertActiveUser(...args),
     assertUserHasSiteAccess: (...args: unknown[]) => mockAssertUserHasSiteAccess(...args),
   };
 });
@@ -81,6 +92,7 @@ function request(body: Record<string, unknown>): NextRequest {
 beforeEach(() => {
   jest.clearAllMocks();
   mockRequireSessionOrIdToken.mockResolvedValue('user-1');
+  mockAssertActiveUser.mockResolvedValue({ role: 'admin' });
   mockAssertUserHasSiteAccess.mockResolvedValue(undefined);
   mockUserRoleDoc.mockResolvedValue({
     exists: true,
@@ -183,6 +195,38 @@ describe('POST /api/cli/device-code/authorize', () => {
 
     expect(res.status).toBe(409);
     expect(body.code).toBe('pairing_phrase_already_authorized');
+    expect(mockTxSet).not.toHaveBeenCalled();
+    expect(mockTxUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects inactive users before authorizing a device code', async () => {
+    const { ApiAuthError } = jest.requireMock('@/lib/apiAuth.server') as {
+      ApiAuthError: new (
+        status: number,
+        message: string,
+        opts?: { code?: string; details?: Record<string, unknown> },
+      ) => Error;
+    };
+    mockAssertActiveUser.mockRejectedValue(
+      new ApiAuthError(403, 'Forbidden: User is deleted or inactive', {
+        code: 'user_inactive',
+      }),
+    );
+
+    const res = await POST(
+      request({
+        code: 'PAIR-123',
+        name: 'CLI',
+        scopes: [{ resource: 'site', id: '*', permissions: ['read'] }],
+      }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.code).toBe('forbidden');
+    expect(body.detail).toBe('Forbidden: User is deleted or inactive');
+    expect(mockAssertActiveUser).toHaveBeenCalledWith('user-1');
+    expect(mockTxGet).not.toHaveBeenCalled();
     expect(mockTxSet).not.toHaveBeenCalled();
     expect(mockTxUpdate).not.toHaveBeenCalled();
   });

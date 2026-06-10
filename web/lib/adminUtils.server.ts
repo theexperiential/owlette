@@ -177,6 +177,7 @@ export async function getSiteAlertRecipients(
     for (const doc of usersQuery.docs) {
       seenIds.add(doc.id);
       const data = doc.data();
+      if (typeof data?.deletedAt === 'number') continue;
       const email = data?.email as string | undefined;
       if (!email) continue;
       if (filterPreference && data?.preferences?.[filterPreference] === false) continue;
@@ -187,9 +188,11 @@ export async function getSiteAlertRecipients(
       try {
         const ownerDoc = await db.collection('users').doc(ownerId).get();
         const data = ownerDoc.data();
-        const email = data?.email as string | undefined;
-        if (email && !(filterPreference && data?.preferences?.[filterPreference] === false)) {
-          recipients.push({ userId: ownerId, email, ccEmails: data?.preferences?.alertCcEmails || [], mutedMachines: data?.preferences?.mutedMachines || [] });
+        if (typeof data?.deletedAt !== 'number') {
+          const email = data?.email as string | undefined;
+          if (email && !(filterPreference && data?.preferences?.[filterPreference] === false)) {
+            recipients.push({ userId: ownerId, email, ccEmails: data?.preferences?.alertCcEmails || [], mutedMachines: data?.preferences?.mutedMachines || [] });
+          }
         }
       } catch {
         // Skip
@@ -232,6 +235,7 @@ export async function getSiteAlertEmailsWithCc(
     for (const doc of usersQuery.docs) {
       queriedIds.add(doc.id);
       const data = doc.data();
+      if (typeof data?.deletedAt === 'number') continue;
       const email = data?.email as string | undefined;
       if (!email) continue;
       if (data?.preferences?.[filterPreference] === false) continue;
@@ -244,11 +248,13 @@ export async function getSiteAlertEmailsWithCc(
       try {
         const ownerDoc = await db.collection('users').doc(ownerId).get();
         const data = ownerDoc.data();
-        const email = data?.email as string | undefined;
-        if (email && data?.preferences?.[filterPreference] !== false) {
-          toEmails.add(email);
-          const userCc = data?.preferences?.alertCcEmails as string[] | undefined;
-          if (userCc) userCc.forEach(cc => ccEmails.add(cc));
+        if (typeof data?.deletedAt !== 'number') {
+          const email = data?.email as string | undefined;
+          if (email && data?.preferences?.[filterPreference] !== false) {
+            toEmails.add(email);
+            const userCc = data?.preferences?.alertCcEmails as string[] | undefined;
+            if (userCc) userCc.forEach(cc => ccEmails.add(cc));
+          }
         }
       } catch {
         // Skip if owner fetch fails
