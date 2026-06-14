@@ -419,6 +419,18 @@ describe('verifyUserSiteAccess', () => {
     await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow('Site not found');
   });
 
+  it('rejects a soft-deleted user even if their role would otherwise grant access', async () => {
+    // Regression: a soft-deleted superadmin holding a stale iron-session cookie
+    // must not retain Cortex access (incl. tier-3 tools) until the cookie lapses.
+    const db = makeAccessDb({
+      users: { role: 'superadmin', sites: [], deletedAt: 1700000000000 },
+      sites: { owner: 'someone' },
+    });
+    await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow(
+      /deleted or inactive/
+    );
+  });
+
   it('grants superadmin full access with isSiteAdmin=true', async () => {
     const db = makeAccessDb({
       users: { role: 'superadmin', sites: [] },
