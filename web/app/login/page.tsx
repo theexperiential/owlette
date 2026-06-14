@@ -236,6 +236,11 @@ function LoginForm() {
                 className="bg-input border-border text-foreground placeholder:text-muted-foreground"
               />
             </div>
+            <div className="flex justify-end">
+              <a href="/forgot-password" className="text-sm text-accent-cyan hover:text-accent-cyan-hover hover:underline">
+                forgot password?
+              </a>
+            </div>
             <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
               {loading ? 'signing in...' : 'sign in with email'}
             </Button>

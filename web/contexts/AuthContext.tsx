@@ -218,6 +218,8 @@ interface AuthContextType {
   updateUserProfile: (firstName: string, lastName: string) => Promise<void>;
   updateUserPhoto: (photoBlob: Blob | null) => Promise<void>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  /** Send a Firebase password-reset email. Resolves even for unknown addresses (email-enumeration protection) — callers must show a generic confirmation, never confirm/deny account existence. */
+  sendPasswordReset: (email: string) => Promise<void>;
   updateUserPreferences: (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => Promise<void>;
   updateLastSite: (siteId: string) => void;
   updateLastMachine: (siteId: string, machineId: string) => void;
@@ -243,6 +245,7 @@ const AuthContext = createContext<AuthContextType>({
   updateUserProfile: async () => {},
   updateUserPhoto: async () => {},
   updatePassword: async () => {},
+  sendPasswordReset: async () => {},
   updateUserPreferences: async () => {},
   updateLastSite: () => {},
   updateLastMachine: () => {},
@@ -834,6 +837,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const sendPasswordReset = useCallback(async (email: string) => {
+    // Routes through our own server endpoint, which mints the reset link via
+    // the Admin SDK and sends a BRANDED email through Resend — instead of
+    // Firebase's plain built-in template. The route is enumeration-safe (200
+    // whether or not an account exists), so on success we stay silent and let
+    // the /forgot-password page render its generic confirmation. Mirrors
+    // signIn: the method owns error toasts, the page owns the success path.
+    let res: Response;
+    try {
+      res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+    } catch (error) {
+      toast.error('Reset Failed', {
+        description: 'Network error — please check your connection and try again.',
+      });
+      throw error;
+    }
+
+    if (!res.ok) {
+      if (res.status === 429) {
+        toast.error('Too Many Requests', {
+          description: 'Too many attempts. Please wait a few minutes and try again.',
+        });
+      } else if (res.status === 400) {
+        toast.error('Invalid Email', {
+          description: 'Please enter a valid email address.',
+        });
+      } else {
+        toast.error('Reset Failed', {
+          description: 'Could not send the reset email. Please try again.',
+        });
+      }
+      throw new Error(`forgot-password failed (${res.status})`);
+    }
+  }, []);
+
   const deleteAccount = useCallback(async (password: string) => {
     try {
       if (!auth?.currentUser || !db) {
@@ -923,11 +965,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     updateUserProfile,
     updateUserPhoto,
     updatePassword,
+    sendPasswordReset,
     updateUserPreferences,
     updateLastSite,
     updateLastMachine,
     deleteAccount,
-  }), [user, loading, role, isSuperadmin, isSiteAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
+  }), [user, loading, role, isSuperadmin, isSiteAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, sendPasswordReset, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

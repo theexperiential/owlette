@@ -117,6 +117,38 @@ export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Password reset email                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Build the branded password-reset email — same dark-theme layout, logo, and
+ * tridant footer as every other Owlette email (this is what replaces
+ * Firebase's plain built-in template).
+ *
+ * `resetUrl` is the in-app /reset-password link carrying the Firebase oobCode.
+ * `expiryMinutes` documents the link's lifetime in the body copy (Firebase
+ * password-reset codes default to 1 hour). No unsubscribe link: this is a
+ * transactional security email, not an alert.
+ */
+export function buildPasswordResetEmail(resetUrl: string, expiryMinutes = 60): string {
+  const ctaButton =
+    `<table cellpadding="0" cellspacing="0" role="presentation" style="margin:24px 0;">` +
+    `<tr><td style="border-radius:6px;background:${EMAIL_COLORS.cyan};">` +
+    `<a href="${resetUrl}" style="display:inline-block;padding:12px 28px;color:${EMAIL_COLORS.bodyBg};text-decoration:none;font-weight:700;font-size:14px;border-radius:6px;">reset password</a>` +
+    `</td></tr></table>`;
+
+  const content = `
+    <h2 style="color:${EMAIL_COLORS.cyan};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">reset your password</h2>
+    <p style="margin:0 0 8px;color:${EMAIL_COLORS.muted};">we received a request to reset the password for your owlette account. click the button below to choose a new one.</p>
+    ${ctaButton}
+    <p style="margin:0 0 12px;color:${EMAIL_COLORS.muted};font-size:13px;">this link expires in ${expiryMinutes} minutes and can only be used once. if you didn't request a password reset, you can safely ignore this email — your password won't change.</p>
+    <p style="margin:0;color:${EMAIL_COLORS.muted};font-size:12px;">if the button doesn't work, copy and paste this link into your browser:<br><span style="color:${EMAIL_COLORS.cyan};word-break:break-all;">${resetUrl}</span></p>
+  `;
+
+  return wrapEmailLayout(content, { preheader: 'reset your owlette password' });
+}
+
+/* ------------------------------------------------------------------ */
 /*  Timestamp helper                                                   */
 /* ------------------------------------------------------------------ */
 
