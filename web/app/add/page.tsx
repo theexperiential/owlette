@@ -197,9 +197,9 @@ export default function AddMachinePage() {
       <div className="absolute inset-0 blueprint-grid opacity-15" />
       <Card className="relative z-10 w-full max-w-lg border-border bg-card">
         <CardHeader className="space-y-4 flex flex-col items-center">
-          <OwletteEyeIcon size={48} />
+          <OwletteEyeIcon size={80} />
           <div className="space-y-1 text-center">
-            <CardTitle className="text-xl font-bold text-foreground">add machine</CardTitle>
+            <CardTitle className="text-2xl font-bold text-foreground">add machine</CardTitle>
             <CardDescription className="text-muted-foreground">
               enter the pairing phrase shown on your machine
             </CardDescription>
