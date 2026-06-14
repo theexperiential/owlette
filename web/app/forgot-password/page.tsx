@@ -32,8 +32,11 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
-      <Card className="w-full max-w-md bg-card/50 border-border">
+    <div className="relative flex min-h-screen items-center justify-center p-4">
+      {/* Grid background */}
+      <div className="absolute inset-0 dot-grid opacity-30" />
+      <div className="absolute inset-0 blueprint-grid opacity-15" />
+      <Card className="relative z-10 w-full max-w-md border-border bg-card">
         <CardHeader className="space-y-4 flex flex-col items-center">
           <OwletteEyeIcon size={80} />
           <div className="space-y-1 text-center">

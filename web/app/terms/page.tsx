@@ -13,19 +13,19 @@ export default function TermsPage() {
         <div className="mb-8">
           <button
             onClick={() => router.back()}
-            className="text-accent-cyan hover:text-accent-cyan text-sm cursor-pointer"
+            className="text-accent-cyan hover:text-accent-cyan-hover text-sm cursor-pointer"
           >
             &larr; back
           </button>
         </div>
 
-        <article className="prose prose-invert prose-slate max-w-none">
-          <h1 className="text-3xl font-bold text-white mb-2">terms of service</h1>
+        <article className="prose dark:prose-invert prose-slate max-w-none">
+          <h1 className="text-3xl font-bold text-foreground mb-2">terms of service</h1>
           <p className="text-muted-foreground text-sm mb-8">last updated: {lastUpdated}</p>
 
           <div className="space-y-8 text-muted-foreground">
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">1. acceptance of terms</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">1. acceptance of terms</h2>
               <p>
                 by accessing or using owlette (&quot;the service&quot;), operated by The Experiential Company, LLC
                 (&quot;TEC,&quot; &quot;we,&quot; &quot;our,&quot; or &quot;us&quot;), you agree to be bound by these terms of service
@@ -40,7 +40,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">2. description of service</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">2. description of service</h2>
               <p>
                 owlette is a cloud-connected process management and remote deployment system
                 designed for managing Windows applications across multiple machines. the service
@@ -56,7 +56,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">3. account responsibilities</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">3. account responsibilities</h2>
               <p>
                 you are responsible for:
               </p>
@@ -74,7 +74,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">4. acceptable use</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">4. acceptable use</h2>
               <p>you agree not to use the service to:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li>monitor or manage machines without proper authorization</li>
@@ -92,7 +92,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">5. intellectual property</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">5. intellectual property</h2>
               <p>
                 the owlette software is released under the Functional Source License, Version 1.1, Apache 2.0 Future License (FSL-1.1-Apache-2.0).
                 you may use, modify, and distribute the software for any permitted purpose — excluding competing commercial uses — in accordance with that license. each release automatically converts to Apache License 2.0 two years after it is made available.
@@ -109,7 +109,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">6. disclaimer of warranties</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">6. disclaimer of warranties</h2>
               <p className="uppercase font-medium">
                 the service is provided &quot;as is&quot; and &quot;as available&quot; without warranties
                 of any kind, either express or implied, including but not limited to implied
@@ -127,7 +127,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">7. limitation of liability</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">7. limitation of liability</h2>
               <p className="uppercase font-medium">
                 to the maximum extent permitted by law, TEC shall not be liable for any indirect,
                 incidental, special, consequential, or punitive damages, or any loss of profits
@@ -148,7 +148,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">8. indemnification</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">8. indemnification</h2>
               <p>
                 you agree to indemnify, defend, and hold harmless TEC and its officers, directors,
                 employees, and agents from and against any claims, liabilities, damages, losses,
@@ -164,7 +164,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">9. termination</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">9. termination</h2>
               <p>
                 we may suspend or terminate your access to the service at any time, with or
                 without cause, and with or without notice. upon termination:
@@ -181,7 +181,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">10. governing law</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">10. governing law</h2>
               <p>
                 these terms shall be governed by and construed in accordance with the laws of
                 the State of California, United States, without regard to its conflict of law
@@ -195,7 +195,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">11. dispute resolution</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">11. dispute resolution</h2>
               <p>
                 before filing a claim against TEC, you agree to try to resolve the dispute
                 informally by contacting us at{' '}
@@ -209,7 +209,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">12. severability</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">12. severability</h2>
               <p>
                 if any provision of these terms is held to be invalid or unenforceable, such
                 provision shall be struck and the remaining provisions shall be enforced to
@@ -218,7 +218,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">13. entire agreement</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">13. entire agreement</h2>
               <p>
                 these terms, together with our privacy policy, constitute the entire agreement
                 between you and TEC regarding the service and supersede all prior agreements
@@ -227,7 +227,7 @@ export default function TermsPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">14. contact us</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">14. contact us</h2>
               <p>
                 if you have any questions about these terms, please contact us at:
               </p>
