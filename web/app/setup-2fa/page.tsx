@@ -7,6 +7,7 @@ import { generateBackupCodes } from '@/lib/totp';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { toast } from 'sonner';
 import { PasskeyManager } from '@/components/PasskeyManager';
 /* eslint-disable @next/next/no-img-element */
@@ -142,11 +143,14 @@ export default function Setup2FAPage() {
       <div className="absolute inset-0 dot-grid opacity-30" />
       <div className="absolute inset-0 blueprint-grid opacity-15" />
       <Card className="relative z-10 w-full max-w-2xl border-border bg-card">
-        <CardHeader>
-          <CardTitle>set up two-factor authentication</CardTitle>
-          <CardDescription>
-            secure your account with two-factor authentication (2FA)
-          </CardDescription>
+        <CardHeader className="space-y-4 flex flex-col items-center">
+          <OwletteEyeIcon size={80} />
+          <div className="space-y-1 text-center">
+            <CardTitle className="text-2xl font-bold text-foreground">set up two-factor authentication</CardTitle>
+            <CardDescription className="text-muted-foreground">
+              secure your account with two-factor authentication (2FA)
+            </CardDescription>
+          </div>
         </CardHeader>
         <CardContent>
           {step === 'setup' && (
