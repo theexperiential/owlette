@@ -12,13 +12,13 @@ import { useMachineOperations } from '@/hooks/useMachineOperations';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { useAgentAlertToasts, type ExeMissingToastAlert } from '@/hooks/useAgentAlertToasts';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import { Plus, LayoutGrid, List, ChevronsUpDown, ChevronsDownUp, Square, Copy, Trash2, Download, Monitor, Cog, Settings2, RotateCw } from 'lucide-react';
+import { Plus, LayoutGrid, List, ChevronsUpDown, ChevronsDownUp, Square, Copy, Trash2, Download, Monitor, Cog, Settings2, RotateCw, Loader2, CheckCircle2 } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody } from '@/components/ui/table';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
@@ -41,6 +41,7 @@ import { useDevicePrefs } from '@/hooks/useDevicePrefs';
 import { useSlidePanel } from '@/hooks/useSlidePanel';
 import { unionIds } from '@/lib/deviceResolvers';
 import { AddMachineButton } from './components/AddMachineButton';
+import { useDeviceCodeAuthorize } from '@/hooks/useDeviceCodeAuthorize';
 import { LoadingWord } from '@/components/LoadingWord';
 import type { Process } from '@/hooks/useFirestore';
 
@@ -78,6 +79,15 @@ export default function DashboardPage() {
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [viewType, setViewType] = useState<ViewType>('card');
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+
+  // Add-machine modal control for the zero-machine "getting started" card.
+  // Lifted so the card-header "+" (opens on the "enter code" tab) and step 3's
+  // "generate code" link can drive the same modal on different tabs.
+  const [addMachineOpen, setAddMachineOpen] = useState(false);
+  const [addMachineTab, setAddMachineTab] = useState<'enter' | 'generate'>('enter');
+  // Inline "enter the 3-word phrase" authorize for the getting-started card —
+  // shares its implementation with AddMachineButton's "enter code" tab.
+  const emptyStateAuthorize = useDeviceCodeAuthorize(currentSiteId);
 
 
   // Schedule Editor dialog state (single instance, opened by gear icon on any process)
@@ -1107,13 +1117,28 @@ export default function DashboardPage() {
               <CardDescription className="text-muted-foreground">
                 connect your first machine to start managing processes
               </CardDescription>
+              {/* Header "+" — reachable even with zero machines, so the manual
+                  "enter code" and bulk "generate code" pairing paths aren't
+                  gated behind already having a machine. */}
+              {sites.length > 0 && (
+                <CardAction>
+                  <AddMachineButton
+                    currentSiteId={currentSiteId}
+                    currentSiteName={currentSite?.name}
+                    open={addMachineOpen}
+                    onOpenChange={setAddMachineOpen}
+                    tab={addMachineTab}
+                    onTabChange={setAddMachineTab}
+                  />
+                </CardAction>
+              )}
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Step 1: Create Your First Site (only shown when no sites exist) */}
               {sites.length === 0 && (
-                <div className="rounded-lg border-2 border-accent-cyan bg-accent-cyan/10 p-6">
+                <div className="rounded-lg border border-accent-cyan/40 bg-accent-cyan/5 p-6">
                   <h3 className="text-lg font-bold text-foreground mb-2">step 1: create your first site</h3>
-                  <p className="text-sm text-foreground mb-4">
+                  <p className="text-sm text-muted-foreground mb-4">
                     Sites organize your machines by location or purpose (e.g., &quot;NYC Office&quot;, &quot;Home Studio&quot;, &quot;Production Floor&quot;).
                     Create your first site to get started!
                   </p>
@@ -1130,7 +1155,7 @@ export default function DashboardPage() {
               {/* Steps 2-5: Only shown after site is created */}
               {sites.length > 0 && (
                 <>
-                  <div className="rounded-lg border border-border bg-background p-4">
+                  <div className="rounded-lg border border-border bg-card-sunken p-4">
                     <h3 className="font-semibold text-foreground mb-3">step 1: download owlette agent</h3>
                 <p className="text-sm text-muted-foreground mb-4">
                   download and run the installer <strong className="text-foreground">on the machine you want to add</strong> (not necessarily this one).
@@ -1189,19 +1214,65 @@ export default function DashboardPage() {
                   </Button>
                 </div>
               </div>
-              <div className="rounded-lg border border-border bg-background p-4">
+              <div className="rounded-lg border border-border bg-card-sunken p-4">
                 <h3 className="font-semibold text-foreground">step 2: run the installer</h3>
                 <p className="text-sm text-muted-foreground">
                   on that machine, double-click the installer - it will automatically open a browser for authentication
                 </p>
               </div>
-              <div className="rounded-lg border border-border bg-background p-4">
+              <div className="rounded-lg border border-border bg-card-sunken p-4">
                 <h3 className="font-semibold text-foreground">step 3: authorize agent</h3>
                 <p className="text-sm text-muted-foreground">
                   log in and authorize the agent for site <span className="font-mono text-accent-cyan">{currentSite?.name || currentSiteId}</span>
                 </p>
+
+                {emptyStateAuthorize.success ? (
+                  <div className="mt-3 flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-foreground">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                    machine authorized — it will appear above within seconds.
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
+                    <p className="text-sm text-muted-foreground">
+                      on remote desktop (Parsec, TeamViewer, RDP)? enter the 3-word phrase the installer shows instead:
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        value={emptyStateAuthorize.phrase}
+                        onChange={(e) => emptyStateAuthorize.setPhrase(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') emptyStateAuthorize.authorize(); }}
+                        placeholder="e.g., silver-compass-drift"
+                        className="border-border bg-muted/50 font-mono text-foreground"
+                        autoComplete="off"
+                        data-testid="getting-started-enter-phrase"
+                      />
+                      <Button
+                        onClick={() => emptyStateAuthorize.authorize()}
+                        disabled={!emptyStateAuthorize.phrase.trim() || emptyStateAuthorize.isAuthorizing}
+                        className="shrink-0 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        data-testid="getting-started-authorize"
+                      >
+                        {emptyStateAuthorize.isAuthorizing ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            authorizing...
+                          </>
+                        ) : (
+                          'authorize'
+                        )}
+                      </Button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { setAddMachineTab('generate'); setAddMachineOpen(true); }}
+                      className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer underline-offset-2 hover:underline"
+                    >
+                      deploying many machines at once? generate a silent-install code
+                    </button>
+                  </div>
+                )}
               </div>
-              <div className="rounded-lg border border-border bg-background p-4">
+              <div className="rounded-lg border border-border bg-card-sunken p-4">
                 <h3 className="font-semibold text-foreground">step 4: done!</h3>
                 <p className="text-sm text-muted-foreground">
                   the installer completes automatically and that machine will appear above within seconds

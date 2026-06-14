@@ -9,21 +9,53 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Plus, Loader2, CheckCircle2, Copy, Monitor, Terminal, Download, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
+import { useDeviceCodeAuthorize } from '@/hooks/useDeviceCodeAuthorize';
+
+type AddMachineTab = 'enter' | 'generate';
 
 interface AddMachineButtonProps {
   currentSiteId: string;
   currentSiteName?: string;
+  /**
+   * Controlled-modal props. When provided, the parent owns the modal's
+   * open/tab state — used by the zero-machine "getting started" card so its
+   * header "+" and its step-3 "generate code" link can drive the same modal on
+   * different tabs. Omit all of them for the default self-contained button.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  tab?: AddMachineTab;
+  onTabChange?: (tab: AddMachineTab) => void;
 }
 
-export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineButtonProps) {
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<'enter' | 'generate'>('enter');
+export function AddMachineButton({
+  currentSiteId,
+  currentSiteName,
+  open: controlledOpen,
+  onOpenChange,
+  tab: controlledTab,
+  onTabChange,
+}: AddMachineButtonProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const [internalTab, setInternalTab] = useState<AddMachineTab>('enter');
   const { version, downloadUrl, isLoading: isLoadingVersion } = useInstallerVersion();
 
-  // Enter Code tab state
-  const [enterPhrase, setEnterPhrase] = useState('');
-  const [isAuthorizing, setIsAuthorizing] = useState(false);
-  const [enterSuccess, setEnterSuccess] = useState(false);
+  // Support both an uncontrolled button (default) and a parent-controlled modal.
+  const open = controlledOpen ?? internalOpen;
+  const tab = controlledTab ?? internalTab;
+  const setOpen = (next: boolean) => (onOpenChange ?? setInternalOpen)(next);
+  const setTab = (next: AddMachineTab) => (onTabChange ?? setInternalTab)(next);
+
+  // Enter Code tab state — shared with the getting-started card's inline field
+  // via the hook so the authorize call has a single implementation.
+  const {
+    phrase: enterPhrase,
+    setPhrase: setEnterPhrase,
+    authorize: handleAuthorize,
+    isAuthorizing,
+    success: enterSuccess,
+    reset: resetEnter,
+  } = useDeviceCodeAuthorize(currentSiteId);
 
   // Generate Code tab state
   const [generatedPhrase, setGeneratedPhrase] = useState('');
@@ -31,9 +63,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
   const [generateSuccess, setGenerateSuccess] = useState(false);
 
   const resetState = () => {
-    setEnterPhrase('');
-    setIsAuthorizing(false);
-    setEnterSuccess(false);
+    resetEnter();
     setGeneratedPhrase('');
     setIsGenerating(false);
     setGenerateSuccess(false);
@@ -43,36 +73,6 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
   const handleOpenChange = (newOpen: boolean) => {
     setOpen(newOpen);
     if (!newOpen) resetState();
-  };
-
-  // Enter Code: authorize an existing phrase
-  const handleAuthorize = async () => {
-    if (!enterPhrase.trim() || !currentSiteId) return;
-
-    setIsAuthorizing(true);
-    try {
-      const response = await fetch('/api/agent/auth/device-code/authorize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pairPhrase: enterPhrase.trim().toLowerCase(),
-          siteId: currentSiteId,
-        }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Authorization failed');
-      }
-
-      setEnterSuccess(true);
-      toast.success('Machine authorized! It will appear on your dashboard shortly.');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      toast.error(message || 'Failed to authorize machine');
-    } finally {
-      setIsAuthorizing(false);
-    }
   };
 
   // Generate Code: create a pre-authorized phrase for /ADD= bulk deploy
@@ -133,7 +133,7 @@ export function AddMachineButton({ currentSiteId, currentSiteName }: AddMachineB
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setOpen(true)}
+              onClick={() => { setTab('enter'); setOpen(true); }}
               className="text-muted-foreground cursor-pointer group"
             >
               <Plus className="h-4 w-4" />
