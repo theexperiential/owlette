@@ -18,9 +18,9 @@ handler responsibilities:
 design:
 - handlers are pure orchestration: every IO module they touch lives in
   its own file with its own tests. this keeps the integration shallow.
-- cancellation: each in-flight distribution registers its threading.Event
-  in a process-global registry keyed by distribution_id. cancel_sync
-  fires the event by id.
+- cancellation: each in-flight sync registers its threading.Event first by
+  (site_id, roost_id, version_id), then by distribution_id once state exists.
+  cancel_sync fires the event through whichever key is currently available.
 
 NOT this module's job:
 - the actual sync engine logic (downloader / assembler / version)
@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from command_router import CommandRouter
 from destination_allowlist import DestinationAllowlist, DestinationNotAllowedError
@@ -49,11 +49,86 @@ except ImportError:  # pragma: no cover — only hit in isolated unit-test envs
 
 logger = logging.getLogger(__name__)
 
-# process-global registry of in-flight distributions. allows cancel_sync
+# process-global registries of in-flight distributions. allow cancel_sync
 # to reach into a running sync and fire its cancel_event.
+# Before start_distribution returns, the distribution_id is not known, so
+# setup-phase syncs are keyed by the command's natural identity.
+# (site_id, roost_id, version_id) -> threading.Event
+_SyncCancelKey = Tuple[str, str, str]
+_setup_cancels: Dict[_SyncCancelKey, threading.Event] = {}
+_setup_cancel_refcounts: Dict[_SyncCancelKey, int] = {}
 # distribution_id -> threading.Event
 _inflight_cancels: Dict[int, threading.Event] = {}
 _inflight_lock = threading.Lock()
+
+
+def register_pending_sync(
+    site_id: str, roost_id: str, version_id: str
+) -> threading.Event:
+    """
+    Register a sync_pull that has been accepted into the slow queue.
+
+    The handler will later reuse this Event, so cancel_sync can be honored
+    while the command is waiting for the slow worker.
+    """
+    cancel_key = (site_id, roost_id, version_id)
+    with _inflight_lock:
+        cancel_event = _setup_cancels.get(cancel_key)
+        if cancel_event is None:
+            cancel_event = threading.Event()
+            _setup_cancels[cancel_key] = cancel_event
+            _setup_cancel_refcounts[cancel_key] = 0
+        _setup_cancel_refcounts[cancel_key] = (
+            _setup_cancel_refcounts.get(cancel_key, 0) + 1
+        )
+        return cancel_event
+
+
+def discard_pending_sync(
+    site_id: str,
+    roost_id: str,
+    version_id: str,
+    cancel_event: Optional[threading.Event] = None,
+) -> None:
+    """Release one pending/setup registration if it still matches."""
+    cancel_key = (site_id, roost_id, version_id)
+    with _inflight_lock:
+        _discard_setup_cancel_locked(cancel_key, cancel_event)
+
+
+def _ensure_setup_cancel(cancel_key: _SyncCancelKey) -> threading.Event:
+    """
+    Return the enqueue-registered Event for this sync, or create one for
+    direct/test handler invocation that did not pass through FirebaseClient.
+    """
+    with _inflight_lock:
+        cancel_event = _setup_cancels.get(cancel_key)
+        if cancel_event is None:
+            cancel_event = threading.Event()
+            _setup_cancels[cancel_key] = cancel_event
+            _setup_cancel_refcounts[cancel_key] = 1
+        else:
+            _setup_cancel_refcounts.setdefault(cancel_key, 1)
+        return cancel_event
+
+
+def _discard_setup_cancel_locked(
+    cancel_key: _SyncCancelKey,
+    cancel_event: Optional[threading.Event] = None,
+) -> None:
+    """Release one setup registration. Caller must hold _inflight_lock."""
+    current = _setup_cancels.get(cancel_key)
+    if current is None:
+        return
+    if cancel_event is not None and current is not cancel_event:
+        return
+
+    remaining = _setup_cancel_refcounts.get(cancel_key, 1) - 1
+    if remaining <= 0:
+        _setup_cancels.pop(cancel_key, None)
+        _setup_cancel_refcounts.pop(cancel_key, None)
+    else:
+        _setup_cancel_refcounts[cancel_key] = remaining
 
 
 def register_handlers(router: CommandRouter) -> None:
@@ -90,97 +165,166 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
     site_id = _require_str(cmd_data, 'site_id')
     roost_id = _require_str(cmd_data, 'roost_id')
     version_id = _require_str(cmd_data, 'version_id')
-    version_url = _require_str(cmd_data, 'version_url')
-    extract_root = _require_str(cmd_data, 'extract_root')
+    cancel_key = (site_id, roost_id, version_id)
+    cancel_event = _ensure_setup_cancel(cancel_key)
+    dist_id: Optional[int] = None
+    setup_entry_released = False
 
-    # Wave 5.4 — kill-switch check. Admin sets sites/{siteId}.roostEnabled=false
-    # to halt all new roost work on this site. In-flight distributions are
-    # NOT cancelled here (cancel_sync handler owns that). Fail-open: a
-    # firestore read error treats the flag as enabled so a transient network
-    # blip doesn't pause deploys. See agent/src/roost_kill_switch.py.
+    def _cancelled_before_distribution(stage: str) -> Optional[str]:
+        if not cancel_event.is_set():
+            return None
+        _report_target_state(service, site_id, roost_id, version_id, 'cancelled')
+        return f"sync_pull cancelled before distribution start ({stage})"
+
     try:
-        if not _roost_is_enabled(site_id, _firestore_reader_for(service)):
-            logger.warning(
-                f"sync_pull: refusing to start — roost is disabled on site {site_id!r} "
-                f"(version {version_id})"
-            )
-            return f"sync_pull skipped: roost kill-switch engaged for site {site_id}"
-    except Exception as e:
-        # defensive: the check itself should fail-open internally, but if
-        # something above it throws, keep going rather than silently
-        # declining commands.
-        logger.warning(
-            f"sync_pull: roost kill-switch check errored ({type(e).__name__}: {e}) — "
-            f"proceeding fail-open"
-        )
+        version_url = _require_str(cmd_data, 'version_url')
+        extract_root = _require_str(cmd_data, 'extract_root')
 
-    state = _state_for(service)
-    allowlist = _allowlist_for(service)
-    cancel_event = threading.Event()
+        cancelled = _cancelled_before_distribution('accepted')
+        if cancelled:
+            return cancelled
 
-    # Report 'pending' the instant we accept the command so the web UI can
-    # surface "target queued" before version fetch even starts.
-    _report_target_state(service, site_id, roost_id, version_id, 'pending')
-
-    # Mint a fresh signed GET URL. `version_url` in the command payload
-    # is either unsigned (the stored object URL — not fetchable from a
-    # private bucket) or expired (15-min TTL), so ignore it and request
-    # a fresh URL right before the fetch. If minting fails, fall back to
-    # the payload URL on the thin chance it was still valid — no reason
-    # to turn a transient API blip into a hard failure.
-    fetch_url = version_url
-    fb = getattr(service, 'firebase_client', None)
-    if fb is not None and hasattr(fb, 'get_version_download_url'):
+        # Wave 5.4 — kill-switch check. Admin sets sites/{siteId}.roostEnabled=false
+        # to halt all new roost work on this site. In-flight distributions are
+        # NOT cancelled here (cancel_sync handler owns that). Fail-open: a
+        # firestore read error treats the flag as enabled so a transient network
+        # blip doesn't pause deploys. See agent/src/roost_kill_switch.py.
         try:
-            fetch_url = fb.get_version_download_url(roost_id, version_id)
+            if not _roost_is_enabled(site_id, _firestore_reader_for(service)):
+                cancelled = _cancelled_before_distribution('kill-switch check')
+                if cancelled:
+                    return cancelled
+                logger.warning(
+                    f"sync_pull: refusing to start — roost is disabled on site {site_id!r} "
+                    f"(version {version_id})"
+                )
+                return f"sync_pull skipped: roost kill-switch engaged for site {site_id}"
         except Exception as e:
+            # defensive: the check itself should fail-open internally, but if
+            # something above it throws, keep going rather than silently
+            # declining commands.
             logger.warning(
-                f"sync_pull: failed to mint fresh version URL "
-                f"({type(e).__name__}: {e}); falling back to payload URL"
+                f"sync_pull: roost kill-switch check errored ({type(e).__name__}: {e}) — "
+                f"proceeding fail-open"
             )
 
-    # fetch + validate version
+        cancelled = _cancelled_before_distribution('kill-switch check')
+        if cancelled:
+            return cancelled
+
+        state = _state_for(service)
+        allowlist = _allowlist_for(service)
+
+        cancelled = _cancelled_before_distribution('state setup')
+        if cancelled:
+            return cancelled
+
+        # Report 'pending' the instant we accept the command so the web UI can
+        # surface "target queued" before version fetch even starts.
+        _report_target_state(service, site_id, roost_id, version_id, 'pending')
+
+        cancelled = _cancelled_before_distribution('pending report')
+        if cancelled:
+            return cancelled
+
+        # Mint a fresh signed GET URL. `version_url` in the command payload
+        # is either unsigned (the stored object URL — not fetchable from a
+        # private bucket) or expired (15-min TTL), so ignore it and request
+        # a fresh URL right before the fetch. If minting fails, fall back to
+        # the payload URL on the thin chance it was still valid — no reason
+        # to turn a transient API blip into a hard failure.
+        fetch_url = version_url
+        fb = getattr(service, 'firebase_client', None)
+        if fb is not None and hasattr(fb, 'get_version_download_url'):
+            try:
+                fetch_url = fb.get_version_download_url(roost_id, version_id)
+            except Exception as e:
+                logger.warning(
+                    f"sync_pull: failed to mint fresh version URL "
+                    f"({type(e).__name__}: {e}); falling back to payload URL"
+                )
+
+        cancelled = _cancelled_before_distribution('version URL setup')
+        if cancelled:
+            return cancelled
+
+        # fetch + validate version
+        try:
+            version = fetch_version(fetch_url, expected_version_id=version_id)
+        except VersionError as e:
+            cancelled = _cancelled_before_distribution('version fetch')
+            if cancelled:
+                return cancelled
+            _report_target_state(
+                service, site_id, roost_id, version_id, 'failed',
+                error=f"version fetch/validate: {e}",
+            )
+            return f"sync_pull failed: version fetch/validate: {e}"
+
+        cancelled = _cancelled_before_distribution('version fetch')
+        if cancelled:
+            return cancelled
+
+        # diff against the most-recent committed version for this roost, if any
+        prior = _load_prior_version(service, site_id, roost_id, exclude_version_id=version_id)
+        diff = diff_versions(version, prior)
+
+        cancelled = _cancelled_before_distribution('version diff')
+        if cancelled:
+            return cancelled
+
+        # register the distribution + planned files/chunks
+        files_planned = [{'path': f.path, 'size': f.size} for f in version.files]
+        chunks_planned = [
+            {'hash': h, 'size': version.chunk_size_index[h]}
+            for h in sorted(version.chunks)
+        ]
+
+        cancelled = _cancelled_before_distribution('distribution setup')
+        if cancelled:
+            return cancelled
+
+        try:
+            dist_id = state.start_distribution(
+                site_id=site_id,
+                roost_id=roost_id,
+                version_id=version_id,
+                version_url=version_url,
+                files=files_planned,
+                chunks=chunks_planned,
+                extract_root=extract_root,
+            )
+        except SyncStateError as e:
+            # already exists — find it and resume
+            existing = state.find_distribution(site_id, roost_id, version_id)
+            if existing is None:
+                cancelled = _cancelled_before_distribution('distribution start')
+                if cancelled:
+                    return cancelled
+                return f"sync_pull failed: state error and no existing row: {e}"
+            dist_id = existing['id']
+            logger.info(f"sync_pull: resuming existing distribution {dist_id}")
+
+        with _inflight_lock:
+            _inflight_cancels[dist_id] = cancel_event
+            _discard_setup_cancel_locked(cancel_key, cancel_event)
+            setup_entry_released = True
+
+    finally:
+        if not setup_entry_released:
+            with _inflight_lock:
+                _discard_setup_cancel_locked(cancel_key, cancel_event)
+
+    assert dist_id is not None
+
     try:
-        version = fetch_version(fetch_url, expected_version_id=version_id)
-    except VersionError as e:
-        _report_target_state(
-            service, site_id, roost_id, version_id, 'failed',
-            error=f"version fetch/validate: {e}",
-        )
-        return f"sync_pull failed: version fetch/validate: {e}"
+        if cancel_event.is_set():
+            state.set_distribution_state(dist_id, 'cancelled')
+            _report_target_state(
+                service, site_id, roost_id, version_id, 'cancelled',
+            )
+            return f"sync_pull cancelled before download (distribution {dist_id})"
 
-    # diff against the most-recent committed version for this roost, if any
-    prior = _load_prior_version(service, site_id, roost_id, exclude_version_id=version_id)
-    diff = diff_versions(version, prior)
-
-    # register the distribution + planned files/chunks
-    files_planned = [{'path': f.path, 'size': f.size} for f in version.files]
-    chunks_planned = [
-        {'hash': h, 'size': version.chunk_size_index[h]}
-        for h in sorted(version.chunks)
-    ]
-    try:
-        dist_id = state.start_distribution(
-            site_id=site_id,
-            roost_id=roost_id,
-            version_id=version_id,
-            version_url=version_url,
-            files=files_planned,
-            chunks=chunks_planned,
-            extract_root=extract_root,
-        )
-    except SyncStateError as e:
-        # already exists — find it and resume
-        existing = state.find_distribution(site_id, roost_id, version_id)
-        if existing is None:
-            return f"sync_pull failed: state error and no existing row: {e}"
-        dist_id = existing['id']
-        logger.info(f"sync_pull: resuming existing distribution {dist_id}")
-
-    with _inflight_lock:
-        _inflight_cancels[dist_id] = cancel_event
-
-    try:
         state.set_distribution_state(dist_id, 'downloading')
         _report_target_state(
             service, site_id, roost_id, version_id, 'downloading',
@@ -320,6 +464,16 @@ def _handle_cancel_sync(cmd_data: dict, cmd_id: str, service: Any) -> str:
     site_id = _require_str(cmd_data, 'site_id')
     roost_id = _require_str(cmd_data, 'roost_id')
     version_id = _require_str(cmd_data, 'version_id')
+
+    cancel_key = (site_id, roost_id, version_id)
+    with _inflight_lock:
+        ev = _setup_cancels.get(cancel_key)
+        if ev is not None:
+            ev.set()
+            return (
+                "cancel_sync: cancellation signalled for pending sync "
+                f"({site_id}, {roost_id}, {version_id})"
+            )
 
     state = _state_for(service)
     row = state.find_distribution(site_id, roost_id, version_id)

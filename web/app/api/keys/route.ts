@@ -5,6 +5,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { emitMutation } from '@/lib/auditLogClient';
 import {
   ApiAuthError,
+  assertActiveUser,
   assertUserHasSiteAccess,
   requireSessionOrIdToken,
 } from '@/lib/apiAuth.server';
@@ -109,6 +110,7 @@ export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
       const userId = await requireSessionOrIdToken(request, { rejectAgentTokens: true });
+      const activeUserData = await assertActiveUser(userId);
 
       let body: CreateKeyBody;
       try {
@@ -146,9 +148,7 @@ export const POST = withRateLimit(
         SUPERADMIN_ONLY_RESOURCES.includes(scope.resource),
       );
       if (needsSuperadminGrant) {
-        const db = getAdminDb();
-        const userDoc = await db.collection('users').doc(userId).get();
-        const role = userDoc.exists ? userDoc.data()?.role : null;
+        const role = activeUserData.role ?? null;
         if (role !== 'superadmin') {
           return problemForbidden(
             'superadmin access required to create user or installer scopes',

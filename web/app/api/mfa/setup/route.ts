@@ -17,7 +17,7 @@ import { generateTOTPSecret, generateQRCode } from '@/lib/totp';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
+import { ApiAuthError, assertActiveUser, requireSessionUser } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
@@ -41,6 +41,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     await requireSessionUser(request, userId);
+    await assertActiveUser(userId);
 
     // Generate TOTP secret
     let secret: string;

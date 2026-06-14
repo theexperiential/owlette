@@ -18,6 +18,7 @@
  */
 
 const mockRequireSession = jest.fn();
+const mockAssertActiveUser = jest.fn();
 const mockVerifyTOTP = jest.fn();
 const mockVerifyBackupCode = jest.fn();
 const mockDecrypt = jest.fn();
@@ -46,6 +47,7 @@ jest.mock('@/lib/apiAuth.server', () => {
   }
   return {
     ApiAuthError,
+    assertActiveUser: (...a: unknown[]) => mockAssertActiveUser(...a),
     requireSession: (...a: unknown[]) => mockRequireSession(...a),
   };
 });
@@ -139,6 +141,15 @@ beforeEach(() => {
   runTransactionFn = null;
 
   mockRequireSession.mockResolvedValue('user-1');
+  const { ApiAuthError } = jest.requireMock(
+    '@/lib/apiAuth.server',
+  ) as { ApiAuthError: new (status: number, message: string) => Error };
+  mockAssertActiveUser.mockImplementation(async () => {
+    if (userData === null) {
+      throw new ApiAuthError(403, 'Forbidden: User is deleted or inactive');
+    }
+    return userData;
+  });
   mockIsEncryptionConfigured.mockReturnValue(true);
   mockDecrypt.mockReturnValue('TOTP_SECRET');
   mockVerifyTOTP.mockReturnValue(true);
@@ -192,10 +203,10 @@ describe('POST /api/mfa/disable — input validation', () => {
     expect(body.error).toMatch(/not enrolled/i);
   });
 
-  it('returns 404 when the user doc does not exist', async () => {
+  it('returns 403 when the active-user gate rejects a missing user doc', async () => {
     userData = null;
     const res = await POST(disableReq({ code: '123456' }));
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
   });
 });
 

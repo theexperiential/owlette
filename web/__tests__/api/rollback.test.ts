@@ -30,8 +30,17 @@ const txState = {
   previousVersionId: null as string | null,
   versionCounter: 0,
   deletedAt: null as unknown,
+  targets: [] as string[],
+  extractPath: null as string | null,
   /** Captured `tx.update(roostRef, ...)` payloads, in call order. */
   roostUpdates: [] as Array<Record<string, unknown>>,
+  /** Captured `tx.set(rolloutRef, ...)` payloads, in call order. */
+  rolloutSets: [] as Array<{
+    payload: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }>,
+  /** Captured `tx.delete(...)` calls. Rollback must not delete rollouts. */
+  txDeletes: [] as unknown[],
 };
 
 const mockRunTransaction = jest.fn(
@@ -47,12 +56,22 @@ const mockRunTransaction = jest.fn(
           versionCounter: txState.versionCounter,
           deletedAt: txState.deletedAt,
           name: 'lobby roost',
-          targets: [],
+          targets: txState.targets,
+          extractPath: txState.extractPath,
         });
       },
-      set: jest.fn(),
+      set: jest.fn((
+        _ref: unknown,
+        payload: Record<string, unknown>,
+        options?: Record<string, unknown>,
+      ) => {
+        txState.rolloutSets.push({ payload, options });
+      }),
       update: jest.fn((_ref: unknown, payload: Record<string, unknown>) => {
         txState.roostUpdates.push(payload);
+      }),
+      delete: jest.fn((ref: unknown) => {
+        txState.txDeletes.push(ref);
       }),
     };
     const result = await cb(tx);
@@ -142,6 +161,7 @@ function authedAsOperator() {
 }
 
 function authedAsReadOnly() {
+  mocks.siteDocs.set(SITE, { owner: 'user-readonly' });
   // readonly preset: ['read'] on roost:*
   mockResolveAuth.mockResolvedValue({
     userId: 'user-readonly',
@@ -162,6 +182,7 @@ async function rollback(body: Record<string, unknown>): Promise<{
   const req = createMockRequest(`http://localhost/api/roosts/${ROOST}/rollback`, {
     method: 'POST',
     body,
+    headers: { 'Roost-Version': '2026-04-22' },
   });
   const res = await rollbackPOST(req, { params: Promise.resolve({ roostId: ROOST }) });
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
@@ -175,9 +196,18 @@ beforeEach(() => {
   txState.previousVersionId = null;
   txState.versionCounter = 0;
   txState.deletedAt = null;
+  txState.targets = [];
+  txState.extractPath = null;
   txState.roostUpdates.length = 0;
+  txState.rolloutSets.length = 0;
+  txState.txDeletes.length = 0;
   mocks.set.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue(undefined);
+  mocks.batchSet.mockClear();
+  mocks.batchDelete.mockClear();
+  mocks.batchCommit.mockResolvedValue(undefined);
+  mocks.siteDocs.clear();
+  mocks.siteDocs.set(SITE, { owner: 'user-operator' });
   mocks.get.mockResolvedValue(docSnapshot('idem', null)); // idempotency cache miss
 });
 
@@ -252,6 +282,80 @@ describe('POST /rollback — happy paths', () => {
         }),
       }),
     );
+  });
+
+  it('dispatches nonce rollback sync_pull commands and does not delete the rollout doc', async () => {
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    txState.versionCounter = 5;
+    txState.currentVersionId = 'vrs_v5_id';
+    txState.previousVersionId = 'vrs_v4_id';
+    txState.targets = ['machine-a', 'machine-b'];
+    txState.extractPath = '~/Owlette/roosts/lobby';
+
+    mockResolveVersion.mockResolvedValue({
+      versionId: 'vrs_v4_id',
+      versionNumber: 4,
+      doc: fakeVersionDoc('vrs_v4_id', {
+        versionUrl: 'https://r2.test/v4.json',
+        description: 'pre-prod build',
+        totalFiles: 3,
+        totalSize: 4096,
+      }),
+    });
+
+    const res = await rollback({ siteId: SITE });
+    nowSpy.mockRestore();
+
+    expect(res.status).toBe(200);
+    expect(txState.txDeletes).toHaveLength(0);
+    expect(txState.rolloutSets).toHaveLength(1);
+    expect(txState.rolloutSets[0]).toMatchObject({
+      payload: expect.objectContaining({
+        stage: 'complete',
+        versionId: 'vrs_v4_id',
+        versionUrl: 'https://r2.test/v4.json',
+        extractRoot: '~/Owlette/roosts/lobby',
+        canary: ['machine-a', 'machine-b'],
+        fleet: [],
+        pendingCommandsDispatched: true,
+        rollback: true,
+        rollbackFromVersionId: 'vrs_v5_id',
+        rollbackBy: 'user-operator',
+        rollbackNonce: 'loyw3v28',
+      }),
+      options: { merge: true },
+    });
+
+    const rollbackCmdId = `roost_rollback_${ROOST}_vrs_v4_id_loyw3v28`;
+    const deterministicCmdId = `roost_sync_${ROOST}_vrs_v4_id`;
+    const pendingWrites = mocks.batchSet.mock.calls
+      .map((call) => call[1] as Record<string, unknown>)
+      .filter((payload) => rollbackCmdId in payload);
+    const completedClears = mocks.batchSet.mock.calls
+      .map((call) => call[1] as Record<string, unknown>)
+      .filter((payload) => !(rollbackCmdId in payload));
+
+    expect(pendingWrites).toHaveLength(2);
+    for (const payload of pendingWrites) {
+      expect(Object.keys(payload)).toEqual([rollbackCmdId, deterministicCmdId]);
+      expect(payload[rollbackCmdId]).toMatchObject({
+        type: 'sync_pull',
+        site_id: SITE,
+        roost_id: ROOST,
+        version_id: 'vrs_v4_id',
+        version_url: 'https://r2.test/v4.json',
+        extract_root: '~/Owlette/roosts/lobby',
+        rollback: true,
+        rollback_requested_by: 'user-operator',
+      });
+    }
+
+    expect(completedClears).toHaveLength(2);
+    for (const payload of completedClears) {
+      expect(Object.keys(payload)).toEqual([deterministicCmdId]);
+    }
+    expect(mocks.batchDelete).toHaveBeenCalledTimes(2);
+    expect(mocks.batchCommit).toHaveBeenCalledTimes(1);
   });
 
   it('explicit number target: targetVersion=3 flips to v3', async () => {

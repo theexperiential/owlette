@@ -27,6 +27,12 @@ import {
   type ScopeCheckResult,
 } from '@/lib/apiAuth.server';
 import type { ApiKeyPermission, ApiKeyResource } from '@/lib/apiKeyTypes';
+import {
+  Capability,
+  hasCapability,
+  type Role,
+  type UserActor,
+} from '@/lib/capabilities';
 import { checkRoostVersion } from '@/lib/versionHeader';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 
@@ -281,6 +287,47 @@ function runScopeCheck(
   }
 }
 
+function authToActor(auth: ResolvedAuth, role: Role, sites: string[]): UserActor {
+  return {
+    type: 'user',
+    userId: auth.userId,
+    ...(auth.keyContext ? { apiKeyId: auth.keyContext.keyId } : {}),
+    role,
+    sites,
+  };
+}
+
+async function loadUserActor(auth: ResolvedAuth): Promise<UserActor> {
+  const db = getAdminDb();
+  const userDoc = await db.collection('users').doc(auth.userId).get();
+  const data = userDoc.exists ? userDoc.data() : null;
+  const rawRole = data?.role;
+  const role: Role = rawRole === 'superadmin' || rawRole === 'admin' ? rawRole : 'member';
+  const sites = Array.isArray(data?.sites)
+    ? (data?.sites as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+  return authToActor(auth, role, sites);
+}
+
+export async function requireDistributionManageCapability(
+  auth: ResolvedAuth,
+  siteId: string,
+): Promise<NextResponse | null> {
+  const siteSnap = await getAdminDb().collection('sites').doc(siteId).get();
+  const siteData = siteSnap.exists ? siteSnap.data() : null;
+  if (siteData?.owner === auth.userId) return null;
+
+  const actor = await loadUserActor(auth);
+  if (!hasCapability(actor, Capability.DISTRIBUTION_MANAGE, siteId)) {
+    return problemForbidden('capability not granted');
+  }
+  return null;
+}
+
+function isMutationPermission(permission: ApiKeyPermission): boolean {
+  return permission !== 'read';
+}
+
 async function assertSiteAccessOrProblem(
   userId: string,
   siteId: string,
@@ -453,6 +500,11 @@ export async function requireRoostAuthAndScope(
   const accessError = await assertSiteAccessOrProblem(authResult.auth.userId, siteId);
   if (accessError) return { ok: false, response: accessError };
 
+  if (isMutationPermission(permission)) {
+    const capabilityError = await requireDistributionManageCapability(authResult.auth, siteId);
+    if (capabilityError) return { ok: false, response: capabilityError };
+  }
+
   const scopeResult = runScopeCheck(authResult.auth, 'roost', roostId, permission);
   if (!scopeResult.ok) return scopeResult;
 
@@ -496,7 +548,11 @@ export async function requirePlatformAuthAndScope(
   // role gate: platform endpoints require superadmin regardless of scope.
   const db = getAdminDb();
   const userDoc = await db.collection('users').doc(authResult.auth.userId).get();
-  const role = userDoc.exists ? userDoc.data()?.role : null;
+  const userData = userDoc.exists ? userDoc.data() : null;
+  if (typeof userData?.deletedAt === 'number') {
+    return { ok: false, response: problemForbidden('user is deleted or inactive') };
+  }
+  const role = userData?.role ?? null;
   if (role !== 'superadmin') {
     return { ok: false, response: problemForbidden('superadmin access required') };
   }

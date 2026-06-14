@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { ApiAuthError, requireSessionUser } from '@/lib/apiAuth.server';
+import { ApiAuthError, assertActiveUser, requireSessionUser } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
 import {
   getRpId,
@@ -35,6 +35,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     }
 
     await requireSessionUser(request, userId);
+    await assertActiveUser(userId);
 
     // Retrieve and validate challenge
     const challengeData = await getAndDeleteChallenge(userId);

@@ -27,6 +27,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
 import {
   ApiAuthError,
+  assertActiveUser,
   assertUserHasSiteAccess,
   requireSessionOrIdToken,
 } from '@/lib/apiAuth.server';
@@ -119,6 +120,7 @@ export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
       const userId = await requireSessionOrIdToken(request);
+      const activeUserData = await assertActiveUser(userId);
 
       const body = (await request.json().catch(() => ({}))) as AuthorizeBody;
 
@@ -162,8 +164,7 @@ export const POST = withRateLimit(
         SUPERADMIN_ONLY_RESOURCES.includes(scope.resource),
       );
       if (needsSuperadminGrant) {
-        const userDoc = await db.collection('users').doc(userId).get();
-        const role = userDoc.exists ? userDoc.data()?.role : null;
+        const role = activeUserData.role ?? null;
         if (role !== 'superadmin') {
           return problemForbidden(
             'superadmin access required to create user or installer scopes',

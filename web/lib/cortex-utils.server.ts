@@ -237,6 +237,18 @@ export async function verifyUserSiteAccess(
   }
 
   const userData = userDoc.data()!;
+
+  // Reject soft-deleted users before granting any access. Legacy Cortex routes
+  // authenticate via the iron-session cookie, which is NOT invalidated
+  // server-side on soft-delete (the delete cascade clears sites[]/MFA/passkeys
+  // but the session cookie lives until it expires). Without this guard a
+  // soft-deleted superadmin — granted by role regardless of sites[] — could
+  // keep driving Cortex, including tier-3 tools, until their cookie lapses.
+  // Mirrors assertUserDataActive() in apiAuth.server.
+  if (typeof userData.deletedAt === 'number') {
+    throw new Error('User is deleted or inactive');
+  }
+
   const siteData = siteDoc.data() || {};
   const role: string | null = typeof userData.role === 'string' ? userData.role : null;
   const isSuperadmin = role === 'superadmin';

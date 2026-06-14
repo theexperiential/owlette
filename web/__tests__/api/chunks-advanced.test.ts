@@ -59,6 +59,8 @@ function makeAuthed() {
 beforeEach(() => {
   jest.clearAllMocks();
   makeAuthed();
+  mocks.siteDocs.clear();
+  mocks.siteDocs.set(SITE, { owner: 'user-1' });
   mocks.set.mockResolvedValue(undefined);
   mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('x', {})));
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));

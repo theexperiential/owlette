@@ -84,6 +84,37 @@ def should_emit_progress(
     return True, new_state
 
 
+def _register_pending_sync_cancel(cmd_data: Dict[str, Any]):
+    """Register sync_pull cancellation before the command enters the slow queue."""
+    if cmd_data.get('type') != 'sync_pull':
+        return None
+
+    site_id = cmd_data.get('site_id')
+    roost_id = cmd_data.get('roost_id')
+    version_id = cmd_data.get('version_id')
+    if not (
+        isinstance(site_id, str) and site_id
+        and isinstance(roost_id, str) and roost_id
+        and isinstance(version_id, str) and version_id
+    ):
+        return None
+
+    from sync_commands import register_pending_sync
+
+    cancel_event = register_pending_sync(site_id, roost_id, version_id)
+    return site_id, roost_id, version_id, cancel_event
+
+
+def _discard_pending_sync_cancel(registration) -> None:
+    if registration is None:
+        return
+
+    site_id, roost_id, version_id, cancel_event = registration
+    from sync_commands import discard_pending_sync
+
+    discard_pending_sync(site_id, roost_id, version_id, cancel_event)
+
+
 class FirebaseClient:
     """
     Main Firebase client for Owlette agent.
@@ -1449,11 +1480,16 @@ class FirebaseClient:
             t.start()
         else:
             # Slow commands go onto a serialised queue
+            pending_sync_cancel = _register_pending_sync_cancel(cmd_data)
             try:
                 self._slow_command_queue.put_nowait((cmd_id, cmd_data))
             except queue.Full:
+                _discard_pending_sync_cancel(pending_sync_cancel)
                 self.logger.warning(f"Slow command queue full, rejecting command {cmd_id}")
                 self._mark_command_failed(cmd_id, "Command queue full — too many pending installs", cmd_data.get('deployment_id'), cmd_data.get('type'))
+            except Exception:
+                _discard_pending_sync_cancel(pending_sync_cancel)
+                raise
 
     def _execute_command(self, cmd_id: str, cmd_data: Dict[str, Any]):
         """Execute a command and write the result to Firestore."""

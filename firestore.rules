@@ -714,8 +714,7 @@ service cloud.firestore {
                       (resource.data.source == 'autonomous' &&
                        canAccessSite(resource.data.siteId)));
       allow create: if isAuthenticated() &&
-                     (request.resource.data.userId == request.auth.uid ||
-                      request.resource.data.source == 'autonomous');
+                     request.resource.data.userId == request.auth.uid;
       allow update, delete: if isAuthenticated() &&
                                resource.data.userId == request.auth.uid;
 

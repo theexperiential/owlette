@@ -6,9 +6,17 @@ import { apiError } from '@/lib/apiErrorResponse';
 /**
  * GET /api/unsubscribe?token=...
  *
- * One-click unsubscribe from health alert emails.
+ * One-click unsubscribe from alert emails.
  * Token is HMAC-signed userId so no authentication is needed.
  */
+
+const ALERT_PREFERENCES = {
+  healthAlerts: false,
+  processAlerts: false,
+  thresholdAlerts: false,
+  cortexAlerts: false,
+  displayAlerts: false,
+};
 
 function getSecret(): string {
   return process.env.CRON_SECRET || 'owlette-unsubscribe-fallback';
@@ -61,7 +69,7 @@ export async function GET(request: NextRequest) {
   try {
     const db = getAdminDb();
     await db.collection('users').doc(userId).set(
-      { preferences: { healthAlerts: false } },
+      { preferences: ALERT_PREFERENCES },
       { merge: true }
     );
 

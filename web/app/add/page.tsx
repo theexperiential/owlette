@@ -148,8 +148,10 @@ export default function AddMachinePage() {
 
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-accent-cyan" />
+      <div className="relative flex items-center justify-center min-h-screen">
+        <div className="absolute inset-0 dot-grid opacity-30" />
+        <div className="absolute inset-0 blueprint-grid opacity-15" />
+        <Loader2 className="relative z-10 h-8 w-8 animate-spin text-accent-cyan" />
       </div>
     );
   }
@@ -159,8 +161,11 @@ export default function AddMachinePage() {
   // Success state
   if (isAuthorized) {
     return (
-      <div className="flex min-h-screen items-center justify-center p-4 bg-background">
-        <Card className="w-full max-w-md bg-card/50 border-border text-center">
+      <div className="relative flex min-h-screen items-center justify-center p-4">
+        {/* Grid background */}
+        <div className="absolute inset-0 dot-grid opacity-30" />
+        <div className="absolute inset-0 blueprint-grid opacity-15" />
+        <Card className="relative z-10 w-full max-w-md border-border bg-card text-center">
           <CardContent className="pt-10 pb-10 space-y-6">
             <div className="mx-auto w-20 h-20 rounded-full bg-emerald-500/20 flex items-center justify-center">
               <CheckCircle2 className="h-10 w-10 text-emerald-500" />
@@ -186,8 +191,11 @@ export default function AddMachinePage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4 bg-background">
-      <Card className="w-full max-w-lg bg-card/50 border-border">
+    <div className="relative flex min-h-screen items-center justify-center p-4">
+      {/* Grid background */}
+      <div className="absolute inset-0 dot-grid opacity-30" />
+      <div className="absolute inset-0 blueprint-grid opacity-15" />
+      <Card className="relative z-10 w-full max-w-lg border-border bg-card">
         <CardHeader className="space-y-4 flex flex-col items-center">
           <OwletteEyeIcon size={48} />
           <div className="space-y-1 text-center">
@@ -233,7 +241,7 @@ export default function AddMachinePage() {
               </Select>
             ) : (
               <p className="text-sm text-muted-foreground">
-                No sites available. Create a site on the dashboard first.
+                no sites available. create a site on the dashboard first.
               </p>
             )}
           </div>

@@ -18,6 +18,7 @@ const mockVerifyBackupCode = jest.fn();
 const mockDecrypt = jest.fn();
 const mockIsEncryptionConfigured = jest.fn().mockReturnValue(true);
 const mockRequireSessionUser = jest.fn();
+const mockAssertActiveUser = jest.fn();
 const mockMarkSessionMfaVerified = jest.fn();
 
 jest.mock('@sentry/nextjs', () => ({
@@ -39,6 +40,7 @@ jest.mock('@/lib/apiAuth.server', () => {
   }
   return {
     ApiAuthError,
+    assertActiveUser: (...a: unknown[]) => mockAssertActiveUser(...a),
     requireSessionUser: (...a: unknown[]) => mockRequireSessionUser(...a),
   };
 });
@@ -149,6 +151,15 @@ beforeEach(() => {
   txOpsLog = [];
 
   mockRequireSessionUser.mockResolvedValue('user-1');
+  mockAssertActiveUser.mockImplementation(async () => {
+    if (!docState.exists) {
+      const { ApiAuthError } = jest.requireMock(
+        '@/lib/apiAuth.server',
+      ) as { ApiAuthError: new (status: number, message: string) => Error };
+      throw new ApiAuthError(403, 'Forbidden: User is deleted or inactive');
+    }
+    return docState.data;
+  });
   mockVerifyTOTP.mockReturnValue(false);
   // Only match hash-bk-1 (the code under contention).
   mockVerifyBackupCode.mockImplementation(

@@ -157,20 +157,23 @@ function Verify2FAContent() {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p>Loading...</p>
+        <p>loading...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 to-gray-800 p-4">
-      <Card className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center p-4 relative">
+      {/* Grid background */}
+      <div className="absolute inset-0 dot-grid opacity-30" />
+      <div className="absolute inset-0 blueprint-grid opacity-15" />
+      <Card className="relative z-10 w-full max-w-md border-border bg-card">
         <CardHeader>
-          <CardTitle>Two-Factor Authentication</CardTitle>
+          <CardTitle>two-factor authentication</CardTitle>
           <CardDescription>
             {useBackupCode
-              ? 'Enter one of your backup codes'
-              : 'Enter the code from your authenticator app'}
+              ? 'enter one of your backup codes'
+              : 'enter the code from your authenticator app'}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -204,7 +207,7 @@ function Verify2FAContent() {
                 htmlFor="trustDevice"
                 className="text-sm text-foreground cursor-pointer"
               >
-                Trust this device for 30 days
+                trust this device for 30 days
               </Label>
             </div>
 
@@ -217,7 +220,7 @@ function Verify2FAContent() {
               }
               className="w-full"
             >
-              {isSubmitting ? 'Verifying...' : 'Verify'}
+              {isSubmitting ? 'verifying...' : 'verify'}
             </Button>
 
             <div className="space-y-2">
@@ -231,8 +234,8 @@ function Verify2FAContent() {
                 className="w-full text-sm"
               >
                 {useBackupCode
-                  ? 'Use authenticator app instead'
-                  : 'Use backup code instead'}
+                  ? 'use authenticator app instead'
+                  : 'use backup code instead'}
               </Button>
 
               <Button
@@ -241,7 +244,7 @@ function Verify2FAContent() {
                 onClick={handleCancel}
                 className="w-full text-sm"
               >
-                Cancel and sign out
+                cancel and sign out
               </Button>
             </div>
           </form>
@@ -255,7 +258,7 @@ export default function Verify2FAPage() {
   return (
     <Suspense fallback={
       <div className="min-h-screen flex items-center justify-center">
-        <p>Loading...</p>
+        <p>loading...</p>
       </div>
     }>
       <Verify2FAContent />

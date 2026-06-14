@@ -65,9 +65,7 @@ dev/video-tutorials/
 ├── README.md            ← you are here (production bible)
 ├── series-outline.md    ← the 13 episodes: goals, prereqs, durations, capture surface
 ├── SCRIPT-FORMAT.md     ← the dual-track script format + the generate.py parser contract
-├── scripts/             ← one markdown script per episode (NN-slug.md)
-│   ├── 01-what-is-owlette.md
-│   └── 02-install-and-pair.md
+├── scripts/             ← one markdown script per episode (NN-slug.md) — all 13 written
 ├── voiceover/           ← ElevenLabs voiceover generation
 │   ├── generate.py      ← parse script beats → per-beat MP3 via ElevenLabs REST
 │   ├── requirements.txt
@@ -85,7 +83,8 @@ web/                     ← the web-capture harness lives in the web project (n
 └── e2e/videos/
     ├── README.md
     ├── video-helpers.ts ← pacing: narrate(), fake cursor, typewriter typing, highlight
-    └── dashboard-tour.video.ts   ← example scene (reuses seedScreenshotFixtures)
+    ├── ffmpeg-recorder.ts ← ddagrab/NVENC capture lifecycle (probe gate, ffprobe validation)
+    └── NN-slug.video.ts ← one scene per browser episode (01, 03–07, 09–13)
 ```
 
 ---
@@ -108,7 +107,7 @@ ever perform on-screen actions, never read on camera.
 2. **Generate voiceover:** `cd dev/video-tutorials/voiceover && python generate.py ../scripts/NN-slug.md`
    → `voiceover/out/NN-slug/*.mp3` + `manifest.json`.
 3. **Capture screen:**
-   - Web beats → `cd web && npm run videos -- --grep "<word from the test title>"` (e.g. `--grep "dashboard"`) → `.webm` per scene. Only the episode-3 example scene exists today; add scenes per `web/e2e/videos/README.md`.
+   - Web beats → `cd web && npm run videos -- --grep "<word from the test title>"` (e.g. `--grep "dashboard"`) → `.mp4` per scene. Scenes exist for all browser episodes (01, 03–07, 09–13); episodes 02 + 08 are native-capture — their implementation plan is `dev/active/native-capture-pipeline/PLAN.md`.
    - Native beats → start OBS, run `python capture-native/scenes/<scene>.py`, stop OBS.
 4. **Assemble** in Resolve: lay the screen capture on the timeline, drop each
    `ep NN-bNN.mp3` under its beat, trim the screen clip to the voice clip's length,

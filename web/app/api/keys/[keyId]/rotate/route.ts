@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
   ApiAuthError,
+  assertActiveUser,
   requireSessionOrIdToken,
 } from '@/lib/apiAuth.server';
 import { emitMutation } from '@/lib/auditLogClient';
@@ -49,6 +50,7 @@ interface RotateBody {
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
       const userId = await requireSessionOrIdToken(request);
+      await assertActiveUser(userId);
       const { keyId } = await params;
 
       if (!keyId || typeof keyId !== 'string') {

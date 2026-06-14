@@ -16,6 +16,7 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { getAdminAuth } from '@/lib/firebase-admin';
 import { createSession } from '@/lib/sessionManager.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { ApiAuthError, assertActiveUser } from '@/lib/apiAuth.server';
 import {
   getRpId,
   getExpectedOrigins,
@@ -60,6 +61,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     // The userHandle is the userId we set during registration
     const userId = userHandle;
+    await assertActiveUser(userId);
 
     // Find the matching credential
     const userPasskeys = await getUserPasskeys(userId);
@@ -118,6 +120,9 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       userId,
     });
   } catch (error) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
     return apiError(error, 'passkeys/authenticate/verify');
   }
 }, {

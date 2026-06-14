@@ -15,6 +15,7 @@ import { gateOrProceed } from '@/lib/roostKillSwitch';
 import {
   applyAuthDeprecations,
   parseJsonBody,
+  requireDistributionManageCapability,
   requireSiteAuthAndScope,
   validateHashList,
   validateSiteIdBody,
@@ -36,6 +37,9 @@ export async function POST(request: NextRequest) {
 
     const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
+
+    const capabilityError = await requireDistributionManageCapability(auth.auth, site.siteId);
+    if (capabilityError) return capabilityError;
 
     const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);
     if (gateRes) return gateRes;

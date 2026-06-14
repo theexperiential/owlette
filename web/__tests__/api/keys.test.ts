@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server';
 
 const store = new Map<string, Record<string, unknown> | null>();
 const mockRequireSessionOrIdToken = jest.fn();
+const mockAssertActiveUser = jest.fn();
 const mockAssertUserHasSiteAccess = jest.fn();
 const mockEmitMutation = jest.fn();
 
@@ -42,6 +43,7 @@ jest.mock('@/lib/apiAuth.server', () => {
     ApiAuthError,
     requireSessionOrIdToken: (...args: unknown[]) =>
       mockRequireSessionOrIdToken(...args),
+    assertActiveUser: (...args: unknown[]) => mockAssertActiveUser(...args),
     assertUserHasSiteAccess: (...args: unknown[]) =>
       mockAssertUserHasSiteAccess(...args),
   };
@@ -148,7 +150,15 @@ function makeRotate(keyId: string, body: Record<string, unknown> = {}) {
 beforeEach(() => {
   store.clear();
   jest.clearAllMocks();
+  store.set('users/user-member', { role: 'member' });
   mockRequireSessionOrIdToken.mockResolvedValue('user-member');
+  mockAssertActiveUser.mockImplementation(async (uid: string) => {
+    const data = store.get(`users/${uid}`);
+    if (!data) {
+      throw new Error(`missing test user ${uid}`);
+    }
+    return data;
+  });
   mockAssertUserHasSiteAccess.mockResolvedValue({ siteId: 'site-1', siteData: {} });
 });
 
@@ -339,5 +349,30 @@ describe('/api/keys/{keyId}/rotate POST', () => {
       }),
     );
     expect(JSON.stringify(mockEmitMutation.mock.calls)).not.toContain(body.key);
+  });
+
+  it('rejects inactive users before rotating an api key', async () => {
+    const { ApiAuthError } = jest.requireMock('@/lib/apiAuth.server') as {
+      ApiAuthError: new (
+        status: number,
+        message: string,
+        opts?: { code?: string; details?: Record<string, unknown> },
+      ) => Error;
+    };
+    mockAssertActiveUser.mockRejectedValue(
+      new ApiAuthError(403, 'Forbidden: User is deleted or inactive', {
+        code: 'user_inactive',
+      }),
+    );
+
+    const res = await makeRotate('key-old', { ttlDays: 14 });
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.code).toBe('forbidden');
+    expect(body.detail).toBe('Forbidden: User is deleted or inactive');
+    expect(mockAssertActiveUser).toHaveBeenCalledWith('user-member');
+    expect(Array.from(store.keys()).some((p) => p.startsWith('api_keys/'))).toBe(false);
+    expect(mockEmitMutation).not.toHaveBeenCalled();
   });
 });

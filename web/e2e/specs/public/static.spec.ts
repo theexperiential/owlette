@@ -30,7 +30,7 @@ test.describe('public routes', () => {
   test('unsubscribe success and failure states render', async ({ page }) => {
     await page.goto('/unsubscribe?success=true');
     await expect(page.getByRole('heading', { name: /unsubscribed/i })).toBeVisible();
-    await expect(page.getByText(/no longer receive machine offline alert emails/i)).toBeVisible();
+    await expect(page.getByText(/all alert emails, including offline notifications, have been turned off/i)).toBeVisible();
 
     await page.goto('/unsubscribe');
     await expect(page.getByRole('heading', { name: /^unsubscribe$/i })).toBeVisible();

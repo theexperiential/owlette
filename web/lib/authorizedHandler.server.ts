@@ -183,7 +183,12 @@ function authToActor(auth: ResolvedAuth, role: Role, sites: string[]): UserActor
 async function loadUserActor(auth: ResolvedAuth): Promise<UserActor> {
   const db = getAdminDb();
   const userDoc = await db.collection('users').doc(auth.userId).get();
-  const data = userDoc.exists ? userDoc.data() : null;
+  const data = userDoc.exists ? userDoc.data() ?? null : null;
+  if (!data || typeof data.deletedAt === 'number') {
+    throw new ApiAuthError(403, 'Forbidden: User is deleted or inactive', {
+      code: 'user_inactive',
+    });
+  }
   const rawRole = data?.role;
   const role: Role = rawRole === 'superadmin' || rawRole === 'admin' ? rawRole : 'member';
   const sites = Array.isArray(data?.sites)
@@ -474,6 +479,9 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         await assertUserHasSiteAccess(auth.userId, siteId);
       } catch (err) {
         if (err instanceof ApiAuthError) {
+          if (err.code === 'user_inactive') {
+            return authErrorToResponse(err);
+          }
           // Don't leak existence: 403/404 both collapse to "not found or no access".
           if (err.status === 404 || err.status === 403) {
             return problemNotFound('site not found or no access');
@@ -487,6 +495,7 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
       try {
         actor = await loadUserActor(auth);
       } catch (err) {
+        if (err instanceof ApiAuthError) return authErrorToResponse(err);
         logger.error('[authorizedSiteHandler] failed to load user actor', {
           context: 'authorizedHandler',
           data: { err: err instanceof Error ? err.message : String(err) },
@@ -665,6 +674,7 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
       try {
         actor = await loadUserActor(auth);
       } catch (err) {
+        if (err instanceof ApiAuthError) return authErrorToResponse(err);
         logger.error('[authorizedPlatformHandler] failed to load user actor', {
           context: 'authorizedHandler',
           data: { err: err instanceof Error ? err.message : String(err) },

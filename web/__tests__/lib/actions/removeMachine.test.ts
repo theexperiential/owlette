@@ -44,28 +44,42 @@ interface BatchOp {
   path: string;
 }
 
+interface AgentRefreshTokenDoc {
+  id: string;
+  siteId: string;
+  machineId: string;
+}
+
 interface FakeDbResult {
   // Helper exposes the path of every individual `.delete()` call (Phase 2).
   individualDeletes: RecordedDelete[];
   // Plus the ordered list of batch ops + commit invocations (Phase 1).
   batchOps: BatchOp[];
+  batchCommitSizes: number[];
   batchCommitCount: number;
   // Make a specific path's individual delete throw to test fault isolation.
   setIndividualDeleteFailure: (path: string, err: Error) => void;
   // Make the batch commit throw to test main-cascade failure mode.
   setBatchCommitFailure: (err: Error) => void;
+  // Make the agent_refresh_tokens query throw to test token cleanup tolerance.
+  setAgentRefreshTokenQueryFailure: (err: Error) => void;
   // The fake db itself, typed loosely — the action core casts to its
   // import of `Firestore`.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   db: any;
 }
 
-function buildFakeDb(): FakeDbResult {
+function buildFakeDb(
+  agentRefreshTokens: AgentRefreshTokenDoc[] = [],
+): FakeDbResult {
   const individualDeletes: RecordedDelete[] = [];
   const batchOps: BatchOp[] = [];
+  const batchCommitSizes: number[] = [];
+  const remainingAgentRefreshTokens = [...agentRefreshTokens];
   let batchCommitCount = 0;
   const individualFailures = new Map<string, Error>();
   let batchFailure: Error | null = null;
+  let agentRefreshTokenQueryFailure: Error | null = null;
 
   function makeDocRef(docPath: string): unknown {
     return {
@@ -79,7 +93,43 @@ function buildFakeDb(): FakeDbResult {
     };
   }
 
+  function makeAgentRefreshTokensCollection(
+    filters: Array<[string, unknown]> = [],
+    rowLimit?: number,
+  ): unknown {
+    return {
+      doc: (id: string) => makeDocRef(`agent_refresh_tokens/${id}`),
+      where: (field: string, _op: string, value: unknown) =>
+        makeAgentRefreshTokensCollection([...filters, [field, value]], rowLimit),
+      limit: (limit: number) => makeAgentRefreshTokensCollection(filters, limit),
+      get: async () => {
+        if (agentRefreshTokenQueryFailure) {
+          throw agentRefreshTokenQueryFailure;
+        }
+        const matchingDocs = remainingAgentRefreshTokens.filter((doc) =>
+          filters.every(
+            ([field, value]) =>
+              (doc as Record<string, unknown>)[field] === value,
+          ),
+        );
+        return {
+          docs: matchingDocs
+            .slice(0, rowLimit)
+            .map((doc) => ({
+              id: doc.id,
+              ref: { path: `agent_refresh_tokens/${doc.id}` },
+              data: () => doc,
+            })),
+        };
+      },
+    };
+  }
+
   function makeCollectionRef(colPath: string): unknown {
+    if (colPath === 'agent_refresh_tokens') {
+      return makeAgentRefreshTokensCollection();
+    }
+
     return {
       doc: (id: string) => makeDocRef(`${colPath}/${id}`),
     };
@@ -94,7 +144,14 @@ function buildFakeDb(): FakeDbResult {
       commit: async () => {
         if (batchFailure) throw batchFailure;
         batchOps.push(...localOps);
+        batchCommitSizes.push(localOps.length);
         batchCommitCount += 1;
+        for (const op of localOps) {
+          const match = op.path.match(/^agent_refresh_tokens\/(.+)$/);
+          if (!match) continue;
+          const index = remainingAgentRefreshTokens.findIndex((doc) => doc.id === match[1]);
+          if (index >= 0) remainingAgentRefreshTokens.splice(index, 1);
+        }
       },
     };
   }
@@ -107,6 +164,7 @@ function buildFakeDb(): FakeDbResult {
   return {
     individualDeletes,
     batchOps,
+    batchCommitSizes,
     get batchCommitCount() {
       return batchCommitCount;
     },
@@ -115,6 +173,9 @@ function buildFakeDb(): FakeDbResult {
     },
     setBatchCommitFailure: (err) => {
       batchFailure = err;
+    },
+    setAgentRefreshTokenQueryFailure: (err) => {
+      agentRefreshTokenQueryFailure = err;
     },
     db,
   };
@@ -179,6 +240,55 @@ describe('removeMachine — cascade covers all 4 paths', () => {
     });
   });
 
+  it('deletes agent refresh tokens matching the same siteId and machineId', async () => {
+    const fake = buildFakeDb([
+      { id: 'tok-match-1', siteId: 'site-a', machineId: 'm1' },
+      { id: 'tok-other-machine', siteId: 'site-a', machineId: 'm2' },
+      { id: 'tok-other-site', siteId: 'site-b', machineId: 'm1' },
+      { id: 'tok-match-2', siteId: 'site-a', machineId: 'm1' },
+    ]);
+
+    await removeMachine({
+      siteId: 'site-a',
+      machineId: 'm1',
+      db: fake.db,
+    });
+
+    expect(fake.batchCommitCount).toBe(2);
+    expect(fake.batchOps).toEqual([
+      { op: 'delete', path: 'sites/site-a/machines/m1' },
+      { op: 'delete', path: 'config/site-a/machines/m1' },
+      { op: 'delete', path: 'agent_refresh_tokens/tok-match-1' },
+      { op: 'delete', path: 'agent_refresh_tokens/tok-match-2' },
+    ]);
+    expect(fake.individualDeletes).toEqual([
+      { path: 'sites/site-a/machines/m1/commands/pending' },
+      { path: 'sites/site-a/machines/m1/commands/completed' },
+    ]);
+  });
+
+  it('deletes agent refresh tokens in batches of at most 500', async () => {
+    const fake = buildFakeDb(
+      Array.from({ length: 1201 }, (_, i) => ({
+        id: `tok-match-${i}`,
+        siteId: 'site-a',
+        machineId: 'm1',
+      })),
+    );
+
+    await removeMachine({
+      siteId: 'site-a',
+      machineId: 'm1',
+      db: fake.db,
+    });
+
+    const tokenDeletes = fake.batchOps.filter((op) =>
+      op.path.startsWith('agent_refresh_tokens/'),
+    );
+    expect(fake.batchCommitSizes).toEqual([2, 500, 500, 201]);
+    expect(tokenDeletes).toHaveLength(1201);
+  });
+
   it('phase 1 batch runs BEFORE phase 2 best-effort deletes', async () => {
     const fake = buildFakeDb();
     // The batch commit failing should short-circuit before any
@@ -241,6 +351,30 @@ describe('removeMachine — best-effort tolerance', () => {
     expect(result.deleted.completedCommands).toBe(
       'sites/site-a/machines/m1/commands/completed',
     );
+  });
+
+  it('treats agent refresh token cleanup failure as non-fatal and logs warning', async () => {
+    const fake = buildFakeDb([
+      { id: 'tok-match', siteId: 'site-a', machineId: 'm1' },
+    ]);
+    fake.setAgentRefreshTokenQueryFailure(new Error('token_query_down'));
+
+    const result = await removeMachine({
+      siteId: 'site-a',
+      machineId: 'm1',
+      db: fake.db,
+    });
+
+    expect(fake.batchCommitCount).toBe(1);
+    expect(fake.batchOps).toEqual([
+      { op: 'delete', path: 'sites/site-a/machines/m1' },
+      { op: 'delete', path: 'config/site-a/machines/m1' },
+    ]);
+    expect(loggerWarnSpy).toHaveBeenCalledTimes(1);
+    expect(loggerWarnSpy.mock.calls[0][0]).toMatch(
+      /agent refresh token delete/,
+    );
+    expect(result.deleted.machine).toBe('sites/site-a/machines/m1');
   });
 
   it('is idempotent: re-running on the same machineId is a no-op', async () => {

@@ -7,21 +7,22 @@
  *   2. `config/{siteId}/machines/{machineId}`         — machine config
  *   3. `sites/{siteId}/machines/{machineId}/commands/pending`   — pending command map
  *   4. `sites/{siteId}/machines/{machineId}/commands/completed` — completed command map
+ *   5. `agent_refresh_tokens` where `siteId` and `machineId` match
  *
- * The four paths mirror the client-side cascade in
- * `web/hooks/useMachineOperations.ts` exactly. The hook will be deleted in
- * a follow-up wave once the route-side action is the only writer.
+ * The fixed machine/config/commands paths mirror the client-side cascade in
+ * `web/hooks/useMachineOperations.ts`. The hook will be deleted in a
+ * follow-up wave once the route-side action is the only writer.
  *
  * Capability: `MACHINE_REMOVE` — site-scoped per the role matrix in
  * `web/lib/capabilities.ts`. Site admins can remove machines on their assigned
  * sites; superadmins on any site.
  *
  * Atomicity: the main doc + config delete run in a Firestore batch; the
- * two command-map docs are deleted as best-effort follow-ups since they
- * may not exist (a freshly-paired machine that never received a command
- * has no commands subcollection at all). Missing-doc deletes are NOT
- * errors — Firestore's `delete()` is naturally idempotent for absent
- * docs, so we don't need to pre-check existence.
+ * command-map docs and agent refresh token docs are deleted as best-effort
+ * follow-ups since they may not exist (a freshly-paired machine that never
+ * received a command has no commands subcollection at all). Missing-doc
+ * deletes are NOT errors — Firestore's `delete()` is naturally idempotent
+ * for absent docs, so we don't need to pre-check existence.
  *
  * Active-deployment guard: the legacy client flow checked
  * `checkMachineHasActiveDeployment` BEFORE calling the cascade. We do NOT
@@ -32,14 +33,16 @@
  *       reconciliation handles abandoned deployments.
  * If a stronger guard is needed it ships in a follow-up wave.
  *
- * Resumability: cascade size is bounded (4 docs total — the commands
- * subcollection model uses two fixed-name docs, NOT one doc per command).
- * No need for chunking or operation-id resumption at this scale.
+ * Resumability: cascade size is bounded by fixed machine/config/commands
+ * docs plus matching agent refresh token docs. No need for operation-id
+ * resumption at this scale.
  */
 
 import { Firestore } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import logger from '@/lib/logger';
+
+const AGENT_REFRESH_TOKEN_DELETE_BATCH_SIZE = 500;
 
 export interface RemoveMachineInput {
   siteId: string;
@@ -121,6 +124,38 @@ export async function removeMachine(
     await completedCommandsRef.delete();
   } catch (err) {
     logger.warn('removeMachine: completed commands delete failed (non-fatal)', {
+      context: 'removeMachine',
+      data: {
+        siteId,
+        machineId,
+        err: err instanceof Error ? err.message : String(err),
+      },
+    });
+  }
+
+  // Phase 3: best-effort token cleanup. The agent refresh token documents
+  // are top-level docs keyed by token hash, so locate them by the same
+  // siteId + machineId query used by the manual revoke route.
+  try {
+    for (;;) {
+      const tokensSnapshot = await db.collection('agent_refresh_tokens')
+        .where('siteId', '==', siteId)
+        .where('machineId', '==', machineId)
+        .limit(AGENT_REFRESH_TOKEN_DELETE_BATCH_SIZE)
+        .get();
+
+      if (tokensSnapshot.docs.length === 0) break;
+
+      const tokenBatch = db.batch();
+      tokensSnapshot.docs.forEach((doc) => {
+        tokenBatch.delete(doc.ref);
+      });
+      await tokenBatch.commit();
+
+      if (tokensSnapshot.docs.length < AGENT_REFRESH_TOKEN_DELETE_BATCH_SIZE) break;
+    }
+  } catch (err) {
+    logger.warn('removeMachine: agent refresh token delete failed (non-fatal)', {
       context: 'removeMachine',
       data: {
         siteId,

@@ -199,6 +199,12 @@ function authed() {
 beforeEach(() => {
   jest.clearAllMocks();
   authed();
+  mocks.siteDocs.clear();
+  mocks.siteDocs.set(SITE, { owner: 'user-1' });
+  mocks.get.mockResolvedValue(docSnapshot('user-1', {
+    role: 'admin',
+    sites: [SITE],
+  }));
   txState.versionCounter = 0;
   txState.currentVersionId = null;
   txState.previousVersionId = null;

@@ -8,24 +8,24 @@ export default function PrivacyPage() {
   const router = useRouter();
 
   return (
-    <div className="min-h-screen py-12 px-4">
+    <div className="min-h-screen bg-background py-12 px-4">
       <div className="max-w-3xl mx-auto">
         <div className="mb-8">
           <button
             onClick={() => router.back()}
-            className="text-accent-cyan hover:text-accent-cyan text-sm cursor-pointer"
+            className="text-accent-cyan hover:text-accent-cyan-hover text-sm cursor-pointer"
           >
             &larr; back
           </button>
         </div>
 
-        <article className="prose prose-invert prose-slate max-w-none">
-          <h1 className="text-3xl font-bold text-white mb-2">privacy policy</h1>
+        <article className="prose dark:prose-invert prose-slate max-w-none">
+          <h1 className="text-3xl font-bold text-foreground mb-2">privacy policy</h1>
           <p className="text-muted-foreground text-sm mb-8">last updated: {lastUpdated}</p>
 
           <div className="space-y-8 text-muted-foreground">
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">1. introduction</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">1. introduction</h2>
               <p>
                 The Experiential Company, LLC (&quot;TEC,&quot; &quot;we,&quot; &quot;our,&quot; or &quot;us&quot;) operates owlette, a cloud-connected
                 process management and remote deployment system. this privacy policy explains how we
@@ -38,9 +38,9 @@ export default function PrivacyPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">2. information we collect</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">2. information we collect</h2>
 
-              <h3 className="text-lg font-medium text-white mt-6 mb-3">account information</h3>
+              <h3 className="text-lg font-medium text-foreground mt-6 mb-3">account information</h3>
               <p>when you create an account, we collect:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li>email address</li>
@@ -49,7 +49,7 @@ export default function PrivacyPage() {
                 <li>two-factor authentication secrets (encrypted)</li>
               </ul>
 
-              <h3 className="text-lg font-medium text-white mt-6 mb-3">machine data</h3>
+              <h3 className="text-lg font-medium text-foreground mt-6 mb-3">machine data</h3>
               <p>when you install the owlette agent on a machine, we collect:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li>machine hostname and unique identifiers</li>
@@ -59,7 +59,7 @@ export default function PrivacyPage() {
                 <li>agent heartbeat and online/offline status</li>
               </ul>
 
-              <h3 className="text-lg font-medium text-white mt-6 mb-3">usage data</h3>
+              <h3 className="text-lg font-medium text-foreground mt-6 mb-3">usage data</h3>
               <p>we automatically collect:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li>actions performed (process starts, stops, deployments)</li>
@@ -69,7 +69,7 @@ export default function PrivacyPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">3. how we use your information</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">3. how we use your information</h2>
               <p>we use the collected information to:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li>provide and maintain the owlette service</li>
@@ -83,7 +83,7 @@ export default function PrivacyPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">4. data storage and security</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">4. data storage and security</h2>
               <p>
                 your data is stored using Google Firebase and Google Cloud Platform infrastructure.
                 we implement industry-standard security measures including:
@@ -102,7 +102,7 @@ export default function PrivacyPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">5. data retention</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">5. data retention</h2>
               <p>we retain your data as follows:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li><strong>account data:</strong> until you delete your account</li>
@@ -116,7 +116,7 @@ export default function PrivacyPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">6. third-party services</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">6. third-party services</h2>
               <p>we use the following third-party services to operate owlette:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li><strong>Google Firebase:</strong> authentication, database, and hosting</li>
@@ -128,13 +128,13 @@ export default function PrivacyPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">7. your rights</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">7. your rights</h2>
               <p>
                 depending on your location, you may have certain rights regarding your personal
                 information:
               </p>
 
-              <h3 className="text-lg font-medium text-white mt-6 mb-3">California residents (CCPA)</h3>
+              <h3 className="text-lg font-medium text-foreground mt-6 mb-3">California residents (CCPA)</h3>
               <p>you have the right to:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li>know what personal information is collected</li>
@@ -143,7 +143,7 @@ export default function PrivacyPage() {
                 <li>non-discrimination for exercising your privacy rights</li>
               </ul>
 
-              <h3 className="text-lg font-medium text-white mt-6 mb-3">all users</h3>
+              <h3 className="text-lg font-medium text-foreground mt-6 mb-3">all users</h3>
               <p>you can:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li>access your account data through the dashboard</li>
@@ -154,7 +154,7 @@ export default function PrivacyPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">8. cookies and tracking</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">8. cookies and tracking</h2>
               <p>
                 owlette uses cookies and similar technologies for authentication and session
                 management. these are essential for the service to function and cannot be
@@ -167,7 +167,7 @@ export default function PrivacyPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">9. children&apos;s privacy</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">9. children&apos;s privacy</h2>
               <p>
                 owlette is not intended for use by anyone under the age of 13. we do not knowingly
                 collect personal information from children under 13. if you are a parent or guardian
@@ -176,7 +176,7 @@ export default function PrivacyPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">10. changes to this policy</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">10. changes to this policy</h2>
               <p>
                 we may update this privacy policy from time to time. we will notify you of any
                 changes by posting the new privacy policy on this page and updating the
@@ -188,7 +188,7 @@ export default function PrivacyPage() {
             </section>
 
             <section>
-              <h2 className="text-xl font-semibold text-white mb-4">11. contact us</h2>
+              <h2 className="text-xl font-semibold text-foreground mb-4">11. contact us</h2>
               <p>
                 if you have any questions about this privacy policy or our data practices,
                 please contact us at:

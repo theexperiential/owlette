@@ -756,7 +756,6 @@ export default function LogsPage() {
         onOpenChange={setManageDialogOpen}
         sites={sites}
         currentSiteId={currentSiteId}
-        machineCount={0}
         onUpdateSite={updateSite}
         onDeleteSite={async (siteId) => {
           await deleteSite(siteId);

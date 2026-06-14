@@ -8,7 +8,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { withRateLimit } from '@/lib/withRateLimit';
-import { requireSession } from '@/lib/apiAuth.server';
+import { ApiAuthError, assertActiveUser, requireSession } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { encryptApiKey, isLlmEncryptionConfigured } from '@/lib/llm-encryption.server';
@@ -19,6 +19,7 @@ export const POST = withRateLimit(
   async (request: NextRequest) => {
     try {
       const userId = await requireSession(request);
+      await assertActiveUser(userId);
 
       if (!isLlmEncryptionConfigured()) {
         return NextResponse.json(
@@ -68,6 +69,9 @@ export const POST = withRateLimit(
 
       return NextResponse.json({ success: true });
     } catch (error: unknown) {
+      if (error instanceof ApiAuthError) {
+        return apiError(error, 'settings/llm-key POST', error.status);
+      }
       return apiError(error, 'settings/llm-key POST');
     }
   },
@@ -109,6 +113,7 @@ export const DELETE = withRateLimit(
   async (request: NextRequest) => {
     try {
       const userId = await requireSession(request);
+      await assertActiveUser(userId);
       const db = getAdminDb();
 
       await db
@@ -120,6 +125,9 @@ export const DELETE = withRateLimit(
 
       return NextResponse.json({ success: true });
     } catch (error: unknown) {
+      if (error instanceof ApiAuthError) {
+        return apiError(error, 'settings/llm-key DELETE', error.status);
+      }
       return apiError(error, 'settings/llm-key DELETE');
     }
   },

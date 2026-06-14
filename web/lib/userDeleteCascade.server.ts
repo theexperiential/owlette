@@ -31,6 +31,7 @@
  */
 
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 
 export type UserDeleteOutcome =
   | { kind: 'already_deleted'; deletedAt: number }
@@ -129,11 +130,10 @@ export async function performUserDeleteCascade(
   //    to the successor uid; the successor's `users.sites[]` is also
   //    extended via arrayUnion so they can read the site through the
   //    canonical membership model. The departing user's `sites[]` will
-  //    be cleared in step 7 below (the whole field stays, but it doesn't
+  //    be cleared in the final update below (the whole field stays, but it doesn't
   //    matter — the user is soft-deleted and excluded from member reads).
   const transferredSites: string[] = [];
   if (successorUid && ownedSites.length > 0) {
-    const { FieldValue } = await import('firebase-admin/firestore');
     for (const siteId of ownedSites) {
       try {
         await db.collection('sites').doc(siteId).update({
@@ -197,7 +197,43 @@ export async function performUserDeleteCascade(
     );
   }
 
-  // 6. Cancel pending commands the user issued. Best-effort, non-blocking
+  // 6. Revoke passkeys: delete discoverable credentials stored under the
+  //    user's passkey subcollection. The final user update below clears the
+  //    passkeyEnrolled flag even if some credential deletes fail.
+  try {
+    const passkeysSnap = await userRef.collection('passkeys').get();
+    for (const passkeyDoc of passkeysSnap.docs) {
+      try {
+        await passkeyDoc.ref.delete();
+      } catch (err) {
+        console.warn(
+          `[userDeleteCascade] failed to delete passkey ${passkeyDoc.id}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
+  } catch (err) {
+    console.warn(
+      `[userDeleteCascade] failed to enumerate passkeys: ${
+        (err as Error).message
+      }`,
+    );
+  }
+
+  // 7. Drop any pending MFA setup challenge. Stored MFA state is cleared
+  //    atomically with the soft-delete stamp below.
+  try {
+    await db.collection('mfa_pending').doc(uid).delete();
+  } catch (err) {
+    console.warn(
+      `[userDeleteCascade] failed to delete pending MFA setup for ${uid}: ${
+        (err as Error).message
+      }`,
+    );
+  }
+
+  // 8. Cancel pending commands the user issued. Best-effort, non-blocking
   //    on the response — fired-and-forgotten via setImmediate so the
   //    DELETE returns promptly even when the user has many sites/machines.
   //    The scope is bounded to the user's owned + assigned sites; cross-
@@ -219,6 +255,13 @@ export async function performUserDeleteCascade(
   //    flagged deleted (any orphaned api keys can be swept separately).
   const deletedAt = Date.now();
   await userRef.update({
+    sites: [],
+    passkeyEnrolled: false,
+    mfaEnrolled: false,
+    mfaSecret: FieldValue.delete(),
+    backupCodes: [],
+    mfaEnrolledAt: FieldValue.delete(),
+    requiresMfaSetup: false,
     deletedAt,
     deletedBy: 'superadmin', // route handler doesn't pass actor here; auditLog has it
   });

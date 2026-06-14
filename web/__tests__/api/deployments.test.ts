@@ -55,9 +55,14 @@ function authed() {
 beforeEach(() => {
   jest.clearAllMocks();
   authed();
+  mocks.siteDocs.clear();
+  mocks.siteDocs.set(SITE, { owner: 'user-1' });
   mocks.set.mockResolvedValue(undefined);
   mocks.batchCommit.mockResolvedValue(undefined);
-  mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('any', {})));
+  mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('user-1', {
+    role: 'admin',
+    sites: [SITE],
+  })));
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));
 });
 

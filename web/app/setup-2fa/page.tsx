@@ -143,17 +143,17 @@ export default function Setup2FAPage() {
       <div className="absolute inset-0 blueprint-grid opacity-15" />
       <Card className="relative z-10 w-full max-w-2xl border-border bg-card">
         <CardHeader>
-          <CardTitle>Set Up Two-Factor Authentication</CardTitle>
+          <CardTitle>set up two-factor authentication</CardTitle>
           <CardDescription>
-            Secure your account with two-factor authentication (2FA)
+            secure your account with two-factor authentication (2FA)
           </CardDescription>
         </CardHeader>
         <CardContent>
           {step === 'setup' && (
             <div className="space-y-6">
               <div className="text-sm text-muted-foreground space-y-2">
-                <p className="font-semibold text-foreground">Step 1: Scan QR Code</p>
-                <p>Open your authenticator app (Google Authenticator, Authy, etc.) and scan this QR code:</p>
+                <p className="font-semibold text-foreground">step 1: scan QR code</p>
+                <p>open your authenticator app (Google Authenticator, Authy, etc.) and scan this QR code:</p>
               </div>
 
               {qrCodeUrl && (
@@ -169,7 +169,7 @@ export default function Setup2FAPage() {
               )}
 
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-muted-foreground">Manual Entry Code:</p>
+                <p className="text-sm font-semibold text-muted-foreground">manual entry code:</p>
                 <div className="flex gap-2">
                   <Input
                     value={secret}
@@ -181,11 +181,11 @@ export default function Setup2FAPage() {
                     variant="outline"
                     onClick={() => copyToClipboard(secret)}
                   >
-                    Copy
+                    copy
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  If you cannot scan the QR code, enter this code manually in your authenticator app.
+                  if you cannot scan the QR code, enter this code manually in your authenticator app.
                 </p>
               </div>
 
@@ -194,7 +194,7 @@ export default function Setup2FAPage() {
                   onClick={() => setStep('verify')}
                   className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 >
-                  Continue to Verification
+                  continue to verification
                 </Button>
                 <Button
                   type="button"
@@ -202,7 +202,7 @@ export default function Setup2FAPage() {
                   onClick={() => router.back()}
                   className="w-full text-sm text-muted-foreground hover:text-foreground"
                 >
-                  Cancel
+                  cancel
                 </Button>
               </div>
             </div>
@@ -211,8 +211,8 @@ export default function Setup2FAPage() {
           {step === 'verify' && (
             <form onSubmit={handleVerify} className="space-y-6">
               <div className="text-sm text-muted-foreground space-y-2">
-                <p className="font-semibold text-foreground">Step 2: Verify Setup</p>
-                <p>Enter the 6-digit code from your authenticator app to verify:</p>
+                <p className="font-semibold text-foreground">step 2: verify setup</p>
+                <p>enter the 6-digit code from your authenticator app to verify:</p>
               </div>
 
               <div className="space-y-2">
@@ -233,7 +233,7 @@ export default function Setup2FAPage() {
                   disabled={isSubmitting || verificationCode.length !== 6}
                   className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
                 >
-                  {isSubmitting ? 'Verifying...' : 'Verify & Enable 2FA'}
+                  {isSubmitting ? 'verifying...' : 'verify & enable 2FA'}
                 </Button>
                 <Button
                   type="button"
@@ -242,7 +242,7 @@ export default function Setup2FAPage() {
                   disabled={isSubmitting}
                   className="w-full"
                 >
-                  Back
+                  back
                 </Button>
                 <Button
                   type="button"
@@ -251,7 +251,7 @@ export default function Setup2FAPage() {
                   disabled={isSubmitting}
                   className="w-full text-sm text-muted-foreground hover:text-foreground"
                 >
-                  Cancel
+                  cancel
                 </Button>
               </div>
             </form>
@@ -260,13 +260,13 @@ export default function Setup2FAPage() {
           {step === 'backup' && (
             <div className="space-y-6">
               <div className="text-sm text-muted-foreground space-y-2">
-                <p className="font-semibold text-red-400">Step 3: Save Backup Codes</p>
+                <p className="font-semibold text-red-400">step 3: save backup codes</p>
                 <p>
-                  Save these backup codes in a secure location. You can use them to access your account
+                  save these backup codes in a secure location. you can use them to access your account
                   if you lose access to your authenticator app.
                 </p>
                 <p className="text-red-400 font-semibold">
-                  These codes will only be shown once!
+                  these codes will only be shown once!
                 </p>
               </div>
 
@@ -288,7 +288,7 @@ export default function Setup2FAPage() {
                   onClick={() => copyToClipboard(backupCodes.join('\n'))}
                   className="w-full"
                 >
-                  Copy All Codes
+                  copy all codes
                 </Button>
               </div>
 

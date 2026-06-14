@@ -20,11 +20,15 @@
  * with rollback-only powers (no new pushes). Defined in
  * `web/lib/apiKeyTypes.ts`.
  *
- * Webhook emission: NOT done inline. The fan-out cloud function
- * (`functions/src/distributionFanout.ts:onRoostWritten`) fires on every
- * `currentVersionId` change and handles rollout state. Webhook
- * publication of `version.rolled_back` is the dispatcher's job in a
- * follow-up wave (currently nothing emits it — see TODO below).
+ * Dispatch: rollback flips the pointer, but does not let the fan-out
+ * trigger replay its deterministic `roost_sync_{roostId}_{versionId}`
+ * command id. The route keeps/creates `rollouts/{targetVersionId}` so
+ * `onRoostWritten` bails, then directly enqueues replay-safe nonce
+ * `sync_pull` commands to each target machine.
+ *
+ * Webhook emission: NOT done inline. Publication of
+ * `version.rolled_back` is the dispatcher's job in a follow-up wave
+ * (currently nothing emits it — see TODO below).
  *
  * Audit log: `version_pointer_changed` audit emission is structural
  * infra not yet wired up from any web route. See TODO below — for now
@@ -32,6 +36,7 @@
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import type { Firestore, WriteBatch } from 'firebase-admin/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
   problem,
@@ -61,10 +66,104 @@ interface RouteParams {
 }
 
 const DEFAULT_TARGET = 'previous';
+const DEFAULT_EXTRACT_ROOT = '~/Documents/Owlette';
+const ROLLBACK_DISPATCH_BATCH_SIZE = 400;
 
 async function readSiteDocForGate(siteId: string): Promise<Record<string, unknown> | null> {
   const snap = await getAdminDb().collection('sites').doc(siteId).get();
   return snap.exists ? (snap.data() ?? null) : null;
+}
+
+async function commitBatchIfNeeded(
+  state: { batch: WriteBatch; ops: number },
+  db: Firestore,
+  nextOps: number,
+): Promise<void> {
+  if (state.ops > 0 && state.ops + nextOps > ROLLBACK_DISPATCH_BATCH_SIZE) {
+    await state.batch.commit();
+    state.batch = db.batch();
+    state.ops = 0;
+  }
+}
+
+async function dispatchRollbackSyncPulls(args: {
+  db: Firestore;
+  siteId: string;
+  roostId: string;
+  versionId: string;
+  versionUrl: string;
+  extractRoot: string;
+  targets: string[];
+  nonce: string;
+  requestedBy: string;
+}): Promise<void> {
+  const {
+    db,
+    siteId,
+    roostId,
+    versionId,
+    versionUrl,
+    extractRoot,
+    targets,
+    nonce,
+    requestedBy,
+  } = args;
+  const deterministicCmdId = `roost_sync_${roostId}_${versionId}`;
+  const rollbackCmdId = `roost_rollback_${roostId}_${versionId}_${nonce}`;
+  const state = { batch: db.batch(), ops: 0 };
+
+  for (const machineId of targets) {
+    await commitBatchIfNeeded(state, db, 3);
+
+    const machineRef = db
+      .collection('sites')
+      .doc(siteId)
+      .collection('machines')
+      .doc(machineId);
+    const pendingRef = machineRef.collection('commands').doc('pending');
+    const completedRef = machineRef.collection('commands').doc('completed');
+    const targetStateRef = db
+      .collection('sites')
+      .doc(siteId)
+      .collection('roosts')
+      .doc(roostId)
+      .collection('target_state')
+      .doc(machineId);
+
+    state.batch.set(
+      pendingRef,
+      {
+        [rollbackCmdId]: {
+          type: 'sync_pull',
+          site_id: siteId,
+          roost_id: roostId,
+          version_id: versionId,
+          version_url: versionUrl,
+          extract_root: extractRoot,
+          queued_at: FieldValue.serverTimestamp(),
+          rollback: true,
+          rollback_requested_by: requestedBy,
+        },
+        [deterministicCmdId]: FieldValue.delete(),
+      },
+      { merge: true },
+    );
+    state.ops += 1;
+
+    state.batch.set(
+      completedRef,
+      { [deterministicCmdId]: FieldValue.delete() },
+      { merge: true },
+    );
+    state.ops += 1;
+
+    state.batch.delete(targetStateRef);
+    state.ops += 1;
+  }
+
+  if (state.ops > 0) {
+    await state.batch.commit();
+  }
 }
 
 /**
@@ -172,6 +271,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       throw err;
     }
     const resolvedData = resolved.doc.data() ?? {};
+    const versionUrl =
+      typeof resolvedData.versionUrl === 'string' && resolvedData.versionUrl
+        ? resolvedData.versionUrl
+        : null;
 
     // Compare-and-swap inside a transaction: read the roost head, verify
     // the target isn't already current, flip the pointers atomically.
@@ -184,6 +287,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       .doc(site.siteId)
       .collection('roosts')
       .doc(roostId);
+    const rolloutRef = roostRef.collection('rollouts').doc(resolved.versionId);
+    const nonce = Date.now().toString(36);
 
     const txResult = await db.runTransaction(async (tx) => {
       const roostSnap = await tx.get(roostRef);
@@ -199,6 +304,23 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       if (currentId === resolved.versionId) {
         return { kind: 'no_op' as const, currentId };
       }
+      if (!versionUrl) {
+        return { kind: 'version_url_missing' as const };
+      }
+      const targets = Array.isArray(existing.targets)
+        ? [
+            ...new Set(
+              (existing.targets as unknown[]).filter(
+                (target): target is string =>
+                  typeof target === 'string' && target.length > 0,
+              ),
+            ),
+          ]
+        : [];
+      const extractRoot =
+        typeof existing.extractPath === 'string' && existing.extractPath.trim()
+          ? existing.extractPath.trim()
+          : DEFAULT_EXTRACT_ROOT;
 
       // Denormalise the resolved version's summary fields onto the roost
       // doc so the /roost list + dispatcher cloud function can read them
@@ -212,10 +334,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             ? resolvedData.description
             : null,
         previousVersionId: currentId,
-        versionUrl:
-          typeof resolvedData.versionUrl === 'string'
-            ? resolvedData.versionUrl
-            : null,
+        versionUrl,
         totalFiles:
           typeof resolvedData.totalFiles === 'number' ? resolvedData.totalFiles : 0,
         totalSize:
@@ -223,9 +342,38 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         updatedAt: FieldValue.serverTimestamp(),
       });
 
+      // Keep/create the target rollout doc as a terminal guard. The roost
+      // pointer change will trigger onRoostWritten, and that trigger bails
+      // when rollouts/{versionId} already exists. Marking it terminal also
+      // prevents an older in-flight rollout state from later promoting a
+      // deterministic fleet command for this rollback version.
+      tx.set(
+        rolloutRef,
+        {
+          stage: 'complete',
+          versionId: resolved.versionId,
+          versionUrl,
+          extractRoot,
+          canary: targets,
+          fleet: [],
+          startedAt: FieldValue.serverTimestamp(),
+          completedAt: FieldValue.serverTimestamp(),
+          pendingCommandsDispatched: true,
+          pendingCommandsDispatchedAt: FieldValue.serverTimestamp(),
+          rollback: true,
+          rollbackFromVersionId: currentId,
+          rollbackBy: auth.userId,
+          rollbackNonce: nonce,
+        },
+        { merge: true },
+      );
+
       return {
         kind: 'flipped' as const,
         previousVersionId: currentId,
+        versionUrl,
+        targets,
+        extractRoot,
       };
     });
 
@@ -251,13 +399,33 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         code: 'rollback_no_op',
       });
     }
+    if (txResult.kind === 'version_url_missing') {
+      return problem({
+        type: ProblemType.Conflict,
+        title: 'version has no url',
+        status: 409,
+        detail: 'the target version exists but its R2 url is missing; cannot fan out rollback',
+        instance: `/api/roosts/${roostId}/rollback`,
+        code: 'version_url_missing',
+      });
+    }
+
+    await dispatchRollbackSyncPulls({
+      db,
+      siteId: site.siteId,
+      roostId,
+      versionId: resolved.versionId,
+      versionUrl: txResult.versionUrl,
+      extractRoot: txResult.extractRoot,
+      targets: txResult.targets,
+      nonce,
+      requestedBy: auth.userId,
+    });
 
     // TODO(roost-webhooks): emit a `version.rolled_back` webhook event.
-    // The fan-out cloud function (distributionFanout.ts:onRoostWritten)
-    // fires on every currentVersionId change and is responsible for
-    // rollout state, but webhook publication is a separate dispatcher
-    // not yet wired up — same gap as `version.published`. Track in the
-    // wave-2 webhook-emission task.
+    // Webhook publication is a separate dispatcher not yet wired up —
+    // same gap as `version.published`. Track in the wave-2
+    // webhook-emission task.
 
     const response = applyAuthDeprecations(
       NextResponse.json({

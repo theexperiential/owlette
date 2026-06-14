@@ -387,6 +387,35 @@ describe('authorizedSiteHandler — denials', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it('returns 403 when site access fails because the user is inactive', async () => {
+    assertUserHasSiteAccessMock.mockRejectedValue(
+      new ApiAuthError(403, 'Forbidden: User is deleted or inactive', {
+        code: 'user_inactive',
+      }),
+    );
+    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
+    const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
+    expect(res.status).toBe(403);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('returns 403 when the actor user doc is soft-deleted', async () => {
+    userDoc = {
+      exists: true,
+      data: () => ({
+        role: 'admin',
+        sites: ['site-a'],
+        deletedAt: 1700000000000,
+      }),
+    };
+    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedSiteHandler({ capability: 'MACHINE_EXEC_COMMAND', siteIdParam: 'path' })(handler);
+    const res = await wrapped(makeRequest(), pathParamsFor('site-a'));
+    expect(res.status).toBe(403);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('returns 403 + deny audit when the capability is missing', async () => {
     userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
     const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
@@ -492,6 +521,19 @@ describe('authorizedPlatformHandler', () => {
     const deny = setCalls.find((c) => (c.payload as { outcome?: string }).outcome === 'deny');
     expect(deny).toBeDefined();
     expect((deny!.payload as { denyReason?: string }).denyReason).toBe('role_insufficient');
+  });
+
+  it('soft-deleted superadmin is rejected with 403 before handler invocation', async () => {
+    userDoc = {
+      exists: true,
+      data: () => ({ role: 'superadmin', sites: [], deletedAt: 1700000000000 }),
+    };
+    const handler = makePlatformHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedPlatformHandler({ capability: 'GLOBAL_SETTINGS_WRITE' })(handler);
+
+    const res = await wrapped(makeRequest('http://localhost/api/platform/security/kill-switch', 'POST'));
+    expect(res.status).toBe(403);
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it('returns 503 when allow audit write fails', async () => {

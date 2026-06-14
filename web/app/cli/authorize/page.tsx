@@ -95,7 +95,7 @@ function CliAuthorizeInner() {
       <PageHeader currentPage="api keys" />
       <main className="max-w-xl mx-auto px-6 py-8">
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-white flex items-center gap-2">
+          <h1 className="text-2xl font-semibold text-foreground flex items-center gap-2">
             <KeyRound className="h-5 w-5" /> authorise cli
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
@@ -106,7 +106,7 @@ function CliAuthorizeInner() {
         {done ? (
           <Card className="border-green-500/50 bg-green-500/5 p-6 text-center space-y-3">
             <CheckCircle2 className="h-8 w-8 text-green-400 mx-auto" />
-            <p className="text-sm text-white">cli authorised</p>
+            <p className="text-sm text-foreground">cli authorised</p>
             <p className="text-xs text-muted-foreground">
               return to your terminal — the cli is polling and will pick up the key
               within a few seconds.
@@ -124,7 +124,7 @@ function CliAuthorizeInner() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="cliKeyName" className="text-white">
+              <Label htmlFor="cliKeyName" className="text-foreground">
                 key name
               </Label>
               <Input
@@ -133,20 +133,20 @@ function CliAuthorizeInner() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. laptop-dev, ci-runner"
-                className="bg-background border-border text-white"
+                className="bg-background border-border text-foreground"
                 disabled={submitting}
               />
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
-                <Label className="text-white">environment</Label>
+                <Label className="text-foreground">environment</Label>
                 <Select
                   value={environment}
                   onValueChange={(v) => setEnvironment(v as ApiKeyEnvironment)}
                   disabled={submitting}
                 >
-                  <SelectTrigger className="bg-background border-border text-white">
+                  <SelectTrigger className="bg-background border-border text-foreground">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -156,7 +156,7 @@ function CliAuthorizeInner() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="cliTtlDays" className="text-white">
+                <Label htmlFor="cliTtlDays" className="text-foreground">
                   ttl (days)
                 </Label>
                 <Input
@@ -166,20 +166,20 @@ function CliAuthorizeInner() {
                   max={MAX_TTL_DAYS}
                   value={ttlDays}
                   onChange={(e) => setTtlDays(Number(e.target.value) || DEFAULT_TTL_DAYS)}
-                  className="bg-background border-border text-white"
+                  className="bg-background border-border text-foreground"
                   disabled={submitting}
                 />
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label className="text-white">scope preset</Label>
+              <Label className="text-foreground">scope preset</Label>
               <Select
                 value={preset}
                 onValueChange={(v) => setPreset(v as ApiKeyScopePreset)}
                 disabled={submitting}
               >
-                <SelectTrigger className="bg-background border-border text-white">
+                <SelectTrigger className="bg-background border-border text-foreground">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

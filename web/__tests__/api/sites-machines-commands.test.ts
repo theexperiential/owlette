@@ -136,6 +136,8 @@ beforeEach(() => {
   signedUrlCalls.length = 0;
   mockResolveAuth.mockResolvedValue(authedSession());
   mockAssertSite.mockResolvedValue({ siteId: SITE, siteData: {} });
+  mocks.siteDocs.clear();
+  mocks.siteDocs.set(SITE, { owner: 'user-1' });
   mocks.set.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue(undefined);
   mocks.del.mockResolvedValue(undefined);
@@ -687,6 +689,7 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
     mockResolveAuth.mockResolvedValue(
       authedKey([{ resource: 'machine', id: MACHINE, permissions: ['read'] }]),
     );
+    queueActorOnly();
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
       {
@@ -970,6 +973,10 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}', ()
     mockResolveAuth.mockResolvedValue(
       authedKey([{ resource: 'site', id: SITE, permissions: ['read'] }]),
     );
+    mocks.get.mockReset();
+    mocks.get.mockImplementation(() => {
+      throw new Error('unexpected extra firestore read on commandStatus GET');
+    });
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands/${CID}`,
     );
@@ -1055,6 +1062,10 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/screenshots/upload-url',
     mockResolveAuth.mockResolvedValue(
       authedKey([{ resource: 'machine', id: MACHINE, permissions: ['read'] }]),
     );
+    mocks.get.mockReset();
+    mocks.get.mockImplementation(() => {
+      throw new Error('unexpected extra firestore read on screenshot upload-url POST');
+    });
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/machines/${MACHINE}/screenshots/upload-url`,
       { method: 'POST', body: {} },

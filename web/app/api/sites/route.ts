@@ -14,6 +14,8 @@ import {
   problemFromError,
   problemForbidden,
   problemNotFound,
+  problemScopeInsufficient,
+  problemTokenExpired,
   problemValidation,
   problemUnauthorized,
   ProblemType,
@@ -21,13 +23,15 @@ import {
 import {
   ApiAuthError,
   applyAuthDeprecations,
+  assertActiveUser,
+  requireScope,
   resolveAuth,
   type ResolvedAuth,
+  type ScopeCheckResult,
 } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { withIdempotency } from '@/lib/idempotency';
-import { authorizedPlatformHandler, type PlatformHandlerContext } from '@/lib/authorizedHandler.server';
-import { Capability } from '@/lib/capabilities';
+import { withRateLimit } from '@/lib/withRateLimit';
 import { createSite } from '@/lib/actions/createSite.server';
 import {
   applyAuthDeprecations as applyScopedAuthDeprecations,
@@ -38,12 +42,6 @@ interface CreateSiteBody {
   siteId?: unknown;
   name?: unknown;
   timezone?: unknown;
-}
-
-function auditActor(ctx: PlatformHandlerContext): string {
-  return ctx.auth.keyContext
-    ? `apiKey:${ctx.auth.keyContext.keyId}`
-    : `user:${ctx.actor.userId}`;
 }
 
 export async function GET(request: NextRequest) {
@@ -127,34 +125,80 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export const POST = authorizedPlatformHandler({
-  capability: Capability.SITE_MEMBER_MANAGE,
-  targetKind: 'site',
-  apiKeyScope: { resource: 'site', permission: 'admin' },
-})(async (request: NextRequest, ctx: PlatformHandlerContext) => {
+// Site creation is self-serve onboarding, NOT a superadmin-only platform
+// action. Any active authenticated user (browser session, Firebase id-token,
+// or a `site:admin`-scoped API key) may create a site and becomes its owner —
+// `createSite` stamps `owner = caller`. The wave-3.9 migration moved this
+// server-side (good) but routed it through `authorizedPlatformHandler`, which
+// hard-requires superadmin (authorizedHandler.server.ts:688) — that regressed
+// new users out of creating their first site. We authorize the caller here
+// directly instead, keeping rate-limiting, idempotency, audit, soft-delete
+// rejection, and API-key scope enforcement.
+export const POST = withRateLimit(async (request: NextRequest) => {
   try {
+    let auth: ResolvedAuth;
+    let scopeCheck: ScopeCheckResult;
+    try {
+      auth = await resolveAuth(request);
+      // Block soft-deleted / missing users before any write.
+      await assertActiveUser(auth.userId);
+      // API keys must carry an explicit `site:admin` scope; sessions and
+      // id-tokens bypass scope enforcement inside requireScope.
+      scopeCheck = requireScope(auth, 'site', '*', 'admin');
+    } catch (err) {
+      // Mirror authorizedHandler's authErrorToResponse so scope/token errors
+      // keep their specific problem codes (e.g. scope_insufficient) rather than
+      // collapsing to a generic forbidden.
+      if (err instanceof ApiAuthError) {
+        if (err.code === 'token_expired') {
+          const expiredAt = typeof err.details?.expiredAt === 'number' ? err.details.expiredAt : undefined;
+          return problemTokenExpired(expiredAt);
+        }
+        if (err.code === 'scope_insufficient') {
+          const d = err.details as { resource?: string; id?: string; permission?: string } | undefined;
+          return problemScopeInsufficient(err.message, {
+            resource: d?.resource ?? 'unknown',
+            id: d?.id ?? 'unknown',
+            permission: d?.permission ?? 'unknown',
+          });
+        }
+        if (err.status === 401) return problemUnauthorized(err.message);
+        if (err.status === 403) return problemForbidden(err.message);
+        if (err.status === 404) return problemNotFound(err.message);
+        return problem({
+          type: ProblemType.Internal,
+          title: 'authorization error',
+          status: err.status,
+          detail: err.message,
+        });
+      }
+      throw err;
+    }
+
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 
     return await withIdempotency(
       request,
       {
-        userId: ctx.actor.userId,
-        environment: ctx.auth.keyContext?.environment ?? 'unknown',
+        userId: auth.userId,
+        environment: auth.keyContext?.environment ?? 'unknown',
       },
       parsed.raw,
       async () => {
         const body = parsed.body as CreateSiteBody;
         const result = await createSite(
           {
-            auditActor: auditActor(ctx),
+            auditActor: auth.keyContext
+              ? `apiKey:${auth.keyContext.keyId}`
+              : `user:${auth.userId}`,
             endpoint: '/api/sites',
             method: 'POST',
           },
           {
             siteId: typeof body.siteId === 'string' ? body.siteId : '',
             name: typeof body.name === 'string' ? body.name : '',
-            ownerUid: ctx.actor.userId,
+            ownerUid: auth.userId,
             timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
           },
         );
@@ -192,14 +236,14 @@ export const POST = authorizedPlatformHandler({
             },
             { status: 201 },
           ),
-          ctx.scopeCheck,
+          scopeCheck,
         );
       },
     );
   } catch (err) {
     return problemFromError(err, 'v2/sites:POST');
   }
-});
+}, { strategy: 'api', identifier: 'ip' });
 
 /**
  * Null = unrestricted (session, legacy key, or site wildcard); Set = restricted

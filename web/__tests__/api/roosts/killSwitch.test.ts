@@ -58,7 +58,11 @@ function disableRoostForSite() {
   // The site doc reader inside each route's `readSiteDocForGate` calls
   // `getAdminDb().collection('sites').doc(siteId).get()`. The firestore-mock
   // factory routes top-level site reads through `mocks.siteDocs`.
-  mocks.siteDocs.set(SITE, { roostEnabled: false, name: 'Disabled site' });
+  mocks.siteDocs.set(SITE, {
+    owner: 'user-1',
+    roostEnabled: false,
+    name: 'Disabled site',
+  });
 }
 
 function authed() {
