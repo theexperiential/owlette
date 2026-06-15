@@ -46,6 +46,16 @@ export function ChatInput({
     return () => window.removeEventListener('keydown', handleKey);
   }, [expandedImage]);
 
+  // Auto-resize textarea to fit its content. Driven by `input` so it tracks
+  // every value change — including programmatic ones like clearing on submit,
+  // which fire no input event and would otherwise leave the box stuck tall.
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = '40px';
+    textarea.style.height = `${Math.max(40, Math.min(textarea.scrollHeight, 200))}px`;
+  }, [input]);
+
   const canSend =
     (input.trim() || pendingImages.some((i) => !i.uploading)) && !isLoading;
 
@@ -59,17 +69,6 @@ export function ChatInput({
       }
     },
     [canSend, onSubmit],
-  );
-
-  // Auto-resize textarea
-  const handleInput = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      onInputChange(e);
-      const textarea = e.target;
-      textarea.style.height = '40px';
-      textarea.style.height = `${Math.max(40, Math.min(textarea.scrollHeight, 200))}px`;
-    },
-    [onInputChange],
   );
 
   const handlePaste = useCallback(
@@ -158,7 +157,7 @@ export function ChatInput({
             ref={textareaRef}
             data-chat-input
             value={input}
-            onChange={handleInput}
+            onChange={onInputChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             placeholder="ask about this machine..."
