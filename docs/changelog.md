@@ -9,6 +9,16 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [2.12.10] - 2026-06-14
+
+### fixed
+
+- **Agent pairing no longer stalls behind an unanswered prompt.** During interactive install the agent used to block on an `open browser? [y/N]` prompt *before* it started polling for authorization — so approving from the dashboard or another device did nothing until that prompt was answered, and pairing could silently time out. The agent now opens the pairing page automatically and starts polling immediately; authorization from any device completes pairing on its own.
+
+### added
+
+- **`--no-browser` pairing option** (and the `OWLETTE_NO_BROWSER=1` env var) skips opening a local browser on kiosks, signage, media servers, and headless or RDP machines while still polling immediately — authorize from your phone or another computer.
+
 ## [2.12.9] - 2026-06-09
 
 ### fixed

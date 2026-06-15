@@ -20,10 +20,15 @@ For silent/bulk deployment:
     python configure_site.py --add silver-compass-drift
 
 Usage:
-    python configure_site.py [--url URL] [--add PHRASE]
+    python configure_site.py [--url URL] [--add PHRASE] [--no-browser]
 
     --url URL        Override the API base URL
     --add PHRASE     Pre-authorized pairing phrase (skips browser, polls immediately)
+    --no-browser     Don't auto-open a browser on this machine — just print the
+                     pairing link and start polling. Use on kiosks/signage/media
+                     servers showing live content, headless boxes, or over RDP,
+                     where you'll authorize from your phone or another computer.
+                     Can also be set with the OWLETTE_NO_BROWSER=1 env var.
 """
 
 import json
@@ -165,7 +170,7 @@ def _save_config(site_id: str, environment: str, api_base: str, project_id: str)
 
 def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                      timeout_seconds: int = TIMEOUT_SECONDS,
-                     show_prompts: bool = True):
+                     show_prompts: bool = True, open_browser: bool = True):
     """
     Run device code pairing flow to configure site authentication.
 
@@ -179,6 +184,9 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
         add_phrase: Pre-authorized pairing phrase (for /ADD= silent install)
         timeout_seconds: Max time to wait for authorization
         show_prompts: Show console output (False for GUI usage)
+        open_browser: Auto-open the pairing page on this machine (interactive
+            mode only). Set False (--no-browser) on kiosks/headless/RDP to skip
+            the local browser; polling still starts immediately either way.
 
     Returns:
         tuple: (success: bool, message: str, site_id: Optional[str])
@@ -368,23 +376,23 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                 print(f"{DIM}{'=' * 60}{RESET}")
                 print()
 
-                # Ask user whether to open browser locally or use phrase on another device
-                try:
-                    choice = input(f"  {BOLD}open browser on this machine? [y/N]{RESET} ").strip().lower()
-                except (EOFError, KeyboardInterrupt):
-                    choice = ''
-
-                if choice in ('y', 'yes'):
-                    if _open_browser(pairing_url):
-                        print(f"  {DIM}browser opened — select a site and authorize{RESET}")
-                    else:
-                        print(f"  {DIM}couldn't open browser — enter the phrase on another device{RESET}")
+                # The agent waits on the SERVER, not the operator. Auto-open the
+                # pairing page for convenience (unless --no-browser) and start
+                # polling immediately, so authorization from ANY device — this
+                # browser, a phone, or the dashboard — completes pairing on its
+                # own. There is no prompt to answer: previously a blocking [y/N]
+                # gated polling, so if the operator authorized elsewhere first the
+                # agent never started polling and pairing silently stalled until
+                # the code expired.
+                if open_browser and _open_browser(pairing_url):
+                    print(f"  {DIM}opened the pairing page in your browser — pick a site and authorize.{RESET}")
                 else:
-                    print(f"  {DIM}enter the phrase on your phone or another computer{RESET}")
+                    print(f"  {DIM}approve at the link above from any device.{RESET}")
                 print()
-                print(f"  waiting for authorization...")
+                print(f"  {BOLD}waiting for authorization...{RESET}")
 
-            # Poll for authorization
+            # Poll for authorization. Authorization from ANY device ends the wait
+            # here — the operator is never blocked behind a prompt.
             success = auth_manager.poll_device_code(
                 device_code=device_code,
                 interval=interval,
@@ -449,7 +457,8 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
 
 
 # Keep backward compatibility: run_oauth_flow calls run_pairing_flow
-def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts=True):
+def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts=True,
+                   open_browser=True):
     """Backward-compatible wrapper. Calls run_pairing_flow()."""
     api_base = None
     if setup_url:
@@ -457,7 +466,8 @@ def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts
             api_base = 'https://dev.owlette.app/api'
         else:
             api_base = 'https://owlette.app/api'
-    return run_pairing_flow(api_base=api_base, timeout_seconds=timeout_seconds, show_prompts=show_prompts)
+    return run_pairing_flow(api_base=api_base, timeout_seconds=timeout_seconds,
+                            show_prompts=show_prompts, open_browser=open_browser)
 
 
 def main():
@@ -467,6 +477,10 @@ def main():
                         help='API base URL (auto-detected if not specified)')
     parser.add_argument('--add', type=str, default=None,
                         help='Pre-authorized pairing phrase for silent install')
+    parser.add_argument('--no-browser', action='store_true',
+                        help="Don't auto-open a browser on this machine; just print "
+                             "the pairing link and poll (kiosks/headless/RDP — "
+                             "authorize from any device). Also: OWLETTE_NO_BROWSER=1")
     args = parser.parse_args()
 
     # Determine API base
@@ -476,6 +490,10 @@ def main():
         if 'dev.owlette.app' in env_url:
             api_base = 'https://dev.owlette.app/api'
 
+    # Suppress the local browser auto-open via flag or env var (for kiosks/
+    # headless/remote installs where you authorize from another device).
+    no_browser = args.no_browser or os.environ.get('OWLETTE_NO_BROWSER', '').strip().lower() in ('1', 'true', 'yes')
+
     # Write debug log
     debug_log = Path(shared_utils.get_data_path('logs/pairing_debug.log'))
     Path(shared_utils.get_data_path('logs')).mkdir(parents=True, exist_ok=True)
@@ -484,6 +502,7 @@ def main():
         f.write(f"==================\n")
         f.write(f"--url: {args.url}\n")
         f.write(f"--add: {args.add}\n")
+        f.write(f"--no-browser: {no_browser}\n")
         f.write(f"Resolved api_base: {api_base}\n")
         f.write(f"OWLETTE_SETUP_URL: {os.environ.get('OWLETTE_SETUP_URL', 'NOT SET')}\n\n")
 
@@ -491,6 +510,7 @@ def main():
         api_base=api_base,
         add_phrase=args.add,
         show_prompts=True,
+        open_browser=not no_browser,
     )
 
     if success:

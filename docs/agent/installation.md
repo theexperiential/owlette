@@ -20,13 +20,13 @@ Download the packaged installer, run it as Administrator, and authorize the mach
 3. Save `Owlette-Installer-v<version>.exe` to the target machine.
 4. Right-click the installer and select **Run as administrator**.
 5. Follow the installer wizard.
-6. When the console appears, copy the pairing phrase and note the authorization URL.
-7. At the prompt `open browser on this machine? [y/N]`, choose:
-    - `y` to open the pairing page locally, then select a site and authorize.
-    - Enter to keep the browser closed, then enter the phrase from your phone or another computer.
-8. Wait while the agent polls for authorization, stores credentials, and installs the Windows service.
+6. When the console appears, the agent prints the pairing phrase and authorization URL, opens the pairing page in your default browser, and immediately begins waiting for authorization — there is no prompt to answer.
+7. Authorize from any device: pick a site and approve on the page that opened, or enter the phrase at the authorization URL from your phone or another computer. The agent is already polling, so pairing completes within seconds of approval.
+8. The agent stores credentials and installs the Windows service.
 
 Pairing phrases expire after 10 minutes. Credentials are stored encrypted at `C:\ProgramData\Owlette\.tokens.enc`.
+
+> **Kiosks, signage, media servers, and headless or RDP machines:** to stop a browser from opening on a screen showing live content, set `OWLETTE_NO_BROWSER=1` before launching the installer — the agent still starts polling immediately, and you authorize from your phone or another computer. When re-pairing manually, pass `--no-browser` to `configure_site.py` for the same effect.
 
 ---
 
@@ -162,11 +162,11 @@ Agent requests a device code from the API
 Console displays the pairing phrase, authorization URL, and 10-minute expiry
   |
   v
-Prompt: open browser on this machine? [y/N]
+Agent auto-opens the pairing page and starts polling immediately (no prompt)
+  (browser open is skipped with --no-browser or OWLETTE_NO_BROWSER=1)
   |
-  +-- y: browser opens locally; select a site and authorize
-  |
-  +-- Enter: enter the phrase from another device
+  v
+Authorize from any device: the opened page, a phone, or the authorization URL
   |
   v
 Agent polls until authorization completes or expires
