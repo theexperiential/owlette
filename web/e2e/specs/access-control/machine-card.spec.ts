@@ -111,15 +111,14 @@ test.describe('machine card — member on site-A', () => {
     const card = await cardFor(page, REBOOTING_MACHINE_ID);
 
     // Admin variant is a <button data-testid="machine-status-cancel-pill">;
-    // the member variant is a text-only <Badge> with no click handler and no
-    // testid. Asserting count 0 is the contract: the button isn't rendered.
+    // the member variant is a non-interactive <Badge> with no click handler and
+    // no testid. Asserting count 0 is the contract: the button isn't rendered.
     await expect(card.getByTestId('machine-status-cancel-pill')).toHaveCount(0);
 
-    // The pill itself is still rendered — it just shows the textual
-    // "restarting…" state without interactivity. Spot-check that the amber
-    // "restarting" copy is in the card so we're not accidentally asserting
-    // on a missing pill.
-    await expect(card).toContainText(/restarting/i);
+    // The pill itself is still rendered — a non-interactive icon + countdown
+    // whose accessible name carries the "restarting" state (role=img aria-label).
+    // Assert on the accessible name so we're not asserting on a missing pill.
+    await expect(card.getByRole('img', { name: /restarting/i })).toBeVisible();
   });
 
   test('context menu hides cancel-restart item during active restart', async ({ page }) => {

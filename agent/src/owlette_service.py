@@ -4666,6 +4666,25 @@ class OwletteService(win32serviceutil.ServiceFramework):
             })
             return
 
+        # Gate 5b: every assigned monitor must be present in the live topology.
+        # apply_topology validates this and returns MISSING_MONITORS *before* any
+        # SetDisplayConfig call, so re-applying a layout that references a
+        # powered-off / asleep / disconnected monitor can never succeed. Without
+        # this gate auto-restore would re-attempt on every display tick while a
+        # monitor is off — and each attempt emits a `display_apply_failed`
+        # warning audit before returning the skip. The `display_monitor_removed`
+        # event already records the absence, so skip silently here; drift on the
+        # monitors that ARE present is re-evaluated on each subsequent tick once
+        # the missing monitor returns. Mirrors _apply_core's own canonicalised
+        # desired-vs-live check (assigned_hashes is already canonicalised above).
+        live_hashes = {
+            m.get('edidHash')
+            for m in (new_profile.get('monitors') or [])
+            if isinstance(m, dict) and m.get('edidHash')
+        }
+        if any(h not in live_hashes for h in assigned_hashes):
+            return
+
         # Gate 6: drift-persistence — require >= 2 consecutive ticks of drift
         # so a single-tick flap (cable wiggle for one heartbeat) doesn't fire.
         if self._drift_pending_tick_count < 2:
@@ -4690,6 +4709,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
         if code in (
             display_manager.DisplayErrorCode.AUTO_RESTORE_RATE_LIMITED,
             display_manager.DisplayErrorCode.AUTO_RESTORE_SKIPPED_UNFIXABLE,
+            # MISSING_MONITORS means an assigned monitor isn't present in the
+            # live topology (powered off, asleep, signal/cable dropped). This is
+            # caught by apply_topology BEFORE any SetDisplayConfig runs, so it's
+            # a non-actionable pre-apply skip — not a real apply failure. Letting
+            # it increment the breaker meant a routine monitor power-off would
+            # trip the (sticky) breaker after 3 ticks and pause auto-restore
+            # until a manual reset, even after the monitor came back.
+            display_manager.DisplayErrorCode.MISSING_MONITORS,
         ):
             return True
         error_text = str((result or {}).get('error') or '').strip().lower()

@@ -219,17 +219,21 @@ The service writes `service_status.json` immediately when important state change
 
 **Symptoms**: Agent files quarantined, service won't start after update.
 
-**Cause**: WinRing0 driver used by LibreHardwareMonitor for CPU/GPU temperatures may be flagged.
+**Cause**: The WinRing0 driver that LibreHardwareMonitor uses for CPU/GPU temperatures is extracted at runtime to `C:\ProgramData\Owlette\python\python.sys` (and `pythonw.sys` for the GUI host) and loaded as kernel service `R0python` / `R0pythonw`. Defender's antivirus flags it as `VulnerableDriver:WinNT/Winring0` and may quarantine that `.sys` file. Process exclusions do not cover a kernel-driver file load, so the driver path itself must be excluded.
 
-**Fix**: The installer should add targeted Defender exclusions automatically. If it did not, add the same scoped exclusions manually from an elevated PowerShell prompt:
+**Fix**: The installer adds these exclusions automatically (2.12.12+). If the agent predates that, or the exclusion did not register, add them manually from an elevated PowerShell prompt, then restart the service:
 
 ```powershell
+# the runtime-extracted WinRing0 kernel driver — this is the file Defender quarantines
+Add-MpPreference -ExclusionPath "C:\ProgramData\Owlette\python\python.sys"
+Add-MpPreference -ExclusionPath "C:\ProgramData\Owlette\python\pythonw.sys"
+# the wrapper DLL + the python hosts (already added by the installer)
 Add-MpPreference -ExclusionPath "C:\ProgramData\Owlette\python\Lib\site-packages\WinTmp"
 Add-MpPreference -ExclusionProcess "C:\ProgramData\Owlette\python\python.exe"
 Add-MpPreference -ExclusionProcess "C:\ProgramData\Owlette\python\pythonw.exe"
 ```
 
-Use a broader `C:\ProgramData\Owlette` exclusion only as a temporary diagnostic step after reviewing the security tradeoff.
+If the driver was already quarantined, restore it from Windows Security → Protection history (or it re-extracts on the next temp read once excluded). Use a broader `C:\ProgramData\Owlette` exclusion only as a temporary diagnostic step after reviewing the security tradeoff.
 
 ---
 

@@ -88,6 +88,11 @@ const DISPLAY_EVENT_LABEL: Record<string, string> = {
   display_apply_refused_mosaic: 'apply refused (mosaic)',
   display_monitor_added: 'monitor added',
   display_apply_succeeded: 'apply succeeded',
+  display_apply_acked: 'apply confirmed',
+  display_revert_deferred: 'revert deferred',
+  display_auto_restore_fired: 'auto-restored',
+  display_auto_restore_skipped_unfixable: 'auto-restore skipped',
+  display_auto_restore_circuit_breaker_tripped: 'auto-restore paused',
 };
 
 /**

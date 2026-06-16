@@ -94,9 +94,15 @@ import site          # Enables site.main() for pip
 
 **Step 0 — Windows Defender Exclusion**:
 ```powershell
-Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\...'
+# wrapper DLL + python hosts
+Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp'
+Add-MpPreference -ExclusionProcess '{app}\python\python.exe'
+Add-MpPreference -ExclusionProcess '{app}\python\pythonw.exe'
+# the runtime-extracted WinRing0 kernel driver itself (this is what Defender quarantines)
+Add-MpPreference -ExclusionPath '{app}\python\python.sys'
+Add-MpPreference -ExclusionPath '{app}\python\pythonw.sys'
 ```
-**Why**: LibreHardwareMonitor uses WinRing0 driver for CPU/GPU temp monitoring. Windows Defender flags it as `VulnerableDriver:WinNT/Winring0` — a false positive for legitimate hardware monitoring.
+**Why**: LibreHardwareMonitor (WinTmp) extracts the WinRing0 driver AT RUNTIME to `{app}\python\python.sys` / `pythonw.sys` and loads it as kernel service `R0python` / `R0pythonw`. Windows Defender flags it as `VulnerableDriver:WinNT/Winring0`. A process exclusion does NOT cover a kernel-driver file load and the WinTmp path is the wrong folder, so the `.sys` paths MUST be excluded by path — do not drop them. If `WinTmp`/`LibreHardwareMonitorLib.dll` is ever upgraded, re-verify the extracted `.sys` name/path.
 
 **Step 1 — OAuth Configuration** (conditional):
 ```

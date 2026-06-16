@@ -1145,9 +1145,18 @@ class TestAutoRestoreCycle:
         # --- New drift while tripped: gate 3 short-circuits, no apply spawn -
         # `_maybe_auto_restore` is the gate-chain entry point. With tripped=True
         # in local config it must return before reaching the thread spawn.
-        # Use a fresh profile object — content is irrelevant since gate 3
-        # rejects before any profile-shape reads.
-        new_profile = {'monitors': [], 'signatureHash': 'abc'}
+        # The profile must carry the assigned monitors in live topology so that
+        # after the manual reset below the apply isn't short-circuited by gate
+        # 5b (assigned-monitor-absent); gate 3 still rejects first while tripped.
+        new_profile = {
+            'monitors': [
+                {'edidHash': 'aaaaaaaa', 'primary': True,
+                 'position': {'x': 0, 'y': 0}},
+                {'edidHash': 'bbbbbbbb', 'primary': False,
+                 'position': {'x': 1920, 'y': 0}},
+            ],
+            'signatureHash': 'abc',
+        }
         drifted_hashes = ['aaaaaaaa']
         fake_service._maybe_auto_restore(new_profile, drifted_hashes)
         # Apply count unchanged, no new audit events.
@@ -1494,6 +1503,13 @@ class TestAutoRestoreCycle:
         apply_results = [
             {'success': False, 'error': 'rate limited - 7s cooldown remaining'},
             {'success': False, 'error': 'apply already in progress'},
+            # A powered-off / disconnected assigned monitor: apply_topology
+            # rejects pre-SetDisplayConfig. Must NOT increment the breaker, or a
+            # routine monitor power-off would trip the sticky breaker.
+            {'success': False,
+             'error': "desired monitors not present in live topology: ['1d7d7cc72281ed07']",
+             'code': dm_mod.DisplayErrorCode.MISSING_MONITORS,
+             'missing': ['1d7d7cc72281ed07']},
             {'success': False, 'error': 'ccd rejected layout',
              'code': dm_mod.DisplayErrorCode.APPLY_FAILED},
         ]
@@ -1505,6 +1521,8 @@ class TestAutoRestoreCycle:
 
         monkeypatch.setattr(dm_mod, 'apply_topology', _mock_apply_topology)
 
+        # Three transient skips (rate-limited, in-progress, missing-monitors).
+        fake_service._run_auto_restore(assigned_layout, drift_key='same-drift')
         fake_service._run_auto_restore(assigned_layout, drift_key='same-drift')
         fake_service._run_auto_restore(assigned_layout, drift_key='same-drift')
 
@@ -1512,9 +1530,109 @@ class TestAutoRestoreCycle:
         assert cb['failures'] == 0
         assert fake_service._last_auto_restore_success_key is None
 
+        # A genuine apply failure still counts.
         fake_service._run_auto_restore(assigned_layout, drift_key='same-drift')
         assert cb['failures'] == 1
         assert fake_service._last_auto_restore_success_key is None
+
+    def test_assigned_monitor_absent_from_live_skips_without_apply(
+        self, monkeypatch, fake_service, assigned_layout, reset_apply_state,
+    ):
+        """Gate 5b: a powered-off / disconnected assigned monitor must not even
+        trigger an apply attempt.
+
+        apply_topology would reject it pre-SetDisplayConfig with MISSING_MONITORS
+        and emit a `display_apply_failed` warning audit on *every* tick while the
+        monitor is off. The gate chain must skip before dispatching the worker —
+        no apply, no breaker churn, no audit spam.
+        """
+        import shared_utils
+        import display_manager as dm_mod
+
+        config_state = {
+            'displays': {
+                'enabled': True,
+                'autoRestore': {
+                    'enabled': True,
+                    'circuitBreaker': {'failures': 0, 'tripped': False},
+                },
+                'assigned': assigned_layout,
+            },
+        }
+        monkeypatch.setattr(
+            shared_utils, 'read_config', self._make_config_reader(config_state),
+        )
+
+        apply_calls = []
+
+        def _mock_apply(layout, **kw):
+            apply_calls.append(layout)
+            return {'success': True, 'changes': [], 'autoRestore': True}
+
+        monkeypatch.setattr(dm_mod, 'apply_topology', _mock_apply)
+
+        spawned = []
+        real_thread_cls = threading.Thread
+
+        def _capture_thread(target, args=(), daemon=False, name=None, **kw):
+            t = real_thread_cls(
+                target=target, args=args, daemon=daemon, name=name, **kw,
+            )
+            spawned.append(t)
+            return t
+
+        monkeypatch.setattr(threading, 'Thread', _capture_thread)
+
+        # Live topology is missing the primary assigned monitor 'aaaaaaaa' (it
+        # was powered off); the surviving monitor 'bbbbbbbb' has drifted to
+        # primary at the origin, which is what triggered the drift check.
+        live_profile = {
+            'monitors': [
+                {'edidHash': 'bbbbbbbb', 'primary': True,
+                 'position': {'x': 0, 'y': 0}},
+            ],
+        }
+        fake_service._drift_pending_tick_count = 2
+        fake_service._maybe_auto_restore(
+            live_profile, ['bbbbbbbb'], 'drift-key', assigned_layout,
+        )
+
+        assert apply_calls == [], 'no apply attempted while a monitor is absent'
+        assert spawned == [], 'no auto-restore worker spawned'
+        cb = config_state['displays']['autoRestore']['circuitBreaker']
+        assert cb['failures'] == 0
+        assert cb.get('tripped') is False
+        fake_service._emit_display_event.assert_not_called()
+
+    def test_apply_was_skip_classifies_both_enum_and_helper_string_codes(
+        self, fake_service,
+    ):
+        """The production Session-0 helper path returns `code` as a JSON-
+        deserialized PLAIN STRING (e.g. 'missing_monitors'), not the enum
+        member (display_manager._spawn_user_session_helper does json.load).
+        The skip classifier must treat both forms identically — otherwise the
+        MISSING_MONITORS skip is a silent no-op on the production path while the
+        in-process unit tests (which pass the raw enum) stay green. Pins the
+        str-enum equality contract at the IPC boundary.
+        """
+        from display_manager import DisplayErrorCode
+        was_skip = fake_service._auto_restore_apply_was_skip
+        # Plain-string (helper / JSON) form — every skip code must classify True.
+        assert was_skip({'success': False, 'code': 'missing_monitors'}) is True
+        assert was_skip({'success': False, 'code': 'auto_restore_rate_limited'}) is True
+        assert was_skip(
+            {'success': False, 'code': 'auto_restore_skipped_unfixable'}
+        ) is True
+        # Enum form — same classification.
+        assert was_skip(
+            {'success': False, 'code': DisplayErrorCode.MISSING_MONITORS}
+        ) is True
+        # Genuine failures (both forms) must NOT be skipped — the breaker must
+        # still trip on real apply failures.
+        assert was_skip({'success': False, 'code': 'apply_failed'}) is False
+        assert was_skip(
+            {'success': False, 'code': DisplayErrorCode.VALIDATE_REJECTED}
+        ) is False
 
 
 class TestEdidHashStability:

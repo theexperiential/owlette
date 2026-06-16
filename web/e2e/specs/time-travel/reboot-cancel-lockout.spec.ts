@@ -60,12 +60,13 @@ test('cancel-pill disappears in the final 5 seconds — only text badge remains'
   // `remaining` at roughly 0-2 — inside the lockout band.
   await page.clock.fastForward(27_000);
 
-  // Cancel button testid disappears — component returns the text-only
-  // Badge branch at MachineStatusPill:101 (`if (!canCancel)`).
+  // Cancel button testid disappears — component returns the non-interactive
+  // Badge branch (`if (!canCancel)`).
   await expect(cancelPill).toHaveCount(0, { timeout: 5_000 });
 
-  // The text-only badge renders in its place. The Badge shows
-  // `{actionLabel}…` which is "restarting…" for a restart flow.
-  // Scope to the machine card so we don't match the same text elsewhere.
-  await expect(card.getByText(/^restarting…$/)).toBeVisible();
+  // The non-interactive status badge renders in its place: a compact icon +
+  // countdown whose accessible name carries the action ("restarting, MM:SS
+  // remaining"). The label moved from visible text to the badge's role=img
+  // aria-label, so assert on the accessible name. Scope to the machine card.
+  await expect(card.getByRole('img', { name: /^restarting/i })).toBeVisible();
 });
