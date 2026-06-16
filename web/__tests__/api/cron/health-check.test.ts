@@ -62,7 +62,7 @@ jest.mock('@/lib/webhookSender.server', () => ({
   fireWebhooks: (...args: unknown[]) => fireWebhooksMock(...args),
 }));
 
-import { GET, classifyMachineHealth } from '@/app/api/cron/health-check/route';
+import { GET, classifyMachineHealth, stalePlannedDowntime } from '@/app/api/cron/health-check/route';
 import type { MachineHealthSnapshot } from '@/app/api/cron/health-check/route';
 
 // --- Helpers -----------------------------------------------------------------
@@ -190,6 +190,65 @@ describe('classifyMachineHealth', () => {
       staleSinceMs: NOW - 70 * MIN,
     });
     expect(classifyMachineHealth(m, NOW)).toEqual({ action: 'alert', heartbeatAgeMinutes: 70 });
+  });
+});
+
+// --- Stale-latch clearing (Fix A, server-side authoritative clear) -----------
+
+describe('stalePlannedDowntime', () => {
+  it('clears a shutdown latch once the window has elapsed past grace', () => {
+    const m = snapshot({
+      shuttingDown: true,
+      shutdownScheduledAtSec: Math.floor((NOW - 20 * MIN) / 1000),
+    });
+    expect(stalePlannedDowntime(m, NOW)).toEqual({ clearShutdown: true, clearReboot: false });
+  });
+
+  it('clears a reboot latch once the window has elapsed past grace', () => {
+    const m = snapshot({
+      rebooting: true,
+      rebootScheduledAtSec: Math.floor((NOW - 20 * MIN) / 1000),
+    });
+    expect(stalePlannedDowntime(m, NOW)).toEqual({ clearShutdown: false, clearReboot: true });
+  });
+
+  it('does NOT clear while still inside the grace window (in-progress)', () => {
+    const m = snapshot({
+      shuttingDown: true,
+      shutdownScheduledAtSec: Math.floor((NOW - 2 * MIN) / 1000),
+    });
+    expect(stalePlannedDowntime(m, NOW)).toEqual({ clearShutdown: false, clearReboot: false });
+  });
+
+  it('does NOT clear a latch with no scheduled anchor (avoids racing a just-set flag)', () => {
+    const m = snapshot({ shuttingDown: true, shutdownScheduledAtSec: 0 });
+    expect(stalePlannedDowntime(m, NOW)).toEqual({ clearShutdown: false, clearReboot: false });
+  });
+
+  it('does NOT clear when the latch is unset even if the anchor lingers', () => {
+    const m = snapshot({
+      shuttingDown: false,
+      shutdownScheduledAtSec: Math.floor((NOW - 20 * MIN) / 1000),
+    });
+    expect(stalePlannedDowntime(m, NOW)).toEqual({ clearShutdown: false, clearReboot: false });
+  });
+
+  it('does NOT clear a far-future (clock-skewed) scheduled instant', () => {
+    const m = snapshot({
+      rebooting: true,
+      rebootScheduledAtSec: Math.floor((NOW + 60 * MIN) / 1000),
+    });
+    expect(stalePlannedDowntime(m, NOW)).toEqual({ clearShutdown: false, clearReboot: false });
+  });
+
+  it('clears both latches when both windows have elapsed', () => {
+    const m = snapshot({
+      shuttingDown: true,
+      shutdownScheduledAtSec: Math.floor((NOW - 20 * MIN) / 1000),
+      rebooting: true,
+      rebootScheduledAtSec: Math.floor((NOW - 20 * MIN) / 1000),
+    });
+    expect(stalePlannedDowntime(m, NOW)).toEqual({ clearShutdown: true, clearReboot: true });
   });
 });
 
@@ -355,6 +414,27 @@ describe('GET /api/cron/health-check', () => {
     expect(emailSend).not.toHaveBeenCalled();
     expect(machineRefSet).toHaveBeenCalledWith(
       { health: { staleSince: { __op: 'delete' } } },
+      { merge: true }
+    );
+  });
+
+  it('clears a stale shutdown latch at the source once the window has elapsed', async () => {
+    mockMachinesGet.mockResolvedValue({
+      size: 1,
+      docs: [
+        machineDoc('INF-RENDER-SPARE', {
+          online: true, // agent never wrote online:false — the box is simply powered off
+          lastHeartbeat: ts(now - 20 * MIN),
+          shuttingDown: true,
+          shutdownScheduledAt: sec(now - 20 * MIN), // 20 min past — beyond the 15 min grace
+        }),
+      ],
+    });
+
+    const res = await GET(request('cron-secret'));
+    expect(res.status).toBe(200);
+    expect(machineRefSet).toHaveBeenCalledWith(
+      { shuttingDown: false, shutdownScheduledAt: { __op: 'delete' } },
       { merge: true }
     );
   });

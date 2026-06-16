@@ -84,6 +84,31 @@ function plannedDowntimeActive(inProgress: boolean, scheduledAtSec: number, now:
   );
 }
 
+/**
+ * Once an announced reboot/shutdown window has fully elapsed (target instant more
+ * than GRACE in the past) but the agent's latch is still set, the latch is stale
+ * and must be cleared at the source: a completed shutdown can never clear its own
+ * latch (the box is powered off), and a failed/never-returning reboot leaves
+ * `rebooting` set with no clearer — either would otherwise pulse the status pill
+ * indefinitely for every client. Each flag is evaluated independently against its
+ * own window, so an in-progress reboot still within grace is left untouched. We
+ * anchor on `scheduledAt` (not heartbeat) so a just-set latch whose anchor hasn't
+ * landed yet is never cleared prematurely.
+ */
+export function stalePlannedDowntime(
+  m: MachineHealthSnapshot,
+  now: number
+): { clearShutdown: boolean; clearReboot: boolean } {
+  const elapsed = (inProgress: boolean, scheduledAtSec: number) =>
+    inProgress === true &&
+    scheduledAtSec > 0 &&
+    now >= scheduledAtSec * 1000 + PLANNED_DOWNTIME_GRACE_MS;
+  return {
+    clearShutdown: elapsed(m.shuttingDown, m.shutdownScheduledAtSec),
+    clearReboot: elapsed(m.rebooting, m.rebootScheduledAtSec),
+  };
+}
+
 export type HealthDecision =
   | { action: 'ok' } // online + fresh heartbeat — clear any stale marker
   | { action: 'ignore'; reason: 'offline-flag' | 'planned-downtime' | 'cooldown' }
@@ -199,19 +224,40 @@ export async function GET(request: NextRequest) {
         const lastHeartbeatMs = timestampToMillis(machine.lastHeartbeat);
         const staleSinceMs = timestampToMillis(machine.health?.staleSince);
 
-        const decision = classifyMachineHealth(
-          {
-            online: machine.online === true,
-            lastHeartbeatMs,
-            lastCronAlertAtMs: timestampToMillis(machine.health?.lastCronAlertAt),
-            staleSinceMs,
-            rebooting: machine.rebooting === true,
-            shuttingDown: machine.shuttingDown === true,
-            rebootScheduledAtSec: unixSecondsOrZero(machine.rebootScheduledAt),
-            shutdownScheduledAtSec: unixSecondsOrZero(machine.shutdownScheduledAt),
-          },
-          now
-        );
+        const snapshot: MachineHealthSnapshot = {
+          online: machine.online === true,
+          lastHeartbeatMs,
+          lastCronAlertAtMs: timestampToMillis(machine.health?.lastCronAlertAt),
+          staleSinceMs,
+          rebooting: machine.rebooting === true,
+          shuttingDown: machine.shuttingDown === true,
+          rebootScheduledAtSec: unixSecondsOrZero(machine.rebootScheduledAt),
+          shutdownScheduledAtSec: unixSecondsOrZero(machine.shutdownScheduledAt),
+        };
+
+        // Clear stale reboot/shutdown latches at the source. A completed shutdown
+        // never powers back on to clear its own latch, and a failed reboot never
+        // returns to clear it — once the announced window has elapsed past grace,
+        // null the flags so the status pill is correct for every client, not just
+        // the one whose heartbeat-derived `online` has already gone stale. This is
+        // a one-shot write: after it lands the flags are gone, so later scans skip
+        // it. Runs before the alert decision so it applies regardless of outcome.
+        const stale = stalePlannedDowntime(snapshot, now);
+        if (stale.clearShutdown || stale.clearReboot) {
+          const clearPayload: Record<string, unknown> = {};
+          if (stale.clearShutdown) {
+            clearPayload.shuttingDown = false;
+            clearPayload.shutdownScheduledAt = FieldValue.delete();
+          }
+          if (stale.clearReboot) {
+            clearPayload.rebooting = false;
+            clearPayload.rebootScheduledAt = FieldValue.delete();
+            clearPayload.rebootCancellable = false;
+          }
+          await machineDoc.ref.set(clearPayload, { merge: true });
+        }
+
+        const decision = classifyMachineHealth(snapshot, now);
 
         if (decision.action === 'ignore') continue;
 
