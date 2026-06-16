@@ -54,8 +54,8 @@
   #define MyAppVersion GetEnv("OWLETTE_VERSION")
   #if MyAppVersion == ""
     ; fallback should match /VERSION - bump on every release
-    #define MyAppVersion "2.11.0"
-    #pragma message "WARNING: Using fallback version 2.11.0 - VERSION file not found or OWLETTE_VERSION not set"
+    #define MyAppVersion "2.12.12"
+    #pragma message "WARNING: Using fallback version 2.12.12 - VERSION file not found or OWLETTE_VERSION not set"
   #endif
 #endif
 
@@ -159,11 +159,16 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{userstartup}\Owlette Tray"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\agent\src\owlette_tray.py"""; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}"
 
 [Run]
-; Step 0: Add Windows Defender exclusions for WinRing0 driver used by LibreHardwareMonitor
-; WinRing0 is flagged as VulnerableDriver:WinNT/Winring0 but is required for CPU/GPU temperature monitoring
-; LibreHardwareMonitorLib.dll (inside WinTmp) extracts and loads WinRing0x64.sys as a kernel driver at runtime,
-; so we need BOTH path exclusions (for the DLL) and process exclusions (for Python loading the driver)
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue"""; StatusMsg: "Configuring Windows Defender exclusion..."; Flags: runhidden waituntilterminated
+; Step 0: Add Windows Defender exclusions for the WinRing0 driver used by LibreHardwareMonitor.
+; WinRing0 is flagged as VulnerableDriver:WinNT/Winring0 but is required for CPU/GPU temperature monitoring.
+; LibreHardwareMonitorLib.dll (inside the WinTmp package) extracts WinRing0 AT RUNTIME to
+; {app}\python\python.sys (and \pythonw.sys when the GUI/pythonw host reads temps) and loads it as kernel
+; service R0python / R0pythonw. Process exclusions do NOT cover a kernel-driver FILE load, and the WinTmp
+; path exclusion is the DLL's subfolder — NOT where the .sys lands — so we MUST path-exclude the extracted
+; .sys files themselves (this is the file Defender actually quarantines; see docs/agent/troubleshooting.md).
+; We also drop a stale legacy C:\Owlette\python exclusion from pre-ProgramData installs, and append the
+; resulting exclusion set to logs\defender_setup.log so a silent failure is diagnosable.
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionPath '{app}\python\python.sys' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionPath '{app}\python\pythonw.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath 'C:\Owlette\python' -ErrorAction SilentlyContinue; [void]((Get-Command Get-MpPreference -ErrorAction SilentlyContinue) -and (('owlette defender exclusions @ ' + (Get-Date -Format s) + ' :: ' + ((Get-MpPreference).ExclusionPath -join ';')) | Out-File -Append -Encoding utf8 '{commonappdata}\Owlette\logs\defender_setup.log'))"""; StatusMsg: "Configuring Windows Defender exclusion..."; Flags: runhidden waituntilterminated
 
 ; Steps 1-2 (pairing + service install) are handled in [Code] CurStepChanged()
 ; to support exit code checking and conditional execution.
@@ -176,8 +181,8 @@ Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-
 ; Stop and remove the Windows service before uninstalling
 Filename: "{app}\tools\nssm.exe"; Parameters: "stop OwletteService"; Flags: runhidden waituntilterminated
 Filename: "{app}\tools\nssm.exe"; Parameters: "remove OwletteService confirm"; Flags: runhidden waituntilterminated
-; Remove Windows Defender exclusions
-Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
+; Remove Windows Defender exclusions (mirror the install set, incl. the .sys driver paths)
+Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\python.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\pythonw.sys' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
 
 [Code]
 

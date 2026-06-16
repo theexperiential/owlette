@@ -9,6 +9,19 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [2.12.12] - 2026-06-15
+
+### fixed
+
+- **Windows Defender no longer disables temperature monitoring on some machines.** The driver Owlette uses to read CPU/GPU temperatures is written to disk at runtime, and on some Windows 11 machines Microsoft Defender quarantined that driver file (flagged as `WinRing0`) because the installer's antivirus exclusion didn't cover its actual location. The installer now excludes the driver file itself, so temperatures keep working; existing machines pick up the fix on their next update. Temperature reads are also now time-bounded, so a driver that's blocked at the OS level can never stall the agent's startup or heartbeat.
+
+## [2.12.11] - 2026-06-15
+
+### fixed
+
+- **The display "events" tab now shows recent events.** The dashboard query fetched an arbitrary slice of a machine's logs (ordered by document id, which is a random UUID) instead of the newest ones, so on a machine with many logs recent monitor add/remove/drift events silently never appeared while an old one stayed pinned. The feed now filters to display events and orders by time, so the latest events always show.
+- **Auto-restore no longer gets permanently paused when a monitor is turned off.** Powering off (or sleeping / disconnecting) a monitor that's part of a stored layout made auto-restore repeatedly try to re-apply, fail because the monitor isn't present, and trip its circuit breaker after three attempts — leaving auto-restore paused until a manual reset even after the monitor came back. Auto-restore now skips the re-apply while an assigned monitor is absent and resumes on its own when it returns; a transient power-off no longer counts as a failure.
+
 ## [2.12.10] - 2026-06-14
 
 ### fixed

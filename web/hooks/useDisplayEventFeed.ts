@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { collection, limit, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useDemoContext } from '@/contexts/DemoContext';
 
@@ -36,9 +36,35 @@ export interface UseDisplayEventFeedOptions {
 }
 
 const DEFAULT_LIMIT = 50;
-/** Over-fetch multiplier — see effect body for why. */
-const OVERFETCH_FACTOR = 4;
 const EMPTY_EVENTS: DisplayEventEntry[] = [];
+
+/**
+ * Every `display_*` action the agent emits — via `_emit_display_event`
+ * (agent/src/owlette_service.py) and the display audit / apply paths
+ * (agent/src/display_manager.py). SINGLE SOURCE OF TRUTH for "what is a display
+ * event" on the web side: the events feed filters on this set server-side.
+ *
+ * IMPORTANT: when the agent adds a new `display_*` action, add it here too —
+ * otherwise that event type silently never appears in the panel. Firestore caps
+ * an `in` filter at 30 values; keep this list under that (currently 15).
+ */
+export const DISPLAY_EVENT_ACTIONS = [
+  'display_monitor_added',
+  'display_monitor_removed',
+  'display_monitor_swapped',
+  'display_drift',
+  'display_mosaic_disabled',
+  'display_sync_lost',
+  'display_apply_succeeded',
+  'display_apply_failed',
+  'display_apply_refused_mosaic',
+  'display_apply_acked',
+  'display_auto_revert_fired',
+  'display_revert_deferred',
+  'display_auto_restore_fired',
+  'display_auto_restore_skipped_unfixable',
+  'display_auto_restore_circuit_breaker_tripped',
+] as const;
 
 /**
  * Normalize a Firestore timestamp value into epoch milliseconds. Mirrors the
@@ -100,14 +126,22 @@ export function useDisplayEventFeed(
       return;
     }
 
-    // Keep this query composite-index-free. Firestore can satisfy the machine
-    // equality from the single-field index; we sort/filter locally so a missing
-    // deployed composite index cannot break the panel's events tab.
+    // Fetch this machine's display events newest-first, filtered to the known
+    // display action set SERVER-SIDE. Filtering by action (rather than
+    // over-fetching all logs and filtering `display_*` on the client) means a
+    // burst of unrelated logs — process crashes, commands, deploys — can never
+    // push recent display events out of the limit window. The orderBy is
+    // essential: without it Firestore returns docs in document-ID order, and log
+    // IDs are random UUIDs (see firebase_client.log_event), so the limit would
+    // slice a time-agnostic subset. Backed by the (action ASC, machineId ASC,
+    // timestamp DESC) composite index in firestore.indexes.json.
     const logsRef = collection(db, 'sites', siteId, 'logs');
     const q = query(
       logsRef,
       where('machineId', '==', machineId),
-      limit(requestedLimit * OVERFETCH_FACTOR),
+      where('action', 'in', [...DISPLAY_EVENT_ACTIONS]),
+      orderBy('timestamp', 'desc'),
+      limit(requestedLimit),
     );
 
     const unsubscribe = onSnapshot(
@@ -121,9 +155,10 @@ export function useDisplayEventFeed(
           })
           .sort((a, b) => b.timestamp - a.timestamp);
 
+        // The query already restricts to DISPLAY_EVENT_ACTIONS and caps at
+        // requestedLimit, so every candidate is a display event — just map them.
         for (const { docSnap, data, timestamp } of candidates) {
           const action = typeof data.action === 'string' ? data.action : '';
-          if (!action.startsWith('display_')) continue;
           next.push({
             id: docSnap.id,
             action,
@@ -133,7 +168,6 @@ export function useDisplayEventFeed(
             machineName: typeof data.machineName === 'string' ? data.machineName : '',
             timestamp,
           });
-          if (next.length >= requestedLimit) break;
         }
         setState({
           siteId,

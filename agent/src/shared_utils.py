@@ -208,6 +208,63 @@ def get_cpu_name():
     logging.warning("All CPU detection methods failed")
     return "Unknown CPU"
 
+# WinTmp read suppression. After a WinTmp read TIMES OUT (a blocked WinRing0
+# driver load that hangs rather than fails), suppress further WinTmp reads for a
+# cooldown. The watchdog returns promptly but cannot kill the hung worker thread,
+# so without this latch a *persistent* hang (e.g. an enforcing vulnerable-driver
+# blocklist) would leak one worker thread on every metrics tick — unbounded on a
+# 24/7 install. CPU + GPU share the latch (same underlying driver); GPU callers
+# fall through to pynvml during the cooldown. Monotonic clock so it's immune to
+# wall-clock changes.
+_WINTMP_TIMEOUT_COOLDOWN_S = 600
+_wintmp_suppressed_until = 0.0
+
+
+def _wintmp_read_with_timeout(label: str, fn, timeout: float = 3.0):
+    """Run a WinTmp temperature read under a watchdog.
+
+    WinTmp loads the WinRing0 ring-0 driver (`python.sys` / `pythonw.sys`) on
+    first use. A plain try/except catches a *failed* driver load (it raises) but
+    NOT a *hung* one — and if a future Windows vulnerable-driver-blocklist
+    enforcement ever blocks the load mid-call instead of failing fast, the call
+    could block indefinitely. These reads run on the startup metrics call
+    (firebase_client.start -> get_system_metrics) and the heartbeat thread, so an
+    unbounded hang could stall service startup or freeze the heartbeat. Bound it
+    so a hung driver load degrades to None like every other slow Windows call
+    here. Mirrors `_wmi_logical_disk_with_timeout` and hardware_profile's
+    `_disk_usage_with_timeout`.
+
+    A timed-out call leaks its worker thread (a hung native call isn't killable);
+    to keep that bounded on a persistent hang, a timeout latches a cooldown
+    (`_WINTMP_TIMEOUT_COOLDOWN_S`) during which we return the default immediately
+    without spawning another worker.
+    """
+    global _wintmp_suppressed_until
+    now = time.monotonic()
+    if now < _wintmp_suppressed_until:
+        return None
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(fn)
+        try:
+            return future.result(timeout=timeout)
+        except FuturesTimeoutError:
+            _wintmp_suppressed_until = now + _WINTMP_TIMEOUT_COOLDOWN_S
+            logging.warning(
+                f"[TEMP] {label} timed out after {timeout}s — WinRing0 driver may be "
+                f"blocked; suppressing WinTmp reads for {_WINTMP_TIMEOUT_COOLDOWN_S}s"
+            )
+            return None
+        except Exception as e:
+            logging.debug(f"[TEMP] {label} error: {e}")
+            return None
+    finally:
+        # shutdown(wait=False) so a hung worker can't block our exit — the
+        # default `with`-shutdown(wait=True) would deadlock on the very hang
+        # this watchdog exists to survive (see _wmi_logical_disk_with_timeout).
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def get_cpu_temperature():
     """
     Get CPU temperature in Celsius using LibreHardwareMonitor (via WinTmp).
@@ -220,11 +277,13 @@ def get_cpu_temperature():
         - Requires administrator privileges (satisfied by Windows service)
         - Returns None on unsupported hardware without crashing
         - Non-critical feature - system continues normally if unavailable
+        - The WinTmp call is bounded by a watchdog (_wintmp_read_with_timeout)
+          so a hung driver load can't stall startup or the heartbeat
     """
     try:
         import WinTmp
 
-        cpu_temp = WinTmp.CPU_Temp()
+        cpu_temp = _wintmp_read_with_timeout("CPU_Temp", WinTmp.CPU_Temp)
 
         # Validate reasonable temperature range (0-150°C)
         if cpu_temp is not None and 0 < cpu_temp < 150:
@@ -236,6 +295,9 @@ def get_cpu_temperature():
         return None
 
     except Exception as e:
+        # Broad boundary: a non-ImportError WinTmp/CLR import or a validation/
+        # conversion error must still degrade to None (callers like
+        # hardware_profile.collect_dynamic_metrics read this unguarded).
         logging.debug(f"[TEMP] WinTmp error: {e}")
         return None
 
@@ -262,7 +324,7 @@ def get_gpu_temperatures():
     # Method 1: Try WinTmp (works for NVIDIA, AMD, Intel)
     try:
         import WinTmp
-        all_temps = WinTmp.GPU_Temps()
+        all_temps = _wintmp_read_with_timeout("GPU_Temps", WinTmp.GPU_Temps)
 
         if all_temps:
             for i, temp in enumerate(all_temps):
