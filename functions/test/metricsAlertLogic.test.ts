@@ -36,12 +36,15 @@ describe('telemetryAgeMs', () => {
     assert.equal(telemetryAgeMs(data, NOW), 90_000);
   });
 
-  it('prefers the freshest of the two signals', () => {
+  it('dates by metrics.timestamp even when lastHeartbeat is fresher (offline-write guard)', () => {
+    // The agent's offline-marking write (_update_presence(False)) re-stamps
+    // lastHeartbeat to ~now while leaving the metrics frozen; we must NOT treat
+    // that as fresh telemetry, so metrics.timestamp wins (no Math.max).
     const data = {
       metrics: { timestamp: ts(NOW - 8 * 60_000) },
       lastHeartbeat: ts(NOW - 60_000),
     };
-    assert.equal(telemetryAgeMs(data, NOW), 60_000);
+    assert.equal(telemetryAgeMs(data, NOW), 8 * 60_000);
   });
 
   it('returns null when no datable signal is present', () => {
@@ -86,6 +89,14 @@ describe('metricsWriteDisposition (the onMetricsWrite gate ordering)', () => {
   it('skips a stale metrics-bearing write (offline machine frozen snapshot)', () => {
     const weekAgo = NOW - 7 * 24 * 60 * 60_000;
     const data = { metrics: { timestamp: ts(weekAgo) }, lastHeartbeat: ts(weekAgo) };
+    assert.equal(metricsWriteDisposition(data, NOW), 'skip-stale');
+  });
+
+  it('skips a just-gone-offline write (fresh lastHeartbeat, frozen stale metrics)', () => {
+    // _update_presence(False) re-stamps lastHeartbeat to ~now while leaving the
+    // metrics (and metrics.timestamp) frozen from before. Must still skip — we
+    // date by metrics.timestamp, not the heartbeat.
+    const data = { metrics: { timestamp: ts(NOW - 30 * 60_000) }, lastHeartbeat: ts(NOW) };
     assert.equal(metricsWriteDisposition(data, NOW), 'skip-stale');
   });
 

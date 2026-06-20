@@ -54,9 +54,18 @@ function toMillis(value: unknown): number {
 }
 
 /**
- * Age (ms) of the freshest liveness signal on a machine doc, or `null` when
- * none is present. Prefers `metrics.timestamp` (stamped with the metrics
- * themselves); falls back to the top-level `lastHeartbeat` for legacy docs.
+ * Age (ms) of the metrics on a machine doc, or `null` when undatable.
+ *
+ * Dates freshness by `metrics.timestamp` — it stamps the METRICS themselves and
+ * is written ONLY by real telemetry (the agent's _upload_metrics). It falls back
+ * to the top-level `lastHeartbeat` ONLY for legacy docs that predate
+ * metrics.timestamp.
+ *
+ * It deliberately does NOT take max-of-both: the agent's offline-marking write
+ * (_update_presence(False)) re-stamps a fresh `lastHeartbeat` while leaving the
+ * metrics frozen, so a max() would read a just-gone-offline machine as "fresh"
+ * and let one spurious threshold alert fire on its stale value. Keying on
+ * metrics.timestamp (which that write never touches) closes that gap.
  */
 export function telemetryAgeMs(
   machineData: Record<string, unknown> | undefined | null,
@@ -65,9 +74,8 @@ export function telemetryAgeMs(
   if (!machineData) return null;
   const metrics = machineData.metrics as Record<string, unknown> | undefined;
   const metricsTs = toMillis(metrics?.timestamp);
-  const heartbeatTs = toMillis(machineData.lastHeartbeat);
-  const freshest = Math.max(metricsTs, heartbeatTs);
-  return freshest > 0 ? now - freshest : null;
+  const signal = metricsTs > 0 ? metricsTs : toMillis(machineData.lastHeartbeat);
+  return signal > 0 ? now - signal : null;
 }
 
 /**
