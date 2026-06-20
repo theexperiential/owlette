@@ -22,6 +22,7 @@
 import type { NextRequest, NextResponse } from 'next/server';
 import {
   authRateLimit,
+  signupRateLimit,
   tokenExchangeRateLimit,
   tokenRefreshRateLimit,
   userRateLimit,
@@ -35,7 +36,7 @@ import {
 } from './rateLimit';
 import { problem, ProblemType } from './apiErrors';
 
-type RateLimitStrategy = 'auth' | 'tokenExchange' | 'tokenRefresh' | 'user' | 'agentAlert' | 'upload' | 'api';
+type RateLimitStrategy = 'auth' | 'signup' | 'tokenExchange' | 'tokenRefresh' | 'user' | 'agentAlert' | 'upload' | 'api';
 type IdentifierType = 'ip' | 'user';
 
 interface RateLimitOptions {
@@ -50,7 +51,12 @@ function reasonFor(strategy: RateLimitStrategy, identifier: IdentifierType): Rat
   if (strategy === 'user' || strategy === 'api') {
     return identifier === 'user' ? 'key-rate' : 'endpoint-rate';
   }
-  if (strategy === 'auth' || strategy === 'tokenExchange' || strategy === 'tokenRefresh') {
+  if (
+    strategy === 'auth' ||
+    strategy === 'signup' ||
+    strategy === 'tokenExchange' ||
+    strategy === 'tokenRefresh'
+  ) {
     return 'endpoint-rate';
   }
   if (strategy === 'upload' || strategy === 'agentAlert') {
@@ -101,6 +107,7 @@ export function withRateLimit<TArgs extends unknown[]>(
     // Select rate limiter based on strategy
     const ratelimiter =
       options.strategy === 'auth' ? authRateLimit :
+      options.strategy === 'signup' ? signupRateLimit :
       options.strategy === 'tokenExchange' ? tokenExchangeRateLimit :
       options.strategy === 'tokenRefresh' ? tokenRefreshRateLimit :
       options.strategy === 'user' ? userRateLimit :

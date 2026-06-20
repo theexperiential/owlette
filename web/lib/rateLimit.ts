@@ -50,6 +50,23 @@ export const authRateLimit = redis
   : null;
 
 /**
+ * Self-serve signup limiter — guards POST /api/users/bootstrap, the write
+ * that creates a `users/{uid}` doc (i.e. a row in the admin user table).
+ * Account creation from a single IP is a rare event, so this is far tighter
+ * than the general auth limiter — it blunts a bot spraying signups without
+ * touching a human onboarding their team.
+ * Prod: 10/hr per IP. Dev: 100/hr to keep local iteration unblocked.
+ */
+export const signupRateLimit = redis
+  ? new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(isDevEnv ? 100 : 10, '1 h'),
+      prefix: 'signup',
+      analytics: true,
+    })
+  : null;
+
+/**
  * Rate limiter for token exchange / device code operations
  * Prod: 60/hr (supports bulk deployment of many machines from one IP)
  * Dev: 200/hr (allows rapid iteration during testing)
