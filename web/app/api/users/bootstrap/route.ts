@@ -38,7 +38,9 @@ import {
   problemValidation,
 } from '@/lib/apiErrors';
 import { withIdempotency } from '@/lib/idempotency';
+import { withRateLimit } from '@/lib/withRateLimit';
 import { bootstrapUser } from '@/lib/actions/bootstrapUser.server';
+import { isDisposableEmailDomain } from '@/lib/disposableEmailDomains';
 import { readAndParseJsonBody } from '../../_shared';
 
 interface BootstrapBody {
@@ -50,7 +52,7 @@ interface BootstrapBody {
 const EMAIL_REGEX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const MAX_DISPLAY_NAME = 200;
 
-export async function POST(request: NextRequest) {
+async function handleBootstrap(request: NextRequest): Promise<NextResponse> {
   try {
     let userId: string;
     try {
@@ -74,6 +76,12 @@ export async function POST(request: NextRequest) {
           return problemValidation(
             'email is required and must be a valid email address',
             { 'body.email': ['must be a valid email address'] },
+          );
+        }
+        if (isDisposableEmailDomain(body.email)) {
+          return problemValidation(
+            'email address uses a disallowed disposable domain',
+            { 'body.email': ['disposable email domains are not permitted'] },
           );
         }
         if (
@@ -133,3 +141,14 @@ export async function POST(request: NextRequest) {
     return problemFromError(err, 'users/bootstrap:POST');
   }
 }
+
+/**
+ * Per-IP signup rate limit (10/hr prod, 100/hr dev). This caps creation of
+ * the Firestore `users/{uid}` doc — the visible/admin-table surface — not
+ * the upstream Firebase Auth account itself (that belongs to App Check /
+ * blocking functions). Honors the `E2E_DISABLE_RATE_LIMIT` escape hatch.
+ */
+export const POST = withRateLimit(handleBootstrap, {
+  strategy: 'signup',
+  identifier: 'ip',
+});

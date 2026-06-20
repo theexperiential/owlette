@@ -153,3 +153,78 @@ export function isFilenameClean(input: string): boolean {
   const result = sanitizeFilename(input);
   return result.ok && !result.changed;
 }
+
+/* -------------------------------------------------------------------------- */
+/*  display-name sanitiser (signup-abuse hardening)                            */
+/* -------------------------------------------------------------------------- */
+
+/** Max grapheme-length we persist for a user display name. */
+const MAX_DISPLAY_NAME_LENGTH = 64;
+
+/** Max pictographic codepoints we keep — beyond this is emoji-spam. */
+const MAX_DISPLAY_NAME_EMOJI = 2;
+
+/**
+ * URL-shaped substrings. A display name is never a legitimate place for a
+ * link, but signup bots stuff them with ads like
+ * `15K lira bonus! https://bit.ly/xxxx 🔥` (the row that motivated this).
+ * We strip three shapes, replacing each with a space so neighbouring words
+ * don't merge:
+ *   1. explicit schemes (`http://`, `https://`, `ftp://`, …)
+ *   2. `www.`-prefixed hosts
+ *   3. bare `label.tld[/path]` tokens for a curated TLD set (covers
+ *      shorteners like `bit.ly`). The `(?:[a-z0-9-]+\.)+` prefix requires a
+ *      real `host.tld` shape, so initials like "J.R." or "Ph.D" survive.
+ */
+const URL_SCHEME_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+const WWW_RE = /\bwww\.\S+/gi;
+const BARE_DOMAIN_RE =
+  /\b(?:[a-z0-9-]+\.)+(?:com|net|org|io|ly|gl|gd|me|co|app|link|click|xyz|top|info|biz|ru|tr|de|uk|cn|site|online|store|live|vip|win|bet)\b\/?\S*/gi;
+
+/** All extended-pictographic (emoji) codepoints. */
+const PICTOGRAPHIC_RE = /\p{Extended_Pictographic}/gu;
+
+/**
+ * Normalise a user-supplied display name for safe storage and display.
+ *
+ * Unlike {@link sanitizeFilename} this NEVER rejects — an empty display name
+ * is legal (the bootstrap action already defaults it to `''`), so the worst
+ * case for a hostile input is that it cleans down to an empty string. React
+ * escapes text on render, so this is defence-in-depth: its real job is to
+ * strip the *actionable* payload (links) and the visual noise (emoji spam,
+ * invisible/RTL spoof characters) before the value is persisted and echoed
+ * back in admin tables, toasts, and `aria-label`s.
+ *
+ * Pipeline: NFC → strip invisible/control chars → strip URLs → cap emoji →
+ * collapse whitespace → trim → cap length.
+ */
+export function sanitizeDisplayName(input: unknown): string {
+  if (typeof input !== 'string') return '';
+
+  let value = input.normalize('NFC');
+  // Invisible / RTL-override chars are deleted (they're pure spoofs); control
+  // chars (tab, newline, CR, …) become a space so they separate words rather
+  // than silently joining them.
+  value = value.replace(INVISIBLE_RE, '').replace(CONTROL_CHARS_RE, ' ');
+  value = value
+    .replace(URL_SCHEME_RE, ' ')
+    .replace(WWW_RE, ' ')
+    .replace(BARE_DOMAIN_RE, ' ');
+
+  // Keep at most MAX_DISPLAY_NAME_EMOJI emoji; drop the rest. A name with a
+  // single flag/star is fine; a wall of 🔥🔥🔥 is decoration around spam.
+  let emojiSeen = 0;
+  value = value.replace(PICTOGRAPHIC_RE, (m) =>
+    ++emojiSeen > MAX_DISPLAY_NAME_EMOJI ? '' : m,
+  );
+
+  value = value.replace(/\s+/g, ' ').trim();
+
+  // Truncate by codepoint (not UTF-16 unit) so CJK/emoji aren't split.
+  const codepoints = Array.from(value);
+  if (codepoints.length > MAX_DISPLAY_NAME_LENGTH) {
+    value = codepoints.slice(0, MAX_DISPLAY_NAME_LENGTH).join('').trim();
+  }
+
+  return value;
+}

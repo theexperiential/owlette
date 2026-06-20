@@ -3,7 +3,11 @@
  *
  * tests for web/lib/sanitize.ts (roost wave 3.8).
  */
-import { isFilenameClean, sanitizeFilename } from '@/lib/sanitize';
+import {
+  isFilenameClean,
+  sanitizeDisplayName,
+  sanitizeFilename,
+} from '@/lib/sanitize';
 
 describe('sanitizeFilename', () => {
   describe('happy path', () => {
@@ -243,5 +247,74 @@ describe('isFilenameClean', () => {
 
   it('is false when sanitiser would reject the name', () => {
     expect(isFilenameClean('has/slash.toe')).toBe(false);
+  });
+});
+
+describe('sanitizeDisplayName', () => {
+  describe('happy path', () => {
+    it('passes a clean name through unchanged', () => {
+      expect(sanitizeDisplayName('John Doe')).toBe('John Doe');
+    });
+
+    it('preserves accented + CJK names', () => {
+      expect(sanitizeDisplayName('José 田中')).toBe('José 田中');
+    });
+
+    it('preserves dotted initials (no false-positive domain strip)', () => {
+      expect(sanitizeDisplayName('J.R.R. Tolkien')).toBe('J.R.R. Tolkien');
+      expect(sanitizeDisplayName('Ph.D Smith')).toBe('Ph.D Smith');
+    });
+
+    it('keeps a small number of emoji', () => {
+      expect(sanitizeDisplayName('Sarah ✨')).toBe('Sarah ✨');
+    });
+  });
+
+  describe('signup-spam payloads', () => {
+    it('strips a scheme URL from the billboard display name', () => {
+      const out = sanitizeDisplayName(
+        '15K lira bonus kapıda! https://bit.ly/trclicko 🔥 Go',
+      );
+      expect(out).toBe('15K lira bonus kapıda! 🔥 Go');
+      expect(out).not.toMatch(/https?:/i);
+      expect(out).not.toContain('bit.ly');
+    });
+
+    it('strips a bare shortener domain without a scheme', () => {
+      expect(sanitizeDisplayName('win now bit.ly/abc def')).toBe('win now def');
+    });
+
+    it('strips a www-prefixed host', () => {
+      expect(sanitizeDisplayName('hi www.spam.example bye')).toBe('hi bye');
+    });
+
+    it('caps an emoji wall to two', () => {
+      expect(sanitizeDisplayName('deal 🔥🔥🔥🔥🔥')).toBe('deal 🔥🔥');
+    });
+
+    it('strips RTL-override + zero-width spoof characters', () => {
+      expect(sanitizeDisplayName('admin‮redmin​')).toBe('adminredmin');
+    });
+
+    it('reduces a name that is only a link to empty', () => {
+      expect(sanitizeDisplayName('https://bit.ly/x')).toBe('');
+    });
+  });
+
+  describe('edge cases', () => {
+    it('returns empty string for non-string input', () => {
+      expect(sanitizeDisplayName(undefined)).toBe('');
+      expect(sanitizeDisplayName(null)).toBe('');
+      expect(sanitizeDisplayName(42)).toBe('');
+    });
+
+    it('caps length to 64 codepoints', () => {
+      const long = 'a'.repeat(200);
+      expect(Array.from(sanitizeDisplayName(long)).length).toBe(64);
+    });
+
+    it('collapses runs of whitespace', () => {
+      expect(sanitizeDisplayName('a    b\t\tc')).toBe('a b c');
+    });
   });
 });
