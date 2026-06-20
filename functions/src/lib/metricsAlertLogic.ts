@@ -33,7 +33,17 @@
  */
 export const STALE_METRICS_MS = 10 * 60 * 1000; // 10 minutes
 
-/** Firestore Timestamp (or any `{ toMillis() }`) → epoch ms, else 0. */
+/**
+ * Firestore Timestamp (or any `{ toMillis() }`) → epoch ms, else 0.
+ *
+ * CONTRACT (load-bearing): only Timestamp-shaped values are datable. A raw
+ * number (epoch ms or seconds) returns 0 here → telemetryAgeMs yields null →
+ * isTelemetryStale is true. This fails CLOSED on purpose: the agent only ever
+ * writes SERVER_TIMESTAMP (resolved by Firestore to a real Timestamp), so a
+ * plain number can only come from a future regression/backfill — and we would
+ * rather suppress an undatable value than silently misread seconds-vs-ms and
+ * either spam or starve alerts. Tests pin this so the contract break is loud.
+ */
 function toMillis(value: unknown): number {
   const ts = value as { toMillis?: () => number } | null;
   if (ts && typeof ts.toMillis === 'function') {
@@ -71,4 +81,27 @@ export function isTelemetryStale(
 ): boolean {
   const age = telemetryAgeMs(machineData, now);
   return age === null || age > staleMs;
+}
+
+/** What `onMetricsWrite` should do with a given machine-doc write. */
+export type MetricsWriteDisposition = 'process' | 'skip-no-metrics' | 'skip-stale';
+
+/**
+ * Single ordered, testable gate for `onMetricsWrite`. The ordering is the
+ * contract: metrics-PRESENCE is checked BEFORE freshness (a write with no
+ * metrics map is skipped regardless of timestamps), and only a fresh,
+ * metrics-bearing write is processed. A non-`'process'` result MUST short
+ * the caller out BEFORE both history sampling and threshold-alert evaluation —
+ * that placement is what stops an offline machine's frozen metrics (re-triggered
+ * by unrelated server-side writes) from logging phantom samples or re-firing
+ * "disk 87% > 85" hourly. Pure, so the decision is unit-tested without the
+ * firebase-admin side effects in metricsHistory.ts.
+ */
+export function metricsWriteDisposition(
+  afterData: Record<string, unknown> | undefined | null,
+  now: number,
+  staleMs: number = STALE_METRICS_MS,
+): MetricsWriteDisposition {
+  if (!afterData || !afterData.metrics) return 'skip-no-metrics';
+  return isTelemetryStale(afterData, now, staleMs) ? 'skip-stale' : 'process';
 }

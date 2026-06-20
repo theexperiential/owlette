@@ -14,6 +14,7 @@ import {
   STALE_METRICS_MS,
   telemetryAgeMs,
   isTelemetryStale,
+  metricsWriteDisposition,
 } from '../src/lib/metricsAlertLogic';
 
 const NOW = new Date('2026-06-20T12:00:00Z').getTime();
@@ -47,6 +48,49 @@ describe('telemetryAgeMs', () => {
     assert.equal(telemetryAgeMs({ metrics: {} }, NOW), null);
     assert.equal(telemetryAgeMs({}, NOW), null);
     assert.equal(telemetryAgeMs(null, NOW), null);
+  });
+
+  it('treats a RAW NUMBER timestamp as undatable (Timestamp-only contract)', () => {
+    // Firestore SERVER_TIMESTAMP materialises as a Timestamp with .toMillis().
+    // A plain epoch number is intentionally NOT datable (fails closed to stale)
+    // rather than being silently misread as ms-vs-seconds. If a future agent
+    // change/backfill ever writes a number, this contract break is now loud.
+    assert.equal(telemetryAgeMs({ metrics: { timestamp: NOW - 30_000 } }, NOW), null);
+    assert.equal(telemetryAgeMs({ lastHeartbeat: NOW - 30_000 }, NOW), null);
+    assert.equal(isTelemetryStale({ metrics: { timestamp: NOW - 30_000 } }, NOW), true);
+  });
+});
+
+describe('metricsWriteDisposition (the onMetricsWrite gate ordering)', () => {
+  it('processes a fresh, metrics-bearing write', () => {
+    const data = { metrics: { timestamp: ts(NOW - 30_000) } };
+    assert.equal(metricsWriteDisposition(data, NOW), 'process');
+  });
+
+  it('skips a write with no metrics map', () => {
+    assert.equal(metricsWriteDisposition({ lastHeartbeat: ts(NOW) }, NOW), 'skip-no-metrics');
+    assert.equal(metricsWriteDisposition({}, NOW), 'skip-no-metrics');
+    assert.equal(metricsWriteDisposition(null, NOW), 'skip-no-metrics');
+  });
+
+  it('checks metrics-presence BEFORE freshness (no-metrics wins over stale)', () => {
+    // A doc with no metrics but an ancient heartbeat is skip-no-metrics, not
+    // skip-stale — the ordering must not regress.
+    const weekAgo = NOW - 7 * 24 * 60 * 60_000;
+    assert.equal(
+      metricsWriteDisposition({ lastHeartbeat: ts(weekAgo) }, NOW),
+      'skip-no-metrics',
+    );
+  });
+
+  it('skips a stale metrics-bearing write (offline machine frozen snapshot)', () => {
+    const weekAgo = NOW - 7 * 24 * 60 * 60_000;
+    const data = { metrics: { timestamp: ts(weekAgo) }, lastHeartbeat: ts(weekAgo) };
+    assert.equal(metricsWriteDisposition(data, NOW), 'skip-stale');
+  });
+
+  it('skips a metrics write whose only timestamp is undatable', () => {
+    assert.equal(metricsWriteDisposition({ metrics: { foo: 1 } }, NOW), 'skip-stale');
   });
 });
 
