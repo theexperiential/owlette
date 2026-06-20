@@ -30,6 +30,7 @@
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
+import { metricsWriteDisposition } from './lib/metricsAlertLogic';
 import https = require('https');
 import http = require('http');
 
@@ -175,12 +176,24 @@ export const onMetricsWrite = onDocumentWritten(
       return;
     }
 
-    // Check if this write contains metrics
-    const metrics = afterData.metrics;
-    if (!metrics) {
+    // Single ordered liveness gate (see metricsAlertLogic.ts). This function
+    // fires on EVERY machine-doc write, not just agent telemetry. An offline
+    // machine keeps its last metrics frozen, and unrelated server-side writes
+    // (e.g. the health-check cron stamping health.lastCronAlertAt) re-trigger
+    // us. The gate skips writes with no metrics and writes whose telemetry is
+    // stale — returning BEFORE both history sampling and threshold-alert eval —
+    // so we never log phantom samples or re-fire "disk 87% > 85" hourly for a
+    // machine that's been offline all week.
+    const disposition = metricsWriteDisposition(afterData, Date.now());
+    if (disposition === 'skip-no-metrics') {
       console.log(`No metrics in write for ${machineId}, skipping`);
       return;
     }
+    if (disposition === 'skip-stale') {
+      console.log(`Stale telemetry for ${machineId}; skipping sample + alert eval`);
+      return;
+    }
+    const metrics = afterData.metrics;
 
     // Get current timestamp
     const now = Math.floor(Date.now() / 1000);
