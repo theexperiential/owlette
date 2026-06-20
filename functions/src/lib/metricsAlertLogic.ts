@@ -56,16 +56,22 @@ function toMillis(value: unknown): number {
 /**
  * Age (ms) of the metrics on a machine doc, or `null` when undatable.
  *
- * Dates freshness by `metrics.timestamp` — it stamps the METRICS themselves and
- * is written ONLY by real telemetry (the agent's _upload_metrics). It falls back
- * to the top-level `lastHeartbeat` ONLY for legacy docs that predate
- * metrics.timestamp.
+ * Dates freshness by the metrics timestamp the agent stamps on every real
+ * telemetry write (_upload_metrics). WHERE that timestamp lives is subtle: the
+ * agent writes the dot-notation key `'metrics.timestamp'`, and its Firestore
+ * REST client backtick-escapes any dotted SERVER_TIMESTAMP key
+ * (firestore_rest_client.py `_extract_server_timestamps`), so in production it
+ * lands in a LITERAL top-level field named "metrics.timestamp" — NOT nested
+ * under the metrics map. We read the literal field first, and also accept a
+ * genuinely-nested `metrics.timestamp` so this keeps working if the agent
+ * storage is ever corrected.
  *
- * It deliberately does NOT take max-of-both: the agent's offline-marking write
- * (_update_presence(False)) re-stamps a fresh `lastHeartbeat` while leaving the
- * metrics frozen, so a max() would read a just-gone-offline machine as "fresh"
- * and let one spurious threshold alert fire on its stale value. Keying on
- * metrics.timestamp (which that write never touches) closes that gap.
+ * Falls back to top-level `lastHeartbeat` ONLY when no metrics timestamp exists
+ * (legacy docs). It deliberately does NOT take max-of-both / prefer a fresher
+ * heartbeat: the agent's offline-marking write (_update_presence(False))
+ * re-stamps `lastHeartbeat` while leaving the metrics (and their timestamp)
+ * frozen, so keying on the metrics timestamp — which that write never touches —
+ * is what makes a just-gone-offline machine correctly read as stale.
  */
 export function telemetryAgeMs(
   machineData: Record<string, unknown> | undefined | null,
@@ -73,7 +79,8 @@ export function telemetryAgeMs(
 ): number | null {
   if (!machineData) return null;
   const metrics = machineData.metrics as Record<string, unknown> | undefined;
-  const metricsTs = toMillis(metrics?.timestamp);
+  const metricsTs =
+    toMillis(machineData['metrics.timestamp']) || toMillis(metrics?.timestamp);
   const signal = metricsTs > 0 ? metricsTs : toMillis(machineData.lastHeartbeat);
   return signal > 0 ? now - signal : null;
 }
