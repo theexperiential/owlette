@@ -30,6 +30,7 @@
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { FieldValue } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
+import { isTelemetryStale } from './lib/metricsAlertLogic';
 import https = require('https');
 import http = require('http');
 
@@ -179,6 +180,20 @@ export const onMetricsWrite = onDocumentWritten(
     const metrics = afterData.metrics;
     if (!metrics) {
       console.log(`No metrics in write for ${machineId}, skipping`);
+      return;
+    }
+
+    // Liveness gate: only sample + evaluate alerts for FRESH telemetry. This
+    // function fires on EVERY machine-doc write, not just agent telemetry. An
+    // offline machine keeps its last metrics frozen in the doc, and unrelated
+    // server-side writes (e.g. the health-check cron stamping
+    // health.lastCronAlertAt) re-trigger us. Without this gate we'd log phantom
+    // history samples and re-fire threshold alerts on a week-old value
+    // ("disk 87.2% > 85" every hour for a machine that's been offline all week).
+    // metrics.timestamp / lastHeartbeat are server-stamped on each real agent
+    // write, so non-telemetry merge-writes leave them stale.
+    if (isTelemetryStale(afterData, Date.now())) {
+      console.log(`Stale telemetry for ${machineId}; skipping sample + alert eval`);
       return;
     }
 
