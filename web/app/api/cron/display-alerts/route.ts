@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
+import { getSiteAlertRecipients, getMachineTimezone, getSiteLabel } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
 import {
   buildDisplayDigestEmail,
@@ -97,6 +97,7 @@ export async function GET(request: NextRequest) {
 
         // Get timezone from the first machine for display
         const tz = await getMachineTimezone(siteId, siteAlerts[0].machineId);
+        const siteLabel = await getSiteLabel(siteId);
 
         // Send per-recipient emails (for individual unsubscribe links)
         for (const recipient of recipients) {
@@ -118,9 +119,9 @@ export async function GET(request: NextRequest) {
             // give the count + site for fast inbox triage.
             const userSubject = userAlerts.length === 1
               ? `[owlette] display event on ${userAlerts[0].machineId}`
-              : `[owlette] ${userAlerts.length} display event(s) in ${siteId}`;
+              : `[owlette] ${userAlerts.length} display event(s) in ${siteLabel}`;
 
-            const html = buildDisplayDigestEmail(siteId, userAlerts, unsubscribeUrl, tz);
+            const html = buildDisplayDigestEmail(siteLabel, userAlerts, unsubscribeUrl, tz);
 
             const result = await resendClient.emails.send({
               from: FROM_EMAIL,

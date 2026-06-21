@@ -23,6 +23,22 @@ const ADMIN_EMAIL = isProduction
   : process.env.ADMIN_EMAIL_DEV;
 
 /**
+ * Human-readable label for a site, for use in alert emails: `"name (siteId)"`
+ * when the site has a name, otherwise just the id. So recipients see
+ * `TEC (default_site)` instead of the unreadable raw document id. Falls back to
+ * the bare id on any lookup failure.
+ */
+export async function getSiteLabel(siteId: string): Promise<string> {
+  try {
+    const siteDoc = await getAdminDb().collection('sites').doc(siteId).get();
+    const name = (siteDoc.data()?.name as string | undefined)?.trim();
+    return name && name !== siteId ? `${name} (${siteId})` : siteId;
+  } catch {
+    return siteId;
+  }
+}
+
+/**
  * Look up all admin/user email addresses for a given site.
  *
  * Collects emails from:

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
+import { getSiteAlertRecipients, getMachineTimezone, getSiteLabel } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
@@ -39,7 +39,7 @@ interface PendingAlert {
 }
 
 function buildProcessDigestEmail(
-  siteId: string,
+  siteLabel: string,
   alerts: PendingAlert[],
   unsubscribeUrl?: string,
   timezone?: string,
@@ -52,7 +52,7 @@ function buildProcessDigestEmail(
       <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">process ${eventLabel}: ${a.processName}</h2>
       <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a monitored process has ${eventLabel} on one of your machines.</p>
       <table width="100%" style="border-collapse:collapse;" cellpadding="0" cellspacing="0">
-        ${alertRow('site', siteId, false)}
+        ${alertRow('site', siteLabel, false)}
         ${alertRow('machine', a.machineId, true)}
         ${alertRow('process', a.processName, false)}
         ${alertRow('event', eventLabel, true, EMAIL_COLORS.red)}
@@ -87,7 +87,7 @@ function buildProcessDigestEmail(
 
   const content = `
     <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">process alerts: ${alerts.length} event(s)</h2>
-    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} process event(s) detected in site <strong style="color:${EMAIL_COLORS.text};">${siteId}</strong>.</p>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} process event(s) detected in site <strong style="color:${EMAIL_COLORS.text};">${siteLabel}</strong>.</p>
     <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
       <thead>
         <tr>
@@ -104,7 +104,7 @@ function buildProcessDigestEmail(
   `;
 
   return wrapEmailLayout(content, {
-    preheader: `${alerts.length} process event(s) in ${siteId}`,
+    preheader: `${alerts.length} process event(s) in ${siteLabel}`,
     unsubscribeUrl,
   });
 }
@@ -174,6 +174,7 @@ export async function GET(request: NextRequest) {
 
         // Get timezone from the first machine for display
         const tz = await getMachineTimezone(siteId, siteAlerts[0].machineId);
+        const siteLabel = await getSiteLabel(siteId);
 
         // Send per-recipient emails (for individual unsubscribe links)
         for (const recipient of recipients) {
@@ -189,9 +190,9 @@ export async function GET(request: NextRequest) {
             // Rebuild subject for this user's filtered alerts
             const userSubject = userAlerts.length === 1
               ? `Process ${userAlerts[0].eventType === 'process_start_failed' ? 'failed to start' : 'crashed'}: ${userAlerts[0].processName} on ${userAlerts[0].machineId}`
-              : `${userAlerts.length} process event(s) in ${siteId}`;
+              : `${userAlerts.length} process event(s) in ${siteLabel}`;
 
-            const html = buildProcessDigestEmail(siteId, userAlerts, unsubscribeUrl, tz);
+            const html = buildProcessDigestEmail(siteLabel, userAlerts, unsubscribeUrl, tz);
 
             const result = await resendClient.emails.send({
               from: FROM_EMAIL,

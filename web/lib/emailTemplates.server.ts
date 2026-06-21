@@ -109,11 +109,18 @@ export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${preheader}</div>`
     : '';
 
+  // "manage alerts" deep-links to the per-category alert preferences so a
+  // recipient can turn off a single alert type instead of unsubscribing from
+  // everything. Shown whenever the unsubscribe link is (i.e. on alert emails).
+  const manageAlertsHtml = unsubscribeUrl
+    ? `<p style="margin:0 0 6px;"><a href="${baseUrl}/settings/alerts" style="color:${EMAIL_COLORS.cyan};text-decoration:underline;font-size:12px;">manage alerts</a></p>`
+    : '';
+
   const unsubscribeHtml = unsubscribeUrl
     ? `<p style="margin:0 0 8px;"><a href="${unsubscribeUrl}" style="color:${EMAIL_COLORS.muted};text-decoration:underline;font-size:12px;">unsubscribe from alerts</a></p>`
     : '';
 
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><title>owlette</title></head><body style="margin:0;padding:0;background-color:${EMAIL_COLORS.bodyBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">${preheaderHtml}<table width="100%" bgcolor="${EMAIL_COLORS.bodyBg}" cellpadding="0" cellspacing="0" role="presentation" style="background-color:${EMAIL_COLORS.bodyBg};"><tr><td align="center" style="padding:32px 16px;"><table width="600" style="max-width:600px;background-color:${EMAIL_COLORS.cardBg};border-radius:8px;border:1px solid ${EMAIL_COLORS.border};" cellpadding="0" cellspacing="0" role="presentation"><tr><td style="padding:28px 32px 20px;text-align:center;border-bottom:1px solid ${EMAIL_COLORS.border};"><a href="https://owlette.app" style="text-decoration:none;"><img src="${logoUrl}" width="48" height="48" alt="owlette" style="display:block;margin:0 auto 12px;border-radius:50%;"></a><table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;"><tr><td><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};font-size:20px;font-weight:700;text-transform:lowercase;letter-spacing:0.5px;text-decoration:none;line-height:1;">owlette</a></td>${envBadgeHtml}</tr></table></td></tr><tr><td style="padding:28px 32px;color:${EMAIL_COLORS.text};font-size:14px;line-height:1.7;">${content}</td></tr><tr><td style="padding:20px 32px;border-top:1px solid ${EMAIL_COLORS.border};text-align:center;"><p style="margin:0 0 10px;font-size:12px;"><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};text-decoration:none;font-weight:600;">owlette.app</a><span style="color:${EMAIL_COLORS.muted};"> is made by </span><a href="https://tridant.io" style="color:${EMAIL_COLORS.cyan};text-decoration:none;">tridant</a></p><p style="color:${EMAIL_COLORS.muted};font-size:11px;margin:0 0 8px;font-style:italic;">attention is all you need</p>${unsubscribeHtml}<p style="color:${EMAIL_COLORS.border};font-size:11px;margin:0;">this is an automated message from owlette</p></td></tr></table></td></tr></table></body></html>`;
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><title>owlette</title></head><body style="margin:0;padding:0;background-color:${EMAIL_COLORS.bodyBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">${preheaderHtml}<table width="100%" bgcolor="${EMAIL_COLORS.bodyBg}" cellpadding="0" cellspacing="0" role="presentation" style="background-color:${EMAIL_COLORS.bodyBg};"><tr><td align="center" style="padding:32px 16px;"><table width="600" style="max-width:600px;background-color:${EMAIL_COLORS.cardBg};border-radius:8px;border:1px solid ${EMAIL_COLORS.border};" cellpadding="0" cellspacing="0" role="presentation"><tr><td style="padding:28px 32px 20px;text-align:center;border-bottom:1px solid ${EMAIL_COLORS.border};"><a href="https://owlette.app" style="text-decoration:none;"><img src="${logoUrl}" width="48" height="48" alt="owlette" style="display:block;margin:0 auto 12px;border-radius:50%;"></a><table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;"><tr><td><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};font-size:20px;font-weight:700;text-transform:lowercase;letter-spacing:0.5px;text-decoration:none;line-height:1;">owlette</a></td>${envBadgeHtml}</tr></table></td></tr><tr><td style="padding:28px 32px;color:${EMAIL_COLORS.text};font-size:14px;line-height:1.7;">${content}</td></tr><tr><td style="padding:20px 32px;border-top:1px solid ${EMAIL_COLORS.border};text-align:center;"><p style="margin:0 0 10px;font-size:12px;"><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};text-decoration:none;font-weight:600;">owlette.app</a><span style="color:${EMAIL_COLORS.muted};"> is made by </span><a href="https://tridant.io" style="color:${EMAIL_COLORS.cyan};text-decoration:none;">tridant</a></p><p style="color:${EMAIL_COLORS.muted};font-size:11px;margin:0 0 8px;font-style:italic;">attention is all you need</p>${manageAlertsHtml}${unsubscribeHtml}<p style="color:${EMAIL_COLORS.border};font-size:11px;margin:0;">this is an automated message from owlette</p></td></tr></table></td></tr></table></body></html>`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -307,7 +314,7 @@ function displayAlertRow(label: string, value: string, alt: boolean, highlight?:
  * for `display_monitor_removed` / `display_auto_revert_fired`).
  */
 export function buildDisplayDigestEmail(
-  siteId: string,
+  siteLabel: string,
   alerts: PendingDisplayAlert[],
   unsubscribeUrl?: string,
   timezone?: string,
@@ -327,7 +334,7 @@ export function buildDisplayDigestEmail(
       <h2 style="color:${color};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">${label}</h2>
       <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a display event was detected on one of your machines.</p>
       <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
-        ${displayAlertRow('site', siteId, false)}
+        ${displayAlertRow('site', siteLabel, false)}
         ${displayAlertRow('machine', a.machineId, true)}
         ${displayAlertRow('event', label, false, color)}
         ${displayAlertRow('monitor', monitor, true)}
@@ -365,7 +372,7 @@ export function buildDisplayDigestEmail(
 
   const content = `
     <h2 style="color:${EMAIL_COLORS.amber};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">display alerts: ${alerts.length} event(s)</h2>
-    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} display event(s) detected in site <strong style="color:${EMAIL_COLORS.text};">${siteId}</strong>.</p>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} display event(s) detected in site <strong style="color:${EMAIL_COLORS.text};">${siteLabel}</strong>.</p>
     <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
       <thead>
         <tr>
@@ -382,7 +389,7 @@ export function buildDisplayDigestEmail(
   `;
 
   return wrapEmailLayout(content, {
-    preheader: `${alerts.length} display event(s) in ${siteId}`,
+    preheader: `${alerts.length} display event(s) in ${siteLabel}`,
     unsubscribeUrl,
   });
 }
