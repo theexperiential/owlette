@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
+import { getSiteAlertRecipients, getMachineTimezone, getSiteLabel } from '@/lib/adminUtils.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, SEVERITY_COLORS, METRIC_LABELS } from '@/lib/emailTemplates.server';
@@ -68,6 +68,7 @@ export async function POST(request: NextRequest) {
         const recipients = await getSiteAlertRecipients(siteId, 'thresholdAlerts');
         const tz = await getMachineTimezone(siteId, machineId);
         const baseUrl = request.nextUrl.origin;
+        const siteLabel = await getSiteLabel(siteId);
 
         if (recipients.length > 0) {
           const severityLabel = severity.toUpperCase();
@@ -83,7 +84,7 @@ export async function POST(request: NextRequest) {
                 : undefined;
 
               const html = buildThresholdAlertEmail({
-                siteId,
+                siteLabel,
                 machineId,
                 ruleName,
                 metric,
@@ -160,7 +161,7 @@ export async function POST(request: NextRequest) {
 /* ------------------------------------------------------------------ */
 
 function buildThresholdAlertEmail(params: {
-  siteId: string;
+  siteLabel: string;
   machineId: string;
   ruleName: string;
   metric: string;
@@ -171,7 +172,7 @@ function buildThresholdAlertEmail(params: {
   unsubscribeUrl?: string;
   timezone?: string;
 }): string {
-  const { siteId, machineId, ruleName, metric, value, threshold, operator, severity, unsubscribeUrl, timezone } = params;
+  const { siteLabel, machineId, ruleName, metric, value, threshold, operator, severity, unsubscribeUrl, timezone } = params;
   const color = SEVERITY_COLORS[severity] || SEVERITY_COLORS.warning;
   const metricLabel = METRIC_LABELS[metric] || metric;
 
@@ -179,7 +180,7 @@ function buildThresholdAlertEmail(params: {
     <h2 style="color:${color};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">threshold alert: ${ruleName}</h2>
     <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a metric threshold has been breached on one of your machines.</p>
     ${emailDataTable([
-      { label: 'site', value: siteId },
+      { label: 'site', value: siteLabel },
       { label: 'machine', value: machineId },
       { label: 'rule', value: ruleName },
       { label: 'metric', value: metricLabel },
