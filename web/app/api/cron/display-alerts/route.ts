@@ -4,6 +4,7 @@ import { getSiteAlertRecipients, getMachineTimezone, getSiteLabel } from '@/lib/
 import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
 import {
   buildDisplayDigestEmail,
+  safeEmailSubject,
   type PendingDisplayAlert,
 } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
@@ -127,7 +128,7 @@ export async function GET(request: NextRequest) {
               from: FROM_EMAIL,
               to: [recipient.email],
               ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
-              subject: userSubject,
+              subject: safeEmailSubject(userSubject),
               html,
             });
 

@@ -3,7 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertRecipients, getSiteLabel } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
-import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp } from '@/lib/emailTemplates.server';
+import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp, escapeHtml, safeEmailSubject } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { fireWebhooks } from '@/lib/webhookSender.server';
 import { apiError } from '@/lib/apiErrorResponse';
@@ -161,7 +161,7 @@ function buildOfflineEmail(siteLabel: string, alerts: OfflineAlert[], unsubscrib
     .map(
       (a) => `
       <tr>
-        <td style="padding:10px 14px;color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.machineId}</td>
+        <td style="padding:10px 14px;color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(a.machineId)}</td>
         <td style="padding:10px 14px;color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.heartbeatAgeMinutes} minute(s) ago</td>
       </tr>`
     )
@@ -169,7 +169,7 @@ function buildOfflineEmail(siteLabel: string, alerts: OfflineAlert[], unsubscrib
 
   const content = `
     <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">machines offline</h2>
-    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} machine(s) in site <strong style="color:${EMAIL_COLORS.text};">${siteLabel}</strong> appear to be offline.</p>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} machine(s) in site <strong style="color:${EMAIL_COLORS.text};">${escapeHtml(siteLabel)}</strong> appear to be offline.</p>
     <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
       <thead>
         <tr>
@@ -356,7 +356,7 @@ export async function GET(request: NextRequest) {
             from: FROM_EMAIL,
             to: [recipient.email],
             ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
-            subject: `${userAlerts.length} machine(s) offline in ${siteLabel}`,
+            subject: safeEmailSubject(`${userAlerts.length} machine(s) offline in ${siteLabel}`),
             html: buildOfflineEmail(siteLabel, userAlerts, unsubscribeUrl),
           });
 

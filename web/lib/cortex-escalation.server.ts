@@ -10,7 +10,7 @@
 import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { getResend, FROM_EMAIL, ENV_LABEL, isProduction } from '@/lib/resendClient.server';
-import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS } from '@/lib/emailTemplates.server';
+import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, escapeHtml, safeEmailSubject } from '@/lib/emailTemplates.server';
 
 /**
  * Send an escalation email to site admins when autonomous Cortex cannot resolve an issue.
@@ -36,7 +36,7 @@ export async function escalate(
 
   const tz = await getMachineTimezone(siteId, machineName);
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || (isProduction ? 'https://owlette.app' : 'https://dev.owlette.app');
-  const subject = `cortex escalation: ${processName} on ${machineName}`;
+  const subject = safeEmailSubject(`cortex escalation: ${processName} on ${machineName}`);
 
   let anySent = false;
   for (const recipient of recipients) {
@@ -91,7 +91,7 @@ function buildEscalationEmail(
     .replace(/\n/g, '<br>');
 
   const content = `
-    <h2 style="color:${EMAIL_COLORS.amber};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">cortex escalation: ${processName}</h2>
+    <h2 style="color:${EMAIL_COLORS.amber};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">cortex escalation: ${escapeHtml(processName)}</h2>
     <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">owlette cortex investigated an issue autonomously but was unable to resolve it. human attention is needed.</p>
 
     ${emailDataTable([

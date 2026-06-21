@@ -51,6 +51,39 @@ export const METRIC_LABELS: Record<string, string> = {
 /*  Data table helper                                                  */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Escape a dynamic value before interpolating it into email HTML. Alert emails
+ * carry operator/admin-controlled free text (site names, machine/process names,
+ * error messages) — escaping prevents stored markup (phishing links, broken
+ * layout) from rendering in emails sent to other recipients.
+ */
+export function escapeHtml(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Sanitize a value used as an email Subject. Subjects are plain text (Resend
+ * JSON-serializes them), so HTML escaping is wrong here — instead collapse
+ * CR/LF and other control characters (defence against header-injection-shaped
+ * values) and cap the length. Use for any subject that includes dynamic text
+ * (site names, rule/process/machine names).
+ */
+export function safeEmailSubject(value: string): string {
+  // Drop control characters (CR/LF/tab/etc. — header-injection-shaped values)
+  // without HTML-escaping (subjects are plain text), then collapse + cap.
+  let out = '';
+  for (const ch of String(value)) {
+    const code = ch.charCodeAt(0);
+    out += code < 0x20 || code === 0x7f ? ' ' : ch;
+  }
+  return out.replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
 interface DataRow {
   label: string;
   value: string;
@@ -67,7 +100,7 @@ export function emailDataTable(rows: DataRow[]): string {
       (r) => {
         const valColor = r.highlight || EMAIL_COLORS.text;
         // Wrap value in a span to override email client auto-link styling
-        const valHtml = `<span style="color:${valColor};${r.highlight ? 'font-weight:700;' : ''}">${r.value}</span>`;
+        const valHtml = `<span style="color:${valColor};${r.highlight ? 'font-weight:700;' : ''}">${escapeHtml(r.value)}</span>`;
         return `<tr><td style="padding:10px 14px;font-weight:600;color:${EMAIL_COLORS.muted};background:${EMAIL_COLORS.altRow};border-bottom:1px solid ${EMAIL_COLORS.border};white-space:nowrap;font-size:13px;">${r.label}</td><td style="padding:10px 14px;color:${valColor};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${valHtml}</td></tr>`;
       }
     )
@@ -106,13 +139,19 @@ export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {
     : '';
 
   const preheaderHtml = preheader
-    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${preheader}</div>`
+    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${escapeHtml(preheader)}</div>`
     : '';
 
-  // "manage alerts" deep-links to the per-category alert preferences so a
-  // recipient can turn off a single alert type instead of unsubscribing from
-  // everything. Shown whenever the unsubscribe link is (i.e. on alert emails).
-  const manageAlertsHtml = unsubscribeUrl
+  // Alert emails are signalled by passing the `unsubscribeUrl` option AT ALL —
+  // alert senders always include the key (even when its value is undefined for
+  // the fallback admin recipient, who has no per-user token); transactional
+  // emails (password reset) never pass it. The "manage alerts" deep-link is
+  // shown on EVERY alert email — including ones to the tokenless fallback
+  // recipient — so there is ALWAYS a way to turn alerts off (log in → toggle a
+  // category at /settings/alerts). The one-click token unsubscribe is only
+  // available when we have a per-user token.
+  const isAlertEmail = 'unsubscribeUrl' in options;
+  const manageAlertsHtml = isAlertEmail
     ? `<p style="margin:0 0 6px;"><a href="${baseUrl}/settings/alerts" style="color:${EMAIL_COLORS.cyan};text-decoration:underline;font-size:12px;">manage alerts</a></p>`
     : '';
 
@@ -295,7 +334,7 @@ function displayEventDetail(eventType: string, data: Record<string, unknown>): s
 function displayAlertRow(label: string, value: string, alt: boolean, highlight?: string): string {
   const bg = alt ? `background:${EMAIL_COLORS.altRow};` : '';
   const color = highlight || EMAIL_COLORS.text;
-  const safeValue = value || '—';
+  const safeValue = escapeHtml(value || '—');
   return `
     <tr>
       <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};font-size:13px;font-weight:600;white-space:nowrap;border-bottom:1px solid ${EMAIL_COLORS.border};width:140px;">${label}</td>
@@ -360,10 +399,10 @@ export function buildDisplayDigestEmail(
       const bg = i % 2 === 1 ? `background:${EMAIL_COLORS.altRow};` : '';
       return `
       <tr>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.machineId}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(a.machineId)}</td>
         <td style="padding:10px 14px;${bg}color:${color};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${label}</td>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${monitor}</td>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${detail}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(monitor)}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(detail)}</td>
       </tr>`;
     })
     .join('');
@@ -372,7 +411,7 @@ export function buildDisplayDigestEmail(
 
   const content = `
     <h2 style="color:${EMAIL_COLORS.amber};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">display alerts: ${alerts.length} event(s)</h2>
-    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} display event(s) detected in site <strong style="color:${EMAIL_COLORS.text};">${siteLabel}</strong>.</p>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} display event(s) detected in site <strong style="color:${EMAIL_COLORS.text};">${escapeHtml(siteLabel)}</strong>.</p>
     <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
       <thead>
         <tr>
