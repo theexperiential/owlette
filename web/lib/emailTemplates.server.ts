@@ -142,24 +142,26 @@ export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {
     ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${escapeHtml(preheader)}</div>`
     : '';
 
-  // Alert emails are signalled by passing the `unsubscribeUrl` option AT ALL —
-  // alert senders always include the key (even when its value is undefined for
-  // the fallback admin recipient, who has no per-user token); transactional
-  // emails (password reset) never pass it. The "manage alerts" deep-link is
-  // shown on EVERY alert email — including ones to the tokenless fallback
-  // recipient — so there is ALWAYS a way to turn alerts off (log in → toggle a
-  // category at /settings/alerts). The one-click token unsubscribe is only
-  // available when we have a per-user token.
+  // One-line footer actions: "manage alerts · unsubscribe". An alert email is
+  // signalled by passing the `unsubscribeUrl` option AT ALL (alert senders
+  // always include the key, even when its value is undefined for the tokenless
+  // fallback admin recipient; transactional emails never pass it). "manage
+  // alerts" shows on EVERY alert email so there is always a way to turn alerts
+  // off; the one-click unsubscribe only when we have a per-user token.
   const isAlertEmail = 'unsubscribeUrl' in options;
-  const manageAlertsHtml = isAlertEmail
-    ? `<p style="margin:0 0 6px;"><a href="${baseUrl}/settings/alerts" style="color:${EMAIL_COLORS.cyan};text-decoration:underline;font-size:12px;">manage alerts</a></p>`
+  const footerLinks: string[] = [];
+  if (isAlertEmail) {
+    footerLinks.push(`<a href="${baseUrl}/settings/alerts" style="color:${EMAIL_COLORS.cyan};text-decoration:underline;">manage alerts</a>`);
+  }
+  if (unsubscribeUrl) {
+    footerLinks.push(`<a href="${unsubscribeUrl}" style="color:${EMAIL_COLORS.muted};text-decoration:underline;">unsubscribe</a>`);
+  }
+  const sep = `<span style="color:${EMAIL_COLORS.border};padding:0 6px;">·</span>`;
+  const actionsHtml = footerLinks.length
+    ? `<p style="margin:0 0 6px;font-size:12px;">${footerLinks.join(sep)}</p>`
     : '';
 
-  const unsubscribeHtml = unsubscribeUrl
-    ? `<p style="margin:0 0 8px;"><a href="${unsubscribeUrl}" style="color:${EMAIL_COLORS.muted};text-decoration:underline;font-size:12px;">unsubscribe from alerts</a></p>`
-    : '';
-
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><title>owlette</title></head><body style="margin:0;padding:0;background-color:${EMAIL_COLORS.bodyBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">${preheaderHtml}<table width="100%" bgcolor="${EMAIL_COLORS.bodyBg}" cellpadding="0" cellspacing="0" role="presentation" style="background-color:${EMAIL_COLORS.bodyBg};"><tr><td align="center" style="padding:32px 16px;"><table width="600" style="max-width:600px;background-color:${EMAIL_COLORS.cardBg};border-radius:8px;border:1px solid ${EMAIL_COLORS.border};" cellpadding="0" cellspacing="0" role="presentation"><tr><td style="padding:28px 32px 20px;text-align:center;border-bottom:1px solid ${EMAIL_COLORS.border};"><a href="https://owlette.app" style="text-decoration:none;"><img src="${logoUrl}" width="48" height="48" alt="owlette" style="display:block;margin:0 auto 12px;border-radius:50%;"></a><table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;"><tr><td><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};font-size:20px;font-weight:700;text-transform:lowercase;letter-spacing:0.5px;text-decoration:none;line-height:1;">owlette</a></td>${envBadgeHtml}</tr></table></td></tr><tr><td style="padding:28px 32px;color:${EMAIL_COLORS.text};font-size:14px;line-height:1.7;">${content}</td></tr><tr><td style="padding:20px 32px;border-top:1px solid ${EMAIL_COLORS.border};text-align:center;"><p style="margin:0 0 10px;font-size:12px;"><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};text-decoration:none;font-weight:600;">owlette.app</a><span style="color:${EMAIL_COLORS.muted};"> is made by </span><a href="https://tridant.io" style="color:${EMAIL_COLORS.cyan};text-decoration:none;">tridant</a></p><p style="color:${EMAIL_COLORS.muted};font-size:11px;margin:0 0 8px;font-style:italic;">attention is all you need</p>${manageAlertsHtml}${unsubscribeHtml}<p style="color:${EMAIL_COLORS.border};font-size:11px;margin:0;">this is an automated message from owlette</p></td></tr></table></td></tr></table></body></html>`;
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><title>owlette</title></head><body style="margin:0;padding:0;background-color:${EMAIL_COLORS.bodyBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">${preheaderHtml}<table width="100%" bgcolor="${EMAIL_COLORS.bodyBg}" cellpadding="0" cellspacing="0" role="presentation" style="background-color:${EMAIL_COLORS.bodyBg};"><tr><td align="center" style="padding:32px 16px;"><table width="600" style="max-width:600px;background-color:${EMAIL_COLORS.cardBg};border-radius:8px;border:1px solid ${EMAIL_COLORS.border};" cellpadding="0" cellspacing="0" role="presentation"><tr><td style="padding:28px 32px 20px;text-align:center;border-bottom:1px solid ${EMAIL_COLORS.border};"><a href="https://owlette.app" style="text-decoration:none;"><img src="${logoUrl}" width="48" height="48" alt="owlette" style="display:block;margin:0 auto 12px;border-radius:50%;"></a><table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;"><tr><td><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};font-size:20px;font-weight:700;text-transform:lowercase;letter-spacing:0.5px;text-decoration:none;line-height:1;">owlette</a></td>${envBadgeHtml}</tr></table></td></tr><tr><td style="padding:28px 32px;color:${EMAIL_COLORS.text};font-size:14px;line-height:1.7;">${content}</td></tr><tr><td style="padding:20px 32px;border-top:1px solid ${EMAIL_COLORS.border};text-align:center;">${actionsHtml}<p style="color:${EMAIL_COLORS.muted};font-size:11px;margin:0;"><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};text-decoration:none;">owlette.app</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
 /* ------------------------------------------------------------------ */
