@@ -17,11 +17,24 @@ jest.mock('@/lib/resendClient.server', () => ({
 
 import {
   escapeHtml,
+  safeEmailSubject,
   emailDataTable,
   wrapEmailLayout,
   buildDisplayDigestEmail,
   type PendingDisplayAlert,
 } from '@/lib/emailTemplates.server';
+
+const displayAlert = (over: Partial<PendingDisplayAlert> = {}): PendingDisplayAlert => ({
+  docId: 'd',
+  siteId: 's',
+  machineId: 'm',
+  eventType: 'display_monitor_removed',
+  data: {},
+  agentVersion: '3.0.0',
+  correlatedApplyId: '',
+  timestamp: null,
+  ...over,
+});
 
 describe('escapeHtml', () => {
   it('escapes HTML metacharacters', () => {
@@ -57,15 +70,47 @@ describe('alert-email value escaping (stored-injection regression)', () => {
   });
 });
 
-describe('wrapEmailLayout — "manage alerts" link', () => {
-  it('renders "manage alerts" + /settings/alerts only when an unsubscribe link is present', () => {
-    const withUnsub = wrapEmailLayout('<p>x</p>', {
+describe('multi-alert display digest escaping', () => {
+  it('escapes machineId in the multi-alert digest table (not just single-alert)', () => {
+    const alerts = [
+      displayAlert({ machineId: '<img src=x onerror=alert(1)>' }),
+      displayAlert({ machineId: 'm2' }),
+    ];
+    const html = buildDisplayDigestEmail('TEC (s)', alerts, undefined, 'UTC');
+    expect(html).not.toContain('<img src=x');
+    expect(html).toContain('&lt;img src=x');
+  });
+});
+
+describe('wrapEmailLayout — manage alerts / unsubscribe footer', () => {
+  it('shows "manage alerts" on EVERY alert email — including the tokenless fallback (unsubscribeUrl undefined)', () => {
+    // The fallback admin recipient has no per-user token, but must still get a
+    // way to turn alerts off. The key being PRESENT (even undefined) marks an
+    // alert email.
+    const fallback = wrapEmailLayout('<p>x</p>', { unsubscribeUrl: undefined });
+    expect(fallback).toContain('manage alerts');
+    expect(fallback).toContain('/settings/alerts');
+    expect(fallback).not.toContain('unsubscribe from alerts'); // no token → no one-click
+
+    const withToken = wrapEmailLayout('<p>x</p>', {
       unsubscribeUrl: 'https://dev.owlette.app/api/unsubscribe?token=t',
     });
-    expect(withUnsub).toContain('manage alerts');
-    expect(withUnsub).toContain('/settings/alerts');
+    expect(withToken).toContain('manage alerts');
+    expect(withToken).toContain('unsubscribe from alerts');
+  });
 
-    const without = wrapEmailLayout('<p>x</p>', {});
-    expect(without).not.toContain('manage alerts');
+  it('does NOT show manage/unsubscribe on transactional emails (no unsubscribeUrl key)', () => {
+    const transactional = wrapEmailLayout('<p>x</p>', { preheader: 'reset your password' });
+    expect(transactional).not.toContain('manage alerts');
+    expect(transactional).not.toContain('unsubscribe from alerts');
+  });
+});
+
+describe('safeEmailSubject', () => {
+  it('strips CR/LF/control chars, collapses whitespace, preserves hyphens', () => {
+    expect(safeEmailSubject('offline in TEC-A4D\r\nBcc: evil@x')).toBe('offline in TEC-A4D Bcc: evil@x');
+  });
+  it('caps length at 200', () => {
+    expect(safeEmailSubject('a'.repeat(500)).length).toBe(200);
   });
 });

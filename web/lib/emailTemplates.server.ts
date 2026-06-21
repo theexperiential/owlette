@@ -66,6 +66,24 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Sanitize a value used as an email Subject. Subjects are plain text (Resend
+ * JSON-serializes them), so HTML escaping is wrong here — instead collapse
+ * CR/LF and other control characters (defence against header-injection-shaped
+ * values) and cap the length. Use for any subject that includes dynamic text
+ * (site names, rule/process/machine names).
+ */
+export function safeEmailSubject(value: string): string {
+  // Drop control characters (CR/LF/tab/etc. — header-injection-shaped values)
+  // without HTML-escaping (subjects are plain text), then collapse + cap.
+  let out = '';
+  for (const ch of String(value)) {
+    const code = ch.charCodeAt(0);
+    out += code < 0x20 || code === 0x7f ? ' ' : ch;
+  }
+  return out.replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
 interface DataRow {
   label: string;
   value: string;
@@ -121,13 +139,19 @@ export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {
     : '';
 
   const preheaderHtml = preheader
-    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${preheader}</div>`
+    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${escapeHtml(preheader)}</div>`
     : '';
 
-  // "manage alerts" deep-links to the per-category alert preferences so a
-  // recipient can turn off a single alert type instead of unsubscribing from
-  // everything. Shown whenever the unsubscribe link is (i.e. on alert emails).
-  const manageAlertsHtml = unsubscribeUrl
+  // Alert emails are signalled by passing the `unsubscribeUrl` option AT ALL —
+  // alert senders always include the key (even when its value is undefined for
+  // the fallback admin recipient, who has no per-user token); transactional
+  // emails (password reset) never pass it. The "manage alerts" deep-link is
+  // shown on EVERY alert email — including ones to the tokenless fallback
+  // recipient — so there is ALWAYS a way to turn alerts off (log in → toggle a
+  // category at /settings/alerts). The one-click token unsubscribe is only
+  // available when we have a per-user token.
+  const isAlertEmail = 'unsubscribeUrl' in options;
+  const manageAlertsHtml = isAlertEmail
     ? `<p style="margin:0 0 6px;"><a href="${baseUrl}/settings/alerts" style="color:${EMAIL_COLORS.cyan};text-decoration:underline;font-size:12px;">manage alerts</a></p>`
     : '';
 
@@ -375,10 +399,10 @@ export function buildDisplayDigestEmail(
       const bg = i % 2 === 1 ? `background:${EMAIL_COLORS.altRow};` : '';
       return `
       <tr>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.machineId}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(a.machineId)}</td>
         <td style="padding:10px 14px;${bg}color:${color};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${label}</td>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${monitor}</td>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${detail}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(monitor)}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(detail)}</td>
       </tr>`;
     })
     .join('');
@@ -404,7 +428,7 @@ export function buildDisplayDigestEmail(
   `;
 
   return wrapEmailLayout(content, {
-    preheader: `${alerts.length} display event(s) in ${escapeHtml(siteLabel)}`,
+    preheader: `${alerts.length} display event(s) in ${siteLabel}`,
     unsubscribeUrl,
   });
 }

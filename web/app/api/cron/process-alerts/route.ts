@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertRecipients, getMachineTimezone, getSiteLabel } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
-import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp, escapeHtml } from '@/lib/emailTemplates.server';
+import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp, escapeHtml, safeEmailSubject } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { apiError } from '@/lib/apiErrorResponse';
 
@@ -49,7 +49,7 @@ function buildProcessDigestEmail(
     const a = alerts[0];
     const eventLabel = a.eventType === 'process_start_failed' ? 'failed to start' : 'crashed';
     const content = `
-      <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">process ${eventLabel}: ${a.processName}</h2>
+      <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">process ${eventLabel}: ${escapeHtml(a.processName)}</h2>
       <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a monitored process has ${eventLabel} on one of your machines.</p>
       <table width="100%" style="border-collapse:collapse;" cellpadding="0" cellspacing="0">
         ${alertRow('site', siteLabel, false)}
@@ -75,10 +75,10 @@ function buildProcessDigestEmail(
       const bg = i % 2 === 1 ? `background:${EMAIL_COLORS.altRow};` : '';
       return `
       <tr>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.machineId}</td>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.processName}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(a.machineId)}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(a.processName)}</td>
         <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.red};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${eventLabel}</td>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.errorMessage}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(a.errorMessage)}</td>
       </tr>`;
     })
     .join('');
@@ -104,7 +104,7 @@ function buildProcessDigestEmail(
   `;
 
   return wrapEmailLayout(content, {
-    preheader: `${alerts.length} process event(s) in ${escapeHtml(siteLabel)}`,
+    preheader: `${alerts.length} process event(s) in ${siteLabel}`,
     unsubscribeUrl,
   });
 }
@@ -198,7 +198,7 @@ export async function GET(request: NextRequest) {
               from: FROM_EMAIL,
               to: [recipient.email],
               ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
-              subject: userSubject,
+              subject: safeEmailSubject(userSubject),
               html,
             });
 

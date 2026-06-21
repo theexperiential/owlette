@@ -9,6 +9,7 @@ import {
   emailTimestamp,
   EMAIL_COLORS,
   buildDisplayDigestEmail,
+  safeEmailSubject,
   type PendingDisplayAlert,
 } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
@@ -605,7 +606,7 @@ async function sendCriticalDisplayEmailNow(params: {
         : undefined;
 
       const html = buildDisplayDigestEmail(siteLabel, [alert], unsubscribeUrl, tz);
-      const subject = `[owlette] critical display alert on ${machineId}`;
+      const subject = safeEmailSubject(`[owlette] critical display alert on ${machineId}`);
 
       const result = await resendClient.emails.send({
         from: FROM_EMAIL,

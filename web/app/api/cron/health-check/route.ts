@@ -3,7 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertRecipients, getSiteLabel } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
-import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp, escapeHtml } from '@/lib/emailTemplates.server';
+import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp, escapeHtml, safeEmailSubject } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { fireWebhooks } from '@/lib/webhookSender.server';
 import { apiError } from '@/lib/apiErrorResponse';
@@ -161,7 +161,7 @@ function buildOfflineEmail(siteLabel: string, alerts: OfflineAlert[], unsubscrib
     .map(
       (a) => `
       <tr>
-        <td style="padding:10px 14px;color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.machineId}</td>
+        <td style="padding:10px 14px;color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(a.machineId)}</td>
         <td style="padding:10px 14px;color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.heartbeatAgeMinutes} minute(s) ago</td>
       </tr>`
     )
@@ -186,7 +186,7 @@ function buildOfflineEmail(siteLabel: string, alerts: OfflineAlert[], unsubscrib
 
   return wrapEmailLayout(content, {
     unsubscribeUrl,
-    preheader: `${alerts.length} machine(s) offline in ${escapeHtml(siteLabel)}`,
+    preheader: `${alerts.length} machine(s) offline in ${siteLabel}`,
   });
 }
 
@@ -356,7 +356,7 @@ export async function GET(request: NextRequest) {
             from: FROM_EMAIL,
             to: [recipient.email],
             ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
-            subject: `${userAlerts.length} machine(s) offline in ${siteLabel}`,
+            subject: safeEmailSubject(`${userAlerts.length} machine(s) offline in ${siteLabel}`),
             html: buildOfflineEmail(siteLabel, userAlerts, unsubscribeUrl),
           });
 

@@ -3,7 +3,7 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertRecipients, getMachineTimezone, getSiteLabel } from '@/lib/adminUtils.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
-import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, SEVERITY_COLORS, METRIC_LABELS } from '@/lib/emailTemplates.server';
+import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, SEVERITY_COLORS, METRIC_LABELS, escapeHtml, safeEmailSubject } from '@/lib/emailTemplates.server';
 import { fireWebhooks } from '@/lib/webhookSender.server';
 import { apiError } from '@/lib/apiErrorResponse';
 
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
 
         if (recipients.length > 0) {
           const severityLabel = severity.toUpperCase();
-          const subject = `[${severityLabel}] ${ruleName} — ${machineId}`;
+          const subject = safeEmailSubject(`[${severityLabel}] ${ruleName} — ${machineId}`);
 
           for (const recipient of recipients) {
             // Skip if user has muted this machine
@@ -177,7 +177,7 @@ function buildThresholdAlertEmail(params: {
   const metricLabel = METRIC_LABELS[metric] || metric;
 
   const content = `
-    <h2 style="color:${color};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">threshold alert: ${ruleName}</h2>
+    <h2 style="color:${color};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">threshold alert: ${escapeHtml(ruleName)}</h2>
     <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a metric threshold has been breached on one of your machines.</p>
     ${emailDataTable([
       { label: 'site', value: siteLabel },
