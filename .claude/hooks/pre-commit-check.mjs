@@ -43,7 +43,9 @@ try {
 
   // Determine affected areas
   const hasWeb = editedFiles.some(f => /[/\\]web[/\\]/.test(f))
-  const hasAgent = editedFiles.some(f => /[/\\]agent[/\\]/.test(f))
+  // Match the Python agent dir only — NOT web routes that merely live under an
+  // /agent/ path (e.g. web/app/api/agent/*), which are TypeScript, not Python.
+  const hasAgent = editedFiles.some(f => /[/\\]agent[/\\]/.test(f) && !/[/\\]web[/\\]/.test(f))
 
   if (!hasWeb && !hasAgent) {
     process.stdout.write(JSON.stringify({ decision: 'approve' }))
