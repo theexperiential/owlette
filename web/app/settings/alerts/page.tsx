@@ -149,7 +149,7 @@ export default function ManageAlertsPage() {
                 id={key}
                 checked={prefs[key]}
                 onCheckedChange={(v) => toggle(key, v)}
-                disabled={savingKey === key}
+                disabled={savingKey !== null}
               />
             </div>
           ))}

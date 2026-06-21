@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
-import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
+import { getSiteAlertRecipients, getMachineTimezone, getSiteLabel } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import {
   wrapEmailLayout,
@@ -591,6 +591,7 @@ async function sendCriticalDisplayEmailNow(params: {
     timestamp: new Date(),
   };
 
+  const siteLabel = await getSiteLabel(siteId);
   let emailsSent = 0;
   for (const recipient of recipients) {
     try {
@@ -603,7 +604,7 @@ async function sendCriticalDisplayEmailNow(params: {
         ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
         : undefined;
 
-      const html = buildDisplayDigestEmail(siteId, [alert], unsubscribeUrl, tz);
+      const html = buildDisplayDigestEmail(siteLabel, [alert], unsubscribeUrl, tz);
       const subject = `[owlette] critical display alert on ${machineId}`;
 
       const result = await resendClient.emails.send({

@@ -3,7 +3,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { getSiteAlertRecipients, getSiteLabel } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
-import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp } from '@/lib/emailTemplates.server';
+import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp, escapeHtml } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { fireWebhooks } from '@/lib/webhookSender.server';
 import { apiError } from '@/lib/apiErrorResponse';
@@ -169,7 +169,7 @@ function buildOfflineEmail(siteLabel: string, alerts: OfflineAlert[], unsubscrib
 
   const content = `
     <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">machines offline</h2>
-    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} machine(s) in site <strong style="color:${EMAIL_COLORS.text};">${siteLabel}</strong> appear to be offline.</p>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} machine(s) in site <strong style="color:${EMAIL_COLORS.text};">${escapeHtml(siteLabel)}</strong> appear to be offline.</p>
     <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
       <thead>
         <tr>
@@ -186,7 +186,7 @@ function buildOfflineEmail(siteLabel: string, alerts: OfflineAlert[], unsubscrib
 
   return wrapEmailLayout(content, {
     unsubscribeUrl,
-    preheader: `${alerts.length} machine(s) offline in ${siteLabel}`,
+    preheader: `${alerts.length} machine(s) offline in ${escapeHtml(siteLabel)}`,
   });
 }
 

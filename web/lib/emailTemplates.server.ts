@@ -51,6 +51,21 @@ export const METRIC_LABELS: Record<string, string> = {
 /*  Data table helper                                                  */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Escape a dynamic value before interpolating it into email HTML. Alert emails
+ * carry operator/admin-controlled free text (site names, machine/process names,
+ * error messages) — escaping prevents stored markup (phishing links, broken
+ * layout) from rendering in emails sent to other recipients.
+ */
+export function escapeHtml(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 interface DataRow {
   label: string;
   value: string;
@@ -67,7 +82,7 @@ export function emailDataTable(rows: DataRow[]): string {
       (r) => {
         const valColor = r.highlight || EMAIL_COLORS.text;
         // Wrap value in a span to override email client auto-link styling
-        const valHtml = `<span style="color:${valColor};${r.highlight ? 'font-weight:700;' : ''}">${r.value}</span>`;
+        const valHtml = `<span style="color:${valColor};${r.highlight ? 'font-weight:700;' : ''}">${escapeHtml(r.value)}</span>`;
         return `<tr><td style="padding:10px 14px;font-weight:600;color:${EMAIL_COLORS.muted};background:${EMAIL_COLORS.altRow};border-bottom:1px solid ${EMAIL_COLORS.border};white-space:nowrap;font-size:13px;">${r.label}</td><td style="padding:10px 14px;color:${valColor};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${valHtml}</td></tr>`;
       }
     )
@@ -295,7 +310,7 @@ function displayEventDetail(eventType: string, data: Record<string, unknown>): s
 function displayAlertRow(label: string, value: string, alt: boolean, highlight?: string): string {
   const bg = alt ? `background:${EMAIL_COLORS.altRow};` : '';
   const color = highlight || EMAIL_COLORS.text;
-  const safeValue = value || '—';
+  const safeValue = escapeHtml(value || '—');
   return `
     <tr>
       <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};font-size:13px;font-weight:600;white-space:nowrap;border-bottom:1px solid ${EMAIL_COLORS.border};width:140px;">${label}</td>
@@ -372,7 +387,7 @@ export function buildDisplayDigestEmail(
 
   const content = `
     <h2 style="color:${EMAIL_COLORS.amber};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">display alerts: ${alerts.length} event(s)</h2>
-    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} display event(s) detected in site <strong style="color:${EMAIL_COLORS.text};">${siteLabel}</strong>.</p>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} display event(s) detected in site <strong style="color:${EMAIL_COLORS.text};">${escapeHtml(siteLabel)}</strong>.</p>
     <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
       <thead>
         <tr>
@@ -389,7 +404,7 @@ export function buildDisplayDigestEmail(
   `;
 
   return wrapEmailLayout(content, {
-    preheader: `${alerts.length} display event(s) in ${siteLabel}`,
+    preheader: `${alerts.length} display event(s) in ${escapeHtml(siteLabel)}`,
     unsubscribeUrl,
   });
 }
