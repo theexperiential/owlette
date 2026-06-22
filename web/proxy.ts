@@ -34,6 +34,9 @@ const PROTECTED_PATHS = [
   '/setup',
   '/add',
   '/cortex',
+  // /settings/* (api-keys, webhooks, alerts) manage account + security state and
+  // must require completed MFA like the rest of the app — not just password auth.
+  '/settings',
 ] as const;
 
 // The MFA challenge page itself. Reachable for authenticated users whose
