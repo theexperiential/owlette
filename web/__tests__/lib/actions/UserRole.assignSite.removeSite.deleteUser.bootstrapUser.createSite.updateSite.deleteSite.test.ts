@@ -331,6 +331,25 @@ describe('bootstrapUser', () => {
 
     expect(result).toEqual({ kind: 'already_exists', createdAt: 456 });
   });
+
+  it('sanitises a spam display name before persisting', async () => {
+    const db = new FakeDb();
+    const now = new Date('2026-01-02T03:04:05.000Z');
+
+    const result = await bootstrapUser(ctx, {
+      uid: 'uid-spam',
+      email: 'salavat@example.com',
+      displayName: '15K lira bonus kapıda! https://bit.ly/trclicko 🔥 Go',
+      db: db.asFirestore(),
+      now: () => now,
+    });
+
+    expect(result.kind).toBe('created');
+    const stored = db.docs.get('users/uid-spam') as { displayName: string };
+    expect(stored.displayName).toBe('15K lira bonus kapıda! 🔥 Go');
+    expect(stored.displayName).not.toContain('bit.ly');
+    expect(stored.displayName).not.toMatch(/https?:/i);
+  });
 });
 
 describe('site CRUD actions', () => {

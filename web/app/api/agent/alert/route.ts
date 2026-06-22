@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
-import { getSiteAlertRecipients, getMachineTimezone } from '@/lib/adminUtils.server';
+import { getSiteAlertRecipients, getMachineTimezone, getSiteLabel } from '@/lib/adminUtils.server';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import {
   wrapEmailLayout,
@@ -9,6 +9,7 @@ import {
   emailTimestamp,
   EMAIL_COLORS,
   buildDisplayDigestEmail,
+  safeEmailSubject,
   type PendingDisplayAlert,
 } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
@@ -421,7 +422,7 @@ export const POST = withRateLimit(
         return NextResponse.json({ success: true, emailSent: false, reason: 'No recipients' });
       }
 
-      const subject = `[ALERT] owlette agent error on ${machineId}`;
+      const subject = safeEmailSubject(`[ALERT] owlette agent error on ${machineId}`);
       const baseUrl = request.nextUrl.origin;
       let emailsSent = 0;
 
@@ -591,6 +592,7 @@ async function sendCriticalDisplayEmailNow(params: {
     timestamp: new Date(),
   };
 
+  const siteLabel = await getSiteLabel(siteId);
   let emailsSent = 0;
   for (const recipient of recipients) {
     try {
@@ -603,8 +605,8 @@ async function sendCriticalDisplayEmailNow(params: {
         ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
         : undefined;
 
-      const html = buildDisplayDigestEmail(siteId, [alert], unsubscribeUrl, tz);
-      const subject = `[owlette] critical display alert on ${machineId}`;
+      const html = buildDisplayDigestEmail(siteLabel, [alert], unsubscribeUrl, tz);
+      const subject = safeEmailSubject(`[owlette] critical display alert on ${machineId}`);
 
       const result = await resendClient.emails.send({
         from: FROM_EMAIL,

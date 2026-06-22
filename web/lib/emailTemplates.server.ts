@@ -51,6 +51,39 @@ export const METRIC_LABELS: Record<string, string> = {
 /*  Data table helper                                                  */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Escape a dynamic value before interpolating it into email HTML. Alert emails
+ * carry operator/admin-controlled free text (site names, machine/process names,
+ * error messages) — escaping prevents stored markup (phishing links, broken
+ * layout) from rendering in emails sent to other recipients.
+ */
+export function escapeHtml(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Sanitize a value used as an email Subject. Subjects are plain text (Resend
+ * JSON-serializes them), so HTML escaping is wrong here — instead collapse
+ * CR/LF and other control characters (defence against header-injection-shaped
+ * values) and cap the length. Use for any subject that includes dynamic text
+ * (site names, rule/process/machine names).
+ */
+export function safeEmailSubject(value: string): string {
+  // Drop control characters (CR/LF/tab/etc. — header-injection-shaped values)
+  // without HTML-escaping (subjects are plain text), then collapse + cap.
+  let out = '';
+  for (const ch of String(value)) {
+    const code = ch.charCodeAt(0);
+    out += code < 0x20 || code === 0x7f ? ' ' : ch;
+  }
+  return out.replace(/\s+/g, ' ').trim().slice(0, 200);
+}
+
 interface DataRow {
   label: string;
   value: string;
@@ -67,7 +100,7 @@ export function emailDataTable(rows: DataRow[]): string {
       (r) => {
         const valColor = r.highlight || EMAIL_COLORS.text;
         // Wrap value in a span to override email client auto-link styling
-        const valHtml = `<span style="color:${valColor};${r.highlight ? 'font-weight:700;' : ''}">${r.value}</span>`;
+        const valHtml = `<span style="color:${valColor};${r.highlight ? 'font-weight:700;' : ''}">${escapeHtml(r.value)}</span>`;
         return `<tr><td style="padding:10px 14px;font-weight:600;color:${EMAIL_COLORS.muted};background:${EMAIL_COLORS.altRow};border-bottom:1px solid ${EMAIL_COLORS.border};white-space:nowrap;font-size:13px;">${r.label}</td><td style="padding:10px 14px;color:${valColor};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${valHtml}</td></tr>`;
       }
     )
@@ -106,14 +139,29 @@ export function wrapEmailLayout(content: string, options: EmailLayoutOptions = {
     : '';
 
   const preheaderHtml = preheader
-    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${preheader}</div>`
+    ? `<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">${escapeHtml(preheader)}</div>`
     : '';
 
-  const unsubscribeHtml = unsubscribeUrl
-    ? `<p style="margin:0 0 8px;"><a href="${unsubscribeUrl}" style="color:${EMAIL_COLORS.muted};text-decoration:underline;font-size:12px;">unsubscribe from alerts</a></p>`
+  // One-line footer actions: "manage alerts · unsubscribe". An alert email is
+  // signalled by passing the `unsubscribeUrl` option AT ALL (alert senders
+  // always include the key, even when its value is undefined for the tokenless
+  // fallback admin recipient; transactional emails never pass it). "manage
+  // alerts" shows on EVERY alert email so there is always a way to turn alerts
+  // off; the one-click unsubscribe only when we have a per-user token.
+  const isAlertEmail = 'unsubscribeUrl' in options;
+  const footerLinks: string[] = [];
+  if (isAlertEmail) {
+    footerLinks.push(`<a href="${baseUrl}/settings/alerts" style="color:${EMAIL_COLORS.cyan};text-decoration:underline;">manage alerts</a>`);
+  }
+  if (unsubscribeUrl) {
+    footerLinks.push(`<a href="${unsubscribeUrl}" style="color:${EMAIL_COLORS.muted};text-decoration:underline;">unsubscribe</a>`);
+  }
+  const sep = `<span style="color:${EMAIL_COLORS.border};padding:0 6px;">·</span>`;
+  const actionsHtml = footerLinks.length
+    ? `<p style="margin:0 0 6px;font-size:12px;">${footerLinks.join(sep)}</p>`
     : '';
 
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><title>owlette</title></head><body style="margin:0;padding:0;background-color:${EMAIL_COLORS.bodyBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">${preheaderHtml}<table width="100%" bgcolor="${EMAIL_COLORS.bodyBg}" cellpadding="0" cellspacing="0" role="presentation" style="background-color:${EMAIL_COLORS.bodyBg};"><tr><td align="center" style="padding:32px 16px;"><table width="600" style="max-width:600px;background-color:${EMAIL_COLORS.cardBg};border-radius:8px;border:1px solid ${EMAIL_COLORS.border};" cellpadding="0" cellspacing="0" role="presentation"><tr><td style="padding:28px 32px 20px;text-align:center;border-bottom:1px solid ${EMAIL_COLORS.border};"><a href="https://owlette.app" style="text-decoration:none;"><img src="${logoUrl}" width="48" height="48" alt="owlette" style="display:block;margin:0 auto 12px;border-radius:50%;"></a><table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;"><tr><td><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};font-size:20px;font-weight:700;text-transform:lowercase;letter-spacing:0.5px;text-decoration:none;line-height:1;">owlette</a></td>${envBadgeHtml}</tr></table></td></tr><tr><td style="padding:28px 32px;color:${EMAIL_COLORS.text};font-size:14px;line-height:1.7;">${content}</td></tr><tr><td style="padding:20px 32px;border-top:1px solid ${EMAIL_COLORS.border};text-align:center;"><p style="margin:0 0 10px;font-size:12px;"><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};text-decoration:none;font-weight:600;">owlette.app</a><span style="color:${EMAIL_COLORS.muted};"> is made by </span><a href="https://tridant.io" style="color:${EMAIL_COLORS.cyan};text-decoration:none;">tridant</a></p><p style="color:${EMAIL_COLORS.muted};font-size:11px;margin:0 0 8px;font-style:italic;">attention is all you need</p>${unsubscribeHtml}<p style="color:${EMAIL_COLORS.border};font-size:11px;margin:0;">this is an automated message from owlette</p></td></tr></table></td></tr></table></body></html>`;
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark"><title>owlette</title></head><body style="margin:0;padding:0;background-color:${EMAIL_COLORS.bodyBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">${preheaderHtml}<table width="100%" bgcolor="${EMAIL_COLORS.bodyBg}" cellpadding="0" cellspacing="0" role="presentation" style="background-color:${EMAIL_COLORS.bodyBg};"><tr><td align="center" style="padding:32px 16px;"><table width="600" style="max-width:600px;background-color:${EMAIL_COLORS.cardBg};border-radius:8px;border:1px solid ${EMAIL_COLORS.border};" cellpadding="0" cellspacing="0" role="presentation"><tr><td style="padding:28px 32px 20px;text-align:center;border-bottom:1px solid ${EMAIL_COLORS.border};"><a href="https://owlette.app" style="text-decoration:none;"><img src="${logoUrl}" width="48" height="48" alt="owlette" style="display:block;margin:0 auto 12px;border-radius:50%;"></a><table cellpadding="0" cellspacing="0" role="presentation" style="margin:0 auto;"><tr><td><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};font-size:20px;font-weight:700;text-transform:lowercase;letter-spacing:0.5px;text-decoration:none;line-height:1;">owlette</a></td>${envBadgeHtml}</tr></table></td></tr><tr><td style="padding:28px 32px;color:${EMAIL_COLORS.text};font-size:14px;line-height:1.7;">${content}</td></tr><tr><td style="padding:20px 32px;border-top:1px solid ${EMAIL_COLORS.border};text-align:center;">${actionsHtml}<p style="color:${EMAIL_COLORS.muted};font-size:11px;margin:0;"><a href="https://owlette.app" style="color:${EMAIL_COLORS.cyan};text-decoration:none;">owlette.app</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -288,7 +336,7 @@ function displayEventDetail(eventType: string, data: Record<string, unknown>): s
 function displayAlertRow(label: string, value: string, alt: boolean, highlight?: string): string {
   const bg = alt ? `background:${EMAIL_COLORS.altRow};` : '';
   const color = highlight || EMAIL_COLORS.text;
-  const safeValue = value || '—';
+  const safeValue = escapeHtml(value || '—');
   return `
     <tr>
       <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};font-size:13px;font-weight:600;white-space:nowrap;border-bottom:1px solid ${EMAIL_COLORS.border};width:140px;">${label}</td>
@@ -307,7 +355,7 @@ function displayAlertRow(label: string, value: string, alt: boolean, highlight?:
  * for `display_monitor_removed` / `display_auto_revert_fired`).
  */
 export function buildDisplayDigestEmail(
-  siteId: string,
+  siteLabel: string,
   alerts: PendingDisplayAlert[],
   unsubscribeUrl?: string,
   timezone?: string,
@@ -327,7 +375,7 @@ export function buildDisplayDigestEmail(
       <h2 style="color:${color};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">${label}</h2>
       <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">a display event was detected on one of your machines.</p>
       <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
-        ${displayAlertRow('site', siteId, false)}
+        ${displayAlertRow('site', siteLabel, false)}
         ${displayAlertRow('machine', a.machineId, true)}
         ${displayAlertRow('event', label, false, color)}
         ${displayAlertRow('monitor', monitor, true)}
@@ -353,10 +401,10 @@ export function buildDisplayDigestEmail(
       const bg = i % 2 === 1 ? `background:${EMAIL_COLORS.altRow};` : '';
       return `
       <tr>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.machineId}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(a.machineId)}</td>
         <td style="padding:10px 14px;${bg}color:${color};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${label}</td>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${monitor}</td>
-        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${detail}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(monitor)}</td>
+        <td style="padding:10px 14px;${bg}color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(detail)}</td>
       </tr>`;
     })
     .join('');
@@ -365,7 +413,7 @@ export function buildDisplayDigestEmail(
 
   const content = `
     <h2 style="color:${EMAIL_COLORS.amber};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">display alerts: ${alerts.length} event(s)</h2>
-    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} display event(s) detected in site <strong style="color:${EMAIL_COLORS.text};">${siteId}</strong>.</p>
+    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} display event(s) detected in site <strong style="color:${EMAIL_COLORS.text};">${escapeHtml(siteLabel)}</strong>.</p>
     <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
       <thead>
         <tr>
@@ -382,7 +430,7 @@ export function buildDisplayDigestEmail(
   `;
 
   return wrapEmailLayout(content, {
-    preheader: `${alerts.length} display event(s) in ${siteId}`,
+    preheader: `${alerts.length} display event(s) in ${siteLabel}`,
     unsubscribeUrl,
   });
 }

@@ -24,6 +24,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import { isValidTimezone } from '@/lib/timeUtils';
+import { sanitizeDisplayName } from '@/lib/sanitize';
 
 export interface BootstrapUserInput {
   uid: string;
@@ -71,8 +72,10 @@ export async function bootstrapUser(
   const db = input.db ?? getAdminDb();
   const userRef = db.collection('users').doc(input.uid);
 
-  const displayName =
-    typeof input.displayName === 'string' ? input.displayName : '';
+  // Sanitise the display name at the single write chokepoint — strips link
+  // payloads / emoji-spam / invisible chars regardless of whether the caller
+  // came through the signup form or hit the API directly with a scraped key.
+  const displayName = sanitizeDisplayName(input.displayName);
   const timezone =
     typeof input.timezone === 'string' && isValidTimezone(input.timezone)
       ? input.timezone

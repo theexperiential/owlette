@@ -47,6 +47,7 @@ jest.mock('@/lib/firebase-admin', () => ({
 
 jest.mock('@/lib/adminUtils.server', () => ({
   getSiteAlertRecipients: (...args: unknown[]) => getSiteAlertRecipientsMock(...args),
+  getSiteLabel: async (siteId: string) => siteId,
 }));
 
 jest.mock('@/lib/resendClient.server', () => ({
