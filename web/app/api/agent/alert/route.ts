@@ -422,7 +422,7 @@ export const POST = withRateLimit(
         return NextResponse.json({ success: true, emailSent: false, reason: 'No recipients' });
       }
 
-      const subject = `[ALERT] owlette agent error on ${machineId}`;
+      const subject = safeEmailSubject(`[ALERT] owlette agent error on ${machineId}`);
       const baseUrl = request.nextUrl.origin;
       let emailsSent = 0;
 
