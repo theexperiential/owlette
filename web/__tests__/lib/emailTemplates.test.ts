@@ -90,19 +90,29 @@ describe('wrapEmailLayout — manage alerts / unsubscribe footer', () => {
     const fallback = wrapEmailLayout('<p>x</p>', { unsubscribeUrl: undefined });
     expect(fallback).toContain('manage alerts');
     expect(fallback).toContain('/settings/alerts');
-    expect(fallback).not.toContain('unsubscribe from alerts'); // no token → no one-click
+    expect(fallback).not.toContain('unsubscribe'); // no token → no one-click
 
     const withToken = wrapEmailLayout('<p>x</p>', {
       unsubscribeUrl: 'https://dev.owlette.app/api/unsubscribe?token=t',
     });
     expect(withToken).toContain('manage alerts');
-    expect(withToken).toContain('unsubscribe from alerts');
+    expect(withToken).toContain('unsubscribe');
   });
 
   it('does NOT show manage/unsubscribe on transactional emails (no unsubscribeUrl key)', () => {
     const transactional = wrapEmailLayout('<p>x</p>', { preheader: 'reset your password' });
     expect(transactional).not.toContain('manage alerts');
-    expect(transactional).not.toContain('unsubscribe from alerts');
+    expect(transactional).not.toContain('unsubscribe');
+  });
+
+  it('uses the simplified footer — no tagline, tridant attribution, or boilerplate', () => {
+    const html = wrapEmailLayout('<p>x</p>', {
+      unsubscribeUrl: 'https://dev.owlette.app/api/unsubscribe?token=t',
+    });
+    expect(html).not.toContain('attention is all you need');
+    expect(html).not.toContain('is made by');
+    expect(html).not.toContain('automated message');
+    expect(html).toContain('owlette.app');
   });
 });
 
