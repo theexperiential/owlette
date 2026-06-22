@@ -22,12 +22,15 @@
  * Idempotent — calling twice for the same uid is a no-op (returns
  * `alreadyExists: true`).
  *
- * Body: `{ email, displayName?, timezone? }`. The `uid` is taken from the
- * verified token, not from the body, so a caller cannot bootstrap a doc
- * for someone else.
+ * Body: `{ displayName?, timezone? }`. Both the `uid` AND the `email` are
+ * taken from the verified auth context — the uid from the bearer/session and
+ * the email from the Firebase Auth record (`getUser(uid).email`) — never from
+ * the body. A caller therefore cannot bootstrap a doc for someone else, nor
+ * persist a falsified email (issue #22). Any `email` in the body is ignored.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { getAdminAuth } from '@/lib/firebase-admin';
 import {
   ApiAuthError,
   requireSessionOrIdToken,
@@ -44,7 +47,9 @@ import { isDisposableEmailDomain } from '@/lib/disposableEmailDomains';
 import { readAndParseJsonBody } from '../../_shared';
 
 interface BootstrapBody {
-  email?: unknown;
+  // `email` is intentionally absent: the authoritative address comes from the
+  // verified Firebase Auth record, not the body (issue #22). A body-supplied
+  // email is ignored.
   displayName?: unknown;
   timezone?: unknown;
 }
@@ -72,16 +77,29 @@ async function handleBootstrap(request: NextRequest): Promise<NextResponse> {
       async () => {
         const body = parsed.body as BootstrapBody;
 
-        if (typeof body.email !== 'string' || !EMAIL_REGEX.test(body.email)) {
+        // Resolve the AUTHORITATIVE email from the Firebase Auth record, not
+        // from the request body. bootstrapUser writes via the Admin SDK, which
+        // bypasses the `email == request.auth.token.email` pin in
+        // firestore.rules — so trusting body.email would let a caller
+        // authenticate with one address (e.g. a disposable one that slips past
+        // the block below) while persisting another, or store a wholly
+        // falsified address. (issue #22)
+        let verifiedEmail: string | undefined;
+        try {
+          verifiedEmail = (await getAdminAuth().getUser(userId)).email?.trim();
+        } catch (err) {
+          return problemFromError(err, 'users/bootstrap:getUser');
+        }
+        if (!verifiedEmail || !EMAIL_REGEX.test(verifiedEmail)) {
           return problemValidation(
-            'email is required and must be a valid email address',
-            { 'body.email': ['must be a valid email address'] },
+            'no verified email is associated with this account',
+            { email: ['account has no usable verified email address'] },
           );
         }
-        if (isDisposableEmailDomain(body.email)) {
+        if (isDisposableEmailDomain(verifiedEmail)) {
           return problemValidation(
             'email address uses a disallowed disposable domain',
-            { 'body.email': ['disposable email domains are not permitted'] },
+            { email: ['disposable email domains are not permitted'] },
           );
         }
         if (
@@ -111,7 +129,7 @@ async function handleBootstrap(request: NextRequest): Promise<NextResponse> {
           },
           {
             uid: userId,
-            email: body.email,
+            email: verifiedEmail,
             displayName:
               typeof body.displayName === 'string' ? body.displayName : '',
             timezone:

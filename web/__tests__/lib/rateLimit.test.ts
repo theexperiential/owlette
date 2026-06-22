@@ -5,14 +5,38 @@ import type { Ratelimit } from '@upstash/ratelimit';
 import { getClientIp, checkRateLimit, getRateLimitHeaders } from '@/lib/rateLimit';
 
 describe('getClientIp', () => {
-  it('extracts first IP from x-forwarded-for', () => {
+  it('prefers CF-Connecting-IP (Cloudflare-set, unspoofable) over X-Forwarded-For', () => {
+    const req = new NextRequest(new URL('http://localhost/test'), {
+      headers: {
+        'cf-connecting-ip': '203.0.113.7',
+        'x-forwarded-for': '1.2.3.4, 5.6.7.8', // client-seeded — must be ignored
+      },
+    });
+    expect(getClientIp(req)).toBe('203.0.113.7');
+  });
+
+  it('takes the RIGHT-most x-forwarded-for hop (proxy-appended), not the client-seeded left', () => {
     const req = new NextRequest(new URL('http://localhost/test'), {
       headers: { 'x-forwarded-for': '1.2.3.4, 5.6.7.8' },
     });
-    expect(getClientIp(req)).toBe('1.2.3.4');
+    expect(getClientIp(req)).toBe('5.6.7.8');
   });
 
-  it('returns x-real-ip when no x-forwarded-for', () => {
+  it('resists X-Forwarded-For rotation — a forged left entry cannot mint a fresh bucket', () => {
+    // Attacker prepends a rotating fake; the trusted edge appends the real IP.
+    // Both requests must resolve to the SAME (real) IP so the rate-limit bucket
+    // is stable regardless of what the client pre-seeds.
+    const a = new NextRequest(new URL('http://localhost/test'), {
+      headers: { 'x-forwarded-for': '9.9.9.9, 198.51.100.5' },
+    });
+    const b = new NextRequest(new URL('http://localhost/test'), {
+      headers: { 'x-forwarded-for': '8.8.8.8, 198.51.100.5' },
+    });
+    expect(getClientIp(a)).toBe('198.51.100.5');
+    expect(getClientIp(b)).toBe('198.51.100.5');
+  });
+
+  it('returns x-real-ip when no cf / x-forwarded-for', () => {
     const req = new NextRequest(new URL('http://localhost/test'), {
       headers: { 'x-real-ip': '10.0.0.1' },
     });
@@ -29,6 +53,41 @@ describe('getClientIp', () => {
   it('returns unknown when no proxy headers', () => {
     const req = new NextRequest(new URL('http://localhost/test'));
     expect(getClientIp(req)).toBe('unknown');
+  });
+
+  it('clamps a malformed IP header to unknown (no injected rate-limit key)', () => {
+    const req = new NextRequest(new URL('http://localhost/test'), {
+      headers: { 'cf-connecting-ip': 'not-an-ip <script>' },
+    });
+    expect(getClientIp(req)).toBe('unknown');
+  });
+
+  it('caps an over-long IP token at 64 chars', () => {
+    const req = new NextRequest(new URL('http://localhost/test'), {
+      headers: { 'cf-connecting-ip': '1'.repeat(100) },
+    });
+    expect(getClientIp(req).length).toBe(64);
+  });
+
+  it('shape-clamps the right-most X-Forwarded-For hop too — the value used as the rate-limit key', () => {
+    // The XFF branch is the identifier on the non-Cloudflare path, so its clamp
+    // must be pinned, not just CF-Connecting-IP's.
+    const malformed = new NextRequest(new URL('http://localhost/test'), {
+      headers: { 'x-forwarded-for': '5.6.7.8, junk!<script>' },
+    });
+    expect(getClientIp(malformed)).toBe('unknown');
+
+    const overlong = new NextRequest(new URL('http://localhost/test'), {
+      headers: { 'x-forwarded-for': `1.2.3.4, ${'9'.repeat(100)}` },
+    });
+    expect(getClientIp(overlong).length).toBe(64);
+  });
+
+  it('preserves an IPv6 client address', () => {
+    const req = new NextRequest(new URL('http://localhost/test'), {
+      headers: { 'cf-connecting-ip': '2001:db8::1' },
+    });
+    expect(getClientIp(req)).toBe('2001:db8::1');
   });
 });
 

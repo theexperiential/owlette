@@ -205,31 +205,70 @@ export function getDisplayAlertRateLimit(eventType: string) {
 }
 
 /**
- * Extract client IP from NextRequest
- * Handles proxies (Railway, Cloudflare, etc.)
+ * Extract the client IP from a request, resistant to header spoofing.
+ *
+ * A client can set any request header, so header precedence runs from
+ * infrastructure-controlled (unforgeable) to weakest — the only safe sources
+ * are ones a trusted hop OVERWRITES or APPENDS:
+ *
+ *   1. `CF-Connecting-IP` — Cloudflare rewrites this at its edge on every
+ *      request, so a client-supplied value never survives. owlette.app is
+ *      fronted by a Cloudflare load balancer (see `infra/cloudflare/`,
+ *      Railway primary + Vercel standby), making this authoritative in prod.
+ *   2. `X-Forwarded-For`, read RIGHT-TO-LEFT. Each proxy APPENDS the address
+ *      it received the connection from, so the right-most entry is the one our
+ *      own edge added; everything to its left is whatever the client
+ *      pre-seeded. Taking the LEFT-most (the previous behaviour) let a caller
+ *      rotate `X-Forwarded-For` to mint a fresh rate-limit bucket per request
+ *      and defeat the per-IP cap (issue #23). We take the right-most entry,
+ *      which the single trusted hop in front of the app (Railway/Vercel edge,
+ *      when Cloudflare is not fronting — e.g. local/dev) controls.
+ *   3. `X-Real-IP` / `X-Railway-IP` — single-value proxy headers.
+ *   4. `'unknown'` — no usable signal; such callers share one bucket.
+ *
+ * The chosen value is shape-clamped (IP charset, ≤64 chars) so a malformed
+ * header can't become an oversized or injected rate-limit key.
  */
 export function getClientIp(request: NextRequest): string {
-  // Check common proxy headers
+  const cfConnectingIp = request.headers.get('cf-connecting-ip');
+  if (cfConnectingIp) {
+    return normalizeIp(cfConnectingIp);
+  }
+
   const forwardedFor = request.headers.get('x-forwarded-for');
   if (forwardedFor) {
-    // x-forwarded-for can be a comma-separated list: "client, proxy1, proxy2"
+    // Right-most = appended by the trusted edge closest to us; entries to its
+    // left are client-controlled. See the doc comment above.
     const ips = forwardedFor.split(',');
-    return ips[0].trim();
+    return normalizeIp(ips[ips.length - 1]);
   }
 
   const realIp = request.headers.get('x-real-ip');
   if (realIp) {
-    return realIp;
+    return normalizeIp(realIp);
   }
 
   // Railway-specific header
   const railwayIp = request.headers.get('x-railway-ip');
   if (railwayIp) {
-    return railwayIp;
+    return normalizeIp(railwayIp);
   }
 
   // Fallback to connection IP (may not work in serverless)
   return 'unknown';
+}
+
+/**
+ * Trim and shape-clamp an IP token. Returns 'unknown' when the value isn't
+ * IP-like, so a junk or hostile header can't become a Redis rate-limit key.
+ * Accepts the IPv4/IPv6 charset only (digits, hex, '.', ':').
+ */
+function normalizeIp(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed || !/^[0-9a-fA-F.:]+$/.test(trimmed)) {
+    return 'unknown';
+  }
+  return trimmed.slice(0, 64);
 }
 
 /**

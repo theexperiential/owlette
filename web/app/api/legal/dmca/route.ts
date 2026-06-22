@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { getClientIp } from '@/lib/rateLimit';
 import { FieldValue } from 'firebase-admin/firestore';
 import {
   rateLimitVerdict,
@@ -72,8 +73,12 @@ export async function POST(request: NextRequest) {
 
     // rate-limit per (email, ip) to keep the review queue functional
     // against a flood. firestore count() via admin SDK to tally recent
-    // submissions in the same hour.
-    const sourceIp = sanitiseIp(request.headers.get('x-forwarded-for'));
+    // submissions in the same hour. The IP is derived via the shared,
+    // spoof-resistant `getClientIp` (CF-Connecting-IP first, then the
+    // trusted right-most X-Forwarded-For hop) — a public endpoint with no
+    // token fallback, so a forgeable left-most XFF here would let a flooder
+    // mint unlimited per-IP buckets (issue #23).
+    const sourceIp = getClientIp(request);
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
     const col = db.collection('dmca_notices');
@@ -151,14 +156,4 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     return problemFromError(err, 'legal/dmca');
   }
-}
-
-/** Extract the first hop of `x-forwarded-for` and clamp to IPv4/IPv6 shape. */
-function sanitiseIp(header: string | null): string {
-  if (!header) return 'unknown';
-  const first = header.split(',')[0].trim();
-  // Loose character allowlist — we're not parsing the IP, just pinning
-  // it so the firestore equality query is deterministic.
-  if (!/^[0-9a-fA-F.:]+$/.test(first)) return 'unknown';
-  return first.slice(0, 64);
 }
