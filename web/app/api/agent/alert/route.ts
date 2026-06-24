@@ -427,6 +427,8 @@ export const POST = withRateLimit(
       let emailsSent = 0;
 
       for (const recipient of recipients) {
+        // Honor per-machine mutes here too (mirrors the critical-display loop).
+        if (recipient.mutedMachines.includes(machineId)) continue;
         try {
           const unsubscribeUrl = recipient.userId !== 'fallback'
             ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
