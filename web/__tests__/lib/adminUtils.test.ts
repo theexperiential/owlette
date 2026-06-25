@@ -140,4 +140,48 @@ describe('getSiteAlertRecipients — ADMIN_EMAIL fallback', () => {
     ]);
     expect(mockGetUserByEmail).not.toHaveBeenCalled();
   });
+
+  it('does NOT fall back when a site MEMBER exists but opted out of this alert type', async () => {
+    // A real member exists (email, not deleted) but opted out of thresholdAlerts.
+    // The empty recipient set is their deliberate choice — the fallback must NOT
+    // override it and spam the admin (this is the live default_site scenario).
+    mockUsersWhereGet.mockResolvedValue({
+      docs: [{ id: 'm1', data: () => ({ email: 'member@owlette.test', preferences: { thresholdAlerts: false, mutedMachines: [] } }) }],
+    });
+    const recipients = await getSiteAlertRecipients('default_site', 'thresholdAlerts');
+    expect(recipients).toEqual([]);
+    expect(mockGetUserByEmail).not.toHaveBeenCalled();
+  });
+
+  it('does NOT fall back when the site OWNER exists but opted out (owner branch)', async () => {
+    mockSiteDocGet.mockResolvedValue({ data: () => ({ owner: 'owner-uid' }) });
+    mockUsersWhereGet.mockResolvedValue({ docs: [] }); // no array-contains members
+    mockUserDocGet.mockResolvedValue({ data: () => ({ email: 'owner@owlette.test', preferences: { thresholdAlerts: false } }) });
+    const recipients = await getSiteAlertRecipients('default_site', 'thresholdAlerts');
+    expect(recipients).toEqual([]);
+    expect(mockGetUserByEmail).not.toHaveBeenCalled();
+  });
+
+  it('treats a member with NO email as orphan -> fallback still fires (honors admin mutes)', async () => {
+    // A member doc with no email can't receive alerts, so it must NOT count as a
+    // real user — the site is still orphan and the safety-net fallback must fire.
+    mockUsersWhereGet.mockResolvedValue({
+      docs: [{ id: 'm1', data: () => ({ preferences: { mutedMachines: [] } }) }], // no email
+    });
+    const recipients = await getSiteAlertRecipients('default_site', 'thresholdAlerts');
+    expect(mockGetUserByEmail).toHaveBeenCalledWith(ADMIN_EMAIL);
+    expect(recipients).toEqual([
+      { userId: 'fallback', email: ADMIN_EMAIL, ccEmails: [], mutedMachines: ['TEC-A4D'] },
+    ]);
+  });
+
+  it('treats a DELETED member as orphan -> fallback still fires', async () => {
+    mockUsersWhereGet.mockResolvedValue({
+      docs: [{ id: 'm1', data: () => ({ email: 'gone@owlette.test', deletedAt: 1700000000000, preferences: {} }) }],
+    });
+    const recipients = await getSiteAlertRecipients('default_site', 'thresholdAlerts');
+    expect(recipients).toEqual([
+      { userId: 'fallback', email: ADMIN_EMAIL, ccEmails: [], mutedMachines: ['TEC-A4D'] },
+    ]);
+  });
 });
