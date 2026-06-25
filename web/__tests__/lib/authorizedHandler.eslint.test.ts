@@ -17,9 +17,11 @@ import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 
 // Each test spawns the eslint binary against the project's flat config —
-// inherently slow (~3–4s in isolation) and flaky under full-suite parallel
-// load where 5s is not enough. 30s leaves headroom on contended CI workers.
-jest.setTimeout(30_000);
+// inherently slow (~4–8s in isolation) and far slower under full-suite parallel
+// load, where the eslint subprocess competes with ~16 jest workers for CPU and
+// has been observed to take 60s+. A generous ceiling keeps this from flaking the
+// pre-push hook; normal runs finish in seconds and never approach it.
+jest.setTimeout(120_000);
 
 interface EslintMessage {
   ruleId: string | null;

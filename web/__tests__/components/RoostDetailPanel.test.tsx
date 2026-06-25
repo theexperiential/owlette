@@ -94,14 +94,14 @@ describe('RoostDetailPanel', () => {
   });
 
   it('close button fires onClose', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     const { props } = renderPanel();
     await user.click(screen.getByRole('button', { name: /close panel/i }));
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
   it('onNewVersion receives roost-derived NewVersionContext', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     const { props } = renderPanel();
     await user.click(screen.getByRole('button', { name: /mock new version/i }));
     expect(props.onNewVersion).toHaveBeenCalledTimes(1);
@@ -122,7 +122,7 @@ describe('RoostDetailPanel', () => {
   });
 
   it('header dropdown items fire correct callbacks', async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null, pointerEventsCheck: 0 });
     const { props } = renderPanel();
 
     const openMenu = async () => {
@@ -144,5 +144,10 @@ describe('RoostDetailPanel', () => {
     await openMenu();
     await user.click(await screen.findByRole('menuitem', { name: /delete roost/i }));
     expect(props.onDelete).toHaveBeenCalledTimes(1);
-  });
+    // Headroom: this opens the Radix menu 4× in sequence; under heavy
+    // parallel-suite CPU load the default 5s jest timeout was the flake source
+    // (a timeout, not a failed assertion). `delay: null` + `pointerEventsCheck: 0`
+    // on setup() keep the interactions fast; this raises the ceiling so
+    // contention alone can't trip it.
+  }, 20000);
 });
