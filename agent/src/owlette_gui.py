@@ -1948,17 +1948,34 @@ class OwletteConfigApp:
                 )
 
     def on_join_site_click(self):
-        """Handle Join Site button click - re-authenticate to a site."""
+        """Handle Join Site button click — device-code pairing flow.
+
+        Requests a pairing phrase, shows it in a dialog (auto-copied to the
+        clipboard, click-to-copy), opens owlette.app/add in the browser, and
+        polls for authorization. Authorization from ANY device completes
+        pairing; the Cancel button aborts without waiting out the code expiry.
+        """
+        # Prevent overlapping join attempts. The phrase dialog is non-modal and
+        # the footer button stays clickable (the periodic status updater keeps
+        # re-enabling it), so without this guard a second click would spin up a
+        # parallel worker + dialog that cross-wire the shared _join_* state
+        # (one Cancel would close the other's dialog, etc.).
+        if getattr(self, '_join_in_progress', False):
+            logging.info("Join already in progress; ignoring duplicate request")
+            return
+
         # Show confirmation dialog
         response = CTkMessagebox(
             master=self.master,
             title="Join Site?",
-            message="This will open your browser to authenticate with a site.\n\n"
+            message="This will pair this machine with a cloud site.\n\n"
+                   "A pairing phrase will appear, and owlette.app/add will open "
+                   "in your browser.\n\n"
                    "Steps:\n"
                    "1. Log in to your owlette account\n"
                    "2. Select or create a site\n"
                    "3. Authorize this machine\n\n"
-                   "The service will restart after authentication completes.",
+                   "The service will restart automatically once authorized.",
             icon="question",
             option_1="Cancel",
             option_2="join site",
@@ -1968,105 +1985,270 @@ class OwletteConfigApp:
         if response.get() != "join site":
             return
 
-        # Update status immediately to show we're connecting (before any blocking operations)
-        self.firebase_status_label.configure(text="connecting...", text_color="#fbbf24")  # Yellow
-        self.master.update()  # Force GUI update before blocking operation
+        # Reset per-attempt state. should_cancel reads _join_cancelled;
+        # _join_in_progress gates re-entry until _finish_join clears it.
+        self._join_in_progress = True
+        self._join_cancelled = False
+        self._join_dialog = None
+
+        # Update footer status to show pairing is in progress
+        self.firebase_status_label.configure(text="pairing...", text_color="#fbbf24")  # Yellow
+        self.master.update_idletasks()
 
         # Get setup URL based on environment setting
         setup_url = shared_utils.get_setup_url()
 
-        # Show loading dialog (not topmost so browser is accessible)
-        loading_dialog = CTkMessagebox(
-            master=self.master,
-            title="joining site...",
-            message="Opening browser for authentication.\n\nPlease complete the steps in your browser.\n\nThis window will close automatically when done.",
-            icon=None,
-            option_1="Cancel",
-            width=550,
-            topmost=False
-        )
-
-        # Run OAuth flow in background thread
-        def run_oauth_thread():
+        def run_join_thread():
             try:
-                # Import configure_site module
                 import configure_site
 
-                # Run OAuth flow (no console prompts for GUI usage)
                 success, message, site_id = configure_site.run_oauth_flow(
                     setup_url=setup_url,
-                    timeout_seconds=300,  # 5 minutes
-                    show_prompts=False  # No console output for GUI
+                    timeout_seconds=600,       # matches the 10-min code expiry
+                    show_prompts=False,        # no console output for GUI
+                    open_browser=True,         # auto-open owlette.app/add
+                    on_phrase=lambda data: self.master.after(
+                        0, lambda d=data: self._show_join_phrase_dialog(d)),
+                    should_cancel=lambda: self._join_cancelled,
                 )
 
-                # Close loading dialog
-                self.master.after(0, loading_dialog.destroy)
-
+                # On success, reload config and restart the service HERE (in the
+                # worker thread) so the ~15s restart doesn't freeze the GUI.
                 if success:
-                    logging.info(f"Successfully joined site: {site_id}")
+                    try:
+                        self.config = shared_utils.load_config()
+                    except Exception as cfg_err:
+                        logging.warning(f"Failed to reload config after join: {cfg_err}")
+                    self._restart_owlette_service()
 
-                    # Reload config to get new site information
-                    self.config = shared_utils.load_config()
-
-                    # Restart service to connect with new site
-                    nssm_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'tools', 'nssm.exe')
-                    if os.path.exists(nssm_path):
-                        try:
-                            logging.info("Restarting service with new site configuration...")
-                            subprocess.run([nssm_path, 'stop', 'OwletteService'],
-                                         check=False,
-                                         capture_output=True,
-                                         timeout=10,
-                                         creationflags=subprocess.CREATE_NO_WINDOW)
-                            time.sleep(3)
-                            subprocess.run([nssm_path, 'start', 'OwletteService'],
-                                         check=False,
-                                         capture_output=True,
-                                         timeout=10,
-                                         creationflags=subprocess.CREATE_NO_WINDOW)
-                            time.sleep(2)
-                            logging.info("Service restarted successfully")
-                        except Exception as e:
-                            logging.warning(f"Failed to restart service: {e}")
-
-                    # Update Firebase client and status
-                    self._reinitialize_firebase()
-
-                    # Show success message
-                    self.master.after(0, lambda: CTkMessagebox(
-                        master=self.master,
-                        title="Joined Site Successfully",
-                        message=f"This machine has been registered to site: {site_id}\n\n"
-                               f"The service is now connecting to Firebase.\n\n"
-                               f"The status will update automatically once connected.",
-                        icon="check",
-                        width=600
-                    ))
-                else:
-                    logging.error(f"Failed to join site: {message}")
-                    # Show error message
-                    self.master.after(0, lambda: CTkMessagebox(
-                        master=self.master,
-                        title="Failed to Join Site",
-                        message=f"Could not complete authentication:\n\n{message}\n\nPlease try again or check the logs for details.",
-                        icon="cancel",
-                        width=600
-                    ))
+                self.master.after(0, lambda: self._finish_join(success, message, site_id))
 
             except Exception as e:
-                logging.error(f"Error in OAuth flow: {e}")
-                self.master.after(0, loading_dialog.destroy)
-                self.master.after(0, lambda: CTkMessagebox(
-                    master=self.master,
-                    title="Error",
-                    message=f"An unexpected error occurred:\n\n{str(e)}",
-                    icon="cancel",
-                    width=600
-                ))
+                logging.error(f"Error in join flow: {e}")
+                self.master.after(0, lambda err=e: self._finish_join(False, str(err), None))
 
-        # Start OAuth thread
-        oauth_thread = threading.Thread(target=run_oauth_thread, daemon=True)
-        oauth_thread.start()
+        threading.Thread(target=run_join_thread, daemon=True, name="JoinSite").start()
+
+    def _restart_owlette_service(self):
+        """Stop then start OwletteService via NSSM. Safe to call off the main
+        thread; failures are logged and non-fatal (the service auto-recovers)."""
+        nssm_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'tools', 'nssm.exe')
+        if not os.path.exists(nssm_path):
+            logging.warning(f"NSSM not found at {nssm_path}, service was not restarted")
+            return
+        try:
+            logging.info("Restarting service with new site configuration...")
+            subprocess.run([nssm_path, 'stop', 'OwletteService'],
+                           check=False, capture_output=True, timeout=10,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            time.sleep(3)
+            subprocess.run([nssm_path, 'start', 'OwletteService'],
+                           check=False, capture_output=True, timeout=10,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+            time.sleep(2)
+            logging.info("Service restarted successfully")
+        except Exception as e:
+            logging.warning(f"Failed to restart service: {e}")
+
+    def _copy_phrase_to_clipboard(self, phrase):
+        """Copy the pairing phrase to the clipboard via tk. Returns True on
+        success; never raises."""
+        try:
+            self.master.clipboard_clear()
+            self.master.clipboard_append(phrase)
+            self.master.update_idletasks()  # flush so the clipboard sticks
+            return True
+        except Exception as e:
+            logging.debug(f"Clipboard copy failed (non-fatal): {e}")
+            return False
+
+    def _show_join_phrase_dialog(self, device_data):
+        """Build the pairing-phrase dialog on the main thread. Called once, via
+        after(), when the server issues a device code."""
+        # If the user cancelled before the code arrived, don't bother.
+        if self._join_cancelled:
+            return
+        try:
+            pair_phrase = device_data.get('pairPhrase', '')
+            pairing_url = device_data.get('pairingUrl') or device_data.get('verificationUri') or ''
+            already_copied = bool(device_data.get('clipboardCopied'))
+
+            dialog = ctk.CTkToplevel(self.master)
+            dialog.title("join a site")
+            dialog.configure(fg_color=shared_utils.WINDOW_COLOR)
+            dialog.resizable(False, False)
+            dialog.transient(self.master)
+            dialog.protocol("WM_DELETE_WINDOW", self._join_cancel)
+            self._join_dialog = dialog
+
+            container = ctk.CTkFrame(
+                dialog, fg_color=shared_utils.FRAME_COLOR,
+                border_color=shared_utils.BORDER_COLOR, border_width=1,
+                corner_radius=shared_utils.CORNER_RADIUS)
+            container.pack(fill='both', expand=True, padx=12, pady=12)
+
+            ctk.CTkLabel(
+                container, text="pairing phrase", text_color=shared_utils.TEXT_COLOR,
+                font=("", 12)).pack(padx=16, pady=(16, 4))
+
+            # The phrase itself — a button so it highlights on hover and copies
+            # on click. hover_color gives the "highlight" affordance.
+            phrase_btn = ctk.CTkButton(
+                container, text=pair_phrase,
+                fg_color=shared_utils.BUTTON_COLOR,
+                hover_color=shared_utils.HIGHLIGHT_COLOR,
+                text_color=shared_utils.ACCENT_COLOR,
+                font=("Consolas", 20, "bold"),
+                corner_radius=shared_utils.CORNER_RADIUS,
+                command=lambda: self._on_join_phrase_copy(pair_phrase))
+            phrase_btn.pack(padx=16, pady=(0, 4), fill='x')
+
+            idle_hint = "✓ copied to clipboard" if already_copied else "click to copy"
+            idle_color = "#34d399" if already_copied else "#94a3b8"
+            hint_label = ctk.CTkLabel(container, text=idle_hint, text_color=idle_color, font=("", 11))
+            hint_label.pack(padx=16, pady=(0, 12))
+            self._join_hint_label = hint_label
+            self._join_hint_idle = (idle_hint, idle_color)
+
+            # Hover over the phrase → prompt "click to copy"; leaving restores
+            # the idle hint (copied / click-to-copy).
+            def _on_enter(_):
+                if hint_label.winfo_exists():
+                    hint_label.configure(text="click to copy", text_color=shared_utils.TEXT_COLOR)
+            def _on_leave(_):
+                if hint_label.winfo_exists():
+                    hint_label.configure(text=self._join_hint_idle[0], text_color=self._join_hint_idle[1])
+            phrase_btn.bind("<Enter>", _on_enter, add="+")
+            phrase_btn.bind("<Leave>", _on_leave, add="+")
+
+            ctk.CTkLabel(
+                container,
+                text="authorize this machine at owlette.app/add:\n"
+                     "1. log in to your owlette account\n"
+                     "2. pick or create a site\n"
+                     "3. authorize this machine",
+                text_color="#94a3b8", font=("", 11), justify='left').pack(padx=16, pady=(0, 12))
+
+            status_label = ctk.CTkLabel(
+                container, text="waiting for authorization…",
+                text_color="#fbbf24", font=("", 12, "bold"))
+            status_label.pack(padx=16, pady=(0, 12))
+
+            button_row = ctk.CTkFrame(container, fg_color='transparent')
+            button_row.pack(padx=16, pady=(0, 16), fill='x')
+
+            open_btn = ctk.CTkButton(
+                button_row, text="open owlette.app/add",
+                fg_color=shared_utils.BUTTON_IMPORTANT_COLOR,
+                hover_color=shared_utils.BUTTON_HOVER_COLOR,
+                text_color=shared_utils.WINDOW_COLOR, font=("", 12, "bold"),
+                corner_radius=shared_utils.CORNER_RADIUS,
+                command=lambda: self._open_pairing_url(pairing_url))
+            open_btn.pack(side='left', expand=True, fill='x', padx=(0, 6))
+
+            cancel_btn = ctk.CTkButton(
+                button_row, text="Cancel",
+                fg_color=shared_utils.BUTTON_COLOR,
+                hover_color=shared_utils.BUTTON_HOVER_COLOR,
+                text_color=shared_utils.TEXT_COLOR, font=("", 12),
+                corner_radius=shared_utils.CORNER_RADIUS,
+                command=self._join_cancel)
+            cancel_btn.pack(side='left', expand=True, fill='x', padx=(6, 0))
+
+            # Center over the main window.
+            self.master.update_idletasks()
+            w, h = 460, 360
+            px, py = self.master.winfo_rootx(), self.master.winfo_rooty()
+            pw, ph = self.master.winfo_width(), self.master.winfo_height()
+            x = px + max(0, (pw - w) // 2)
+            y = py + max(0, (ph - h) // 2)
+            dialog.geometry(f"{w}x{h}+{x}+{y}")
+            dialog.lift()
+
+        except Exception as e:
+            # No dialog means no Cancel button and no phrase on screen, so
+            # abort the poll rather than let the worker hang silently until the
+            # 10-minute code expiry. _finish_join then tidies up the flag/status.
+            logging.error(f"Failed to show pairing dialog; aborting join: {e}")
+            self._join_cancelled = True
+
+    def _on_join_phrase_copy(self, phrase):
+        """Click-to-copy handler for the phrase button."""
+        ok = self._copy_phrase_to_clipboard(phrase)
+        # Update the idle hint so leaving the button reflects the copy result.
+        self._join_hint_idle = (
+            ("✓ copied to clipboard", "#34d399") if ok
+            else ("copy failed — select the phrase manually", "#f87171"))
+        if getattr(self, '_join_hint_label', None) and self._join_hint_label.winfo_exists():
+            self._join_hint_label.configure(
+                text="✓ copied!" if ok else self._join_hint_idle[0],
+                text_color="#34d399" if ok else "#f87171")
+
+    def _open_pairing_url(self, url):
+        """Open the pairing page in the default browser."""
+        if not url:
+            return
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception as e:
+            logging.warning(f"Failed to open pairing URL: {e}")
+
+    def _join_cancel(self):
+        """Cancel an in-progress join: signal the poll loop to stop and close
+        the dialog. The worker thread returns and _finish_join tidies up."""
+        self._join_cancelled = True
+        self._close_join_dialog()
+
+    def _close_join_dialog(self):
+        """Destroy the pairing dialog if it exists. Idempotent."""
+        dialog = getattr(self, '_join_dialog', None)
+        if dialog is not None:
+            try:
+                if dialog.winfo_exists():
+                    dialog.destroy()
+            except Exception:
+                pass
+            self._join_dialog = None
+
+    def _finish_join(self, success, message, site_id):
+        """Handle the join result on the main thread: close the dialog, refresh
+        status, and show a result message."""
+        # Always release the re-entry guard first — every terminal path
+        # (success, failure, cancel, worker exception) routes through here.
+        self._join_in_progress = False
+        self._close_join_dialog()
+
+        if success:
+            logging.info(f"Successfully joined site: {site_id}")
+            self._reinitialize_firebase()
+            CTkMessagebox(
+                master=self.master,
+                title="Joined Site Successfully",
+                message=f"This machine has been registered to site: {site_id}\n\n"
+                       f"The service is now connecting to Firebase.\n\n"
+                       f"The status will update automatically once connected.",
+                icon="check",
+                width=600
+            )
+            return
+
+        # Not successful — a user cancel shouldn't nag with an error popup.
+        self.update_firebase_status()
+        if self._join_cancelled or message == "Cancelled by user":
+            logging.info("Join site cancelled by user")
+            return
+
+        logging.error(f"Failed to join site: {message}")
+        CTkMessagebox(
+            master=self.master,
+            title="Failed to Join Site",
+            message=f"Could not complete authentication:\n\n{message}\n\n"
+                   f"Please try again or check the logs for details.",
+            icon="cancel",
+            width=600
+        )
 
     def _reinitialize_firebase(self):
         """Reinitialize Firebase status after configuration change.

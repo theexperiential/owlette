@@ -32,7 +32,7 @@ import time
 import logging
 import json
 import threading
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -334,20 +334,26 @@ class AuthManager:
         except requests.exceptions.RequestException as e:
             raise AuthenticationError(f"Network error requesting device code: {e}")
 
-    def poll_device_code(self, device_code: str, interval: int = 5, timeout: int = 600) -> bool:
+    def poll_device_code(self, device_code: str, interval: int = 5, timeout: int = 600,
+                         should_cancel: Optional[Callable[[], bool]] = None) -> bool:
         """
         Poll the server for device code authorization.
 
-        Blocks until authorized, expired, or timeout. Designed to be called
-        from configure_site.py during installation.
+        Blocks until authorized, expired, cancelled, or timeout. Designed to be
+        called from configure_site.py during installation and from the GUI
+        Join Site flow.
 
         Args:
             device_code: Opaque device code from request_device_code()
             interval: Polling interval in seconds (from server response)
             timeout: Maximum time to poll in seconds
+            should_cancel: Optional predicate polled between attempts; when it
+                returns True the wait is abandoned and the method returns False.
+                Lets the GUI's Cancel button abort without waiting out the
+                timeout. Checked in small slices so cancellation is prompt.
 
         Returns:
-            True if authorized and tokens stored successfully
+            True if authorized and tokens stored successfully; False if cancelled
 
         Raises:
             AuthenticationError: If polling fails or code expires
@@ -355,7 +361,23 @@ class AuthManager:
         url = f"{self.api_base}/agent/auth/device-code/poll"
         start_time = time.time()
 
+        def _cancelled() -> bool:
+            return bool(should_cancel and should_cancel())
+
+        def _wait(seconds: float) -> None:
+            # Sleep in small slices so a cancel request is honored within
+            # ~0.25s instead of blocking for the whole poll interval.
+            deadline = time.time() + seconds
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0 or _cancelled():
+                    return
+                time.sleep(min(0.25, remaining))
+
         while time.time() - start_time < timeout:
+            if _cancelled():
+                logger.info("Device code polling cancelled by caller")
+                return False
             try:
                 response = requests.post(
                     url,
@@ -365,7 +387,7 @@ class AuthManager:
 
                 if response.status_code == 202:
                     # Still pending — wait and retry
-                    time.sleep(interval)
+                    _wait(interval)
                     continue
 
                 if response.status_code == 200:
@@ -432,7 +454,7 @@ class AuthManager:
 
             except requests.exceptions.RequestException as e:
                 logger.warning(f"Network error during poll (retrying): {e}")
-                time.sleep(interval)
+                _wait(interval)
                 continue
 
         raise AuthenticationError("Timed out waiting for authorization")
