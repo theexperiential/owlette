@@ -75,6 +75,7 @@ export function MachineContextMenu({
   const [showRestartDialog, setShowRestartDialog] = useState(false);
   const [showShutdownDialog, setShowShutdownDialog] = useState(false);
   const [isRevoking, setIsRevoking] = useState(false);
+  const [revokingScope, setRevokingScope] = useState<'latest' | 'all' | null>(null);
   const [isSendingCommand, setIsSendingCommand] = useState(false);
   const [showRestartScheduleDialog, setShowRestartScheduleDialog] = useState(false);
   const { userPreferences, updateUserPreferences } = useAuth();
@@ -90,13 +91,17 @@ export function MachineContextMenu({
     });
   };
 
-  const handleRevokeToken = async () => {
+  // scope 'latest' revokes only this machine's current (most-recently-used)
+  // token — safe when several machines share this hostname. scope 'all' revokes
+  // every token for the hostname (disconnects any sibling that shares it too).
+  const handleRevokeToken = async (scope: 'latest' | 'all') => {
     setIsRevoking(true);
+    setRevokingScope(scope);
     try {
       const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/agent-tokens/revoke`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ machineId }),
+        body: JSON.stringify(scope === 'all' ? { machineId } : { machineId, latestOnly: true }),
       });
 
       const data = await response.json();
@@ -105,9 +110,20 @@ export function MachineContextMenu({
         throw new Error(data.error || 'Failed to revoke token');
       }
 
-      toast.success(`Token revoked for ${machineName}`, {
-        description: 'The machine will need to be re-registered to reconnect.',
-      });
+      const revokedCount = data.revokedCount ?? 0;
+      if (scope === 'all') {
+        toast.success(`Tokens revoked for ${machineName}`, {
+          description: `revoked ${revokedCount} token(s) for this hostname. affected agents must re-register to reconnect.`,
+        });
+      } else if (revokedCount > 0) {
+        toast.success(`Token revoked for ${machineName}`, {
+          description: 'revoked the most recently used token for this hostname; that agent must re-register to reconnect.',
+        });
+      } else {
+        toast.info(`No live token for ${machineName}`, {
+          description: 'this hostname has no live token — nothing was revoked.',
+        });
+      }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       toast.error('Failed to revoke token', {
@@ -115,6 +131,7 @@ export function MachineContextMenu({
       });
     } finally {
       setIsRevoking(false);
+      setRevokingScope(null);
       setShowRevokeDialog(false);
     }
   };
@@ -374,24 +391,37 @@ export function MachineContextMenu({
           <DialogHeader>
             <DialogTitle>revoke token for {machineName}?</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              this will immediately invalidate the machine&apos;s authentication token.
-              the agent will disconnect and cannot reconnect until re-registered with a new registration code.
+              revoking disconnects the agent, which must re-register to reconnect.
+              <br /><br />
+              if this hostname was re-paired, or if more than one machine shares it, there may be several tokens:
+              <br />
+              • <strong className="text-foreground">revoke current token</strong> — removes only the single most-recently-used token for this hostname.
+              <br />
+              • <strong className="text-red-400">revoke all for hostname</strong> — removes every token, disconnecting any other machine that shares this hostname too.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter>
+          <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <Button
               variant="ghost"
               onClick={() => setShowRevokeDialog(false)}
+              disabled={isRevoking}
               className="bg-secondary border border-border cursor-pointer"
             >
               cancel
             </Button>
             <Button
-              onClick={handleRevokeToken}
+              onClick={() => handleRevokeToken('all')}
+              disabled={isRevoking}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isRevoking && revokingScope === 'all' ? 'revoking...' : 'revoke all for hostname'}
+            </Button>
+            <Button
+              onClick={() => handleRevokeToken('latest')}
               disabled={isRevoking}
               className="bg-amber-600 hover:bg-amber-700"
             >
-              {isRevoking ? 'revoking...' : 'revoke token'}
+              {isRevoking && revokingScope === 'latest' ? 'revoking...' : 'revoke current token'}
             </Button>
           </DialogFooter>
         </DialogContent>

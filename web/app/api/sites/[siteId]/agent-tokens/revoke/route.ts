@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { Firestore, DocumentReference } from 'firebase-admin/firestore';
+import type { Firestore, DocumentReference, QueryDocumentSnapshot } from 'firebase-admin/firestore';
 import { adminDb } from '@/lib/firebase-admin';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
+import { isTokenDead, tokenTimestampToMillis } from '@/lib/agentTokens';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
-import { isTokenDead } from '@/lib/agentTokens';
 
 type RouteParams = {
   siteId: string;
@@ -43,12 +43,29 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
 })(async (request: NextRequest, ctx) => {
   try {
     const body = await request.json();
-    const { tokenId, machineId, all, prune } = body;
+    const { tokenId, machineId, all, prune, latestOnly } = body;
     const siteId = ctx.siteId;
 
-    if (!tokenId && !machineId && !all && !prune) {
+    // Exactly one primary revoke mode may be set. latestOnly is a MODIFIER of
+    // the machineId mode — reject it standalone or mixed with a bulk mode so a
+    // precise ({ machineId, latestOnly }) request can never fall through to a
+    // broader all/prune delete because of branch ordering.
+    const modeCount = [tokenId, machineId, all, prune].filter(Boolean).length;
+    if (modeCount === 0) {
       return NextResponse.json(
         { error: 'Must specify tokenId, machineId, all: true, or prune: true' },
+        { status: 400 },
+      );
+    }
+    if (modeCount > 1) {
+      return NextResponse.json(
+        { error: 'Specify exactly one of tokenId, machineId, all, or prune' },
+        { status: 400 },
+      );
+    }
+    if (latestOnly && !machineId) {
+      return NextResponse.json(
+        { error: 'latestOnly is only valid together with machineId' },
         { status: 400 },
       );
     }
@@ -133,6 +150,42 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
         .where('siteId', '==', siteId)
         .where('machineId', '==', machineId)
         .get();
+
+      if (latestOnly) {
+        // Precise revoke: delete only the single most-recently-used LIVE token
+        // for this machineId — the credential the currently-connected agent is
+        // using. Preserves sibling tokens that share this hostname (distinct
+        // machines cloned to the same name, or older re-pairs), so revoking one
+        // machine can't disconnect another. lastUsed is the primary key
+        // (createdAt only breaks ties) so we never mix timestamp scales.
+        const now = Date.now();
+        let pick: QueryDocumentSnapshot | null = null;
+        let pickLast = -Infinity;
+        let pickCreated = -Infinity;
+        for (const doc of tokensSnapshot.docs) {
+          const data = doc.data();
+          if (isTokenDead(data, now)) continue;
+          const last = tokenTimestampToMillis(data.lastUsed) ?? 0;
+          const created = tokenTimestampToMillis(data.createdAt) ?? 0;
+          if (last > pickLast || (last === pickLast && created > pickCreated)) {
+            pick = doc;
+            pickLast = last;
+            pickCreated = created;
+          }
+        }
+
+        revokedCount = await deleteRefsInChunks(db, pick ? [pick.ref] : []);
+
+        logger.info(`Revoked ${revokedCount} current token for machine ${machineId} in site ${siteId}`);
+
+        return NextResponse.json({
+          success: true,
+          revokedCount,
+          message: revokedCount > 0
+            ? `Revoked the current token for machine ${machineId}`
+            : `No live token found for machine ${machineId}`,
+        });
+      }
 
       revokedCount = await deleteRefsInChunks(
         db,

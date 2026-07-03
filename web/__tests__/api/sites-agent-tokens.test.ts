@@ -148,6 +148,52 @@ describe('/api/sites/{siteId}/agent-tokens/revoke', () => {
     expect(deletedIds).toEqual(['delete-me']);
   });
 
+  it('machineId + latestOnly revokes ONLY the most-recently-used live token (preserves siblings)', async () => {
+    const now = Date.now();
+    tokenDocs = [
+      { id: 'stale', siteId: 'site-a', machineId: 'm1', lastUsed: lifecycleTs(now - 3_600_000), createdAt: lifecycleTs(now - 7_200_000) },
+      { id: 'fresh', siteId: 'site-a', machineId: 'm1', lastUsed: lifecycleTs(now - 60_000), createdAt: lifecycleTs(now - 120_000) },
+      { id: 'dead', siteId: 'site-a', machineId: 'm1', supersededAt: now - 600_000, retiresAt: lifecycleTs(now - 300_000) },
+      { id: 'other-machine', siteId: 'site-a', machineId: 'm2', lastUsed: lifecycleTs(now) },
+    ];
+
+    const res = await POST(
+      new NextRequest('http://localhost/api/sites/site-a/agent-tokens/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machineId: 'm1', latestOnly: true }),
+      }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.revokedCount).toBe(1);
+    expect(deletedIds).toEqual(['fresh']); // only the freshest live token; siblings kept
+  });
+
+  it('machineId + latestOnly with only dead tokens revokes nothing', async () => {
+    const now = Date.now();
+    tokenDocs = [
+      { id: 'dead1', siteId: 'site-a', machineId: 'm1', supersededAt: now - 600_000, retiresAt: lifecycleTs(now - 300_000) },
+      { id: 'dead2', siteId: 'site-a', machineId: 'm1', expiresAt: lifecycleTs(now - 1000) },
+    ];
+
+    const res = await POST(
+      new NextRequest('http://localhost/api/sites/site-a/agent-tokens/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machineId: 'm1', latestOnly: true }),
+      }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.revokedCount).toBe(0);
+    expect(deletedIds).toEqual([]);
+  });
+
   it('prune deletes only dead tokens (superseded-retired / expired), never live', async () => {
     const now = Date.now();
     tokenDocs = [
@@ -183,6 +229,32 @@ describe('/api/sites/{siteId}/agent-tokens/revoke', () => {
       { params: Promise.resolve({ siteId: 'site-a' }) },
     );
 
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects conflicting revoke modes so latestOnly can never fall through to all', async () => {
+    tokenDocs = [{ id: 'x', siteId: 'site-a', machineId: 'm1' }];
+    const res = await POST(
+      new NextRequest('http://localhost/api/sites/site-a/agent-tokens/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machineId: 'm1', latestOnly: true, all: true }),
+      }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+    expect(res.status).toBe(400);
+    expect(deletedIds).toEqual([]); // nothing deleted
+  });
+
+  it('rejects latestOnly without machineId', async () => {
+    const res = await POST(
+      new NextRequest('http://localhost/api/sites/site-a/agent-tokens/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ latestOnly: true }),
+      }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
     expect(res.status).toBe(400);
   });
 });
