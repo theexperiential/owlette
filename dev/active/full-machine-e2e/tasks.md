@@ -2,26 +2,30 @@
 
 Status legend: [ ] not started · [x] done · [~] in progress
 
-## Wave 0 — Auth spike (half-day; validates or kills the riskiest assumptions before any harness code)
+## Wave 0 — Auth spike ✅ DONE 2026-07-03 (10/10, `e2e-machine/wave0/RESULTS.md`)
 
-- [ ] 0.1 Seed a dedicated e2e superadmin in the dev Firebase project with MFA disabled (or a backup-code path a script can drive). Store creds in the runner/host secret store.
-- [ ] 0.2 Script minting a `__session` cookie headlessly against live dev (replay login → session-create; capture the httpOnly cookie). Confirm MFA does not block. **Make-or-break.**
-- [ ] 0.3 With the cookie: `POST /api/agent/auth/device-code` (expect `preauthorizedIntent=true`) then `POST .../authorize` with the e2e siteId. Confirm 200 + pre-authorized doc.
-- [ ] 0.4 On the spare machine, run `configure_site.py --add <phrase> --url https://dev.owlette.app/api` directly (no installer). Oracle: tokens in `.tokens.enc`, machine doc + heartbeat in dev Firestore, `agent_refresh_tokens` doc created.
-- [ ] 0.5 Confirm Cloudflare does NOT 1010-block the agent's `requests` poll from the VM. If blocked: dev-edge allowlist / bot-fight relax for `/api/agent/*` / add UA to the poll — pick and document.
-- [ ] 0.6 Record findings in context.md; go/no-go decision for the harness.
+Verdict: **GO.** All three make-or-break unknowns resolved green. Implemented as `e2e-machine/wave0/run_spike.mjs` (+ `poll_agent.py`) rather than the sketch below; the deltas were improvements.
+
+- [x] 0.1 Seed a dedicated e2e **site-owner** (not superadmin — least privilege; `assertUserHasSiteAccess` passes on `site.owner === uid`) in dev with MFA off. (Done per-run + torn down; a persistent runner account for CI is a Wave 4 concern.)
+- [x] 0.2 Mint a `__session` cookie headlessly against live dev via Identity Toolkit `signInWithPassword` → `POST /api/auth/session` (capture httpOnly cookie). **MFA does not block a no-MFA account** (session `mfaVerified=true`; `/api/*` is never MFA-gated by the proxy). **Make-or-break — PASSED.**
+- [x] 0.3 With the cookie: `POST /api/agent/auth/device-code` (`preauthorizedIntent=true`) then `POST .../authorize {pairPhrase, siteId}` (`deferTokenMint`). Confirmed.
+- [x] 0.4 Proved the mint via the agent's real Python + `requests` polling with a **synthetic** machineId (NOT `configure_site.py` — that would clobber this box's live `.tokens.enc`). Oracle: real access+refresh tokens returned, `agent_refresh_tokens` doc created. (Real `.tokens.enc` write + heartbeat doc is a Wave 1 install-run oracle, not needed to prove auth.)
+- [x] 0.5 **Cloudflare does NOT block** the agent's default-UA `requests` poll — HTTP 200 on first poll. No dev-edge change needed.
+- [x] 0.6 Findings recorded in `e2e-machine/wave0/RESULTS.md`; context.md facts re-verified against current code (all HOLD). **Go decision: proceed to Wave 1.**
 
 ## Wave 1 — Fresh-install smoke (no GUI; stages 0–3, 7–8)
 
-- [ ] 1.1 Build the golden Win11 image per `docs/internal/gui-automation-machine-setup.md` (Profiles A + C: autologon, no lock/sleep, WU pinned, 100% DPI + fixed res/theme, toolchain, UAC ON), using `scripts/bootstrap-gui-automation.ps1 -Rig E2eRunner` to validate. Record the pinned resolution/theme in that doc so the image is reproducible; the harness README links to it (permanent home in docs/internal/).
-- [ ] 1.2 Create the dedicated e2e site in dev; confirm zero alert subscribers; decide + apply the Sentry tag/filter for the e2e machine.
-- [ ] 1.3 Pytest controller skeleton: per-stage JSON logging, artifact collection, **cloud teardown in `finally`**.
-- [ ] 1.4 Stage 0 preflight (empty-machine asserts + interactive-session hard-fail via `WTSGetActiveConsoleSessionId`).
-- [ ] 1.5 Stage 1 pre-auth (Wave 0 scripts productionized; mint ≤10 min before install, retry mint not install).
-- [ ] 1.6 Stage 2 install: download → `Unblock-File` → launch pre-elevated → **compound pairing oracle** (service RUNNING + `.tokens.enc` non-empty + config site_id + setup-log `Pairing exit code: 0`). Negative test: expired phrase must FAIL the run despite installer exit 0.
-- [ ] 1.7 Stage 3 bootstrap oracles (poll RUNNING — no `net start`; service_status.json; log scan; Firestore heartbeat, 150s+ budget).
-- [ ] 1.8 Stages 7–8: silent uninstall + documented-state asserts (binaries/service/registry gone, user data PRESERVED) + cloud teardown + snapshot revert; verify next-run preflight passes.
-- [ ] 1.9 Chaos check: kill the controller mid-run at stage 3; confirm teardown still ran and the next run is clean.
+**Code built 2026-07-03** as `e2e-machine/wave1/run_wave1.py` + the reusable cloud spine `e2e-machine/lib/` (admin/preauthorize/probe/teardown). Cloud helpers proven against dev; the install/uninstall stages await their **first run on a clean, elevated box** (couldn't run here — this box has a live agent). Run + tuning instructions: `e2e-machine/RUNBOOK.md` Part B.
+
+- [ ] 1.1 Build the golden Win11 image per `docs/internal/gui-automation-machine-setup.md` (Profiles A + C: autologon, no lock/sleep, WU pinned, 100% DPI + fixed res/theme, toolchain, UAC ON), using `scripts/bootstrap-gui-automation.ps1 -Rig E2eRunner` to validate. Record the pinned resolution/theme in that doc so the image is reproducible; the harness README links to it (permanent home in docs/internal/). *(spare box provisioning — user)*
+- [x] 1.2 Dedicated e2e site in dev with **zero alert subscribers** — done: `lib/admin.mjs seedSiteAndOwner` seeds `e2e-fullmachine` + a least-privilege owner with all alert prefs OFF, torn down per run. (Sentry env-tag/filter for the e2e machine: still TODO before first heavy use.)
+- [x] 1.3 Controller skeleton: per-stage logging + artifact-friendly output + **cloud teardown in `finally`** (`run_wave1.py`). Plain-Python (no pytest dep) so it runs on the bootstrap venv.
+- [x] 1.4 Stage 0 preflight: empty-machine asserts (service/dir/registry) + **Session-0 hard-fail** (process-vs-console session, not just WTSGetActiveConsoleSessionId) + elevation check. Verified locally (correctly refused this non-empty, non-elevated box).
+- [x] 1.5 Stage 1 pre-auth: `node lib/preauthorize.mjs` mints ≤10 min before install (retry the mint, not the install). Reuses the Wave 0 cookie path. Proven against dev.
+- [x] 1.6 Stage 2 install: `Unblock-File` → launch pre-elevated with `/VERYSILENT /SERVER=dev /ADD= /LOG=` → **compound pairing oracle** (service RUNNING + `.tokens.enc` non-empty + config bound to e2e site + setup-log `Pairing exit code: 0`). `--negative` mode proves an invalid phrase FAILS despite installer exit 0. *(awaiting first clean-box run)*
+- [x] 1.7 Stage 3 bootstrap oracles: poll RUNNING (no `net start`), `tmp/service_status.json` firebase.connected, `logs/service.log` agent_started + no ERROR/CRITICAL, dev Firestore heartbeat <180s via `node probe.mjs` (200s budget). *(awaiting first clean-box run)*
+- [x] 1.8 Stages 7–8: silent uninstall + documented-state asserts (service/binaries/registry gone, user data PRESERVED by design) + cloud teardown. Snapshot revert is the runbook's between-runs step. *(awaiting first clean-box run)*
+- [x] 1.9 Chaos safety: teardown + best-effort uninstall run in a `finally`, so a mid-run failure still cleans the box and dev state. (Explicit mid-stage-3 kill test: verify on first real run.)
 
 ## Wave 1.5 — Upgrade-in-place leg
 

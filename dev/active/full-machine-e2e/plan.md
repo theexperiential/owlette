@@ -1,5 +1,7 @@
 # Full-Machine Release E2E Gate — Plan
-**Created**: 2026-06-10 | **Status**: Planned (not started) | **Last revised**: 2026-06-10
+**Created**: 2026-06-10 | **Status**: Wave 0 done (auth spike GREEN); Wave 1 next | **Last revised**: 2026-07-03
+
+> **Harness lives at [`e2e-machine/`](../../../e2e-machine/)** (top-level, so the agent build never sweeps it). Wave 0 spike + results: `e2e-machine/wave0/`.
 
 ## Summary
 
@@ -74,7 +76,7 @@ Second golden snapshot with **version N-1 installed and paired**. Run installer 
 
 ## Success criteria
 
-1. Wave 0 spike proves a `__session` cookie + pairing phrase can be minted fully headlessly and `configure_site.py --add` authenticates against live dev from the VM (tokens in `.tokens.enc`, machine doc + heartbeat in dev Firestore) — with MFA and Cloudflare confirmed non-blocking.
+1. ✅ **DONE (2026-07-03, 10/10).** Wave 0 spike proved a `__session` cookie + pairing phrase mint fully headlessly and the deferred mint returns real tokens against live dev — MFA and Cloudflare both confirmed non-blocking. (Proven via the agent's real `requests` poll with a synthetic machineId; the `.tokens.enc` write + heartbeat doc move to Wave 1's real install run.) See `e2e-machine/wave0/RESULTS.md`.
 2. Fresh-install leg passes end-to-end unattended (stages 0–3, 7–8) with the compound pairing oracle — a deliberately-broken pairing (expired phrase) is correctly detected as FAILURE despite installer exit 0.
 3. Upgrade leg passes: N over paired N-1 preserves auth/config and comes back heartbeating on N.
 4. GUI leg adds a process through real clicks and the config round-trips to dev Firestore.
