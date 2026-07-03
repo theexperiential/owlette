@@ -1951,9 +1951,10 @@ class OwletteConfigApp:
         """Handle Join Site button click — device-code pairing flow.
 
         Requests a pairing phrase, shows it in a dialog (auto-copied to the
-        clipboard, click-to-copy), opens owlette.app/add in the browser, and
-        polls for authorization. Authorization from ANY device completes
-        pairing; the Cancel button aborts without waiting out the code expiry.
+        clipboard, click-to-copy), and polls for authorization. The dialog has
+        an opt-in open button for owlette.app/add. Authorization from ANY
+        device completes pairing; the Cancel button aborts without waiting out
+        the code expiry.
         """
         # Prevent overlapping join attempts. The phrase dialog is non-modal and
         # the footer button stays clickable (the periodic status updater keeps
@@ -1969,8 +1970,8 @@ class OwletteConfigApp:
             master=self.master,
             title="Join Site?",
             message="This will pair this machine with a cloud site.\n\n"
-                   "A pairing phrase will appear, and owlette.app/add will open "
-                   "in your browser.\n\n"
+                   "A pairing phrase will appear. You can open owlette.app/add "
+                   "from the next dialog, or authorize from another device.\n\n"
                    "Steps:\n"
                    "1. Log in to your owlette account\n"
                    "2. Select or create a site\n"
@@ -2006,7 +2007,7 @@ class OwletteConfigApp:
                     setup_url=setup_url,
                     timeout_seconds=600,       # matches the 10-min code expiry
                     show_prompts=False,        # no console output for GUI
-                    open_browser=True,         # auto-open owlette.app/add
+                    open_browser=False,        # user opens via dialog button
                     on_phrase=lambda data: self.master.after(
                         0, lambda d=data: self._show_join_phrase_dialog(d)),
                     should_cancel=lambda: self._join_cancelled,
@@ -2071,7 +2072,12 @@ class OwletteConfigApp:
             return
         try:
             pair_phrase = device_data.get('pairPhrase', '')
-            pairing_url = device_data.get('pairingUrl') or device_data.get('verificationUri') or ''
+            pairing_url = (
+                device_data.get('pairingUrl')
+                or device_data.get('qrUrl')
+                or device_data.get('verificationUri')
+                or ''
+            )
             already_copied = bool(device_data.get('clipboardCopied'))
 
             dialog = ctk.CTkToplevel(self.master)

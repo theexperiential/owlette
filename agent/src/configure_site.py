@@ -5,14 +5,15 @@ Runs during installer to configure Firebase site_id via device code authenticati
 
 This script:
 1. Requests a pairing phrase from the server (3 random words, e.g., "silver-compass-drift")
-2. Displays the phrase in the console and optionally opens the pairing page in a browser
+2. Displays the phrase in the console and lets the operator opt in to opening
+   the pairing page in a browser
 3. User selects a site on owlette.app/add (or enters phrase on the dashboard)
 4. Agent polls for authorization until the user approves
 5. Receives and stores OAuth tokens securely (C:\\ProgramData\\owlette\\.tokens.enc)
 6. Writes minimal configuration to config.json (site_id, project_id, api_base)
 
 Three authorization methods:
-- Browser: Installer auto-opens owlette.app/add with phrase pre-filled → select site → authorize
+- Browser: Operator opens owlette.app/add with phrase pre-filled, then selects a site and authorizes
 - Manual: Visit owlette.app/add → enter phrase → select site → authorize
 - Dashboard: Click "+" on dashboard → enter phrase → authorize
 
@@ -20,11 +21,13 @@ For silent/bulk deployment:
     python configure_site.py --add silver-compass-drift
 
 Usage:
-    python configure_site.py [--url URL] [--add PHRASE] [--no-browser]
+    python configure_site.py [--url URL] [--add PHRASE] [--open-browser] [--no-browser]
 
     --url URL        Override the API base URL
     --add PHRASE     Pre-authorized pairing phrase (skips browser, polls immediately)
-    --no-browser     Don't auto-open a browser on this machine — just print the
+    --open-browser   Open the pairing page immediately instead of waiting for
+                     the operator to press Enter.
+    --no-browser     Do not offer to open a browser on this machine; just print the
                      pairing link and start polling. Use on kiosks/signage/media
                      servers showing live content, headless boxes, or over RDP,
                      where you'll authorize from your phone or another computer.
@@ -82,14 +85,67 @@ def _open_browser(url: str) -> bool:
         return False
 
 
+def _prompt_open_browser_async(url: str) -> Callable[[], None]:
+    """Open ``url`` if the operator presses Enter, without blocking polling."""
+    if not url:
+        return lambda: None
+
+    import threading
+    stop_event = threading.Event()
+
+    def _wait_for_enter_key() -> bool:
+        if sys.platform == 'win32':
+            try:
+                import msvcrt
+                while not stop_event.is_set():
+                    if msvcrt.kbhit():
+                        ch = msvcrt.getwch()
+                        if ch in ('\r', '\n'):
+                            return True
+                    time.sleep(0.05)
+            except Exception:
+                return False
+            return False
+
+        try:
+            if not sys.stdin.isatty():
+                return False
+            import select
+            while not stop_event.is_set():
+                readable, _, _ = select.select([sys.stdin], [], [], 0.05)
+                if readable:
+                    sys.stdin.readline()
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _wait_for_enter():
+        if not _wait_for_enter_key() or stop_event.is_set():
+            return
+
+        opened = _open_browser(url)
+        try:
+            print()
+            if opened:
+                print(f"  {DIM}opened the pairing page in your browser - pick a site and authorize.{RESET}")
+            else:
+                print(f"  {DIM}could not open a browser; use the link above from any device.{RESET}")
+        except Exception:
+            pass
+
+    threading.Thread(target=_wait_for_enter, daemon=True, name="OpenPairingPagePrompt").start()
+    return stop_event.set
+
+
 def _copy_to_clipboard(text: str) -> bool:
     """
     Best-effort copy of ``text`` to the Windows clipboard via win32clipboard
     (ships with pywin32 — no extra dependency). Returns True on success.
 
     Never raises: the clipboard can be transiently locked by another process,
-    and a failed copy must never block pairing — the phrase is still shown on
-    screen and the browser still opens. Windows-only; a no-op elsewhere.
+    and a failed copy must never block pairing - the phrase is still shown on
+    screen. Windows-only; a no-op elsewhere.
     """
     if sys.platform != 'win32':
         return False
@@ -196,7 +252,8 @@ def _save_config(site_id: str, environment: str, api_base: str, project_id: str)
 
 def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                      timeout_seconds: int = TIMEOUT_SECONDS,
-                     show_prompts: bool = True, open_browser: bool = True,
+                     show_prompts: bool = True, open_browser: bool = False,
+                     prompt_open_browser: bool = True,
                      on_phrase: Optional[Callable[[dict], None]] = None,
                      should_cancel: Optional[Callable[[], bool]] = None):
     """
@@ -212,9 +269,12 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
         add_phrase: Pre-authorized pairing phrase (for /ADD= silent install)
         timeout_seconds: Max time to wait for authorization
         show_prompts: Show console output (False for GUI usage)
-        open_browser: Auto-open the pairing page on this machine (interactive
-            mode only). Set False (--no-browser) on kiosks/headless/RDP to skip
-            the local browser; polling still starts immediately either way.
+        open_browser: Open the pairing page immediately on this machine
+            (interactive mode only). This is opt-in; polling starts immediately
+            either way.
+        prompt_open_browser: In console mode, show a non-blocking "press Enter
+            to open" prompt. Set False (--no-browser) on kiosks/headless/RDP to
+            avoid any local browser affordance.
         on_phrase: Optional callback invoked once in interactive mode with the
             device_data dict (pairPhrase, pairingUrl, verificationUri,
             expiresIn, ...) plus a 'clipboardCopied' bool, so a GUI caller can
@@ -427,18 +487,19 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                 except Exception as cb_err:
                     logging.warning(f"on_phrase callback failed: {cb_err}")
 
-            # Auto-open the pairing page (unless suppressed). Gated on
-            # open_browser regardless of show_prompts, so GUI callers get the
-            # browser too. Previously this lived inside the show_prompts block,
-            # so the GUI Join Site flow (show_prompts=False) opened nothing and
-            # showed no phrase — it just silently polled. The agent waits on
-            # the SERVER, so authorization from ANY device (this browser, a
-            # phone, or the dashboard) completes pairing on its own.
+            # Opening the local browser is opt-in. The console Enter prompt is
+            # handled on a daemon thread so polling still starts immediately.
+            # The GUI renders its own open button from on_phrase.
             browser_opened = _open_browser(pairing_url) if open_browser else False
 
+            stop_open_prompt = None
             if show_prompts:
                 if browser_opened:
                     print(f"  {DIM}opened the pairing page in your browser — pick a site and authorize.{RESET}")
+                elif prompt_open_browser and pairing_url:
+                    print(f"  {DIM}press Enter to open the pairing page in your browser.{RESET}")
+                    print(f"  {DIM}or approve at the link above from any device.{RESET}")
+                    stop_open_prompt = _prompt_open_browser_async(pairing_url)
                 else:
                     print(f"  {DIM}approve at the link above from any device.{RESET}")
                 print()
@@ -446,12 +507,16 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
 
             # Poll for authorization. Authorization from ANY device ends the
             # wait; should_cancel lets a GUI Cancel abort it promptly.
-            success = auth_manager.poll_device_code(
-                device_code=device_code,
-                interval=interval,
-                timeout=expires_in,
-                should_cancel=should_cancel,
-            )
+            try:
+                success = auth_manager.poll_device_code(
+                    device_code=device_code,
+                    interval=interval,
+                    timeout=expires_in,
+                    should_cancel=should_cancel,
+                )
+            finally:
+                if stop_open_prompt:
+                    stop_open_prompt()
 
             if success:
                 site_id = auth_manager._site_id
@@ -516,7 +581,8 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
 
 # Keep backward compatibility: run_oauth_flow calls run_pairing_flow
 def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts=True,
-                   open_browser=True, on_phrase=None, should_cancel=None):
+                   open_browser=False, prompt_open_browser=True,
+                   on_phrase=None, should_cancel=None):
     """Backward-compatible wrapper. Calls run_pairing_flow()."""
     api_base = None
     if setup_url:
@@ -526,6 +592,7 @@ def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts
             api_base = 'https://owlette.app/api'
     return run_pairing_flow(api_base=api_base, timeout_seconds=timeout_seconds,
                             show_prompts=show_prompts, open_browser=open_browser,
+                            prompt_open_browser=prompt_open_browser,
                             on_phrase=on_phrase, should_cancel=should_cancel)
 
 
@@ -536,8 +603,11 @@ def main():
                         help='API base URL (auto-detected if not specified)')
     parser.add_argument('--add', type=str, default=None,
                         help='Pre-authorized pairing phrase for silent install')
+    parser.add_argument('--open-browser', action='store_true',
+                        help='Open the pairing page immediately. By default the '
+                             'console asks you to press Enter before opening a browser.')
     parser.add_argument('--no-browser', action='store_true',
-                        help="Don't auto-open a browser on this machine; just print "
+                        help="Do not offer to open a browser on this machine; just print "
                              "the pairing link and poll (kiosks/headless/RDP — "
                              "authorize from any device). Also: OWLETTE_NO_BROWSER=1")
     args = parser.parse_args()
@@ -549,7 +619,7 @@ def main():
         if 'dev.owlette.app' in env_url:
             api_base = 'https://dev.owlette.app/api'
 
-    # Suppress the local browser auto-open via flag or env var (for kiosks/
+    # Suppress the local browser prompt via flag or env var (for kiosks/
     # headless/remote installs where you authorize from another device).
     no_browser = args.no_browser or os.environ.get('OWLETTE_NO_BROWSER', '').strip().lower() in ('1', 'true', 'yes')
 
@@ -561,6 +631,7 @@ def main():
         f.write(f"==================\n")
         f.write(f"--url: {args.url}\n")
         f.write(f"--add: {args.add}\n")
+        f.write(f"--open-browser: {args.open_browser}\n")
         f.write(f"--no-browser: {no_browser}\n")
         f.write(f"Resolved api_base: {api_base}\n")
         f.write(f"OWLETTE_SETUP_URL: {os.environ.get('OWLETTE_SETUP_URL', 'NOT SET')}\n\n")
@@ -569,7 +640,8 @@ def main():
         api_base=api_base,
         add_phrase=args.add,
         show_prompts=True,
-        open_browser=not no_browser,
+        open_browser=args.open_browser and not no_browser,
+        prompt_open_browser=(not no_browser) and (not args.open_browser),
     )
 
     if success:

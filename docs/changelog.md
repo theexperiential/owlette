@@ -9,6 +9,16 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [2.12.14] - 2026-07-03
+
+### fixed
+
+- **Agent pairing no longer opens a browser without operator action.** Interactive installer pairing now prints the phrase and URL, starts polling immediately, and offers `press Enter to open the pairing page in your browser` as the opt-in path. The desktop app join-site dialog also waits for the user to click its existing open button instead of launching a browser automatically.
+
+### added
+
+- **`--open-browser` pairing option** for operators who explicitly want the old immediate-open behavior during manual `configure_site.py` runs. `--no-browser` and `OWLETTE_NO_BROWSER=1` still suppress any local browser affordance.
+
 ## [2.12.13] - 2026-07-03
 
 ### fixed

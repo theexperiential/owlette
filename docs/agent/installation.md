@@ -20,13 +20,13 @@ Download the packaged installer, run it as Administrator, and authorize the mach
 3. Save `Owlette-Installer-v<version>.exe` to the target machine.
 4. Right-click the installer and select **Run as administrator**.
 5. Follow the installer wizard.
-6. When the console appears, the agent prints the pairing phrase and authorization URL, opens the pairing page in your default browser, and immediately begins waiting for authorization — there is no prompt to answer.
-7. Authorize from any device: pick a site and approve on the page that opened, or enter the phrase at the authorization URL from your phone or another computer. The agent is already polling, so pairing completes within seconds of approval.
+6. When the console appears, the agent prints the pairing phrase and authorization URL, then immediately begins waiting for authorization.
+7. Press Enter only if you want to open the pairing page in the local browser, or authorize from another device by visiting the displayed URL and entering the phrase. The agent is already polling, so pairing completes within seconds of approval.
 8. The agent stores credentials and installs the Windows service.
 
 Pairing phrases expire after 10 minutes. Credentials are stored encrypted at `C:\ProgramData\Owlette\.tokens.enc`.
 
-> **Kiosks, signage, media servers, and headless or RDP machines:** to stop a browser from opening on a screen showing live content, set `OWLETTE_NO_BROWSER=1` before launching the installer — the agent still starts polling immediately, and you authorize from your phone or another computer. When re-pairing manually, pass `--no-browser` to `configure_site.py` for the same effect.
+> **Kiosks, signage, media servers, and headless or RDP machines:** leave the prompt unanswered, or set `OWLETTE_NO_BROWSER=1` before launching the installer to hide the local-browser prompt entirely. The agent still starts polling immediately, and you authorize from your phone or another computer. When re-pairing manually, pass `--no-browser` to `configure_site.py` for the same effect.
 
 ---
 
@@ -60,6 +60,7 @@ The installer passes `/ADD=` to `configure_site.py --add`. The agent polls `/api
 | `/ADD=phrase` | Preauthorized pairing phrase for silent enrollment |
 | `/SERVER=prod` | Use `https://owlette.app/api`; this is the default |
 | `/SERVER=dev` | Use `https://dev.owlette.app/api` |
+| `/OPENBROWSER=1` | Open the pairing page immediately instead of waiting for Enter |
 | `/SILENT` | Minimal UI with progress only |
 | `/VERYSILENT` | No installer UI |
 | `/SUPPRESSMSGBOXES` | Suppress message boxes |
@@ -162,11 +163,11 @@ Agent requests a device code from the API
 Console displays the pairing phrase, authorization URL, and 10-minute expiry
   |
   v
-Agent auto-opens the pairing page and starts polling immediately (no prompt)
-  (browser open is skipped with --no-browser or OWLETTE_NO_BROWSER=1)
+Agent starts polling immediately and offers Enter-to-open as an opt-in browser path
+  (browser affordance is skipped with --no-browser or OWLETTE_NO_BROWSER=1)
   |
   v
-Authorize from any device: the opened page, a phone, or the authorization URL
+Authorize from any device: the local browser if opened, a phone, or the authorization URL
   |
   v
 Agent polls until authorization completes or expires
