@@ -29,6 +29,7 @@ interface StoredToken {
   supersededBy?: string;
   retiresAt?: number;
   expiresAt?: number;
+  predecessorHash?: string;
 }
 
 const tokenStore = new Map<string, StoredToken>();
@@ -78,6 +79,10 @@ jest.mock('@/lib/firebase-admin', () => ({
           const data = tokenStore.get(ref.hash);
           return {
             exists: !!data,
+            // Real DocumentSnapshots expose `.ref` back to the ref; the
+            // rotation GC reads the predecessor snapshot then deletes via
+            // snapshot.ref, so the mock must provide it.
+            ref: { hash: ref.hash },
             data: () =>
               data
                 ? {
@@ -129,6 +134,12 @@ jest.mock('@/lib/firebase-admin', () => ({
             version: (payload.version as string) ?? '2.11.3',
             createdBy: (payload.createdBy as string) ?? 'installer',
             agentUid: (payload.agentUid as string) ?? 'agent-uid',
+            // Rotation writes a back-pointer to the token it supersedes; the
+            // route reads it on the NEXT rotation to GC the grandparent.
+            predecessorHash:
+              typeof payload.predecessorHash === 'string'
+                ? (payload.predecessorHash as string)
+                : undefined,
           });
         },
       };
@@ -270,6 +281,52 @@ describe('POST /api/agent/auth/refresh — rotation', () => {
 
     const res = await refreshPOST(refreshReq('original-refresh-token'));
     expect(res.status).toBe(401);
+  });
+
+  it('rotation garbage-collects the grandparent ONCE it is retired (past grace)', async () => {
+    seedToken('t0'); // minted by exchange/authorize — no predecessorHash
+
+    // Rotation #1: t0 -> t1. t1 records predecessorHash=hash(t0). t0 is
+    // superseded (in grace) but nothing is GC'd yet (t0 has no predecessor).
+    const r1 = await refreshPOST(refreshReq('t0'));
+    expect(r1.status).toBe(200);
+    const t1 = (await r1.json()).refreshToken as string;
+    expect(typeof t1).toBe('string');
+    expect(tokenStore.has(hashOf('t0'))).toBe(true);
+
+    // Fast-forward t0 past its 5-min grace so it is provably dead.
+    const t0 = tokenStore.get(hashOf('t0'))!;
+    t0.retiresAt = Date.now() - 1;
+    tokenStore.set(hashOf('t0'), t0);
+
+    // Rotation #2: t1 -> t2. Reads t1.predecessorHash=hash(t0), sees t0 is
+    // dead, and GCs it.
+    const r2 = await refreshPOST(refreshReq(t1));
+    expect(r2.status).toBe(200);
+    const t2 = (await r2.json()).refreshToken as string;
+    expect(typeof t2).toBe('string');
+
+    expect(tokenStore.has(hashOf('t0'))).toBe(false); // retired grandparent GC'd
+    expect(tokenStore.has(hashOf(t1))).toBe(true);     // parent still present
+  });
+
+  it('rotation does NOT delete a grandparent still within its grace window', async () => {
+    seedToken('t0');
+
+    const r1 = await refreshPOST(refreshReq('t0'));
+    expect(r1.status).toBe(200);
+    const t1 = (await r1.json()).refreshToken as string;
+
+    // t0 is superseded but its retiresAt is still in the future (in grace).
+    const t0 = tokenStore.get(hashOf('t0'))!;
+    expect(typeof t0.retiresAt).toBe('number');
+    expect(t0.retiresAt! > Date.now()).toBe(true);
+
+    // Rotation #2 while t0 is still in grace: t0 MUST be preserved — a second
+    // process could still legitimately present it.
+    const r2 = await refreshPOST(refreshReq(t1));
+    expect(r2.status).toBe(200);
+    expect(tokenStore.has(hashOf('t0'))).toBe(true); // in-grace grandparent kept
   });
 
   it('machine_id_mismatch when refresh token machineId differs from claim', async () => {

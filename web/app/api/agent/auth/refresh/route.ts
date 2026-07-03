@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminAuth, getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { withRateLimit } from '@/lib/withRateLimit';
+import { isTokenDead } from '@/lib/agentTokens';
 import logger from '@/lib/logger';
 
 const REFRESH_TOKEN_GRACE_MS = 5 * 60 * 1000;
@@ -169,22 +170,38 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     try {
       const result = await adminDb.runTransaction(async (transaction) => {
         const tokenDoc = await transaction.get(tokenRef);
-        // Only need to check the new-token doc when we're going to write
-        // it — saves a read for legacy refresh-no-rotate calls.
-        const newTokenDoc = willRotate ? await transaction.get(newTokenRef) : null;
 
         if (!tokenDoc.exists) {
           return { error: 'Invalid refresh token', status: 401 } as const;
         }
 
+        const tokenData = tokenDoc.data();
+        const now = Date.now();
+
+        // Firestore requires ALL reads before ANY write in a transaction, so
+        // read the rotation-related docs up front (before the conditional
+        // deletes/updates below). predecessorHash is the back-pointer written
+        // when THIS token was minted (see the rotation branch) — the hash of
+        // the doc this token superseded, our garbage-collection candidate.
+        const predecessorHash = tokenData?.predecessorHash;
+        const gcCandidateRef =
+          willRotate &&
+          typeof predecessorHash === 'string' &&
+          predecessorHash.length > 0 &&
+          predecessorHash !== refreshTokenHash &&
+          predecessorHash !== newRefreshTokenHash
+            ? adminDb.collection('agent_refresh_tokens').doc(predecessorHash)
+            : null;
+        // Only read the new-token slot when rotating — saves a read for
+        // legacy refresh-no-rotate calls.
+        const newTokenDoc = willRotate ? await transaction.get(newTokenRef) : null;
+        const gcCandidateDoc = gcCandidateRef ? await transaction.get(gcCandidateRef) : null;
+
         if (newTokenDoc && newTokenDoc.exists) {
           throw new Error('Refresh token hash collision');
         }
 
-        const tokenData = tokenDoc.data();
-
         // Check expiry (tokens without expiresAt never expire — by design for long-duration installations)
-        const now = Date.now();
         const expiresAt = timestampToMillis(tokenData?.expiresAt);
 
         if (expiresAt && expiresAt < now) {
@@ -233,7 +250,26 @@ export const POST = withRateLimit(async (request: NextRequest) => {
             createdAt: FieldValue.serverTimestamp(),
             lastUsed: FieldValue.serverTimestamp(),
             agentUid: txAgentUid,
+            // Back-pointer to the token this one supersedes. On the NEXT
+            // rotation this lets us delete this (by then retired) doc,
+            // bounding the collection to ~2 docs per machine instead of
+            // leaking one dead doc per hourly refresh forever.
+            predecessorHash: refreshTokenHash,
           });
+
+          // Garbage-collect the predecessor doc that the current token
+          // superseded when it was minted — but ONLY if it is provably dead
+          // (superseded past its 5-minute grace, or expired). Rotation
+          // cadence is NOT enforced: agent restarts, or a service + GUI
+          // sharing one stored credential, can rotate twice within the grace
+          // window, so we must VERIFY the predecessor is retired rather than
+          // assume a full cycle elapsed. Using the same isTokenDead predicate
+          // as the admin prune path guarantees we can never delete a token an
+          // agent could still legitimately present (which would 401 it into
+          // wiping its local credentials). Idempotent if already gone.
+          if (gcCandidateDoc && gcCandidateDoc.exists && isTokenDead(gcCandidateDoc.data(), now)) {
+            transaction.delete(gcCandidateDoc.ref);
+          }
         } else {
           // Legacy agent — keep the same token alive by bumping lastUsed.
           // No supersession, no new doc; the agent's stored refresh token
