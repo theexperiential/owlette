@@ -9,6 +9,18 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [2.12.13] - 2026-07-03
+
+### fixed
+
+- **The desktop app's "join site" button now actually pairs the machine.** Previously it opened no browser and showed no pairing phrase — it just polled silently, so there was no way to know what to do next. It now shows the 3-word pairing phrase in a dialog (copied to your clipboard automatically, click it to copy again), opens owlette.app/add in your browser, and reports progress; the service restarts on its own once you authorize from any device. You can cancel at any time without waiting for the code to expire.
+- **Revoking a machine's token no longer risks disconnecting other machines that share its hostname.** The revoke dialog now offers "revoke current token" (only the most-recently-used token for that hostname) alongside "revoke all for hostname" (the previous behavior, now clearly labelled). Machines cloned to the same hostname are no longer knocked offline when you revoke just one.
+
+### added
+
+- **The pairing phrase is copied to your clipboard during install.** When the installer displays the 3-word phrase, it's already on your clipboard to paste straight into owlette.app/add — no retyping. Best-effort, so a busy clipboard never blocks pairing.
+- **The agent-tokens admin can be searched, filtered, and pruned.** Search by machine id or agent, filter by version, flag hostname duplicates, and prune tokens that are provably expired. The collection previously grew without bound as tokens rotated hourly, which made it easy to revoke a token a live agent was actually using; rotation now cleans up its own dead predecessors at the source.
+
 ## [2.12.12] - 2026-06-15
 
 ### fixed
