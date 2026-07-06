@@ -54,7 +54,7 @@ Agents authenticate using a device code flow with a two-token system. No Firebas
        stored in device_codes/{phrase} with 10-minute expiry
 
 2. User authorizes (POST /api/agent/auth/device-code/authorize)
-   ├── Via browser auto-opened on the machine (owlette.app/add)
+   ├── Via browser opened by the operator on the machine (owlette.app/add)
    ├── Via dashboard "+" button → "Enter Code" tab
    ├── Via /ADD=phrase installer flag (pre-authorized, no interaction)
    ├── Server creates Firebase custom token with claims:

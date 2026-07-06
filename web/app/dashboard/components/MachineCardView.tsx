@@ -25,7 +25,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, RotateCw, Settings2, BellOff } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, RotateCw, Settings2, BellOff, Monitor } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
@@ -228,23 +228,67 @@ function MachineCard({
     <Card data-testid="machine-card" className="border-border/60 bg-card-sunken py-0 gap-0">
       <CardHeader className="py-3 px-4 gap-0 bg-card-header rounded-t-xl">
         <div className="flex items-center justify-between">
-          <div className="flex flex-col min-w-0">
-            <CardTitle className="text-xl font-semibold text-white select-text flex items-center gap-1.5">
-              {machine.machineId}
-              {isMuted && <span title="alerts muted"><BellOff className="h-3.5 w-3.5 text-muted-foreground" /></span>}
-            </CardTitle>
-            {showLocalClock && machine.machineTimezone && localClock && (
+          <div className="flex items-center gap-2.5 min-w-0">
+            {/* Display icon — quick access to the display panel, mirrors the
+                list view's per-row Monitor button (drift/breaker dots included). */}
+            <div className="relative flex-shrink-0">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="text-xs text-muted-foreground mt-0.5 cursor-help select-none">
-                    {localTzShort}, {localClock} local
-                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onMetricClick?.('display');
+                    }}
+                    data-testid="open-display-panel"
+                    className="bg-card border border-border text-muted-foreground hover:text-white h-8 w-8 p-0"
+                    aria-label="view displays"
+                  >
+                    <Monitor className="h-4 w-4" />
+                  </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p className="max-w-xs">this machine&apos;s local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
+                  <p>view displays</p>
                 </TooltipContent>
               </Tooltip>
-            )}
+              {displayDriftCount > 0 && (
+                <span
+                  className="absolute -top-0.5 -right-0.5 inline-block w-2 h-2 rounded-full bg-amber-500 pointer-events-none"
+                  role="img"
+                  aria-label={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
+                  title={`${displayDriftCount} display change${displayDriftCount === 1 ? '' : 's'} from assigned`}
+                />
+              )}
+              {machine.displayBreakerTripped && (
+                <span
+                  className={`absolute inline-block w-2 h-2 rounded-full bg-destructive pointer-events-none ${
+                    displayDriftCount > 0 ? '-bottom-0.5 -right-0.5' : '-top-0.5 -right-0.5'
+                  }`}
+                  role="img"
+                  aria-label="auto-restore disabled — circuit breaker tripped"
+                  title="auto-restore disabled — circuit breaker tripped"
+                />
+              )}
+            </div>
+            <div className="flex flex-col min-w-0">
+              <CardTitle className="text-xl font-semibold text-white select-text flex items-center gap-1.5">
+                {machine.machineId}
+                {isMuted && <span title="alerts muted"><BellOff className="h-3.5 w-3.5 text-muted-foreground" /></span>}
+              </CardTitle>
+              {showLocalClock && machine.machineTimezone && localClock && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-xs text-muted-foreground mt-0.5 cursor-help select-none">
+                      {localTzShort}, {localClock} local
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="max-w-xs">this machine&apos;s local time ({machine.machineTimezone}). schedule entries are interpreted in this timezone.</p>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <MachineStatusPill

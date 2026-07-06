@@ -54,8 +54,8 @@
   #define MyAppVersion GetEnv("OWLETTE_VERSION")
   #if MyAppVersion == ""
     ; fallback should match /VERSION - bump on every release
-    #define MyAppVersion "2.12.12"
-    #pragma message "WARNING: Using fallback version 2.12.12 - VERSION file not found or OWLETTE_VERSION not set"
+    #define MyAppVersion "2.12.14"
+    #pragma message "WARNING: Using fallback version 2.12.14 - VERSION file not found or OWLETTE_VERSION not set"
   #endif
 #endif
 
@@ -195,6 +195,7 @@ function GetConfigureArgs(Param: String): String;
 var
   ServerParam: String;
   AddPhrase: String;
+  OpenBrowserParam: String;
   ApiUrl: String;
 begin
   // Determine API base URL from /SERVER= parameter
@@ -210,6 +211,10 @@ begin
   AddPhrase := ExpandConstant('{param:ADD|}');
   if AddPhrase <> '' then
     Result := Result + ' --add "' + AddPhrase + '"';
+
+  OpenBrowserParam := ExpandConstant('{param:OPENBROWSER|}');
+  if (OpenBrowserParam = '1') or (OpenBrowserParam = 'true') or (OpenBrowserParam = 'yes') then
+    Result := Result + ' --open-browser';
 
   Log('Configure args: ' + Result);
 end;

@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites } from '@/hooks/useFirestore';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
@@ -17,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { KeyRound, Trash2, RefreshCw, AlertTriangle, Clock, CheckCircle } from 'lucide-react';
+import { KeyRound, Trash2, RefreshCw, AlertTriangle, Clock, CheckCircle, Search, Layers, Eraser } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { AdminButton } from '@/components/admin/AdminButton';
@@ -33,20 +34,38 @@ interface TokenInfo {
   agentUid: string;
 }
 
+const ALL = 'all';
+
 export default function TokensPage() {
   const { user, isSuperadmin, userSites, lastSiteId, updateLastSite, userPreferences } = useAuth();
   const { sites } = useSites(user?.uid, userSites, isSuperadmin);
   const [selectedSiteId, setSelectedSiteId] = useState<string>('');
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
+  const [prunableCount, setPrunableCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
   const [revokeAllDialogOpen, setRevokeAllDialogOpen] = useState(false);
+  const [pruneDialogOpen, setPruneDialogOpen] = useState(false);
   const [tokenToRevoke, setTokenToRevoke] = useState<TokenInfo | null>(null);
   const [isRevoking, setIsRevoking] = useState(false);
+  const [isPruning, setIsPruning] = useState(false);
+
+  // Filters
+  const [search, setSearch] = useState('');
+  const [versionFilter, setVersionFilter] = useState<string>(ALL);
+  const [duplicatesOnly, setDuplicatesOnly] = useState(false);
+
+  // Monotonic fetch counter: guards against out-of-order responses. If the
+  // admin switches sites (or refetches) while a request is in flight, a slow
+  // older response must NOT overwrite the newer site's data — otherwise the
+  // table would show one site's tokens while the selector and the
+  // revoke/prune actions target another (a way to nuke the wrong site).
+  const fetchSeqRef = useRef(0);
 
   const fetchTokens = useCallback(async () => {
     if (!selectedSiteId) return;
 
+    const seq = ++fetchSeqRef.current;
     setLoading(true);
     try {
       const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/agent-tokens`, {
@@ -54,27 +73,37 @@ export default function TokensPage() {
       });
       const data = await response.json();
 
+      if (seq !== fetchSeqRef.current) return; // superseded by a newer fetch
+
       if (!response.ok) {
         throw new Error(data.error || 'Failed to fetch tokens');
       }
 
       setTokens(data.tokens);
+      setPrunableCount(typeof data.prunableCount === 'number' ? data.prunableCount : 0);
     } catch (error: unknown) {
+      if (seq !== fetchSeqRef.current) return; // don't surface a stale error
       const message = error instanceof Error ? error.message : String(error);
       toast.error('Failed to load tokens', {
         description: message,
       });
     } finally {
-      setLoading(false);
+      if (seq === fetchSeqRef.current) setLoading(false);
     }
   }, [selectedSiteId]);
 
   // Fetch tokens when site changes
   useEffect(() => {
     if (selectedSiteId) {
+      // Clear the previous site's rows/counts up front so a FAILED fetch for
+      // the new site can't leave stale data visible — revoke-all/prune target
+      // the selected site, so showing another site's rows would be dangerous.
+      setTokens([]);
+      setPrunableCount(0);
       fetchTokens();
     } else {
       setTokens([]);
+      setPrunableCount(0);
     }
   }, [selectedSiteId, fetchTokens]);
 
@@ -91,7 +120,14 @@ export default function TokensPage() {
   }, [sites, selectedSiteId, lastSiteId]);
 
   const handleSiteChange = (siteId: string) => {
+    // Clear synchronously with the site change so the SAME render that flips
+    // the selector also empties the table/counts — otherwise there is a frame
+    // where revoke-all / prune (which target selectedSiteId) act while the old
+    // site's rows are still painted. The effect below also clears, but that
+    // runs after paint; this closes the interim frame.
     setSelectedSiteId(siteId);
+    setTokens([]);
+    setPrunableCount(0);
     updateLastSite(siteId);
   };
 
@@ -166,6 +202,39 @@ export default function TokensPage() {
     }
   };
 
+  const handlePrune = async () => {
+    setIsPruning(true);
+    try {
+      const response = await fetch(`/api/sites/${encodeURIComponent(selectedSiteId)}/agent-tokens/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prune: true,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to prune tokens');
+      }
+
+      toast.success('dead tokens pruned', {
+        description: `${data.revokedCount} superseded / expired token(s) removed. live tokens were untouched.`,
+      });
+
+      fetchTokens();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error('Failed to prune tokens', {
+        description: message,
+      });
+    } finally {
+      setIsPruning(false);
+      setPruneDialogOpen(false);
+    }
+  };
+
   // Resolve the selected site's timezone for display-mode-aware rendering.
   // This is a site-scoped admin surface — there is no single "machine" anchor.
   const selectedSite = sites.find(s => s.id === selectedSiteId);
@@ -198,11 +267,52 @@ export default function TokensPage() {
     return { label: `Expires ${expiry.toLocaleDateString()}`, color: 'bg-accent-cyan/20 text-accent-cyan border-accent-cyan/30' };
   };
 
+  // Distinct versions present, newest-first, for the version filter.
+  const versions = useMemo(() => {
+    const set = new Set<string>();
+    tokens.forEach((t) => { if (t.version) set.add(t.version); });
+    return Array.from(set).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  }, [tokens]);
+
+  // Per-machine token counts. When a machineId has more than one live token it
+  // means either repeated re-pairs OR distinct physical machines cloned to the
+  // same hostname. We deliberately do NOT try to pick which one is "active":
+  // lastUsed is stamped at pairing time (not only on refresh), so a re-paired
+  // or a separate-but-same-hostname token can look freshest while a genuinely
+  // live token looks stale. Declaring a winner would invite an admin to revoke
+  // the wrong (live) token — the exact failure this surface exists to prevent.
+  // Instead we flag every sharing row and let the "last used" column + human
+  // judgment decide.
+  const machineCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const t of tokens) {
+      counts.set(t.machineId, (counts.get(t.machineId) || 0) + 1);
+    }
+    return counts;
+  }, [tokens]);
+
+  const duplicateMachineCount = useMemo(
+    () => Array.from(machineCounts.values()).filter((n) => n > 1).length,
+    [machineCounts],
+  );
+
+  const filteredTokens = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return tokens.filter((t) => {
+      if (q && !t.machineId?.toLowerCase().includes(q) && !t.agentUid?.toLowerCase().includes(q)) {
+        return false;
+      }
+      if (versionFilter !== ALL && t.version !== versionFilter) return false;
+      if (duplicatesOnly && (machineCounts.get(t.machineId) || 0) <= 1) return false;
+      return true;
+    });
+  }, [tokens, search, versionFilter, duplicatesOnly, machineCounts]);
+
   return (
     <div className="p-8">
       <div className="max-w-screen-2xl mx-auto">
       {/* Header with inline site selector */}
-      <div className="mb-8">
+      <div className="mb-6">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-3xl font-bold text-foreground mb-2">agent tokens</h1>
@@ -254,6 +364,79 @@ export default function TokensPage() {
         </div>
       </div>
 
+      {/* Filter toolbar */}
+      {selectedSiteId && (
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <div className="relative flex-1 min-w-[220px] max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="search machine id or agent uid"
+              className="pl-9 bg-card border-border text-foreground"
+            />
+          </div>
+
+          <Select value={versionFilter} onValueChange={setVersionFilter}>
+            <SelectTrigger className="w-[160px] bg-card border-border text-foreground">
+              <SelectValue placeholder="all versions" />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-border">
+              <SelectItem value={ALL} className="text-foreground hover:bg-muted!">all versions</SelectItem>
+              {versions.map((v) => (
+                <SelectItem key={v} value={v} className="text-foreground hover:bg-muted!">{v}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setDuplicatesOnly((v) => !v)}
+                aria-pressed={duplicatesOnly}
+                className={`border-border cursor-pointer ${duplicatesOnly
+                  ? 'bg-accent-cyan/20 text-accent-cyan border-accent-cyan/40 hover:bg-accent-cyan/30!'
+                  : 'text-foreground hover:bg-accent! hover:text-foreground!'}`}
+              >
+                <Layers className="h-4 w-4 mr-2" />
+                duplicates{duplicateMachineCount > 0 ? ` (${duplicateMachineCount})` : ''}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+              <p>show only machine ids that have more than one live token — repeated re-pairs, or distinct machines cloned to the same hostname</p>
+            </TooltipContent>
+          </Tooltip>
+
+          <div className="ml-auto flex items-center gap-3">
+            {prunableCount > 0 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPruneDialogOpen(true)}
+                    className="border-amber-500/40 text-amber-400 hover:bg-amber-950/30! hover:text-amber-300! cursor-pointer"
+                  >
+                    <Eraser className="h-4 w-4 mr-2" />
+                    prune dead ({prunableCount})
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p>{prunableCount} superseded / expired token(s) are hidden here and safe to delete. live tokens are never touched.</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+            <span className="text-sm text-muted-foreground whitespace-nowrap">
+              {filteredTokens.length === tokens.length
+                ? `${tokens.length} live`
+                : `${filteredTokens.length} of ${tokens.length} live`}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Tokens Table */}
       {selectedSiteId && (
         <Card className="bg-card border-border">
@@ -265,6 +448,11 @@ export default function TokensPage() {
                 <KeyRound className="h-12 w-12 mx-auto mb-3 opacity-50" />
                 <p>no active tokens for this site</p>
                 <p className="text-sm mt-1">Tokens are created when agents register with the site</p>
+              </div>
+            ) : filteredTokens.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Search className="h-10 w-10 mx-auto mb-3 opacity-50" />
+                <p>no tokens match your filters</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -280,11 +468,35 @@ export default function TokensPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {tokens.map((token) => {
+                    {filteredTokens.map((token) => {
                       const expiryStatus = getExpiryStatus(token.expiresAt);
+                      const dupCount = machineCounts.get(token.machineId) || 0;
+                      const isDuplicated = dupCount > 1;
                       return (
                         <TableRow key={token.id} className="border-border hover:bg-muted/50">
-                          <TableCell className="font-mono text-foreground">{token.machineId}</TableCell>
+                          <TableCell className="font-mono text-foreground">
+                            <div className="flex items-center gap-2">
+                              <span>{token.machineId}</span>
+                              {isDuplicated && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge
+                                      tabIndex={0}
+                                      aria-label={`one of ${dupCount} tokens sharing machine id ${token.machineId}; revoking disconnects whichever agent holds this one`}
+                                      className="cursor-help bg-amber-500/20 text-amber-400 border-amber-500/30"
+                                    >
+                                      duplicate
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    <p>
+                                      {dupCount} tokens share this machine id — repeated re-pairs, or separate machines cloned to the same hostname. compare &ldquo;last used&rdquo; before revoking; revoking disconnects whichever agent holds this token.
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                            </div>
+                          </TableCell>
                           <TableCell className="text-foreground">{token.version || 'N/A'}</TableCell>
                           <TableCell>
                             <Badge className={expiryStatus.color}>
@@ -381,6 +593,38 @@ export default function TokensPage() {
               className="bg-red-600 hover:bg-red-700"
             >
               {isRevoking ? 'revoking...' : `revoke all ${tokens.length} tokens`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Prune Dead Tokens Dialog */}
+      <Dialog open={pruneDialogOpen} onOpenChange={setPruneDialogOpen}>
+        <DialogContent className="bg-background border-border">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-400">
+              <Eraser className="h-5 w-5" />
+              prune dead tokens?
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              This removes {prunableCount} superseded and expired token(s) that agents can no longer use —
+              the leftovers from refresh-token rotation. <strong className="text-foreground">live tokens are never touched</strong>,
+              so no connected agent is affected.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <AdminButton
+              adminVariant="card"
+              onClick={() => setPruneDialogOpen(false)}
+            >
+              Cancel
+            </AdminButton>
+            <Button
+              onClick={handlePrune}
+              disabled={isPruning}
+              className="bg-amber-600 hover:bg-amber-700"
+            >
+              {isPruning ? 'pruning...' : `prune ${prunableCount} dead tokens`}
             </Button>
           </DialogFooter>
         </DialogContent>

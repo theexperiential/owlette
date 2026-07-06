@@ -2,6 +2,8 @@
 
 Key facts grounding the plan. Items marked **[verified]** were checked against the code on 2026-06-10; others come from the research pass and should be re-confirmed at implementation time.
 
+**2026-07-03 re-verification (Wave 0):** All device-code/pairing facts below were re-checked against current code after ~130 commits landed — **all still HOLD** (only line numbers drifted; `configure_site.py` poll moved 278→322). The Wave 0 spike then proved the full headless path end-to-end against live dev (`e2e-machine/wave0/RESULTS.md`, 10/10). Confirmed live: no-MFA `__session` cookie works, Cloudflare does NOT block the agent's `requests` poll, the deferred mint returns real tokens. New nuances found: poll rate limit is `api` 300/hr; a 60s mint-claim lease returns 202 on concurrent polls (loop on 202); the post-pairing refresh leg now needs an `X-Owlette-Agent-Version` header (≥2.12.0) for the rotating path. The `4a282c6` refresh-token GC does NOT touch the pairing mint — each `/ADD=` still creates one new `agent_refresh_tokens` doc, so per-run teardown-by-siteId stays mandatory.
+
 ## Pairing / auth
 
 - **[verified]** `web/app/api/agent/auth/device-code/authorize/route.ts:57` calls bare `requireSession(request)` — resolves ONLY an iron-session `__session` cookie. A Firebase ID-token bearer will NOT authorize a device code. The `device-code` generate route needs the same cookie so `isDashboardOrigin` sets `preauthorizedIntent=true`; without it the doc takes the interactive branch and authorize 400s.

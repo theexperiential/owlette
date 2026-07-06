@@ -98,7 +98,7 @@ python owlette_service.py debug
     ```cmd
     C:\ProgramData\Owlette\python\python.exe C:\ProgramData\Owlette\agent\src\configure_site.py
     ```
-3. At `open browser on this machine? [y/N]`, choose `y` to open the local browser, or press Enter and enter the pairing phrase from another device.
+3. At `press Enter to open the pairing page in your browser`, press Enter only if you want the local browser, or leave it open and enter the pairing phrase from another device.
 4. Wait for authorization to complete, then restart the service.
 
 If pairing fails before authorization completes, check `C:\ProgramData\Owlette\logs\pairing_debug.log`.

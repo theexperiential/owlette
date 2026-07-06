@@ -5806,10 +5806,11 @@ paths:
       summary: bootstrap the caller user document
       description: |
         Creates `users/{uid}` for the authenticated caller on first sign-in
-        or sign-up. The uid is taken from the verified session or Firebase
-        ID token, not from the request body. This route intentionally does
-        not use the platform superadmin handler because a new caller has no
-        user document yet.
+        or sign-up. Both the uid AND the email are taken from the verified
+        session / Firebase Auth record (`getUser(uid).email`), never from the
+        request body — a body-supplied `email` is ignored. This route
+        intentionally does not use the platform superadmin handler because a
+        new caller has no user document yet.
       security:
         - firebaseIdToken: []
       parameters:
@@ -5823,11 +5824,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [email]
+              description: |
+                The email is not accepted here; it is resolved server-side
+                from the verified auth record. Only optional profile fields
+                are read from the body.
               properties:
-                email:
-                  type: string
-                  format: email
                 displayName:
                   type: string
                   maxLength: 200

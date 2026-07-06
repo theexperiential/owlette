@@ -5,7 +5,7 @@
 Double-click the installer and follow the prompts:
 
 ```bash
-Owlette-Installer-v2.0.0.exe
+Owlette-Installer-v<version>.exe
 ```
 
 This will install Owlette configured for the **production environment** (owlette.app) by default. Pass `/SERVER=dev` to target the development environment instead.
@@ -18,7 +18,7 @@ The installer supports switching between development and production environments
 
 #### Production Environment (Default)
 ```bash
-Owlette-Installer-v2.0.0.exe /SERVER=prod
+Owlette-Installer-v<version>.exe /SERVER=prod
 ```
 - Connects to: `https://owlette.app`
 - Use for production deployments
@@ -26,7 +26,7 @@ Owlette-Installer-v2.0.0.exe /SERVER=prod
 
 #### Development Environment
 ```bash
-Owlette-Installer-v2.0.0.exe /SERVER=dev
+Owlette-Installer-v<version>.exe /SERVER=dev
 ```
 - Connects to: `https://dev.owlette.app`
 - Use for testing, development, and staging
@@ -38,24 +38,24 @@ Owlette-Installer-v2.0.0.exe /SERVER=dev
    - `dev` → `https://dev.owlette.app/setup`
    - `prod` → `https://owlette.app/setup`
 3. The URL is passed to `configure_site.py` during installation
-4. Browser opens to the specified environment for OAuth configuration
+4. The console prints the pairing URL and starts polling; press Enter only if you want to open the local browser
 
 ## Silent Installation
 
 For automated deployments, combine with standard Inno Setup silent flags:
 
 ```bash
-# Silent install for development
-Owlette-Installer-v2.0.0.exe /SILENT /SERVER=dev
+# Silent install for development with a preauthorized phrase
+Owlette-Installer-v<version>.exe /SILENT /SERVER=dev /ADD=silver-compass-drift
 
-# Silent install for production
-Owlette-Installer-v2.0.0.exe /SILENT /SERVER=prod
+# Silent install for production with a preauthorized phrase
+Owlette-Installer-v<version>.exe /SILENT /SERVER=prod /ADD=silver-compass-drift
 
 # Very silent (no progress window)
-Owlette-Installer-v2.0.0.exe /VERYSILENT /SERVER=prod
+Owlette-Installer-v<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SERVER=prod /ADD=silver-compass-drift
 ```
 
-**Note:** Silent installation will still require Firebase credentials to be configured manually after installation.
+**Note:** For unattended installs, pass `/ADD=<phrase>` with a preauthorized pairing phrase from the dashboard. Silent installs without `/ADD=` still need an existing valid config or an operator to complete interactive pairing.
 
 ## Installation Process
 
@@ -69,13 +69,14 @@ Owlette-Installer-v2.0.0.exe /VERYSILENT /SERVER=prod
 3. **File Extraction**
    - Copies Python runtime, Owlette Agent code, tools, and configurations to `C:\ProgramData\Owlette`
 
-4. **Site Configuration (OAuth)**
-   - Opens browser to specified environment (dev/prod)
+4. **Site Configuration**
+   - Prints the pairing phrase and authorization URL for the selected environment (dev/prod)
+   - User presses Enter to open the browser, or authorizes from another device
    - User logs in and selects/creates a site
-   - **Automatic OAuth token exchange:**
-     - Web backend generates registration code
-     - Agent exchanges code for access + refresh tokens
-     - Tokens stored securely in Windows Credential Manager
+   - **Automatic device-code token exchange:**
+     - Web backend authorizes the pairing phrase
+     - Agent polls until access + refresh tokens are returned
+     - Tokens are stored in the encrypted Owlette token file
      - Site ID and configuration saved to `config.json`
    - **No manual credential downloads required!**
 
@@ -83,7 +84,7 @@ Owlette-Installer-v2.0.0.exe /VERYSILENT /SERVER=prod
    - Installs Owlette as a Windows service using NSSM
    - Configures service to start automatically
    - Starts the service
-   - Agent automatically authenticates using stored OAuth tokens
+   - Agent automatically authenticates using stored device-code tokens
 
 6. **Shortcuts Creation**
    - Start Menu shortcuts for GUI and tray icon
@@ -93,11 +94,11 @@ Owlette-Installer-v2.0.0.exe /VERYSILENT /SERVER=prod
 
 ### Firebase Integration
 
-**Firebase integration is automatic!** The installer OAuth flow handles all authentication:
+**Firebase integration is automatic!** The installer device-code flow handles all authentication:
 
 ✅ **Automatic:**
-- OAuth tokens (access + refresh)
-- Windows Credential Manager storage (encrypted)
+- Device-code tokens (access + refresh)
+- Encrypted token-file storage
 - Automatic token refresh (when access token expires)
 - Site assignment and permissions
 
@@ -109,9 +110,9 @@ Owlette-Installer-v2.0.0.exe /VERYSILENT /SERVER=prod
 ### Authentication Details
 
 **Where tokens are stored:**
-- Location: Windows Credential Manager
-- Encryption: Machine + user specific (DPAPI)
-- Access: Only the logged-in user on this machine
+- Location: `C:\ProgramData\Owlette\.tokens.enc`
+- Encryption: Machine-bound key
+- Access: Local Owlette processes on this machine
 
 **Token lifecycle:**
 - Access token: Valid for 1 hour (auto-refreshes)
@@ -156,16 +157,16 @@ The uninstaller will:
 
 ### Port 8765 Already in Use
 
-If the OAuth callback server fails to start:
-1. Check for other processes using port 8765
-2. Close conflicting applications
-3. Re-run the installer
+If pairing cannot reach the server:
+1. Check outbound HTTPS access to `owlette.app` or `dev.owlette.app`
+2. Confirm the pairing phrase has not expired
+3. Re-run the installer or `configure_site.py`
 
 ### Browser Doesn't Open
 
-If browser doesn't open automatically during setup:
-1. Manually navigate to the URL shown in the installer
-2. Complete the OAuth flow
+The installer no longer opens a browser automatically during setup:
+1. Press Enter in the pairing console to open the local browser, or manually navigate to the URL shown in the installer
+2. Complete the pairing flow
 3. Installation will continue automatically
 
 ### Service Won't Start
@@ -173,7 +174,7 @@ If browser doesn't open automatically during setup:
 Check logs at `C:\ProgramData\Owlette\agent\logs\` for error messages.
 
 Common issues:
-- Missing Firebase credentials (non-fatal, service runs in local-only mode)
+- Missing or expired pairing tokens
 - Python dependencies missing (re-run installer)
 - Port conflicts (check firewall settings)
 
@@ -183,12 +184,12 @@ Common issues:
 
 The installer uses `C:\ProgramData\Owlette` by default. To change:
 ```bash
-Owlette-Installer-v2.0.0.exe /DIR="D:\CustomPath\Owlette"
+Owlette-Installer-v<version>.exe /DIR="D:\CustomPath\Owlette"
 ```
 
-### Skip OAuth Configuration
+### Skip Pairing
 
-Not recommended, but you can manually edit `config.json` after installation to configure the site_id.
+Not recommended. The agent needs encrypted tokens from the pairing flow; editing `config.json` alone is not enough to connect to a site.
 
 ## Developer Notes
 
@@ -198,13 +199,13 @@ During development, you can test both environments:
 
 ```bash
 # Test dev environment
-Owlette-Installer-v2.0.0.exe /SERVER=dev
+Owlette-Installer-v<version>.exe /SERVER=dev
 
 # Uninstall
 C:\ProgramData\Owlette\unins000.exe
 
 # Test prod environment
-Owlette-Installer-v2.0.0.exe /SERVER=prod
+Owlette-Installer-v<version>.exe /SERVER=prod
 ```
 
 ### Manual Configuration Override
@@ -219,9 +220,9 @@ This is useful for local web development.
 
 ## Version History
 
-- **2.1.0** - OAuth custom token authentication (eliminated service accounts)
-  - Automatic OAuth flow during installation
-  - Tokens stored in Windows Credential Manager
+- **2.1.0** - Legacy browser-based custom token authentication (eliminated service accounts)
+  - Browser handoff during installation
+  - Tokens stored in the then-current Windows encrypted store
   - No manual credential downloads required
   - Token revocation via web dashboard
 

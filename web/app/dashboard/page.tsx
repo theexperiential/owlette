@@ -1217,7 +1217,7 @@ export default function DashboardPage() {
               <div className="rounded-lg border border-border bg-card-sunken p-4">
                 <h3 className="font-semibold text-foreground">step 2: run the installer</h3>
                 <p className="text-sm text-muted-foreground">
-                  on that machine, double-click the installer - it will automatically open a browser for authentication
+                  on that machine, double-click the installer - press Enter only if you want to open the pairing page locally
                 </p>
               </div>
               <div className="rounded-lg border border-border bg-card-sunken p-4">
