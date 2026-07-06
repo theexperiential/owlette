@@ -220,12 +220,17 @@ def stage3_bootstrap(hostname):
     ok &= record("3 bootstrap: service_status.json firebase.connected", connected,
                  f"path={STATUS_JSON}")
 
-    # service.log sanity
+    # service.log sanity. Match an INFO-level startup marker the service always
+    # emits: 'agent_started' proper is a Firestore event action logged only at
+    # DEBUG ("Logged agent_started event to Firestore"), suppressed at the
+    # default INFO level (owlette_service.py). 'owlette initialized' fires on
+    # first_start regardless of Firebase state.
+    STARTUP_MARKERS = ("owlette initialized", "Firebase client initialized and started")
     if SERVICE_LOG.exists():
         log_txt = SERVICE_LOG.read_text(encoding="utf-8", errors="ignore")
-        started = "agent_started" in log_txt
+        started = any(m in log_txt for m in STARTUP_MARKERS)
         clean = not any(lvl in log_txt for lvl in (" ERROR ", " CRITICAL "))
-        ok &= record("3 bootstrap: service.log agent_started, no ERROR/CRITICAL", started and clean,
+        ok &= record("3 bootstrap: service.log startup marker, no ERROR/CRITICAL", started and clean,
                      f"started={started} noErrors={clean}")
     else:
         ok &= record("3 bootstrap: service.log present", False, f"missing {SERVICE_LOG}")

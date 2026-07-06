@@ -118,19 +118,33 @@ export async function generateAndAuthorizePhrase(cookie) {
   return { phrase: gen.pairPhrase, expiresInSec: gen.expiresIn };
 }
 
+/** Coerce a Firestore Timestamp | number(seconds) | null into epoch seconds. */
+function toEpochSeconds(v) {
+  if (v == null) return null;
+  if (typeof v === 'number') return v;
+  if (typeof v.toMillis === 'function') return Math.floor(v.toMillis() / 1000);
+  if (typeof v._seconds === 'number') return v._seconds; // plain-object Timestamp
+  if (typeof v.seconds === 'number') return v.seconds;
+  return null;
+}
+
 /** Read the machine heartbeat doc + refresh-token count for the e2e site. */
 export async function probe(machineId) {
   const { db } = init();
   const m = await db.collection('sites').doc(SITE_ID).collection('machines').doc(machineId).get();
   const rt = await db.collection('agent_refresh_tokens').where('siteId', '==', SITE_ID).get();
   const md = m.exists ? m.data() : null;
+  // The agent writes lastHeartbeat as a Firestore SERVER_TIMESTAMP, so it reads
+  // back as a Timestamp object (not a number). Normalize to epoch seconds,
+  // tolerating a raw number too in case a write path ever changes.
+  const hbSec = toEpochSeconds(md?.lastHeartbeat);
   return {
     siteId: SITE_ID,
     machineId,
     machineExists: m.exists,
     online: md?.online ?? null,
-    lastHeartbeat: md?.lastHeartbeat ?? null,
-    lastHeartbeatAgeSec: typeof md?.lastHeartbeat === 'number' ? Math.floor(Date.now() / 1000) - md.lastHeartbeat : null,
+    lastHeartbeat: hbSec,
+    lastHeartbeatAgeSec: hbSec !== null ? Math.floor(Date.now() / 1000) - hbSec : null,
     agentVersion: md?.agent_version ?? null,
     refreshTokenCount: rt.size,
     refreshTokenMachineIds: rt.docs.map((d) => d.data().machineId),
