@@ -29,25 +29,25 @@ export function MachineSelector({ machines, selectedMachineId, onSelect }: Machi
         aria-label="cortex target"
         className="w-[220px] bg-secondary border-border text-foreground"
       >
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           {isSiteMode ? (
-            <Globe className="h-4 w-4 text-muted-foreground" />
+            <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
           ) : (
-            <Monitor className="h-4 w-4 text-muted-foreground" />
+            <Monitor className="h-4 w-4 shrink-0 text-muted-foreground" />
           )}
           <SelectValue placeholder="select target">
             {isSiteMode ? (
-              <span className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-accent-cyan" />
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="h-2 w-2 shrink-0 rounded-full bg-accent-cyan" />
                 All Machines
                 <span className="text-xs text-muted-foreground">({onlineCount})</span>
               </span>
             ) : selectedMachine ? (
-              <span className="flex items-center gap-2">
+              <span className="flex min-w-0 items-center gap-2">
                 <span
-                  className={`h-2 w-2 rounded-full ${selectedMachine.online ? 'bg-green-500' : 'bg-red-500'}`}
+                  className={`h-2 w-2 shrink-0 rounded-full ${selectedMachine.online ? 'bg-green-500' : 'bg-red-500'}`}
                 />
-                {selectedMachine.name}
+                <span className="truncate">{selectedMachine.name}</span>
               </span>
             ) : null}
           </SelectValue>
