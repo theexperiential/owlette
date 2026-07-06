@@ -29,6 +29,7 @@ import {
   buildExecutableTools,
   type SiteAccessLevel,
 } from '@/lib/cortex-utils.server';
+import { repairDanglingToolParts } from '@/lib/cortex/repairMessages';
 
 const SITE_TARGET_ID = '__site__';
 
@@ -389,13 +390,23 @@ async function handleServerSideLLM(
 
   const model = createModel(llmConfig);
 
+  // Repair dangling tool parts (stream died mid-tool-call, or an approval
+  // was superseded) so convertToModelMessages can't throw
+  // MissingToolResultsError and permanently brick the conversation.
+  const { messages: repairedMessages, repairedToolCallIds } = repairDanglingToolParts(messages);
+  if (repairedToolCallIds.length > 0) {
+    console.warn(
+      `[cortex] repaired ${repairedToolCallIds.length} dangling tool part(s) in chat ${chatId}: ${repairedToolCallIds.join(', ')}`,
+    );
+  }
+
   const result = streamText({
     model,
     system: buildSystemPrompt(machineName || machineId, false, processes),
     // Convert with the built tools so per-tool toModelOutput hooks (e.g.
     // capture_screenshot → image-url) project prior-turn tool outputs into
     // model content, not just on the turn they were produced.
-    messages: await convertToModelMessages(messages, { tools: executableTools }),
+    messages: await convertToModelMessages(repairedMessages, { tools: executableTools }),
     tools: executableTools,
     stopWhen: stepCountIs(10),
   });
@@ -436,10 +447,19 @@ async function handleSiteWideMode(
 
   const model = createModel(llmConfig);
 
+  // Same dangling-tool-part repair as the single-machine path — see
+  // handleServerSideLLM.
+  const { messages: repairedMessages, repairedToolCallIds } = repairDanglingToolParts(messages);
+  if (repairedToolCallIds.length > 0) {
+    console.warn(
+      `[cortex] repaired ${repairedToolCallIds.length} dangling tool part(s) in chat ${chatId}: ${repairedToolCallIds.join(', ')}`,
+    );
+  }
+
   const result = streamText({
     model,
     system: buildSystemPrompt('', true),
-    messages: await convertToModelMessages(messages, { tools: executableTools }),
+    messages: await convertToModelMessages(repairedMessages, { tools: executableTools }),
     tools: executableTools,
     stopWhen: stepCountIs(10),
   });
