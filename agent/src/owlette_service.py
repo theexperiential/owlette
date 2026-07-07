@@ -3909,7 +3909,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                 import mcp_tools
                 config = shared_utils.read_config()
-                result = mcp_tools.execute_tool(tool_name, tool_params, config)
+                # command_id lets execute_script register its subprocess for
+                # cancellation via the cancel_mcp_tool command
+                result = mcp_tools.execute_tool(tool_name, tool_params, config, command_id=cmd_id)
 
                 self._log_cortex_tool(tool_name, tool_params, result)
 

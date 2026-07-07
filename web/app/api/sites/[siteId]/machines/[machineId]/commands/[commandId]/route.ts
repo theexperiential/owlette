@@ -1,10 +1,14 @@
 /**
  * GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}
  *
- * Poll a queued command's status. Reads from three Firestore command
- * documents (`pending`, `in_progress`-implicit, `completed`) and synthesizes
- * a unified status. For `capture_screenshot` commands that completed and
- * persisted a `screenshot_path`, mints a fresh 1-hour signed read URL into
+ * Poll a queued command's status. Reads from two Firestore command
+ * documents (`pending` and `completed`) and synthesizes a unified status.
+ * Progress markers (`running` restart-safety marker, `downloading`,
+ * `installing`) live on the `completed` doc as NON-terminal statuses and
+ * surface as `in_progress` — only the whitelisted terminal statuses
+ * (`completed`/`failed`/`error`/`cancelled`) resolve the command. For
+ * `capture_screenshot` commands that completed and persisted a
+ * `screenshot_path`, mints a fresh 1-hour signed read URL into
  * `result.screenshot_url` per request — never persists the URL itself.
  *
  * Auth: `machine=<id>:read` (api-key) OR site membership (session/id-token).
@@ -29,6 +33,21 @@ interface RouteParams {
 const COMMAND_ID_RE = /^cmd_[A-Za-z0-9_-]{1,80}$/;
 
 type CommandStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+/**
+ * A completed-doc entry only resolves the command when its `status` is one of
+ * these. The agent also writes NON-terminal markers to the completed doc —
+ * `running` (restart-safety marker written at command start), `downloading`,
+ * and `installing` (deployment progress) — which must surface as `in_progress`,
+ * not `completed`. `cancelled` has no dedicated CommandStatus variant, so it is
+ * mapped to `failed` (surfacing the agent's cancellation error) at resolve time.
+ */
+const TERMINAL_COMMAND_STATUSES = new Set([
+  'completed',
+  'failed',
+  'error',
+  'cancelled',
+]);
 
 interface CommandLookup {
   status: CommandStatus;
@@ -61,10 +80,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       .collection('commands');
 
     // Read pending first, then completed. The agent moves a command from
-    // `pending → completed` on terminal status; intermediate `in_progress`
-    // is signalled by a status field on the pending entry. We read serially
-    // (rather than parallel) so the relative order is deterministic for
-    // tests + Firestore's per-collection read budget.
+    // `pending → completed` on terminal status, and writes intermediate
+    // progress markers (`running`/`downloading`/`installing`) to the
+    // `completed` doc as non-terminal statuses (never to the pending entry).
+    // We read serially (rather than parallel) so the relative order is
+    // deterministic for tests + Firestore's per-collection read budget.
     const pendingSnap = await commandsCol.doc('pending').get();
     const completedSnap = await commandsCol.doc('completed').get();
 
@@ -153,8 +173,16 @@ function resolveCommand(
   if (completedEntry && typeof completedEntry === 'object') {
     const data = completedEntry as Record<string, unknown>;
     const rawStatus = typeof data.status === 'string' ? data.status : null;
+    // Non-terminal markers (`running`/`downloading`/`installing`, or any
+    // unrecognized status) mean the command is still executing — surface as
+    // in_progress, never as completed with an empty result.
+    if (!rawStatus || !TERMINAL_COMMAND_STATUSES.has(rawStatus)) {
+      return { status: 'in_progress', data, source: 'completed' };
+    }
+    // Terminal. `cancelled` has no dedicated CommandStatus variant, so it maps
+    // to `failed` — the agent's cancellation error then surfaces via `error`.
     const status: CommandStatus =
-      rawStatus === 'failed' || rawStatus === 'error'
+      rawStatus === 'failed' || rawStatus === 'error' || rawStatus === 'cancelled'
         ? 'failed'
         : 'completed';
     return { status, data, source: 'completed' };
@@ -166,12 +194,10 @@ function resolveCommand(
   const pendingEntry = pendingAll?.[commandId];
   if (pendingEntry && typeof pendingEntry === 'object') {
     const data = pendingEntry as Record<string, unknown>;
-    const rawStatus = typeof data.status === 'string' ? data.status : 'pending';
-    const status: CommandStatus =
-      rawStatus === 'in_progress' || rawStatus === 'running'
-        ? 'in_progress'
-        : 'pending';
-    return { status, data, source: 'pending' };
+    // A command in the pending doc is always awaiting agent pickup — the agent
+    // never writes intermediate/terminal status here (progress + terminal
+    // states are written to the completed doc, handled above).
+    return { status: 'pending', data, source: 'pending' };
   }
 
   return null;

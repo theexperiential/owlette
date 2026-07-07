@@ -187,6 +187,27 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
     if (chat.error) setErrorDismissed(false);
   }, [chat.error]);
 
+  // Per-commandId cancel-in-flight state. Lives here (next to the async
+  // handler) — ChatWindow just derives a per-card boolean from the Set.
+  const [cancelPendingCommandIds, setCancelPendingCommandIds] = useState<Set<string>>(new Set());
+  const cancelTool = chat.cancelTool;
+  const handleCancelTool = useCallback(async (commandId: string) => {
+    setCancelPendingCommandIds((prev) => {
+      const next = new Set(prev);
+      next.add(commandId);
+      return next;
+    });
+    try {
+      await cancelTool(commandId);
+    } finally {
+      setCancelPendingCommandIds((prev) => {
+        const next = new Set(prev);
+        next.delete(commandId);
+        return next;
+      });
+    }
+  }, [cancelTool]);
+
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
@@ -680,6 +701,10 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
               onToolApproval={(id, approved) => chat.addToolApprovalResponse({ id, approved })}
               onEditMessage={chat.editMessage}
               approvalTargetLabel={isSiteMode ? 'all machines' : selectedMachineId}
+              toolCommands={chat.toolCommands}
+              onCancelTool={handleCancelTool}
+              cancelPendingCommandIds={cancelPendingCommandIds}
+              turnStale={chat.turnStale}
             />
           )}
 

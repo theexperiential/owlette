@@ -21,6 +21,15 @@ interface ToolCallCardProps {
   approvalTargetLabel?: string;
   onApprove?: () => void;
   onDeny?: () => void;
+  /**
+   * Cancel the running tool call. Only provided while the tool is executing
+   * AND at least one agent command has been dispatched for it (a site-wide
+   * fan-out cancels every targeted machine) — server-side tools and
+   * not-yet-dispatched calls have no cancel affordance.
+   */
+  onCancel?: () => void;
+  /** True while the cancel request is in flight — disables the button. */
+  cancelPending?: boolean;
 }
 
 export function ToolCallCard({
@@ -32,6 +41,8 @@ export function ToolCallCard({
   approvalTargetLabel,
   onApprove,
   onDeny,
+  onCancel,
+  cancelPending,
 }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -100,6 +111,29 @@ export function ToolCallCard({
           )}
         </span>
       </button>
+
+      {/* Cancel affordance — sibling of the header (not nested inside it: the
+          header is a <button>, and nested interactive controls are an axe
+          violation). Only rendered while executing with a known commandId. */}
+      {isLoading && onCancel && (
+        <div className="border-t border-border px-3 py-1.5 flex items-center justify-end">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={cancelPending}
+            onClick={onCancel}
+            className="h-7 text-xs text-muted-foreground"
+          >
+            {cancelPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Ban className="h-3.5 w-3.5" />
+            )}
+            cancel
+          </Button>
+        </div>
+      )}
 
       {/* Approval banner — privileged tier-3 action needs explicit go-ahead.
           The payload stays collapsed (expand the card header to inspect the

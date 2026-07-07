@@ -16,6 +16,7 @@ import re
 import shlex
 import socket
 import subprocess
+import threading
 import time
 import json
 from datetime import datetime
@@ -44,6 +45,38 @@ MAX_OUTPUT_SIZE = 50000
 
 # Subprocess timeout (seconds)
 SUBPROCESS_TIMEOUT = 25
+
+# Maximum execute_script timeout (seconds). 55 minutes — safely under the
+# 1-hour pending-entry GC in firebase_client._cleanup_stale_commands: a script
+# that outlives its pending entry can never deliver a result. The web side
+# clamps to the same value; longer jobs use the detached-job + follow-up
+# pattern instead.
+MAX_SCRIPT_TIMEOUT = 3300
+
+# ─── Running-process registry (cancel support) ──────────────────────────────
+# Maps in-flight command_id → subprocess PID for execute_script calls, so a
+# cancel_mcp_tool command (handled in firebase_client) can kill the process
+# tree of a specific running script. Entries are removed when the script
+# finishes, times out, or errors.
+_RUNNING_COMMANDS = {}
+_RUNNING_COMMANDS_LOCK = threading.Lock()
+
+
+def cancel_running_command(command_id):
+    """Kill the process tree of an in-flight command registered by
+    _execute_script.
+
+    Returns True if a running process was found and killed, False if the
+    command is unknown or already finished (idempotent — cancelling twice,
+    or cancelling a completed command, is not an error).
+    """
+    with _RUNNING_COMMANDS_LOCK:
+        pid = _RUNNING_COMMANDS.get(command_id)
+    if pid is None:
+        return False
+    logger.info(f"[MCP-AUDIT] cancel_mcp_tool: killing process tree for command {command_id} (PID {pid})")
+    _kill_process_tree(pid)
+    return True
 
 # ─── Tier 2 safety: critical processes that manage_process must never kill ──
 _CRITICAL_PROCESSES = frozenset({
@@ -123,7 +156,7 @@ def _validate_registry_path(hive, key_path):
     )
 
 
-def execute_tool(tool_name, tool_params, config=None):
+def execute_tool(tool_name, tool_params, config=None, command_id=None):
     """
     Dispatch a tool call to the appropriate handler.
 
@@ -131,6 +164,8 @@ def execute_tool(tool_name, tool_params, config=None):
         tool_name: Name of the tool to execute
         tool_params: Dict of parameters for the tool
         config: Optional agent config dict (avoids re-reading from disk)
+        command_id: Optional originating Firestore command id — lets
+            _execute_script register its subprocess for cancellation
 
     Returns:
         Dict with tool result or error
@@ -179,6 +214,10 @@ def execute_tool(tool_name, tool_params, config=None):
         return {'error': f'Unknown tool: {tool_name}'}
 
     try:
+        # Only _execute_script tracks its subprocess for cancellation;
+        # every other handler keeps the (params, config) signature.
+        if handler is _execute_script:
+            return handler(tool_params, config, command_id=command_id)
         return handler(tool_params, config)
     except Exception as e:
         logger.error(f"Tool '{tool_name}' failed: {e}")
@@ -876,18 +915,25 @@ def _run_powershell(params, config):
         return {'error': f'PowerShell command timed out after {SUBPROCESS_TIMEOUT} seconds'}
 
 
-def _execute_script(params, config):
+def _execute_script(params, config, command_id=None):
     """Execute a PowerShell script with no command restrictions.
 
     Uses Popen with a job object so the entire process tree (including
     child processes spawned by Start-Job, Start-Process, etc.) is killed
     on timeout instead of leaving orphans.
+
+    When command_id is provided, the subprocess PID is registered in
+    _RUNNING_COMMANDS for the duration of the run so cancel_mcp_tool can
+    kill it mid-flight.
     """
     script = params.get('script', '').strip()
     if not script:
         return {'error': 'script parameter is required'}
 
     timeout = params.get('timeout_seconds', 120)
+    if timeout > MAX_SCRIPT_TIMEOUT:
+        logger.info(f"[MCP-AUDIT] execute_script timeout_seconds clamped: {timeout}s -> {MAX_SCRIPT_TIMEOUT}s")
+        timeout = MAX_SCRIPT_TIMEOUT
     cwd = params.get('working_directory', None)
 
     if cwd and not os.path.isdir(cwd):
@@ -904,6 +950,10 @@ def _execute_script(params, config):
         cwd=cwd,
         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
     )
+
+    if command_id is not None:
+        with _RUNNING_COMMANDS_LOCK:
+            _RUNNING_COMMANDS[command_id] = proc.pid
 
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
@@ -931,6 +981,10 @@ def _execute_script(params, config):
     except Exception:
         _kill_process_tree(proc.pid)
         raise
+    finally:
+        if command_id is not None:
+            with _RUNNING_COMMANDS_LOCK:
+                _RUNNING_COMMANDS.pop(command_id, None)
 
 
 def _get_allowed_file_bases(config):

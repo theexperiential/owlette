@@ -33,6 +33,34 @@ const SERVER_SIDE_TOOLS = new Set([
 export const COMMAND_POLL_INTERVAL_MS = 1500;
 export const COMMAND_TIMEOUT_MS = 30000;
 
+/**
+ * Web-side cap for tool-provided `timeout_seconds` (55 minutes). Mirrors the
+ * agent-side clamp (agent/src/mcp_tools.py `MAX_SCRIPT_TIMEOUT`) and stays
+ * under the agent's 1-hour pending-entry GC so a command can never outlive
+ * its pending entry. Longer jobs should run detached with a scheduled
+ * follow-up instead.
+ */
+export const MAX_TOOL_TIMEOUT_SECONDS = 3300;
+
+/**
+ * Observability hooks for agent command dispatch + polling. Used by the turn
+ * runner to record `toolCallId → commandId` recovery mappings and to keep the
+ * stream doc's heartbeat fresh during long tool waits.
+ */
+export interface AgentCommandHooks {
+  /** Fires synchronously right after the pending-command write, with the generated commandId. */
+  onCommandQueued?: (commandId: string) => void;
+  /** Fires on each poll iteration while waiting for the agent's result. */
+  onPollTick?: () => void;
+  /**
+   * Aborts the poll wait when the owning turn is superseded or stopped. When
+   * this fires, the poll loop deletes the pending command (best effort) and
+   * returns a cancelled result so the tool loop unwinds promptly instead of
+   * blocking a dead turn for the full command timeout.
+   */
+  abortSignal?: AbortSignal;
+}
+
 const RESERVED_EXISTING_COMMAND_KEYS: ReadonlySet<string> = new Set<string>([
   'type',
   'process_name',
@@ -59,6 +87,20 @@ export interface BuildExecutableToolsOptions {
    * so the approval toggle is honored consistently everywhere.
    */
   requireTier3Approval?: boolean;
+  /**
+   * Per-tool-call dispatch hooks. `onCommandQueued` receives the AI SDK
+   * toolCallId, the Firestore commandId written to `commands/pending`, and the
+   * target machineId (site-wide fan-out fires once per machine). `onPollTick`
+   * fires on every poll iteration. Server-side tools (SERVER_SIDE_TOOLS) never
+   * dispatch commands, so they never fire these.
+   */
+  toolCallbacks?: {
+    onCommandQueued?: (toolCallId: string, commandId: string, machineId: string) => void;
+    onPollTick?: () => void;
+    /** Per-turn abort signal — fans out to every dispatch's poll loop so a
+     * superseded/stopped turn stops waiting on in-flight tool commands. */
+    abortSignal?: AbortSignal;
+  };
 }
 
 type ProcessToolResult = Record<string, unknown>;
@@ -391,13 +433,16 @@ export async function executeToolOnAgent(
   machineId: string,
   toolName: string,
   toolParams: Record<string, unknown>,
-  chatId: string
+  chatId: string,
+  opts?: AgentCommandHooks
 ): Promise<unknown> {
   const commandId = `mcp_${Date.now()}_${toolName}`;
 
-  // Use tool-provided timeout if available, otherwise default
+  // Use tool-provided timeout if available, otherwise default. Clamped to
+  // MAX_TOOL_TIMEOUT_SECONDS (mirrors the agent-side clamp in
+  // agent/src/mcp_tools.py MAX_SCRIPT_TIMEOUT).
   const toolTimeout = typeof toolParams.timeout_seconds === 'number'
-    ? toolParams.timeout_seconds * 1000
+    ? Math.min(toolParams.timeout_seconds, MAX_TOOL_TIMEOUT_SECONDS) * 1000
     : COMMAND_TIMEOUT_MS;
   // Add buffer for agent-side overhead (startup, serialization)
   const pollTimeoutMs = toolTimeout + 10000;
@@ -425,6 +470,8 @@ export async function executeToolOnAgent(
     { merge: true }
   );
 
+  opts?.onCommandQueued?.(commandId);
+
   const completedRef = db
     .collection('sites')
     .doc(siteId)
@@ -436,7 +483,20 @@ export async function executeToolOnAgent(
   const startTime = Date.now();
 
   while (Date.now() - startTime < pollTimeoutMs) {
+    // Owning turn superseded/stopped: stop waiting, drop the pending command
+    // (best effort — the agent may already be running it), and unwind.
+    if (opts?.abortSignal?.aborted) {
+      try {
+        const { FieldValue } = await import('firebase-admin/firestore');
+        await pendingRef.update({ [commandId]: FieldValue.delete() });
+      } catch {
+        // Best effort cleanup
+      }
+      return { error: 'cancelled by user' };
+    }
+
     await new Promise((resolve) => setTimeout(resolve, COMMAND_POLL_INTERVAL_MS));
+    opts?.onPollTick?.();
 
     const completedDoc = await completedRef.get();
     if (!completedDoc.exists) continue;
@@ -445,11 +505,24 @@ export async function executeToolOnAgent(
     const cmdResult = data?.[commandId];
 
     if (cmdResult) {
+      // CROSS-SIDE CONTRACT: the agent writes `{status: 'running', startedAt}`
+      // to the completed doc when a command starts (restart safety + progress
+      // signal — see agent/src/firebase_client.py `_mark_command_running`).
+      // Running entries are NON-terminal: skip and keep polling, and never
+      // delete them — the agent's terminal write overwrites the marker.
+      if (cmdResult.status === 'running') continue;
+
       const { FieldValue } = await import('firebase-admin/firestore');
       await completedRef.update({ [commandId]: FieldValue.delete() });
 
       if (cmdResult.status === 'failed') {
         return { error: cmdResult.error || 'Tool execution failed' };
+      }
+      // A user cancel (via /api/cortex/cancel-tool → agent) writes a terminal
+      // `cancelled` entry. Surface it as an error so the model reacts instead
+      // of falling through the success path and returning undefined.
+      if (cmdResult.status === 'cancelled') {
+        return { error: cmdResult.error || 'cancelled by user' };
       }
 
       const result = cmdResult.result;
@@ -484,7 +557,8 @@ export async function executeExistingCommand(
   machineId: string,
   commandType: string,
   processName: string,
-  extraParams: Record<string, unknown> = {}
+  extraParams: Record<string, unknown> = {},
+  opts?: AgentCommandHooks
 ): Promise<unknown> {
   const commandId = `${commandType}_${Date.now()}`;
   const safeExtraParams = stripReservedExistingCommandKeys(extraParams);
@@ -510,6 +584,8 @@ export async function executeExistingCommand(
     { merge: true }
   );
 
+  opts?.onCommandQueued?.(commandId);
+
   const completedRef = db
     .collection('sites')
     .doc(siteId)
@@ -521,12 +597,29 @@ export async function executeExistingCommand(
   const startTime = Date.now();
 
   while (Date.now() - startTime < COMMAND_TIMEOUT_MS) {
+    // Owning turn superseded/stopped: drop the pending command and unwind.
+    if (opts?.abortSignal?.aborted) {
+      try {
+        const { FieldValue } = await import('firebase-admin/firestore');
+        await pendingRef.update({ [commandId]: FieldValue.delete() });
+      } catch {
+        // Best effort cleanup
+      }
+      return { error: 'cancelled by user' };
+    }
+
     await new Promise((resolve) => setTimeout(resolve, COMMAND_POLL_INTERVAL_MS));
+    opts?.onPollTick?.();
 
     const completedDoc = await completedRef.get();
     const cmdResult = completedDoc.data()?.[commandId];
 
     if (cmdResult) {
+      // CROSS-SIDE CONTRACT: `{status: 'running'}` entries are non-terminal
+      // progress markers (agent/src/firebase_client.py `_mark_command_running`)
+      // — skip and keep polling; never delete them.
+      if (cmdResult.status === 'running') continue;
+
       const { FieldValue } = await import('firebase-admin/firestore');
       await completedRef.update({ [commandId]: FieldValue.delete() });
 
@@ -1139,8 +1232,24 @@ export function buildExecutableTools(
       // it is intentionally unaffected. Gated by the per-site approval flag so
       // turning approval off disables the gate on every path, not just local.
       needsApproval: def.tier >= 3 && options.requireTier3Approval !== false,
-      execute: async (params: unknown) => {
-        // Server-side tools run directly on the web server (no agent relay)
+      execute: async (params: unknown, execOptions?: { toolCallId?: string }) => {
+        // Bridge the per-turn toolCallbacks into per-dispatch AgentCommandHooks:
+        // the AI SDK passes { toolCallId } as execute's second arg; each
+        // dispatch pairs it with the commandId + target machineId (site-wide
+        // fan-out fires once per machine).
+        const toolCallbacks = options.toolCallbacks;
+        const hooksFor = (targetMachineId: string): AgentCommandHooks | undefined =>
+          toolCallbacks
+            ? {
+                onCommandQueued: (commandId) =>
+                  toolCallbacks.onCommandQueued?.(execOptions?.toolCallId ?? '', commandId, targetMachineId),
+                onPollTick: toolCallbacks.onPollTick,
+                abortSignal: toolCallbacks.abortSignal,
+              }
+            : undefined;
+
+        // Server-side tools run directly on the web server (no agent relay,
+        // no command dispatch — toolCallbacks intentionally not fired)
         if (SERVER_SIDE_TOOLS.has(toolName)) {
           // For deploy_software in site mode, target all online machines
           const targetMachineIds = siteMode ? onlineMachines : [machineId];
@@ -1162,10 +1271,10 @@ export function buildExecutableTools(
                 if (existingCmd) {
                   const toolParams = params as Record<string, unknown>;
                   const processName = toolParams.process_name as string;
-                  const result = await executeExistingCommand(db, siteId, mid, existingCmd, processName, toolParams);
+                  const result = await executeExistingCommand(db, siteId, mid, existingCmd, processName, toolParams, hooksFor(mid));
                   return { machine: mid, ...result as Record<string, unknown> };
                 }
-                const result = await executeToolOnAgent(db, siteId, mid, toolName, params as Record<string, unknown>, chatId);
+                const result = await executeToolOnAgent(db, siteId, mid, toolName, params as Record<string, unknown>, chatId, hooksFor(mid));
                 return { machine: mid, ...(typeof result === 'object' && result !== null ? result as Record<string, unknown> : { result }) };
               } catch (err) {
                 return { machine: mid, error: err instanceof Error ? err.message : 'Unknown error' };
@@ -1180,10 +1289,10 @@ export function buildExecutableTools(
         if (existingCmd) {
           const toolParams = params as Record<string, unknown>;
           const processName = toolParams.process_name as string;
-          return executeExistingCommand(db, siteId, machineId, existingCmd, processName, toolParams);
+          return executeExistingCommand(db, siteId, machineId, existingCmd, processName, toolParams, hooksFor(machineId));
         }
 
-        return executeToolOnAgent(db, siteId, machineId, toolName, params as Record<string, unknown>, chatId);
+        return executeToolOnAgent(db, siteId, machineId, toolName, params as Record<string, unknown>, chatId, hooksFor(machineId));
       },
     };
 

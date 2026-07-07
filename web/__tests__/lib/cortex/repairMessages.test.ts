@@ -14,6 +14,10 @@
  *   5. regression pin against the real AI SDK: the broken shape makes
  *      convertToModelMessages throw MissingToolResultsError; the repaired
  *      shape converts cleanly
+ *   6. the async resolver overload: recovered `{ output }` becomes a real
+ *      `output-available` part, `{ errorText }` customizes the error,
+ *      `null` falls back to LOST_RESULT_ERROR, and approval-requested
+ *      parts never consult the resolver
  */
 
 import { convertToModelMessages, streamText, type UIMessage } from 'ai';
@@ -22,6 +26,7 @@ import {
   repairDanglingToolParts,
   LOST_RESULT_ERROR,
   SUPERSEDED_APPROVAL_ERROR,
+  STILL_RUNNING_ERROR,
 } from '@/lib/cortex/repairMessages';
 
 function userMsg(id: string, text: string): UIMessage {
@@ -166,7 +171,7 @@ describe('repairDanglingToolParts', () => {
     });
   });
 
-  it('leaves output-error and approval-responded parts untouched', () => {
+  it('leaves output-error and DENIED approval-responded parts untouched', () => {
     const erroredPart = {
       type: 'tool-execute_script',
       toolCallId: 'toolu_err_1',
@@ -174,7 +179,7 @@ describe('repairDanglingToolParts', () => {
       input: {},
       errorText: 'agent said no',
     };
-    const respondedPart = {
+    const deniedPart = {
       type: 'tool-reboot_machine',
       toolCallId: 'toolu_resp_1',
       state: 'approval-responded',
@@ -183,7 +188,7 @@ describe('repairDanglingToolParts', () => {
     };
     const messages = [
       userMsg('u1', 'go'),
-      assistantMsg('a1', [erroredPart, respondedPart]),
+      assistantMsg('a1', [erroredPart, deniedPart]),
       userMsg('u2', 'ok'),
     ];
 
@@ -191,6 +196,67 @@ describe('repairDanglingToolParts', () => {
 
     expect(repairedToolCallIds).toEqual([]);
     expect(out[1]).toBe(messages[1]);
+  });
+
+  // The prod failure that the live smoke surfaced: a tier-3 tool approved and
+  // executing, then superseded by a new user message. Its part is
+  // `approval-responded` (approved) with no output — repair must give it a
+  // synthetic result or convertToModelMessages emits a dangling tool_use and
+  // the provider 400s the whole request ("tool_use ids without tool_result").
+  it('repairs an APPROVED approval-responded part superseded mid-execution', () => {
+    const approvedInflight = {
+      type: 'tool-execute_script',
+      toolCallId: 'toolu_appr_exec_1',
+      state: 'approval-responded',
+      input: { script: 'Start-Sleep -Seconds 300' },
+      approval: { id: 'appr_3', approved: true },
+    };
+    const messages = [
+      userMsg('u1', 'run the long script'),
+      assistantMsg('a1', [{ type: 'text', text: 'running that now' }, approvedInflight]),
+      userMsg('u2', 'while that runs, what is the uptime?'),
+    ];
+
+    const { messages: out, repairedToolCallIds } = repairDanglingToolParts(messages);
+
+    expect(repairedToolCallIds).toEqual(['toolu_appr_exec_1']);
+    const part = (out[1].parts as Array<Record<string, unknown>>)[1];
+    expect(part).toMatchObject({
+      type: 'tool-execute_script',
+      toolCallId: 'toolu_appr_exec_1',
+      state: 'output-error',
+      errorText: LOST_RESULT_ERROR,
+    });
+    expect(part.approval).toBeUndefined();
+  });
+
+  it('recovers the real result for an APPROVED approval-responded part via the resolver', async () => {
+    const approvedInflight = {
+      type: 'tool-execute_script',
+      toolCallId: 'toolu_appr_exec_2',
+      state: 'approval-responded',
+      input: { script: 'Get-Uptime' },
+      approval: { id: 'appr_4', approved: true },
+    };
+    const messages = [
+      userMsg('u1', 'run it'),
+      assistantMsg('a1', [approvedInflight]),
+      userMsg('u2', 'and?'),
+    ];
+
+    const seen: string[] = [];
+    const { messages: out } = await repairDanglingToolParts(messages, {
+      resolveLostResult: async (id) => {
+        seen.push(id);
+        return { output: { exit_code: 0, stdout: 'up 3 days' } };
+      },
+    });
+
+    expect(seen).toContain('toolu_appr_exec_2');
+    expect((out[1].parts as Array<Record<string, unknown>>)[0]).toMatchObject({
+      state: 'output-available',
+      output: { exit_code: 0, stdout: 'up 3 days' },
+    });
   });
 
   // The regression pin this module exists for: the exact prod failure shape
@@ -255,5 +321,104 @@ describe('repairDanglingToolParts', () => {
       .filter((m) => m.role === 'tool')
       .flatMap((m) => m.content as Array<{ type: string; toolCallId?: string }>);
     expect(toolResults.some((c) => c.toolCallId === 'toolu_dangling_1')).toBe(true);
+  });
+});
+
+describe('repairDanglingToolParts with resolveLostResult (async overload)', () => {
+  function brokenHistory(): UIMessage[] {
+    return [
+      userMsg('u1', 'run sfc and dism'),
+      assistantMsg('a1', [{ type: 'text', text: 'running both' }, completedToolPart, danglingToolPart]),
+      userMsg('u2', 'still running?'),
+    ];
+  }
+
+  it('splices a recovered { output } in as output-available', async () => {
+    const recovered = { exit_code: 0, stdout: 'scan complete, no violations' };
+    const resolveLostResult = jest.fn().mockResolvedValue({ output: recovered });
+
+    const { messages: out, repairedToolCallIds } = await repairDanglingToolParts(brokenHistory(), {
+      resolveLostResult,
+    });
+
+    expect(resolveLostResult).toHaveBeenCalledTimes(1);
+    expect(resolveLostResult).toHaveBeenCalledWith('toolu_dangling_1');
+    expect(repairedToolCallIds).toEqual(['toolu_dangling_1']);
+    const parts = out[1].parts as Array<Record<string, unknown>>;
+    expect(parts[1]).toBe(completedToolPart); // untouched sibling
+    expect(parts[2]).toMatchObject({
+      type: 'tool-execute_script',
+      toolCallId: 'toolu_dangling_1',
+      state: 'output-available',
+      output: recovered,
+      input: danglingToolPart.input, // captured input preserved
+    });
+    expect((parts[2] as Record<string, unknown>).errorText).toBeUndefined();
+
+    // The recovered history must also satisfy the SDK's validation.
+    const modelMessages = await convertToModelMessages(out);
+    const toolResults = modelMessages
+      .filter((m) => m.role === 'tool')
+      .flatMap((m) => m.content as Array<{ type: string; toolCallId?: string }>);
+    expect(toolResults.some((c) => c.toolCallId === 'toolu_dangling_1')).toBe(true);
+  });
+
+  it('uses a resolver-supplied { errorText } for the output-error', async () => {
+    const { messages: out } = await repairDanglingToolParts(brokenHistory(), {
+      resolveLostResult: async () => ({ errorText: STILL_RUNNING_ERROR }),
+    });
+
+    expect((out[1].parts as Array<Record<string, unknown>>)[2]).toMatchObject({
+      state: 'output-error',
+      errorText: STILL_RUNNING_ERROR,
+      input: danglingToolPart.input,
+    });
+  });
+
+  it('falls back to LOST_RESULT_ERROR when the resolver returns null', async () => {
+    const { messages: out, repairedToolCallIds } = await repairDanglingToolParts(brokenHistory(), {
+      resolveLostResult: async () => null,
+    });
+
+    expect(repairedToolCallIds).toEqual(['toolu_dangling_1']);
+    expect((out[1].parts as Array<Record<string, unknown>>)[2]).toMatchObject({
+      state: 'output-error',
+      errorText: LOST_RESULT_ERROR,
+    });
+  });
+
+  it('never invokes the resolver for superseded approval-requested parts', async () => {
+    const resolveLostResult = jest.fn().mockResolvedValue({ output: { exit_code: 0 } });
+    const messages = [
+      userMsg('u1', 'reboot it'),
+      assistantMsg('a1', [
+        {
+          type: 'tool-reboot_machine',
+          toolCallId: 'toolu_approval_1',
+          state: 'approval-requested',
+          input: {},
+          approval: { id: 'appr_1' },
+        },
+      ]),
+      userMsg('u2', 'actually, wait'),
+    ];
+
+    const { messages: out, repairedToolCallIds } = await repairDanglingToolParts(messages, {
+      resolveLostResult,
+    });
+
+    expect(resolveLostResult).not.toHaveBeenCalled();
+    expect(repairedToolCallIds).toEqual(['toolu_approval_1']);
+    expect((out[1].parts as Array<Record<string, unknown>>)[0]).toMatchObject({
+      state: 'output-error',
+      errorText: SUPERSEDED_APPROVAL_ERROR, // the tool never ran — not resolver-eligible
+    });
+  });
+
+  it('keeps the no-opts signature synchronous (not a Promise)', () => {
+    const result = repairDanglingToolParts(brokenHistory());
+
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(result.repairedToolCallIds).toEqual(['toolu_dangling_1']);
   });
 });

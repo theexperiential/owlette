@@ -215,6 +215,13 @@ class FirebaseClient:
         # already-processed commands aren't re-executed.
         self._seen_commands: set = set()
 
+        # Commands whose subprocess was killed by cancel_mcp_tool. The cancel
+        # handler writes the terminal 'cancelled' entry immediately; when the
+        # killed command's own thread later unwinds, _execute_command checks
+        # this set so it re-asserts 'cancelled' instead of clobbering it with
+        # a 'completed'/'failed' result from the dead subprocess.
+        self._cancelled_commands: set = set()
+
         # Cached site timezone (fetched from sites/{siteId} on connect)
         self.site_timezone: Optional[str] = None
 
@@ -512,17 +519,7 @@ class FirebaseClient:
 
         # Start listeners if connected (ConnectionManager will supervise these)
         if self.connected:
-            # Pre-populate seen commands from completed doc to prevent
-            # re-executing commands after a service restart (e.g., if the
-            # service crashed between writing "completed" and deleting "pending")
-            try:
-                completed_path = f"sites/{self.site_id}/machines/{self.machine_id}/commands/completed"
-                completed_data = self.db.get_document(completed_path)
-                if completed_data:
-                    self._seen_commands = set(completed_data.keys())
-                    self.logger.debug(f"Pre-populated {len(self._seen_commands)} seen commands from completed doc")
-            except Exception as e:
-                self.logger.warning(f"Could not pre-populate seen commands: {e}")
+            self._seed_seen_commands()
 
             # Trigger initial thread start via connection manager
             self.connection_manager._restart_all_threads()
@@ -539,6 +536,37 @@ class FirebaseClient:
         else:
             self.logger.warning("Listener threads NOT started (offline mode)")
             self.logger.warning("Software inventory NOT synced (offline mode)")
+
+    def _seed_seen_commands(self):
+        """Pre-populate _seen_commands from the completed doc on startup.
+
+        Prevents re-executing commands after a service restart (e.g., if the
+        service crashed between writing "completed" and deleting "pending").
+
+        Restart safety: any entry still marked status:'running' was in flight
+        when the service last stopped — its subprocess died with the service,
+        so mark it failed. Web pollers get a terminal status instead of
+        waiting forever, and the command is never silently re-executed (its
+        id is already seeded into _seen_commands above).
+        """
+        try:
+            completed_path = f"sites/{self.site_id}/machines/{self.machine_id}/commands/completed"
+            completed_data = self.db.get_document(completed_path)
+            if completed_data:
+                self._seen_commands = set(completed_data.keys())
+                self.logger.debug(f"Pre-populated {len(self._seen_commands)} seen commands from completed doc")
+
+                for cmd_id, entry in completed_data.items():
+                    if isinstance(entry, dict) and entry.get('status') == 'running':
+                        self.logger.warning(f"Command {cmd_id} was interrupted by service restart — marking failed")
+                        self._mark_command_failed(
+                            cmd_id,
+                            'interrupted by service restart',
+                            entry.get('deployment_id'),
+                            entry.get('type'),
+                        )
+        except Exception as e:
+            self.logger.warning(f"Could not pre-populate seen commands: {e}")
 
     def stop(self):
         """Stop all background threads and set machine offline."""
@@ -1453,12 +1481,12 @@ class FirebaseClient:
             return False
 
     # Command types that execute fast (< 30s) and can run concurrently.
-    # cancel_sync is an interrupt command: it only sets a thread-safe
-    # cancellation Event, so it MUST run on the fast lane — otherwise it
-    # serialises behind the in-flight sync_pull on the single slow worker and
-    # cannot cancel until the sync it is meant to stop has already finished
+    # cancel_sync and cancel_mcp_tool are interrupt commands: cancel_sync only
+    # sets a thread-safe cancellation Event, and cancel_mcp_tool kills an
+    # already-running subprocess. Both MUST run on the fast lane — otherwise
+    # they serialise behind the in-flight work they are meant to stop
     # (OWL-06). Heavy roost work (sync_pull, rollback) stays on the slow lane.
-    _FAST_COMMAND_TYPES = frozenset({'mcp_tool_call', 'capture_screenshot', 'cancel_sync'})
+    _FAST_COMMAND_TYPES = frozenset({'mcp_tool_call', 'capture_screenshot', 'cancel_sync', 'cancel_mcp_tool'})
 
     def _process_command(self, cmd_id: str, cmd_data: Dict[str, Any]):
         """Dispatch a command to the appropriate execution lane.
@@ -1499,12 +1527,39 @@ class FirebaseClient:
 
             deployment_id = cmd_data.get('deployment_id')
 
+            # Restart safety: mark the command as in-flight before executing.
+            # If the service dies mid-command, _seed_seen_commands finds this
+            # marker on the next start and marks the command failed instead of
+            # silently re-executing it. The terminal _mark_command_* write
+            # below overwrites the status. Cross-side contract: web pollers
+            # treat status:'running' entries as non-terminal and skip them.
+            # deployment_id/type are threaded in so a restart-interrupted
+            # deployment carries them into the failed marker (_seed_seen_commands)
+            # — the deploymentStatus cloud function skips markers without a
+            # deployment_id, which would strand the deployment 'in_progress'.
+            self._mark_command_running(cmd_id, deployment_id, cmd_type)
+
+            if cmd_type == 'cancel_mcp_tool':
+                # Interrupt command handled entirely client-side (no service
+                # callback): kill the target's registered subprocess and write
+                # its terminal 'cancelled' entry.
+                result = self._handle_cancel_mcp_tool(cmd_data)
+                self._mark_command_completed(cmd_id, result, deployment_id, cmd_type)
+                return
+
             if self.command_callback:
                 result = self.command_callback(cmd_id, cmd_data)
 
                 is_error = isinstance(result, str) and result.startswith("Error:")
 
-                if cmd_type == 'cancel_installation':
+                if cmd_id in self._cancelled_commands:
+                    # cancel_mcp_tool killed this command's subprocess and
+                    # already wrote its terminal 'cancelled' entry — re-assert
+                    # it instead of clobbering it with the dead subprocess's
+                    # completed/failed result.
+                    self._cancelled_commands.discard(cmd_id)
+                    self._mark_command_cancelled(cmd_id, 'cancelled by user', deployment_id, cmd_type)
+                elif cmd_type == 'cancel_installation':
                     self._mark_command_cancelled(cmd_id, result, deployment_id, cmd_type)
                 elif is_error:
                     self._mark_command_failed(cmd_id, result, deployment_id, cmd_type)
@@ -1537,7 +1592,13 @@ class FirebaseClient:
 
         except Exception as e:
             self.logger.error(f"Error processing command {cmd_id}: {e}")
-            self._mark_command_failed(cmd_id, str(e), cmd_data.get('deployment_id'), cmd_data.get('type'))
+            if cmd_id in self._cancelled_commands:
+                # A cancelled subprocess can surface as an exception while its
+                # thread unwinds — keep the terminal status truthful.
+                self._cancelled_commands.discard(cmd_id)
+                self._mark_command_cancelled(cmd_id, 'cancelled by user', cmd_data.get('deployment_id'), cmd_data.get('type'))
+            else:
+                self._mark_command_failed(cmd_id, str(e), cmd_data.get('deployment_id'), cmd_data.get('type'))
             # Log deployment failure from unhandled exception
             cmd_type = cmd_data.get('type')
             dep_id = cmd_data.get('deployment_id')
@@ -1545,6 +1606,58 @@ class FirebaseClient:
                 software_name = cmd_data.get('installer_name') or cmd_data.get('software_name') or cmd_type
                 self.log_event('deployment_failed', 'error', software_name,
                                f"Deployment {dep_id} failed: {e}")
+
+    def _handle_cancel_mcp_tool(self, cmd_data: Dict[str, Any]) -> str:
+        """Cancel an in-flight mcp_tool_call subprocess (Cortex cancel button).
+
+        Looks up params['target_command_id'] in mcp_tools' running-command
+        registry and kills its process tree, then writes the target's terminal
+        'cancelled' entry so web pollers resolve the tool card immediately
+        (without waiting for the killed command's thread to unwind). An
+        unknown or already-finished target returns a safe error — cancelling
+        is idempotent, never an exception.
+
+        Returns a JSON string, matching the mcp_tool_call result convention.
+        """
+        import mcp_tools
+
+        params = cmd_data.get('params') or {}
+        target_id = params.get('target_command_id')
+        if not target_id:
+            return json.dumps({'error': 'target_command_id is required'})
+
+        # Flag the target BEFORE the kill so its own thread — which can unblock
+        # from proc.communicate() the instant the process tree dies and race to
+        # the cmd_id-in-_cancelled_commands guard in _execute_command — sees the
+        # flag and re-asserts 'cancelled' instead of writing a partial-output
+        # 'completed'. If nothing is running, un-flag and report it.
+        # Residual (accepted) reverse race: a command that finishes naturally in
+        # the window between this add and the guard lookup gets marked cancelled
+        # — acceptable, since the user explicitly requested cancellation.
+        self._cancelled_commands.add(target_id)
+
+        if not mcp_tools.cancel_running_command(target_id):
+            self._cancelled_commands.discard(target_id)
+            return json.dumps({'error': 'command not running'})
+
+        if self.connected and self.db:
+            try:
+                completed_ref = self.db.collection('sites').document(self.site_id)\
+                    .collection('machines').document(self.machine_id)\
+                    .collection('commands').document('completed')
+
+                completed_ref.set({
+                    target_id: {
+                        'status': 'cancelled',
+                        'error': 'cancelled by user',
+                        'completedAt': SERVER_TIMESTAMP,
+                    }
+                }, merge=True)
+            except Exception as e:
+                self.logger.error(f"Failed to write cancelled status for command {target_id}: {e}")
+
+        self.logger.info(f"Command {target_id} cancelled by user — process tree killed")
+        return json.dumps({'status': 'cancelled', 'target_command_id': target_id})
 
     def _slow_command_worker_loop(self):
         """Drain the slow-command queue one at a time (serialised installs)."""
@@ -1622,6 +1735,51 @@ class FirebaseClient:
 
         except Exception as e:
             self.logger.error(f"Failed to update command {cmd_id} progress: {e}")
+
+    def _mark_command_running(self, cmd_id: str, deployment_id: Optional[str] = None, cmd_type: Optional[str] = None):
+        """Write a status:'running' marker to the completed doc (restart safety).
+
+        Written by _execute_command before the command runs. If the service
+        dies mid-command, _seed_seen_commands finds this marker on the next
+        start and marks the command failed instead of silently re-executing
+        it. The terminal _mark_command_* write overwrites the status.
+        Cross-side contract: web pollers treat status:'running' entries as
+        non-terminal and skip them while waiting for the real result.
+
+        deployment_id/cmd_type are threaded in (same conditional-include
+        pattern as _mark_command_completed) so a restart-interrupted
+        deployment carries them into the failed marker _seed_seen_commands
+        writes — otherwise the deploymentStatus cloud function skips the entry
+        (its `if (!deployment_id) continue` guard) and the deployment stays
+        'in_progress' forever. The deploymentStatus reconciler maps a
+        status:'running' entry to a non-terminal target ('in_progress'
+        overall) — a safe transient state, never a corrupt terminal one.
+        """
+        if not self.connected or not self.db:
+            return
+
+        try:
+            completed_ref = self.db.collection('sites').document(self.site_id)\
+                .collection('machines').document(self.machine_id)\
+                .collection('commands').document('completed')
+
+            running_data = {
+                'status': 'running',
+                'startedAt': SERVER_TIMESTAMP,
+            }
+
+            if deployment_id:
+                running_data['deployment_id'] = deployment_id
+
+            if cmd_type:
+                running_data['type'] = cmd_type
+
+            completed_ref.set({
+                cmd_id: running_data
+            }, merge=True)
+
+        except Exception as e:
+            self.logger.warning(f"Failed to mark command {cmd_id} as running: {e}")
 
     def _mark_command_completed(self, cmd_id: str, result: Any, deployment_id: Optional[str] = None, cmd_type: Optional[str] = None):
         """Mark a command as completed in Firestore."""
@@ -1788,8 +1946,9 @@ class FirebaseClient:
             for cmd_id, cmd in completed_data.items():
                 if not isinstance(cmd, dict):
                     continue
-                # Completed commands have completedAt (set by agent); fall back to timestamp
-                ts_ms = timestamp_to_ms(cmd.get('completedAt') or cmd.get('timestamp'))
+                # Completed commands have completedAt (set by agent); running
+                # markers only have startedAt; fall back to timestamp
+                ts_ms = timestamp_to_ms(cmd.get('completedAt') or cmd.get('startedAt') or cmd.get('timestamp'))
                 if ts_ms > 0 and (now_ms - ts_ms) > completed_ttl_ms:
                     old_completed.append(cmd_id)
             if old_completed:
