@@ -136,25 +136,82 @@ def test_no_registration_without_command_id(monkeypatch):
     assert mcp_tools._RUNNING_COMMANDS == {}
 
 
-def test_execute_tool_threads_command_id_only_to_execute_script(monkeypatch):
+def test_execute_tool_threads_command_id_to_shell_tools(monkeypatch):
+    """command_id is threaded to every shell-spawning tool (execute_script,
+    run_powershell, run_command) so each can register its subprocess for
+    cancellation — but NOT to read-only handlers, which keep the 2-arg
+    signature."""
     import mcp_tools
     calls = {}
 
-    def fake_script(params, config, command_id=None):
-        calls['script_command_id'] = command_id
-        return {}
+    def make_shell_fake(key):
+        def fake(params, config, command_id=None):
+            calls[key] = command_id
+            return {}
+        return fake
 
     def fake_info(params, config):
         calls['info'] = True
         return {}
 
-    monkeypatch.setattr(mcp_tools, '_execute_script', fake_script)
+    monkeypatch.setattr(mcp_tools, '_execute_script', make_shell_fake('execute_script'))
+    monkeypatch.setattr(mcp_tools, '_run_powershell', make_shell_fake('run_powershell'))
+    monkeypatch.setattr(mcp_tools, '_run_command', make_shell_fake('run_command'))
     monkeypatch.setattr(mcp_tools, '_get_system_info', fake_info)
 
     mcp_tools.execute_tool('execute_script', {}, None, command_id='cmd-9')
+    mcp_tools.execute_tool('run_powershell', {}, None, command_id='cmd-9')
+    mcp_tools.execute_tool('run_command', {}, None, command_id='cmd-9')
     mcp_tools.execute_tool('get_system_info', {}, None, command_id='cmd-9')
 
-    assert calls == {'script_command_id': 'cmd-9', 'info': True}
+    assert calls == {
+        'execute_script': 'cmd-9',
+        'run_powershell': 'cmd-9',
+        'run_command': 'cmd-9',
+        'info': True,
+    }
+
+
+def test_run_powershell_registers_pid_for_cancellation(monkeypatch):
+    """run_powershell (the Cortex Tier-3 shell tool) must register its
+    subprocess in _RUNNING_COMMANDS so the cancel button can kill it —
+    regression guard for the cancel-is-a-no-op bug."""
+    import mcp_tools
+    seen_during_run = {}
+
+    def communicate(timeout=None):
+        seen_during_run.update(mcp_tools._RUNNING_COMMANDS)
+        return ('out', '')
+
+    _mock_popen(monkeypatch, pid=7777, communicate_side_effect=communicate)
+
+    result = mcp_tools.execute_tool(
+        'run_powershell', {'script': 'Get-Date'}, None, command_id='ps-1'
+    )
+
+    assert seen_during_run == {'ps-1': 7777}
+    assert 'ps-1' not in mcp_tools._RUNNING_COMMANDS
+    assert result['exit_code'] == 0
+
+
+def test_run_command_registers_pid_for_cancellation(monkeypatch):
+    """run_command must likewise register its subprocess for cancellation."""
+    import mcp_tools
+    seen_during_run = {}
+
+    def communicate(timeout=None):
+        seen_during_run.update(mcp_tools._RUNNING_COMMANDS)
+        return ('out', '')
+
+    _mock_popen(monkeypatch, pid=8888, communicate_side_effect=communicate)
+
+    result = mcp_tools.execute_tool(
+        'run_command', {'command': 'hostname'}, None, command_id='rc-1'
+    )
+
+    assert seen_during_run == {'rc-1': 8888}
+    assert 'rc-1' not in mcp_tools._RUNNING_COMMANDS
+    assert result['exit_code'] == 0
 
 
 # ─── cancel_running_command ─────────────────────────────────────────────────
