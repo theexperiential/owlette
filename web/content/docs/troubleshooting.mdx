@@ -129,7 +129,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 1. **No LLM key configured** — Check Cortex settings for API key
 2. **Invalid API key** — Verify the key is correct and has credits
 3. **Machine offline** — Cortex checks machine status before executing tools
-4. **Tool timeout** — Some tools may take longer than 30 seconds; try again
+4. **A tool is stuck** — A turn keeps running even if you reload the page (the chat reattaches to it), so you rarely lose work. If a tool call is taking too long, use the **cancel** control on its tool card to kill it, or **stop** the whole turn from the chat.
 5. **Rate limited** — The API may be rate-limiting requests
 
 ---

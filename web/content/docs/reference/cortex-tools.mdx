@@ -548,7 +548,7 @@ Execute a shell command on the remote machine.
 
 `ipconfig`, `systeminfo`, `hostname`, `whoami`, `tasklist`, `netstat`, `ping`, `tracert`, `nslookup`, `dir`, `type`, `echo`, `set`, `ver`, `wmic`, `sc`, `net`, `reg`, `nvidia-smi`, `dxdiag`
 
-This is the default set (`DEFAULT_ALLOWED_COMMANDS`); it is overridable via `config.mcp.allowed_commands`.
+This is the default set (`DEFAULT_ALLOWED_COMMANDS`); it is overridable via `config.mcp.allowed_commands`. A running command can be **cancelled** from its tool card, which kills the process tree on the machine.
 
 ---
 
@@ -563,7 +563,7 @@ Execute a PowerShell command on the remote machine.
 
 **Returns**: stdout, stderr, exit code.
 
-No command restrictions — every invocation is audit-logged to the site events feed and the local `[MCP-AUDIT]` log. Fixed 25-second timeout; for long-running work use `execute_script`.
+No command restrictions — every invocation is audit-logged to the site events feed and the local `[MCP-AUDIT]` log. Fixed 25-second timeout; for long-running work use `execute_script`. A running command can be **cancelled** from its tool card, which kills the process tree on the machine.
 
 ---
 
@@ -625,10 +625,12 @@ Execute a PowerShell script on the remote machine with **no command restrictions
 | parameter | type | required | description |
 |-----------|------|----------|-------------|
 | `script` | string | **Yes** | PowerShell script to execute (can be multi-line) |
-| `timeout_seconds` | number | No | Timeout in seconds (default: 120) — set higher for long operations like installs |
+| `timeout_seconds` | number | No | Timeout in seconds (default: 120, capped at 3300 / 55 min) — set higher for long operations like installs |
 | `working_directory` | string | No | Optional working directory for script execution |
 
 **Returns**: stdout, stderr, exit code.
+
+Timeouts are capped at **3300 seconds (55 minutes)** so a result stays retrievable; for jobs that run longer than that, launch the work detached (e.g. a background job or scheduled task) and check back in a follow-up turn rather than blocking the tool call. A running `execute_script` can be **cancelled** from its tool card — the process tree is killed within a few seconds and the card resolves to "cancelled by user".
 
 ---
 
@@ -696,8 +698,8 @@ Cancel a pending reboot or shutdown. Must be called within the 30-second countdo
 ```
 LLM decides to call a tool
   |
-  +-- Tier 3: pause for confirmation first
-  |     +-- User confirms: continue to the tool-name execution path
+  +-- Tier 3: pause for in-chat approval (when the per-site approval gate is on)
+  |     +-- User approves: continue to the tool-name execution path
   |     +-- User denies: return "denied by user"
   |
   +-- Server-side tools
@@ -713,8 +715,10 @@ LLM decides to call a tool
         +-- Create an mcp_tool_call command in Firestore
         +-- Agent receives and executes the MCP tool
         +-- Agent writes result to completed queue
-        +-- API polls for result (1.5s intervals, 30s timeout plus buffer)
+        +-- Turn runner polls for the result (bounded by the tool's own timeout)
 ```
+
+The turn runs server-side, **detached from the browser connection** — it keeps executing and its results still land in the chat even if the connection drops or the page reloads, and the client reattaches to stream it. Long-running shell tools (`run_command`, `run_powershell`, `execute_script`) can be **cancelled** from their tool card mid-flight: the agent kills the process tree and the card resolves to "cancelled by user". The whole turn can be **stopped** server-side from the chat.
 
 ### command allowlists
 
