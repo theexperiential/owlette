@@ -9,6 +9,12 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [2.12.16] - 2026-07-07
+
+### fixed
+
+- **Cancelling a running tool now works for every shell tool.** The cancel control added in 2.12.15 only stopped `execute_script` — a running `run_powershell` or `run_command` ignored the cancel and ran to completion. All three shell tools now register their process, so cancel terminates the process tree within a few seconds and the tool card resolves to "cancelled by user".
+
 ## [2.12.15] - 2026-07-07
 
 ### added
