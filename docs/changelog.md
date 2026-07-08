@@ -9,6 +9,12 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [2.12.17] - 2026-07-08
+
+### fixed
+
+- **Agent roost sync-state database migrates itself.** Agents whose local roost sync database predated an internal rename would fail their hourly integrity check (and any future sync) with an internal "No item with that key" error. The database now upgrades itself in place on startup, preserving existing state.
+
 ## [2.12.16] - 2026-07-07
 
 ### fixed
