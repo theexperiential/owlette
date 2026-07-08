@@ -104,6 +104,94 @@ def test_wal_mode_enabled(tmp_path):
         state.close()
 
 
+# ─── schema migration (v1 -> v2: roost rename) ──────────────────────────
+
+
+def test_fresh_db_uses_current_roost_columns(tmp_path):
+    """a fresh DB is created at the latest schema with the renamed columns —
+    no legacy folder_id/manifest_* names."""
+    with SyncState(str(tmp_path / 'state.db')) as state:
+        cols = {r['name'] for r in state._conn.execute('PRAGMA table_info(distributions)')}
+        assert {'roost_id', 'version_id', 'version_url'} <= cols
+        assert not ({'folder_id', 'manifest_id', 'manifest_url'} & cols)
+        assert state._conn.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_VERSION
+
+
+def _create_v1_distributions_db(path) -> None:
+    """build a pre-rename (v1) DB carrying the old distributions column names."""
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute('''
+            CREATE TABLE distributions (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                site_id         TEXT NOT NULL,
+                folder_id       TEXT NOT NULL,
+                manifest_id     TEXT NOT NULL,
+                manifest_url    TEXT NOT NULL,
+                state           TEXT NOT NULL,
+                created_at      INTEGER NOT NULL,
+                updated_at      INTEGER NOT NULL,
+                error           TEXT,
+                extract_root    TEXT,
+                last_scrub_at   INTEGER,
+                UNIQUE (site_id, folder_id, manifest_id)
+            )
+        ''')
+        conn.execute(
+            'INSERT INTO distributions (site_id, folder_id, manifest_id, manifest_url, '
+            'state, created_at, updated_at, extract_root, last_scrub_at) '
+            "VALUES ('site_a', 'roost_b', 'ver_c', 'https://x/manifest', "
+            "'committed', 1000, 1000, '~/Documents/proj', NULL)"
+        )
+        conn.execute('PRAGMA user_version = 1')
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_v1_db_migrated_to_v2_renames_columns(tmp_path):
+    """an existing pre-rename (v1) DB is migrated in place on open: the three
+    drifted columns are renamed and rows are preserved.
+
+    regression for the hourly 'roost scrub failed: No item with that key'
+    warning — sqlite3.Row raised IndexError because the code read version_url
+    while the on-disk column was still manifest_url.
+    """
+    db = tmp_path / 'state.db'
+    _create_v1_distributions_db(db)
+
+    with SyncState(str(db)) as state:
+        assert state._conn.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_VERSION
+        cols = {r['name'] for r in state._conn.execute('PRAGMA table_info(distributions)')}
+        assert {'roost_id', 'version_id', 'version_url'} <= cols
+        assert not ({'folder_id', 'manifest_id', 'manifest_url'} & cols)
+
+        # rows survive and are readable through the new column names.
+        row = state.get_distribution(1)
+        assert row is not None
+        assert row['site_id'] == 'site_a'
+        assert row['roost_id'] == 'roost_b'
+        assert row['version_id'] == 'ver_c'
+        assert row['version_url'] == 'https://x/manifest'
+
+        # the query the scrub runs no longer raises — it returns the due row.
+        due = state.list_scrub_due(max_age_seconds=0)
+        assert [r['id'] for r in due] == [1]
+
+
+def test_migrated_db_is_noop_on_reopen(tmp_path):
+    """re-opening an already-migrated DB is a no-op (user_version stays current)."""
+    db = tmp_path / 'state.db'
+    _create_v1_distributions_db(db)
+    with SyncState(str(db)) as state:
+        assert state._conn.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_VERSION
+    # second open must not attempt to re-run the migration (would fail: the old
+    # columns no longer exist).
+    with SyncState(str(db)) as state:
+        assert state._conn.execute('PRAGMA user_version').fetchone()[0] == SCHEMA_VERSION
+        assert state.get_distribution(1)['version_url'] == 'https://x/manifest'
+
+
 # ─── distributions ──────────────────────────────────────────────────
 
 
