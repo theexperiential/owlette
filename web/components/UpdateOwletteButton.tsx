@@ -52,18 +52,21 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(new Set());
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // A self-update is an `update_owlette` command the agent service must be
-  // online to receive and execute — an offline machine can never consume it.
-  // So only online machines are selectable: they're the default selection, the
-  // only ones "select all" picks, and the submit path filters to them too (a
-  // machine can drop offline while the dialog sits open).
-  const onlineOutdatedIds = outdatedMachines.filter(m => m.online).map(m => m.machineId);
+  // The actionable set: machines that can be updated *right now*. A self-update
+  // is an `update_owlette` command the agent service must be online to receive
+  // and execute (an offline agent can never consume it), and an in-flight
+  // update can't be re-triggered (a stale / "may have failed" one can). This
+  // single predicate is the source of truth for the button's count badge, the
+  // default selection, "select all", each row's checkbox, and the submit
+  // filter — so the count and the selection can never disagree.
+  const canUpdateMachine = (m: Machine) =>
+    m.online && !(updatingMachines.has(m.machineId) && !staleMachines.has(m.machineId));
+  const selectableMachineIds = outdatedMachines.filter(canUpdateMachine).map(m => m.machineId);
 
   // Initialize selected machines when dialog opens
   const handleOpenDialog = () => {
-    // Select all *online* outdated machines by default — offline agents can't
-    // receive the update command.
-    setSelectedMachines(new Set(onlineOutdatedIds));
+    // Default to every machine that can actually be updated right now.
+    setSelectedMachines(new Set(selectableMachineIds));
     setDialogOpen(true);
   };
 
@@ -80,7 +83,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
   };
 
   const handleSelectAll = () => {
-    setSelectedMachines(new Set(onlineOutdatedIds));
+    setSelectedMachines(new Set(selectableMachineIds));
   };
 
   const handleDeselectAll = () => {
@@ -93,16 +96,16 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
       return;
     }
 
-    // Guard the open→submit race: a selected machine can drop offline while the
-    // dialog is open. Only send to machines that are still online — an offline
-    // agent can't receive the update command.
-    const onlineIdSet = new Set(onlineOutdatedIds);
-    const targetMachines = Array.from(selectedMachines).filter(id => onlineIdSet.has(id));
-    const skippedOffline = selectedMachines.size - targetMachines.length;
+    // Guard the open→submit race: a selected machine can drop offline (or start
+    // updating elsewhere) while the dialog is open. Only send to machines that
+    // are still updatable.
+    const selectableIdSet = new Set(selectableMachineIds);
+    const targetMachines = Array.from(selectedMachines).filter(id => selectableIdSet.has(id));
+    const skipped = selectedMachines.size - targetMachines.length;
 
     if (targetMachines.length === 0) {
-      toast.error('Selected machines are offline', {
-        description: 'an owlette agent must be online to receive an update. bring it online and try again.',
+      toast.error('Selected machines can no longer be updated', {
+        description: 'they went offline or are already updating. bring them online and try again.',
       });
       return;
     }
@@ -115,8 +118,8 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
       toast.success(
         `Update initiated for ${targetMachines.length} machine(s)`,
         {
-          description: skippedOffline > 0
-            ? `${skippedOffline} offline machine(s) skipped — they can't receive updates. the rest will restart automatically after updating.`
+          description: skipped > 0
+            ? `${skipped} machine(s) skipped — offline or already updating. the rest will restart automatically after updating.`
             : 'The owlette service will restart automatically after updating',
           duration: 5000,
         }
@@ -158,9 +161,9 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
         {latestVersion && (
           <span className="ml-2 text-xs">to v{latestVersion}</span>
         )}
-        {totalMachinesNeedingUpdate > 0 && (
+        {selectableMachineIds.length > 0 && (
           <Badge className="ml-2 bg-orange-600 text-white">
-            {totalMachinesNeedingUpdate}
+            {selectableMachineIds.length}
           </Badge>
         )}
         {inProgressCount > 0 && (
@@ -208,7 +211,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                     variant="ghost"
                     size="sm"
                     onClick={handleSelectAll}
-                    disabled={onlineOutdatedIds.length === 0 || onlineOutdatedIds.every(id => selectedMachines.has(id))}
+                    disabled={selectableMachineIds.length === 0 || selectableMachineIds.every(id => selectedMachines.has(id))}
                   >
                     select all
                   </Button>
@@ -229,9 +232,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                   const isSelected = selectedMachines.has(machine.machineId);
                   const isMachineUpdating = updatingMachines.has(machine.machineId);
                   const isStale = staleMachines.has(machine.machineId);
-                  // Offline agents can't receive the update command; in-flight
-                  // updates can't be re-triggered (stale ones can be retried).
-                  const isSelectable = machine.online && !(isMachineUpdating && !isStale);
+                  const isSelectable = canUpdateMachine(machine);
 
                   return (
                     <label
