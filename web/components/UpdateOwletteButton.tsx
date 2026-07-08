@@ -52,10 +52,18 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
   const [selectedMachines, setSelectedMachines] = useState<Set<string>>(new Set());
   const [isUpdating, setIsUpdating] = useState(false);
 
+  // A self-update is an `update_owlette` command the agent service must be
+  // online to receive and execute — an offline machine can never consume it.
+  // So only online machines are selectable: they're the default selection, the
+  // only ones "select all" picks, and the submit path filters to them too (a
+  // machine can drop offline while the dialog sits open).
+  const onlineOutdatedIds = outdatedMachines.filter(m => m.online).map(m => m.machineId);
+
   // Initialize selected machines when dialog opens
   const handleOpenDialog = () => {
-    // Select all outdated machines by default
-    setSelectedMachines(new Set(outdatedMachines.map(m => m.machineId)));
+    // Select all *online* outdated machines by default — offline agents can't
+    // receive the update command.
+    setSelectedMachines(new Set(onlineOutdatedIds));
     setDialogOpen(true);
   };
 
@@ -72,7 +80,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
   };
 
   const handleSelectAll = () => {
-    setSelectedMachines(new Set(outdatedMachines.map(m => m.machineId)));
+    setSelectedMachines(new Set(onlineOutdatedIds));
   };
 
   const handleDeselectAll = () => {
@@ -85,15 +93,31 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
       return;
     }
 
+    // Guard the open→submit race: a selected machine can drop offline while the
+    // dialog is open. Only send to machines that are still online — an offline
+    // agent can't receive the update command.
+    const onlineIdSet = new Set(onlineOutdatedIds);
+    const targetMachines = Array.from(selectedMachines).filter(id => onlineIdSet.has(id));
+    const skippedOffline = selectedMachines.size - targetMachines.length;
+
+    if (targetMachines.length === 0) {
+      toast.error('Selected machines are offline', {
+        description: 'an owlette agent must be online to receive an update. bring it online and try again.',
+      });
+      return;
+    }
+
     setIsUpdating(true);
 
     try {
-      await updateMachines(siteId, Array.from(selectedMachines));
+      await updateMachines(siteId, targetMachines);
 
       toast.success(
-        `Update initiated for ${selectedMachines.size} machine(s)`,
+        `Update initiated for ${targetMachines.length} machine(s)`,
         {
-          description: 'The owlette service will restart automatically after updating',
+          description: skippedOffline > 0
+            ? `${skippedOffline} offline machine(s) skipped — they can't receive updates. the rest will restart automatically after updating.`
+            : 'The owlette service will restart automatically after updating',
           duration: 5000,
         }
       );
@@ -184,7 +208,7 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                     variant="ghost"
                     size="sm"
                     onClick={handleSelectAll}
-                    disabled={selectedMachines.size === outdatedMachines.length}
+                    disabled={onlineOutdatedIds.length === 0 || onlineOutdatedIds.every(id => selectedMachines.has(id))}
                   >
                     select all
                   </Button>
@@ -205,16 +229,23 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                   const isSelected = selectedMachines.has(machine.machineId);
                   const isMachineUpdating = updatingMachines.has(machine.machineId);
                   const isStale = staleMachines.has(machine.machineId);
+                  // Offline agents can't receive the update command; in-flight
+                  // updates can't be re-triggered (stale ones can be retried).
+                  const isSelectable = machine.online && !(isMachineUpdating && !isStale);
 
                   return (
                     <label
                       key={machine.machineId}
-                      className="flex items-center gap-4 p-4 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
+                      className={`flex items-center gap-4 p-4 ${
+                        isSelectable
+                          ? 'hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer'
+                          : 'cursor-not-allowed opacity-75'
+                      }`}
                     >
                       <Checkbox
                         checked={isSelected}
                         onCheckedChange={() => handleToggleMachine(machine.machineId)}
-                        disabled={isMachineUpdating && !isStale}
+                        disabled={!isSelectable}
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 mb-1">
@@ -225,6 +256,11 @@ export function UpdateOwletteButton({ siteId, machines }: UpdateOwletteButtonPro
                         <div className="text-sm text-gray-500 dark:text-gray-400">
                           current: {machine.agent_version ? `v${machine.agent_version}` : '< v2.0.8'} → latest: v{latestVersion}
                         </div>
+                        {!machine.online && (
+                          <div className="text-sm text-muted-foreground mt-0.5">
+                            offline — must be online to receive an update
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {isMachineUpdating && !isStale && (
