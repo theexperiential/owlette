@@ -1621,8 +1621,13 @@ class FirebaseClient:
         """
         import mcp_tools
 
+        # executeMachineCommand (the /api/cortex/cancel-tool dispatch path)
+        # spreads the payload at the TOP LEVEL of the command doc
+        # ({type, target_command_id, ...}), the same convention every other
+        # command's fields are read under. Read it from there; fall back to a
+        # nested `params` object defensively.
         params = cmd_data.get('params') or {}
-        target_id = params.get('target_command_id')
+        target_id = cmd_data.get('target_command_id') or params.get('target_command_id')
         if not target_id:
             return json.dumps({'error': 'target_command_id is required'})
 

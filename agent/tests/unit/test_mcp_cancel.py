@@ -274,8 +274,10 @@ def test_handle_cancel_kills_and_writes_cancelled(monkeypatch):
         mcp_tools._RUNNING_COMMANDS['tgt-1'] = 555
     svc = _make_cancel_client()
 
+    # Production wire shape: executeMachineCommand spreads the payload at the
+    # TOP LEVEL of the command doc (NOT nested under `params`).
     result = json.loads(svc._handle_cancel_mcp_tool(
-        {'type': 'cancel_mcp_tool', 'params': {'target_command_id': 'tgt-1'}}
+        {'type': 'cancel_mcp_tool', 'target_command_id': 'tgt-1'}
     ))
 
     kill.assert_called_once_with(555)
@@ -307,17 +309,33 @@ def test_handle_cancel_flags_target_before_kill(monkeypatch):
         mcp_tools._RUNNING_COMMANDS['tgt-1'] = 555
 
     svc._handle_cancel_mcp_tool(
-        {'type': 'cancel_mcp_tool', 'params': {'target_command_id': 'tgt-1'}}
+        {'type': 'cancel_mcp_tool', 'target_command_id': 'tgt-1'}
     )
 
     assert membership_at_kill == {'flagged': True}
+
+
+def test_handle_cancel_reads_nested_params_fallback(monkeypatch):
+    """Defensive fallback: a nested `params.target_command_id` is still honored
+    if some caller ever sends the old shape."""
+    import mcp_tools
+    monkeypatch.setattr(mcp_tools, '_kill_process_tree', MagicMock())
+    with mcp_tools._RUNNING_COMMANDS_LOCK:
+        mcp_tools._RUNNING_COMMANDS['tgt-9'] = 777
+    svc = _make_cancel_client()
+
+    result = json.loads(svc._handle_cancel_mcp_tool(
+        {'type': 'cancel_mcp_tool', 'params': {'target_command_id': 'tgt-9'}}
+    ))
+
+    assert result == {'status': 'cancelled', 'target_command_id': 'tgt-9'}
 
 
 def test_handle_cancel_unknown_target_returns_safe_error():
     svc = _make_cancel_client()
 
     result = json.loads(svc._handle_cancel_mcp_tool(
-        {'type': 'cancel_mcp_tool', 'params': {'target_command_id': 'gone'}}
+        {'type': 'cancel_mcp_tool', 'target_command_id': 'gone'}
     ))
 
     assert result == {'error': 'command not running'}
@@ -448,7 +466,7 @@ def test_mark_command_running_omits_absent_deployment_fields():
 
 def test_cancel_mcp_tool_dispatches_handler_not_callback(monkeypatch):
     svc = _make_exec_client(monkeypatch)
-    cmd = {'type': 'cancel_mcp_tool', 'params': {'target_command_id': 'tgt-1'}}
+    cmd = {'type': 'cancel_mcp_tool', 'target_command_id': 'tgt-1'}
 
     svc._execute_command('cmd-2', cmd)
 
