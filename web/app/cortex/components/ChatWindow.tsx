@@ -31,9 +31,21 @@ interface ChatWindowProps {
   onEditMessage?: (messageId: string, newText: string) => void;
   /** Where tool calls run, shown in the approval prompt (machine / "all machines"). */
   approvalTargetLabel?: string;
+  /** Dispatched agent commands keyed by toolCallId → machineId → { commandId } — the cancel index. */
+  toolCommands?: Record<string, Record<string, { commandId: string }>>;
+  /** Cancel a running tool by its toolCallId (fans out to every machine it dispatched to). */
+  onCancelTool?: (toolCallId: string) => void;
+  /**
+   * toolCallIds with a cancel request in flight. Pending state lives in
+   * CortexChatView (next to the async cancel handler); this window only
+   * derives a per-card boolean from it.
+   */
+  cancelPendingCommandIds?: Set<string>;
+  /** The active turn's runner died (server restarted) — show the interrupted notice. */
+  turnStale?: boolean;
 }
 
-export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage, approvalTargetLabel }: ChatWindowProps) {
+export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage, approvalTargetLabel, toolCommands, onCancelTool, cancelPendingCommandIds, turnStale }: ChatWindowProps) {
   const { user } = useAuth();
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
@@ -295,7 +307,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                       key={i}
                       src={filePart.url}
                       alt="Pasted image"
-                      className="max-w-sm rounded-lg border border-border my-1 cursor-pointer hover:opacity-90 transition-opacity"
+                      className={`max-w-sm rounded-lg border border-border my-1 cursor-pointer hover:opacity-90 transition-opacity${isUser ? ' ml-auto' : ''}`}
                       loading="lazy"
                       onClick={() => setExpandedImage(filePart.url!)}
                     />
@@ -331,6 +343,18 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                 const denied = state === 'output-denied'
                   || (state === 'approval-responded' && toolPart.approval?.approved === false);
                 const approvalId = toolPart.approval?.id;
+                const running = !hasResult && !awaitingApproval && !denied;
+
+                // Cancel is only offered for a running tool that has actually
+                // dispatched at least one agent command (its toolCallId is
+                // present in toolCommands with ≥1 machine entry). Server-side
+                // tools and not-yet-dispatched calls have no cancel affordance.
+                // The cancel fans out to every machine the call targeted, so it
+                // is keyed by the toolCallId (not a single commandId).
+                const toolCallId = running ? toolPart.toolCallId : undefined;
+                const cancellable = Boolean(
+                  toolCallId && Object.keys(toolCommands?.[toolCallId] ?? {}).length > 0,
+                );
 
                 return (
                   <ToolCallCard
@@ -338,11 +362,13 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                     toolName={toolName}
                     args={args}
                     result={hasResult ? result : undefined}
-                    isLoading={!hasResult && !awaitingApproval && !denied}
+                    isLoading={running}
                     approvalState={awaitingApproval ? 'requested' : denied ? 'denied' : undefined}
                     approvalTargetLabel={approvalTargetLabel}
                     onApprove={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, true) : undefined}
                     onDeny={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, false) : undefined}
+                    onCancel={cancellable && toolCallId && onCancelTool ? () => onCancelTool(toolCallId) : undefined}
+                    cancelPending={cancellable && toolCallId ? cancelPendingCommandIds?.has(toolCallId) : undefined}
                   />
                 );
               }
@@ -364,6 +390,16 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
         </div>
         );
       })}
+
+      {/* Interrupted-turn notice — the turn runner died (server restarted)
+          mid-turn; the next send repairs history and recovers tool results. */}
+      {turnStale && (
+        <div className="max-w-3xl mx-auto">
+          <p className="text-xs text-muted-foreground border-l-2 border-border pl-3">
+            this turn was interrupted (server restarted) — send a message to continue; completed tool results will be recovered.
+          </p>
+        </div>
+      )}
 
       {/* Loading indicator */}
       {isLoading && messages[messages.length - 1]?.role === 'user' && (

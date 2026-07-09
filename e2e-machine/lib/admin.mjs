@@ -151,11 +151,28 @@ export async function probe(machineId) {
   };
 }
 
+/** Read the machine's synced config doc — the round-trip target for the GUI
+ *  add-process flow. The agent uploads config (minus the firebase section) to
+ *  config/{siteId}/machines/{machineId}; a driven "add process" lands here. */
+export async function probeConfig(machineId) {
+  const { db } = init();
+  const c = await db.collection('config').doc(SITE_ID).collection('machines').doc(machineId).get();
+  const cd = c.exists ? c.data() : null;
+  const procs = Array.isArray(cd?.processes) ? cd.processes : [];
+  return {
+    siteId: SITE_ID,
+    machineId,
+    configExists: c.exists,
+    processCount: procs.length,
+    processNames: procs.map((p) => p?.name).filter((n) => typeof n === 'string'),
+  };
+}
+
 /** Remove all per-run e2e cloud state for the site. Safe to call repeatedly.
  *  fullReset also deletes the persistent site + owner. */
 export async function teardown({ fullReset = false } = {}) {
   const { db, auth } = init();
-  const removed = { machines: 0, hardware: 0, tokens: 0, deviceCodes: 0, site: false, owner: false };
+  const removed = { machines: 0, hardware: 0, configDocs: 0, tokens: 0, deviceCodes: 0, site: false, owner: false };
 
   const machines = await db.collection('sites').doc(SITE_ID).collection('machines').get();
   for (const d of machines.docs) {
@@ -163,6 +180,11 @@ export async function teardown({ fullReset = false } = {}) {
     for (const h of hw.docs) { await h.ref.delete(); removed.hardware++; }
     await d.ref.delete(); removed.machines++;
   }
+  // The synced config lives in a separate top-level collection
+  // (config/{siteId}/machines/*), not under sites/ — the Wave 2 add-process
+  // flow writes here, so sweep it too or driven processes leak across runs.
+  const cfgMachines = await db.collection('config').doc(SITE_ID).collection('machines').get();
+  for (const d of cfgMachines.docs) { await d.ref.delete(); removed.configDocs++; }
   const rts = await db.collection('agent_refresh_tokens').where('siteId', '==', SITE_ID).get();
   for (const d of rts.docs) { await d.ref.delete(); removed.tokens++; }
   const dcs = await db.collection('device_codes').where('siteId', '==', SITE_ID).get();
@@ -170,6 +192,7 @@ export async function teardown({ fullReset = false } = {}) {
 
   if (fullReset) {
     await db.collection('sites').doc(SITE_ID).delete().catch(() => {});
+    await db.collection('config').doc(SITE_ID).delete().catch(() => {});
     removed.site = true;
     await db.collection('users').doc(OWNER_UID).delete().catch(() => {});
     await auth.deleteUser(OWNER_UID).catch(() => {});

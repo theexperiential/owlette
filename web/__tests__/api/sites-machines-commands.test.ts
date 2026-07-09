@@ -318,6 +318,42 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/commands', () => {
     expect(res.status).toBe(202);
   });
 
+  it('202 happy path: cancel_mcp_tool forwards target_command_id', async () => {
+    queueIdemAndMachine({ online: true });
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-cancel-mcp' },
+        body: { type: 'cancel_mcp_tool', params: { target_command_id: 'cmd_target_1' } },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(202);
+
+    const cmd = lastMergedCommand();
+    expect(cmd.type).toBe('cancel_mcp_tool');
+    expect(cmd.target_command_id).toBe('cmd_target_1');
+  });
+
+  it('400 when cancel_mcp_tool omits target_command_id', async () => {
+    queueIdemOnly();
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+      {
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'idem-cancel-mcp-bad' },
+        body: { type: 'cancel_mcp_tool', params: {} },
+      },
+    );
+    const res = await commandsPOST(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   it('400 unsupported_command_type when type not in allowlist', async () => {
     // Validation happens before the machine lookup, so only the idem cache
     // miss is consumed. queueIdemOnly() asserts no second read happens.
@@ -864,11 +900,13 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}', ()
     expect(body.data.result).toBeUndefined();
   });
 
-  it('200 in_progress shape', async () => {
-    queueGetSnapshots(
-      { [CID]: { type: 'capture_screenshot', status: 'in_progress' } },
-      null,
-    );
+  it('200 running marker on completed doc surfaces as in_progress (not completed)', async () => {
+    // The agent writes {status:'running', startedAt} to the completed doc at
+    // command START (restart safety). This must NOT report the command as
+    // completed with an empty result — it is still executing.
+    queueGetSnapshots(null, {
+      [CID]: { type: 'mcp_tool_call', status: 'running', startedAt: 1_700_000_000_000 },
+    });
     const req = createMockRequest(
       `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands/${CID}`,
     );
@@ -878,7 +916,27 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}', ()
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.data.status).toBe('in_progress');
+    expect(body.data.result).toBeUndefined();
+    expect(body.data.error).toBeUndefined();
   });
+
+  it.each(['downloading', 'installing'] as const)(
+    '200 %s progress marker on completed doc surfaces as in_progress',
+    async (status) => {
+      queueGetSnapshots(null, {
+        [CID]: { type: 'install_software', status, deployment_id: 'dep-1', progress: 42 },
+      });
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands/${CID}`,
+      );
+      const res = await commandStatusGET(req, {
+        params: Promise.resolve({ siteId: SITE, machineId: MACHINE, commandId: CID }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.data.status).toBe('in_progress');
+    },
+  );
 
   it('200 completed capture_screenshot mints fresh signed read url', async () => {
     queueGetSnapshots(null, {
@@ -946,6 +1004,24 @@ describe('GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}', ()
     const body = await res.json();
     expect(body.data.status).toBe('failed');
     expect(body.data.error).toContain('reboot blocked');
+  });
+
+  it('200 cancelled terminal status maps to failed and surfaces the error', async () => {
+    // `cancelled` has no dedicated CommandStatus variant — it is terminal and
+    // maps to `failed`, surfacing the agent's cancellation error.
+    queueGetSnapshots(null, {
+      [CID]: { type: 'mcp_tool_call', status: 'cancelled', error: 'cancelled by user' },
+    });
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands/${CID}`,
+    );
+    const res = await commandStatusGET(req, {
+      params: Promise.resolve({ siteId: SITE, machineId: MACHINE, commandId: CID }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.data.status).toBe('failed');
+    expect(body.data.error).toBe('cancelled by user');
   });
 
   it('404 when command id not in either queue', async () => {

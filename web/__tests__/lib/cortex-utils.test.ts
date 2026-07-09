@@ -143,6 +143,7 @@ import {
   resolveCortexMaxTier,
   getCortexRequireTier3Approval,
   COMMAND_TIMEOUT_MS,
+  MAX_TOOL_TIMEOUT_SECONDS,
 } from '@/lib/cortex-utils.server';
 
 import { allTools } from '@/lib/mcp-tools';
@@ -240,6 +241,132 @@ describe('executeToolOnAgent', () => {
     const cmdId = Object.keys(written)[0];
     expect(written[cmdId].tool_params).toEqual({ name_filter: 'chrome', limit: 10 });
   });
+
+  it('fires onCommandQueued synchronously after the pending write with the written commandId', async () => {
+    const { db, pendingDoc, completedDoc } = createMockDb();
+
+    completedDoc.get.mockImplementation(async () => {
+      const cmdId = getCommandId(pendingDoc);
+      return { exists: true, data: () => ({ [cmdId]: { status: 'success', result: {} } }) };
+    });
+
+    const observed: { commandId: string; pendingWrites: number; polls: number }[] = [];
+    const onCommandQueued = jest.fn((commandId: string) => {
+      observed.push({
+        commandId,
+        pendingWrites: pendingDoc.set.mock.calls.length,
+        polls: completedDoc.get.mock.calls.length,
+      });
+    });
+
+    await executeToolOnAgent(db, 's1', 'm1', 'get_system_info', {}, 'c1', { onCommandQueued });
+
+    expect(onCommandQueued).toHaveBeenCalledTimes(1);
+    expect(observed).toEqual([
+      // Fired with the id that was just written, after the write, before any poll.
+      { commandId: getCommandId(pendingDoc), pendingWrites: 1, polls: 0 },
+    ]);
+  }, 15000);
+
+  it('clamps timeout_seconds to MAX_TOOL_TIMEOUT_SECONDS in the pending command', async () => {
+    const { db, pendingDoc, completedDoc } = createMockDb();
+
+    completedDoc.get.mockImplementation(async () => {
+      const cmdId = getCommandId(pendingDoc);
+      return { exists: true, data: () => ({ [cmdId]: { status: 'success', result: {} } }) };
+    });
+
+    await executeToolOnAgent(db, 's1', 'm1', 'execute_script', { script: 'x', timeout_seconds: 90000 }, 'c1');
+
+    const written = pendingDoc.set.mock.calls[0][0] as Record<
+      string,
+      { timeout_seconds: number; tool_params: Record<string, unknown> }
+    >;
+    const cmdId = Object.keys(written)[0];
+    expect(written[cmdId].timeout_seconds).toBe(MAX_TOOL_TIMEOUT_SECONDS);
+    // tool_params pass through unmodified — the agent applies its own clamp
+    // (agent/src/mcp_tools.py MAX_SCRIPT_TIMEOUT).
+    expect(written[cmdId].tool_params).toEqual({ script: 'x', timeout_seconds: 90000 });
+  }, 15000);
+
+  it('passes timeout_seconds through unclamped when below the cap', async () => {
+    const { db, pendingDoc, completedDoc } = createMockDb();
+
+    completedDoc.get.mockImplementation(async () => {
+      const cmdId = getCommandId(pendingDoc);
+      return { exists: true, data: () => ({ [cmdId]: { status: 'success', result: {} } }) };
+    });
+
+    await executeToolOnAgent(db, 's1', 'm1', 'execute_script', { script: 'x', timeout_seconds: 600 }, 'c1');
+
+    const written = pendingDoc.set.mock.calls[0][0] as Record<string, { timeout_seconds: number }>;
+    const cmdId = Object.keys(written)[0];
+    expect(written[cmdId].timeout_seconds).toBe(600);
+  }, 15000);
+
+  it('surfaces a cancelled entry as an error instead of falling through to undefined', async () => {
+    const { db, pendingDoc, completedDoc } = createMockDb();
+
+    // A user cancel (cancel-tool → agent) writes a terminal `cancelled` entry.
+    completedDoc.get.mockImplementation(async () => {
+      const cmdId = getCommandId(pendingDoc);
+      return {
+        exists: true,
+        data: () => ({ [cmdId]: { status: 'cancelled', error: 'cancelled by user' } }),
+      };
+    });
+
+    const result = await executeToolOnAgent(db, 's1', 'm1', 'execute_script', { script: 'x' }, 'c1');
+
+    expect(result).toEqual({ error: 'cancelled by user' });
+    // The terminal cancelled entry is consumed like any other terminal write.
+    expect(completedDoc.update).toHaveBeenCalledTimes(1);
+  }, 15000);
+
+  it('unwinds promptly with a cancelled result when the abort signal fires', async () => {
+    const { db, pendingDoc, completedDoc } = createMockDb();
+    // Agent never answers — without the abort we would poll to timeout.
+    completedDoc.get.mockResolvedValue({ exists: false, data: () => ({}) });
+
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await executeToolOnAgent(
+      db, 's1', 'm1', 'execute_script', { script: 'x' }, 'c1',
+      { abortSignal: controller.signal },
+    );
+
+    expect(result).toEqual({ error: 'cancelled by user' });
+    // The pending command is dropped best-effort so the agent can skip it.
+    expect(pendingDoc.update).toHaveBeenCalledWith({ [getCommandId(pendingDoc)]: '__FIELD_DELETE__' });
+  }, 15000);
+
+  it('skips running-status entries (non-terminal, not deleted) and resolves on the terminal write', async () => {
+    const { db, pendingDoc, completedDoc } = createMockDb();
+
+    // Agent contract (agent/src/firebase_client.py _mark_command_running):
+    // the completed doc holds {status:'running'} while the command executes,
+    // then the terminal write overwrites it.
+    let polls = 0;
+    completedDoc.get.mockImplementation(async () => {
+      const cmdId = getCommandId(pendingDoc);
+      polls++;
+      if (polls < 2) {
+        return { exists: true, data: () => ({ [cmdId]: { status: 'running', startedAt: 123 } }) };
+      }
+      return { exists: true, data: () => ({ [cmdId]: { status: 'success', result: { ok: true } } }) };
+    });
+
+    const onPollTick = jest.fn();
+    const result = await executeToolOnAgent(db, 's1', 'm1', 'execute_script', { script: 'x' }, 'c1', { onPollTick });
+
+    expect(result).toMatchObject({ ok: true });
+    // The running marker was never deleted — only the terminal entry was.
+    expect(completedDoc.update).toHaveBeenCalledTimes(1);
+    expect(completedDoc.update).toHaveBeenCalledWith({ [getCommandId(pendingDoc)]: '__FIELD_DELETE__' });
+    // One tick per poll iteration (running poll + terminal poll).
+    expect(onPollTick).toHaveBeenCalledTimes(2);
+  }, 15000);
 });
 
 // ─── executeExistingCommand ─────────────────────────────────────────────────
@@ -270,6 +397,33 @@ describe('executeExistingCommand', () => {
 
     expect(result).toMatchObject({ status: 'success' });
   });
+
+  it('fires onCommandQueued with the written commandId and skips running-status entries', async () => {
+    const { db, pendingDoc, completedDoc } = createMockDb();
+
+    let polls = 0;
+    completedDoc.get.mockImplementation(async () => {
+      const cmdId = getCommandId(pendingDoc);
+      polls++;
+      if (polls < 2) {
+        return { exists: true, data: () => ({ [cmdId]: { status: 'running', startedAt: 123 } }) };
+      }
+      return { exists: true, data: () => ({ [cmdId]: { status: 'success', result: 'Process restarted' } }) };
+    });
+
+    const onCommandQueued = jest.fn();
+    const onPollTick = jest.fn();
+    const result = await executeExistingCommand(
+      db, 's1', 'm1', 'restart_process', 'MyApp.exe', {}, { onCommandQueued, onPollTick },
+    );
+
+    expect(onCommandQueued).toHaveBeenCalledTimes(1);
+    expect(onCommandQueued).toHaveBeenCalledWith(getCommandId(pendingDoc));
+    // Running marker skipped without deletion; only the terminal entry deleted.
+    expect(completedDoc.update).toHaveBeenCalledTimes(1);
+    expect(onPollTick).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ status: 'success' });
+  }, 15000);
 });
 
 // ─── buildExecutableTools ───────────────────────────────────────────────────
@@ -373,6 +527,63 @@ describe('buildExecutableTools', () => {
     });
     expect(mockUpdateProcess).not.toHaveBeenCalled();
   });
+
+  it('bridges toolCallbacks: onCommandQueued receives (toolCallId, commandId, machineId)', async () => {
+    const { db, pendingDoc, completedDoc } = createMockDb();
+
+    completedDoc.get.mockImplementation(async () => {
+      const cmdId = getCommandId(pendingDoc);
+      return { exists: true, data: () => ({ [cmdId]: { status: 'success', result: {} } }) };
+    });
+
+    const onCommandQueued = jest.fn();
+    const onPollTick = jest.fn();
+    const toolDef = allTools.find((tool) => tool.name === 'get_system_info')!;
+    const tools = buildExecutableTools(
+      db, 's1', 'm1', 'c1', [toolDef], false, [],
+      { toolCallbacks: { onCommandQueued, onPollTick } },
+    );
+
+    await tools.get_system_info.execute({}, { toolCallId: 'call_abc' });
+
+    expect(onCommandQueued).toHaveBeenCalledTimes(1);
+    expect(onCommandQueued).toHaveBeenCalledWith('call_abc', getCommandId(pendingDoc), 'm1');
+    expect(onPollTick).toHaveBeenCalled();
+  }, 15000);
+
+  it('site-wide fan-out fires onCommandQueued once per machine with that machine id', async () => {
+    const { db, pendingDoc, completedDoc } = createMockDb();
+
+    // Resolve every command that has been queued so far (both machines share
+    // the mocked completed doc).
+    completedDoc.get.mockImplementation(async () => {
+      const data: Record<string, unknown> = {};
+      for (const call of pendingDoc.set.mock.calls) {
+        for (const cmdId of Object.keys(call[0] as Record<string, unknown>)) {
+          data[cmdId] = { status: 'success', result: {} };
+        }
+      }
+      return { exists: true, data: () => data };
+    });
+
+    const onCommandQueued = jest.fn();
+    const toolDef = allTools.find((tool) => tool.name === 'get_system_info')!;
+    const tools = buildExecutableTools(
+      db, 's1', '', 'c1', [toolDef], true, ['m1', 'm2'],
+      { toolCallbacks: { onCommandQueued } },
+    );
+
+    await tools.get_system_info.execute({}, { toolCallId: 'call_fan' });
+
+    expect(onCommandQueued).toHaveBeenCalledTimes(2);
+    const machineArgs = onCommandQueued.mock.calls.map((call) => call[2]).sort();
+    expect(machineArgs).toEqual(['m1', 'm2']);
+    const queuedIds = pendingDoc.set.mock.calls.map((call) => Object.keys(call[0] as Record<string, unknown>)[0]);
+    for (const call of onCommandQueued.mock.calls) {
+      expect(call[0]).toBe('call_fan');
+      expect(queuedIds).toContain(call[1]);
+    }
+  }, 15000);
 });
 
 // ─── verifyUserSiteAccess ───────────────────────────────────────────────────

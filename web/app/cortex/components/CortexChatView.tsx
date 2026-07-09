@@ -114,11 +114,18 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   const selectedMachine = !isSiteMode ? machines.find((m) => m.machineId === selectedMachineId) : null;
   const suppressNextChatRouteRef = useRef(false);
   const skipNextLandingResetRef = useRef(false);
-  // Set when we intentionally start a new chat (or delete the routed chat) while
-  // the URL still points at the old chat: the persistent component would briefly
-  // see initialChatId(old) !== activeChatId(new) and wrongly reload the old chat,
-  // stealing selection from the just-created one. One-shot skip of that load.
-  const suppressNextLoadRef = useRef(false);
+  // The routed chat id we've navigated away from (via handleNewChat /
+  // handleDeleteChat) while the URL still points at it. router.push is async, so
+  // until the pathname commits, initialChatId lags at this stale id while
+  // activeChatId is already the new chat. The load effect must not reload the
+  // stale id — that would steal selection from the just-created chat. A one-shot
+  // boolean is insufficient: the load effect re-runs on *every* render (its
+  // `loadChat` dep is rebuilt each render because the AI SDK's useChat returns a
+  // fresh object), so the flag would be spent on the first of the several renders
+  // in the navigation window and the next reload would slip through. Storing the
+  // id makes the guard hold for the whole window; the effect clears it once the
+  // pathname catches up (initialChatId moves off this id).
+  const staleRoutedChatIdRef = useRef<string | null>(null);
   const previousChatIdRef = useRef<string | null>(null);
   const previousInitialChatIdRef = useRef<string | undefined>(initialChatId);
 
@@ -138,13 +145,17 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   const loadChat = chat.loadChat;
 
   useEffect(() => {
-    // Skip the load that a just-started new chat (or a deletion) would otherwise
-    // trigger from the stale URL before navigation commits.
-    if (suppressNextLoadRef.current) {
-      suppressNextLoadRef.current = false;
-      return;
+    // Once the pathname commits, initialChatId moves off the stale id (to the new
+    // chat's URL or back to the landing) — the navigation window is over, so retire
+    // the guard and make that chat loadable again on a future navigation.
+    if (staleRoutedChatIdRef.current !== null && initialChatId !== staleRoutedChatIdRef.current) {
+      staleRoutedChatIdRef.current = null;
     }
     if (!initialChatId || initialChatId === activeChatId) return;
+    // A just-started new chat (or a deletion) navigated away from initialChatId,
+    // but the pathname hasn't committed yet so it still reads the stale id. Don't
+    // reload it — that would steal selection from the just-created chat.
+    if (initialChatId === staleRoutedChatIdRef.current) return;
     void loadChat(initialChatId);
   }, [initialChatId, activeChatId, loadChat]);
 
@@ -187,6 +198,27 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
     if (chat.error) setErrorDismissed(false);
   }, [chat.error]);
 
+  // Per-commandId cancel-in-flight state. Lives here (next to the async
+  // handler) — ChatWindow just derives a per-card boolean from the Set.
+  const [cancelPendingCommandIds, setCancelPendingCommandIds] = useState<Set<string>>(new Set());
+  const cancelTool = chat.cancelTool;
+  const handleCancelTool = useCallback(async (commandId: string) => {
+    setCancelPendingCommandIds((prev) => {
+      const next = new Set(prev);
+      next.add(commandId);
+      return next;
+    });
+    try {
+      await cancelTool(commandId);
+    } finally {
+      setCancelPendingCommandIds((prev) => {
+        const next = new Set(prev);
+        next.delete(commandId);
+        return next;
+      });
+    }
+  }, [cancelTool]);
+
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
@@ -198,7 +230,7 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
       // stops the landing effect from starting a *second* new chat.
       suppressNextChatRouteRef.current = true;
       skipNextLandingResetRef.current = true;
-      suppressNextLoadRef.current = true;
+      staleRoutedChatIdRef.current = initialChatId;
       router.push('/cortex');
     }
 
@@ -227,7 +259,7 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
     if (deletedRouteChat) {
       suppressNextChatRouteRef.current = true;
       skipNextLandingResetRef.current = true;
-      suppressNextLoadRef.current = true;
+      staleRoutedChatIdRef.current = conversationId;
     }
 
     void chat.deleteChat(conversationId);
@@ -680,6 +712,10 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
               onToolApproval={(id, approved) => chat.addToolApprovalResponse({ id, approved })}
               onEditMessage={chat.editMessage}
               approvalTargetLabel={isSiteMode ? 'all machines' : selectedMachineId}
+              toolCommands={chat.toolCommands}
+              onCancelTool={handleCancelTool}
+              cancelPendingCommandIds={cancelPendingCommandIds}
+              turnStale={chat.turnStale}
             />
           )}
 

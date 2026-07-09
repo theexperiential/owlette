@@ -276,6 +276,80 @@ describe('dispatchToolCallAsSystem', () => {
     expect(out).toEqual({ error: 'Process query timed out' });
   });
 
+  it('skips a non-terminal running marker without deleting it, then returns the later real result', async () => {
+    // The agent writes `{status:'running', startedAt}` at command START
+    // (restart safety + progress signal). It is NON-terminal: pollForResult
+    // must skip it (keep polling) and never delete it, so the agent's real
+    // terminal result is still consumed on a later poll. Regression guard for
+    // the finding-3 bug where the running marker was consumed + deleted and
+    // the tool returned undefined to the LLM.
+    let access = 0;
+    const { db, updates } = buildFakeDb({
+      completedResults: new Proxy({}, {
+        get: (_t, key) => {
+          if (typeof key === 'string' && key.startsWith('cmd_')) {
+            access += 1;
+            // First poll: only the running marker is present.
+            if (access === 1) {
+              return { status: 'running', startedAt: 1717000000000 };
+            }
+            // Subsequent polls: the real terminal result has landed.
+            return { status: 'success', result: { hostname: 'box-9' } };
+          }
+          return undefined;
+        },
+      }) as Record<string, Record<string, unknown>>,
+    });
+
+    const out = await dispatchToolCallAsSystem(
+      { db, siteId: SITE_ID, machineId: MACHINE_ID, chatId: CHAT_ID, eventId: EVENT_ID },
+      'get_system_info',
+      {},
+    );
+
+    // The later real result is returned — NOT undefined (the finding-3 bug).
+    expect(out).toEqual({ hostname: 'box-9' });
+
+    // The running marker was never deleted: only the terminal result triggers a
+    // completed-doc FieldValue.delete() cleanup — exactly one such update.
+    const completedDeletes = updates.filter(
+      (u) =>
+        u.path[u.path.length - 1] === 'completed' &&
+        Object.values(u.payload).some((v) => v === '__FIELD_DELETE__'),
+    );
+    expect(completedDeletes).toHaveLength(1);
+  });
+
+  it('returns a cancelled `error` envelope when the agent reports the tool was cancelled', async () => {
+    const { db } = buildFakeDb({
+      completedResults: new Proxy({}, {
+        get: () => ({ status: 'cancelled', error: 'cancelled by user' }),
+      }) as Record<string, Record<string, unknown>>,
+    });
+    const out = await dispatchToolCallAsSystem(
+      { db, siteId: SITE_ID, machineId: MACHINE_ID, chatId: CHAT_ID, eventId: EVENT_ID },
+      'get_system_info',
+      {},
+    );
+    // A cancelled entry has no `result` field — must NOT fall through to a
+    // phantom-success `return result` (undefined). Finding-6 dispatch half.
+    expect(out).toEqual({ error: 'cancelled by user' });
+  });
+
+  it('defaults the cancelled message when the agent omits an error string', async () => {
+    const { db } = buildFakeDb({
+      completedResults: new Proxy({}, {
+        get: () => ({ status: 'cancelled' }),
+      }) as Record<string, Record<string, unknown>>,
+    });
+    const out = await dispatchToolCallAsSystem(
+      { db, siteId: SITE_ID, machineId: MACHINE_ID, chatId: CHAT_ID, eventId: EVENT_ID },
+      'get_system_info',
+      {},
+    );
+    expect(out).toEqual({ error: 'cancelled by user' });
+  });
+
   it('returns an `error` envelope on poll timeout and cleans up pending', async () => {
     const { db, updates } = buildFakeDb({ completedAlwaysEmpty: true });
 
@@ -381,6 +455,55 @@ describe('dispatchExistingCommandAsSystem', () => {
     expect(written[cmdId].schedules).toEqual([
       { days: ['mon'], ranges: [{ start: '09:00', stop: '17:00' }] },
     ]);
+  });
+
+  it('skips a running marker and returns the later terminal result', async () => {
+    let access = 0;
+    const { db, updates } = buildFakeDb({
+      completedResults: new Proxy({}, {
+        get: (_t, key) => {
+          if (typeof key === 'string' && key.startsWith('cmd_')) {
+            access += 1;
+            if (access === 1) {
+              return { status: 'running', startedAt: 1717000000000 };
+            }
+            return { status: 'success', result: 'Process restarted' };
+          }
+          return undefined;
+        },
+      }) as Record<string, Record<string, unknown>>,
+    });
+
+    const out = await dispatchExistingCommandAsSystem(
+      { db, siteId: SITE_ID, machineId: MACHINE_ID, chatId: CHAT_ID, eventId: EVENT_ID },
+      'restart_process',
+      'MyApp.exe',
+    );
+
+    expect(out).toEqual({ status: 'success', result: 'Process restarted' });
+
+    const completedDeletes = updates.filter(
+      (u) =>
+        u.path[u.path.length - 1] === 'completed' &&
+        Object.values(u.payload).some((v) => v === '__FIELD_DELETE__'),
+    );
+    expect(completedDeletes).toHaveLength(1);
+  });
+
+  it('surfaces a cancelled entry through the status/result shape', async () => {
+    const { db } = buildFakeDb({
+      completedResults: new Proxy({}, {
+        get: () => ({ status: 'cancelled', error: 'cancelled by user' }),
+      }) as Record<string, Record<string, unknown>>,
+    });
+    const out = await dispatchExistingCommandAsSystem(
+      { db, siteId: SITE_ID, machineId: MACHINE_ID, chatId: CHAT_ID, eventId: EVENT_ID },
+      'restart_process',
+      'MyApp.exe',
+    );
+    // Not a phantom success: status is 'cancelled' and the agent's error
+    // string surfaces as the result (mirrors executeExistingCommand).
+    expect(out).toEqual({ status: 'cancelled', result: 'cancelled by user' });
   });
 
   it('returns timeout envelope when agent does not respond', async () => {

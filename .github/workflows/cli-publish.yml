@@ -8,7 +8,7 @@ name: cli publish
 # must be configured under the package settings on npmjs.com first. npm
 # requires the package to already exist before a trusted publisher can be
 # attached, so the very first publish of the package must be bootstrapped
-# once with a token / local `npm publish` (see docs/api/distribution.md).
+# once with a token / local `npm publish` (see web/content/docs/api/distribution.mdx).
 # Every release after that goes through this workflow tokenlessly, with
 # provenance attestations generated automatically.
 #

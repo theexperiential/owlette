@@ -294,6 +294,17 @@ function normalizeCommandBody(body: CommandBody): NormalizedCommand {
     }
     const chatIdError = copyOptionalString(inputParams, payload, 'chat_id');
     if (chatIdError) return { ok: false, response: chatIdError };
+  } else if (cmdType === 'cancel_mcp_tool') {
+    const error = copyOptionalString(inputParams, payload, 'target_command_id');
+    if (error) return { ok: false, response: error };
+    if (payload.target_command_id === undefined) {
+      return {
+        ok: false,
+        response: problemValidation('params.target_command_id is required for cancel_mcp_tool', {
+          'body.params.target_command_id': ['required'],
+        }),
+      };
+    }
   } else if (cmdType === 'update_owlette') {
     for (const key of ['installer_url', 'deployment_id', 'target_version', 'checksum_sha256']) {
       const error = copyOptionalString(inputParams, payload, key);

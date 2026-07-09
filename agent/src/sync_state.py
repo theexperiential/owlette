@@ -41,12 +41,16 @@ from typing import Any, Iterator, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# sqlite schema version stamped into PRAGMA user_version. lets a future
-# in-place upgrade detect "this DB was created by a previous shape".
-# bump only when the schema CHANGES after roost ships in production —
-# until then there's no installed DB in the wild to migrate from, so
-# the create_schema function below is the source of truth.
-SCHEMA_VERSION = 1
+# sqlite schema version stamped into PRAGMA user_version. lets an in-place
+# upgrade detect "this DB was created by a previous shape" and migrate it.
+# _create_schema() is the source of truth for a FRESH DB (it always builds the
+# latest shape); existing DBs are brought forward by the numbered steps in
+# _MIGRATIONS. bump this and add a matching migration whenever the schema
+# changes.
+#
+# v1 -> v2: the roost rename (folder->roost, manifest->version) renamed three
+#           distributions columns; see _migrate_1_to_2.
+SCHEMA_VERSION = 2
 
 def _default_state_db_path() -> str:
     """
@@ -87,6 +91,31 @@ DEFAULT_STATE_DB_PATH = _default_state_db_path()
 class SyncStateError(Exception):
     """raised when state-store operations fail in a way callers must handle."""
     pass
+
+
+def _migrate_1_to_2(conn: sqlite3.Connection) -> None:
+    """
+    schema v1 -> v2: the roost rename (folder -> roost, manifest -> version).
+
+    DBs created before the rename carry the old column names on the
+    distributions table (folder_id / manifest_id / manifest_url); the current
+    code reads the new ones (roost_id / version_id / version_url), so an
+    unmigrated DB raises `IndexError: No item with that key` on every row
+    access — e.g. the hourly scrub, and any real sync against those rows.
+    SQLite 3.25+ RENAME COLUMN updates the column plus every constraint/index
+    that references it (the UNIQUE natural key included), preserving all rows.
+    """
+    conn.execute('ALTER TABLE distributions RENAME COLUMN folder_id TO roost_id')
+    conn.execute('ALTER TABLE distributions RENAME COLUMN manifest_id TO version_id')
+    conn.execute('ALTER TABLE distributions RENAME COLUMN manifest_url TO version_url')
+
+
+# numbered migration steps: {target_version: fn(conn)}. applied in order for an
+# existing DB stamped below SCHEMA_VERSION (see SyncState._run_migrations). a
+# fresh DB skips these and gets _create_schema() — the current shape — directly.
+_MIGRATIONS = {
+    2: _migrate_1_to_2,
+}
 
 
 class SyncState:
@@ -156,21 +185,37 @@ class SyncState:
 
     def _run_migrations(self) -> None:
         """
-        create the schema if the DB is fresh; otherwise no-op.
+        bring the DB up to SCHEMA_VERSION.
 
-        we don't have an installed DB in the wild yet — roost hasn't shipped.
-        once it has, future schema CHANGES (not the initial create) will
-        re-introduce stepped migrations here.
+        a fresh DB (user_version 0) gets the current schema created in one
+        shot — _create_schema() is the source of truth for the latest shape.
+        an existing DB stamped at an older version is upgraded by applying each
+        numbered step in _MIGRATIONS in order, preserving its rows. already
+        current → no-op.
         """
         assert self._conn is not None
-        cur = self._conn.execute('PRAGMA user_version')
-        current = cur.fetchone()[0]
+        current = self._conn.execute('PRAGMA user_version').fetchone()[0]
         if current >= SCHEMA_VERSION:
             return
         with self._txn():
-            self._create_schema()
+            if current == 0:
+                # fresh DB: build the latest schema directly.
+                self._create_schema()
+            else:
+                # existing DB: step it forward one version at a time.
+                for version in range(current + 1, SCHEMA_VERSION + 1):
+                    migrate = _MIGRATIONS.get(version)
+                    if migrate is None:
+                        raise SyncStateError(
+                            f"missing migration to schema v{version} "
+                            f"(DB at v{current}, target v{SCHEMA_VERSION})"
+                        )
+                    migrate(self._conn)
             self._conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
-        logger.info(f"sync_state schema created (v{SCHEMA_VERSION})")
+        if current == 0:
+            logger.info(f"sync_state schema created (v{SCHEMA_VERSION})")
+        else:
+            logger.info(f"sync_state migrated schema v{current} -> v{SCHEMA_VERSION}")
 
     def _create_schema(self) -> None:
         """create the full schema from scratch. single source of truth."""

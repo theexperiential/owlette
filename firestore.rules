@@ -1,8 +1,8 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.5.0 - User-doc field allowlist, deletedAt gating, cortex/per-machine-logs rules
-// Last Updated: 2026-05-17
+// Version: 2.6.0 - Async Cortex turns: chat stream snapshots + cortex-followups (server-written, client read-only)
+// Last Updated: 2026-07-06
 //
 // Security Model:
 // - Role-based access control (RBAC): user | admin | agent
@@ -728,6 +728,27 @@ service cloud.firestore {
         allow write: if isAuthenticated() &&
                         get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid;
       }
+
+      match /stream/{docId} {
+        // Live turn snapshots for async Cortex turns (stream/current)
+        // Read access mirrors messages: parent chat ownership OR autonomous chat site access
+        // Written only by the server-side turn runner via Admin SDK (no client writes)
+        allow read: if isAuthenticated() &&
+                       (get(/databases/$(database)/documents/chats/$(chatId)).data.userId == request.auth.uid ||
+                        (get(/databases/$(database)/documents/chats/$(chatId)).data.source == 'autonomous' &&
+                         canAccessSite(get(/databases/$(database)/documents/chats/$(chatId)).data.siteId)));
+      }
+    }
+
+    // ============================================
+    // Cortex Follow-ups Collection
+    // ============================================
+
+    match /cortex-followups/{followupId} {
+      // Scheduled Cortex follow-up reminders ("check back on a task")
+      // Users can read their own follow-ups
+      // Written only by trusted server APIs via Admin SDK (no client writes)
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
 
     // ============================================

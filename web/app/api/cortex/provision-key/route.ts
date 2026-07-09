@@ -25,6 +25,20 @@ import { getUserIdFromSession, withRateLimit } from '@/lib/withRateLimit';
 const COMMAND_TIMEOUT_MS = 15_000;
 const POLL_INTERVAL_MS = 1_000;
 
+/**
+ * The agent writes a NON-terminal `running` marker to the completed doc at the
+ * START of every command (restart safety), plus intermediate progress states.
+ * Only these whitelisted statuses actually resolve the command — a `running`
+ * entry must NOT be treated as terminal (deleting it destroys restart safety
+ * and would return success while provisioning is still in flight).
+ */
+const TERMINAL_COMMAND_STATUSES = new Set([
+  'completed',
+  'failed',
+  'error',
+  'cancelled',
+]);
+
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     const userId = await requireSession(request);
@@ -88,13 +102,20 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
       const completedDoc = await completedRef.get();
       const cmdResult = completedDoc.data()?.[commandId];
+      const status =
+        cmdResult && typeof cmdResult === 'object'
+          ? (cmdResult as { status?: unknown }).status
+          : undefined;
 
-      if (cmdResult) {
+      // Only a terminal status resolves the command. A non-terminal `running`
+      // marker (or any progress state) means provisioning is still underway —
+      // keep polling and leave the entry in place (restart safety).
+      if (typeof status === 'string' && TERMINAL_COMMAND_STATUSES.has(status)) {
         // Clean up
         const { FieldValue } = await import('firebase-admin/firestore');
         await completedRef.update({ [commandId]: FieldValue.delete() });
 
-        if (cmdResult.status === 'failed') {
+        if (status === 'failed' || status === 'error') {
           return NextResponse.json(
             { error: cmdResult.error || 'Key provisioning failed' },
             { status: 500 },

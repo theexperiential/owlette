@@ -173,6 +173,7 @@ The public route shim still requires `process_name` for `set_launch_mode`; direc
 | type | fields | behavior |
 |------|--------|----------|
 | `mcp_tool_call` | `tool_name`, `tool_params`, optional `chat_id`, optional `timeout_seconds` | Execute an agent-side MCP tool. `tool_params` is the payload object. |
+| `cancel_mcp_tool` | `target_command_id` | Kill the process tree of an in-flight `mcp_tool_call` identified by its command id and mark it `cancelled`. Unknown or already-finished targets return a safe error (cancelling is idempotent). |
 | `update_owlette` | `installer_url`, `checksum_sha256`, optional `target_version`, optional `deployment_id` | Download a verified agent installer and run it through Task Scheduler. `checksum_sha256` is required. |
 
 `mcp_tool_call` returns JSON-encoded tool output in the final `result` field

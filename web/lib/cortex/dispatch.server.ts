@@ -145,6 +145,14 @@ async function pollForResult(
     const data = completedDoc.data();
     const cmdResult = data?.[commandId] as Record<string, unknown> | undefined;
     if (cmdResult) {
+      // CROSS-SIDE CONTRACT: the agent writes `{status: 'running', startedAt}`
+      // to the completed doc when a command starts (restart safety + progress
+      // signal — see agent/src/firebase_client.py `_mark_command_running`).
+      // Running entries are NON-terminal: skip and keep polling, and never
+      // delete them — the agent's terminal write overwrites the marker.
+      // Mirrors cortex-utils.server.ts pollForResult (lines 483/582).
+      if (cmdResult.status === 'running') continue;
+
       // Best-effort cleanup so the doc doesn't grow unbounded.
       await completed.update({ [commandId]: FieldValue.delete() }).catch(() => undefined);
       return cmdResult;
@@ -234,6 +242,13 @@ function interpretToolCallResult(
     return { error: (cmdResult.error as string) || 'Tool execution failed' };
   }
 
+  // A `cancelled` entry (agent-side `cancel_mcp_tool` write — no `result`
+  // field) is terminal but NOT a success. Surface it as a tool failure so the
+  // LLM doesn't interpret an undefined result as a phantom success.
+  if (cmdResult.status === 'cancelled') {
+    return { error: (cmdResult.error as string) || 'cancelled by user' };
+  }
+
   const result = cmdResult.result;
   if (typeof result === 'string') {
     try {
@@ -294,6 +309,10 @@ export async function dispatchExistingCommandAsSystem(
     return { error: `Command '${commandType}' timed out` };
   }
 
+  // `running` markers are skipped inside pollForResult (non-terminal), so
+  // cmdResult is always terminal here. A `cancelled` entry has no `result`
+  // field and carries `error: 'cancelled by user'`, which surfaces through
+  // the `|| cmdResult.error` fallback below (mirrors executeExistingCommand).
   return {
     status: cmdResult.status,
     result: cmdResult.result || cmdResult.error || 'Command completed',

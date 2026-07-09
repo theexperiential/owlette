@@ -1,112 +1,32 @@
 /**
- * Core chat API endpoint — dual-path architecture.
+ * Core chat API endpoint — async turn architecture (cortex-async-turns).
  *
- * Single-machine mode (local Cortex):
- *   Web writes pendingMessage to Firestore → local Cortex picks up →
- *   Agent SDK runs with local tools → Cortex writes response progressively →
- *   Web streams via SSE (onSnapshot).
- *
- * Site-wide mode (unchanged):
- *   Web runs LLM directly via Vercel AI SDK → relays tools via Firestore commands.
+ * POST authenticates, verifies site access, acquires the per-chat turn lock
+ * (`chats/{chatId}/stream/current`), and starts a detached turn runner. The
+ * runner owns the LLM loop + tool relay and persists progress to Firestore,
+ * so the turn survives a dead HTTP stream; the stream returned here is a
+ * best-effort live branch of the same turn (clients reattach via Firestore).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { streamText, stepCountIs, convertToModelMessages, type UIMessage } from 'ai';
+import { createUIMessageStreamResponse, type UIMessage } from 'ai';
 import { resolveAuth, requireScope } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
-import { createModel, buildSystemPrompt, type ProcessSummary } from '@/lib/llm';
-import { getToolsByTier } from '@/lib/mcp-tools';
 import { apiError } from '@/lib/apiErrorResponse';
 import {
-  resolveLlmConfig,
   verifyUserSiteAccess,
-  resolveCortexMaxTier,
   isMachineOnline,
   isCortexEnabled,
   getOnlineMachines,
-  getCortexRequireTier3Approval,
-  buildExecutableTools,
-  type SiteAccessLevel,
 } from '@/lib/cortex-utils.server';
-import { repairDanglingToolParts } from '@/lib/cortex/repairMessages';
+import { startTurn } from '@/lib/cortex/turnRunner.server';
+import {
+  acquireTurnLock,
+  generateTurnId,
+  TurnActiveError,
+} from '@/lib/cortex/turnStore.server';
 
 const SITE_TARGET_ID = '__site__';
-
-/**
- * Fetch process configurations from Firestore for system prompt context.
- */
-async function fetchProcessSummaries(
-  db: FirebaseFirestore.Firestore,
-  siteId: string,
-  machineId: string,
-): Promise<ProcessSummary[]> {
-  try {
-    const configDoc = await db
-      .collection('config')
-      .doc(siteId)
-      .collection('machines')
-      .doc(machineId)
-      .get();
-
-    if (!configDoc.exists) return [];
-
-    const data = configDoc.data();
-    const processes = data?.processes;
-    if (!Array.isArray(processes)) return [];
-
-    return processes.map((p: Record<string, unknown>) => ({
-      name: (p.name as string) || 'Unknown',
-      launch_mode: (p.launch_mode as string) || (p.autolaunch ? 'always' : 'off'),
-      exe_path: (p.exe_path as string) || (p.path as string) || '',
-      ...(p.file_path ? { file_path: p.file_path as string } : {}),
-      ...(p.cwd ? { cwd: p.cwd as string } : {}),
-    }));
-  } catch {
-    return [];
-  }
-}
-
-/** Cortex heartbeat is "fresh" if within this many milliseconds. */
-const HEARTBEAT_STALE_MS = 30_000;
-
-/** Maximum time to wait for Cortex response before timing out. */
-const LOCAL_CORTEX_TIMEOUT_MS = 60_000;
-
-/**
- * Check if local Cortex is running on a machine by checking its heartbeat.
- */
-async function isCortexLocal(
-  db: FirebaseFirestore.Firestore,
-  siteId: string,
-  machineId: string,
-): Promise<boolean> {
-  try {
-    const machineDoc = await db
-      .collection('sites')
-      .doc(siteId)
-      .collection('machines')
-      .doc(machineId)
-      .get();
-
-    if (!machineDoc.exists) return false;
-
-    const data = machineDoc.data();
-    const cortexStatus = data?.cortexStatus;
-    if (!cortexStatus?.online) return false;
-
-    const lastHeartbeat = cortexStatus.lastHeartbeat;
-    if (!lastHeartbeat) return false;
-
-    const heartbeatTime = lastHeartbeat.toDate
-      ? lastHeartbeat.toDate().getTime()
-      : new Date(lastHeartbeat).getTime();
-
-    return Date.now() - heartbeatTime < HEARTBEAT_STALE_MS;
-  } catch {
-    return false;
-  }
-}
 
 // Note: Streaming responses are incompatible with withRateLimit's header injection,
 // so we handle rate limiting manually if needed in the future.
@@ -125,12 +45,15 @@ export async function POST(request: NextRequest) {
       machineId,
       machineName,
       chatId,
+      supersede,
     } = body as {
       messages: UIMessage[];  // AI SDK UIMessages (text + file + tool/approval parts)
       siteId: string;
       machineId: string;
       machineName: string;
       chatId: string;
+      /** Claim the turn lock even while another turn is running (new user message mid-turn). */
+      supersede?: boolean;
     };
 
     if (!messages || !Array.isArray(messages) || messages.length === 0 || !siteId || !chatId) {
@@ -157,312 +80,106 @@ export async function POST(request: NextRequest) {
       ? { ...access, isSuperadmin: false, isSiteAdmin: false }
       : access;
 
-    // ─── Site-Wide Mode (unchanged — web-side LLM) ─────────────────────
+    // Chat ownership guard. Site access alone is not enough — a chat belongs to
+    // the user who created it. When the chat doc already exists it must match
+    // the caller (userId) and target site; a mismatch is a cross-user write
+    // attempt (the runner persists via the admin SDK, bypassing Firestore
+    // rules, so this is the only gate). A non-existent doc is allowed — the
+    // first turn of a new chat legitimately creates it.
+    const existingChatSnap = await db.collection('chats').doc(chatId).get();
+    if (existingChatSnap.exists) {
+      const chatData = existingChatSnap.data();
+      if (chatData?.userId !== userId || chatData?.siteId !== siteId) {
+        return NextResponse.json({ error: 'you do not own this chat' }, { status: 403 });
+      }
+    }
+
     if (isSiteMode) {
-      return handleSiteWideMode(db, userId, siteId, messages, chatId, effectiveAccess);
-    }
-
-    // ─── Single Machine Mode ───────────────────────────────────────────
-    if (!machineId) {
-      return NextResponse.json(
-        { error: 'machineId is required for single-machine mode' },
-        { status: 400 },
-      );
-    }
-
-    const online = await isMachineOnline(db, siteId, machineId);
-    if (!online) {
-      return NextResponse.json(
-        { error: `Machine "${machineName || machineId}" appears to be offline.` },
-        { status: 503 },
-      );
-    }
-
-    const cortexEnabled = await isCortexEnabled(db, siteId, machineId);
-    if (!cortexEnabled) {
-      return NextResponse.json(
-        { error: `Cortex is disabled on "${machineName || machineId}". Re-enable it from the Cortex header to deliver tool calls.` },
-        { status: 423 },
-      );
-    }
-
-    // Routing into the local Cortex path requires BOTH:
-    //  1. site-admin caller — the local path runs tools inside the agent and
-    //     does not honor a per-user tier cap, so non-admins are forced through
-    //     the server-side LLM path where the tier cap (tier 1) is enforced.
-    //  2. tier-3 approval NOT required for this site — the local path executes
-    //     tools inside the agent, so the web-side `needsApproval` gate cannot
-    //     see or pause them. When approval is required (the default), admins are
-    //     routed server-side so the AI SDK approval gate fires. See
-    //     getCortexRequireTier3Approval / the §6 decision in the PR.
-    const localPathAllowed =
-      effectiveAccess.isSiteAdmin && !(await getCortexRequireTier3Approval(db, siteId));
-    const cortexLocal = localPathAllowed
-      ? await isCortexLocal(db, siteId, machineId)
-      : false;
-
-    if (cortexLocal) {
-      // ─── Local Cortex Path (SSE via Firestore onSnapshot) ──────────
-      return handleLocalCortex(db, siteId, machineId, machineName, messages, chatId);
+      // ─── Site-Wide Mode ────────────────────────────────────────────────
+      // User-facing 503 before committing a turn. The runner refetches the
+      // online-machine list itself; the double fetch is accepted so an empty
+      // site fails here instead of inside an already-locked turn.
+      const onlineMachines = await getOnlineMachines(db, siteId);
+      if (onlineMachines.length === 0) {
+        return NextResponse.json(
+          { error: 'No machines are currently online in this site.' },
+          { status: 503 },
+        );
+      }
     } else {
-      // ─── Fallback: Server-side LLM (existing approach) ────────────
-      return handleServerSideLLM(db, userId, siteId, machineId, machineName, messages, chatId, effectiveAccess);
+      // ─── Single Machine Mode ───────────────────────────────────────────
+      if (!machineId) {
+        return NextResponse.json(
+          { error: 'machineId is required for single-machine mode' },
+          { status: 400 },
+        );
+      }
+
+      const online = await isMachineOnline(db, siteId, machineId);
+      if (!online) {
+        return NextResponse.json(
+          { error: `Machine "${machineName || machineId}" appears to be offline.` },
+          { status: 503 },
+        );
+      }
+
+      const cortexEnabled = await isCortexEnabled(db, siteId, machineId);
+      if (!cortexEnabled) {
+        return NextResponse.json(
+          { error: `Cortex is disabled on "${machineName || machineId}". Re-enable it from the Cortex header to deliver tool calls.` },
+          { status: 423 },
+        );
+      }
     }
+
+    // acquireTurnLock returns the PRIOR turn's toolCommands recovery index
+    // (read inside the same claim transaction), so this turn can splice in real
+    // agent results for tool calls whose runner died — no separate pre-lock
+    // read (which would be a TOCTOU against the overwrite the claim performs).
+    const turnId = generateTurnId();
+    let priorToolCommands;
+    try {
+      priorToolCommands = await acquireTurnLock(db, chatId, {
+        turnId,
+        siteId,
+        machineId,
+        supersede: supersede === true,
+      });
+    } catch (error) {
+      if (error instanceof TurnActiveError) {
+        return NextResponse.json(
+          { error: 'a turn is already running', code: 'turn_active' },
+          { status: 409 },
+        );
+      }
+      throw error;
+    }
+
+    // Detached runner: returns immediately with the live stream branch; the
+    // turn itself keeps running (and persisting to Firestore) even if this
+    // HTTP response dies.
+    const stream = startTurn(db, {
+      chatId,
+      turnId,
+      siteId,
+      machineId,
+      machineName: machineName || '',
+      messages,
+      userId,
+      access: effectiveAccess,
+      priorToolCommands,
+    });
+
+    // Client disconnect: cancel the HTTP tee branch so we don't hold the
+    // response open. The turn itself keeps running (the snapshot pump owns the
+    // other tee branch), so nothing is lost — the client reattaches via the
+    // stream doc.
+    request.signal.addEventListener('abort', () => {
+      void stream.cancel().catch(() => {});
+    });
+
+    return createUIMessageStreamResponse({ stream });
   } catch (error: unknown) {
     return apiError(error, 'cortex');
   }
-}
-
-
-/**
- * Local Cortex path: write pendingMessage to Firestore, then stream
- * response via Vercel AI SDK protocol as Cortex writes progressively.
- *
- * Uses the AI SDK's text-stream protocol so the client-side useChat hook
- * works without modification:
- *   0:"text delta"\n   — text content
- *   d:{"finishReason":"stop"}\n  — stream finish
- *   3:"error message"\n — error
- */
-async function handleLocalCortex(
-  db: FirebaseFirestore.Firestore,
-  siteId: string,
-  machineId: string,
-  machineName: string,
-  messages: UIMessage[],
-  chatId: string,
-): Promise<Response> {
-  const activeChatRef = db
-    .collection('sites')
-    .doc(siteId)
-    .collection('machines')
-    .doc(machineId)
-    .collection('cortex')
-    .doc('active-chat');
-
-  // Extract the latest user message text + images from its UIMessage parts.
-  const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
-
-  let userText = '';
-  const images: Array<{ url: string; mediaType: string }> = [];
-
-  for (const part of lastUserMsg?.parts ?? []) {
-    if (part.type === 'text') {
-      userText += part.text || '';
-    } else if (part.type === 'file' && part.mediaType?.startsWith('image/') && part.url) {
-      images.push({ url: part.url, mediaType: part.mediaType });
-    }
-  }
-
-  // Serialize messages for Firestore (flatten to text history for the agent,
-  // which consumes `[{ role, content }]` — preserves the existing contract).
-  const serializedMessages = messages.map((m) => ({
-    role: m.role,
-    content: m.parts
-      .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-      .map((p) => p.text || '')
-      .join(''),
-  }));
-
-  // Write pending message for local Cortex to pick up
-  await activeChatRef.set(
-    {
-      pendingMessage: userText,
-      chatId,
-      machineName: machineName || machineId,
-      messages: serializedMessages,
-      ...(images.length > 0 ? { images } : {}),
-      status: 'pending',
-      response: { content: '', complete: false, parts: [] },
-      updatedAt: FieldValue.serverTimestamp(),
-    },
-    { merge: false },
-  );
-
-  // Stream response as AI SDK protocol
-  const encoder = new TextEncoder();
-  let lastContent = '';
-  let unsubscribe: (() => void) | null = null;
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-  const stream = new ReadableStream({
-    start(controller) {
-      // Timeout
-      timeoutId = setTimeout(() => {
-        controller.enqueue(encoder.encode(`3:"cortex response timed out"\n`));
-        controller.close();
-        unsubscribe?.();
-      }, LOCAL_CORTEX_TIMEOUT_MS);
-
-      // Listen for Firestore changes
-      unsubscribe = activeChatRef.onSnapshot(
-        (snapshot) => {
-          const data = snapshot.data();
-          if (!data) return;
-
-          const response = data.response;
-          if (!response) return;
-
-          const content: string = response.content || '';
-          const complete: boolean = response.complete || false;
-          const status: string = data.status;
-
-          // Send text delta (new content since last snapshot)
-          if (content.length > lastContent.length) {
-            const delta = content.slice(lastContent.length);
-            // AI SDK protocol: 0:"text"\n
-            controller.enqueue(encoder.encode(`0:${JSON.stringify(delta)}\n`));
-            lastContent = content;
-          }
-
-          // Complete
-          if (complete) {
-            // AI SDK protocol: d:{"finishReason":"stop"}\n
-            controller.enqueue(
-              encoder.encode(`d:${JSON.stringify({ finishReason: 'stop' })}\n`),
-            );
-            if (timeoutId) clearTimeout(timeoutId);
-            unsubscribe?.();
-            controller.close();
-          }
-
-          // Error
-          if (status === 'error') {
-            controller.enqueue(
-              encoder.encode(`3:${JSON.stringify(content || 'cortex error')}\n`),
-            );
-            if (timeoutId) clearTimeout(timeoutId);
-            unsubscribe?.();
-            controller.close();
-          }
-        },
-        (error) => {
-          console.error('Cortex onSnapshot error:', error);
-          controller.enqueue(
-            encoder.encode(`3:${JSON.stringify(error.message || 'Stream error')}\n`),
-          );
-          controller.close();
-          if (timeoutId) clearTimeout(timeoutId);
-        },
-      );
-    },
-
-    cancel() {
-      unsubscribe?.();
-      if (timeoutId) clearTimeout(timeoutId);
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
-      'X-Vercel-AI-Data-Stream': 'v1',
-    },
-  });
-}
-
-
-/**
- * Server-side LLM path (fallback when local Cortex is not running).
- * Same as the original implementation — Vercel AI SDK + Firestore relay.
- */
-async function handleServerSideLLM(
-  db: FirebaseFirestore.Firestore,
-  userId: string,
-  siteId: string,
-  machineId: string,
-  machineName: string,
-  messages: UIMessage[],
-  chatId: string,
-  access: SiteAccessLevel,
-): Promise<Response> {
-  const [llmConfig, processes, requireTier3Approval] = await Promise.all([
-    resolveLlmConfig(db, userId, siteId),
-    fetchProcessSummaries(db, siteId, machineId),
-    getCortexRequireTier3Approval(db, siteId),
-  ]);
-
-  const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
-  const executableTools = buildExecutableTools(
-    db, siteId, machineId, chatId, toolDefs,
-    false, [], { userId, userRole: access.role, requireTier3Approval },
-  );
-
-  const model = createModel(llmConfig);
-
-  // Repair dangling tool parts (stream died mid-tool-call, or an approval
-  // was superseded) so convertToModelMessages can't throw
-  // MissingToolResultsError and permanently brick the conversation.
-  const { messages: repairedMessages, repairedToolCallIds } = repairDanglingToolParts(messages);
-  if (repairedToolCallIds.length > 0) {
-    console.warn(
-      `[cortex] repaired ${repairedToolCallIds.length} dangling tool part(s) in chat ${chatId}: ${repairedToolCallIds.join(', ')}`,
-    );
-  }
-
-  const result = streamText({
-    model,
-    system: buildSystemPrompt(machineName || machineId, false, processes),
-    // Convert with the built tools so per-tool toModelOutput hooks (e.g.
-    // capture_screenshot → image-url) project prior-turn tool outputs into
-    // model content, not just on the turn they were produced.
-    messages: await convertToModelMessages(repairedMessages, { tools: executableTools }),
-    tools: executableTools,
-    stopWhen: stepCountIs(10),
-  });
-
-  return result.toUIMessageStreamResponse();
-}
-
-
-/**
- * Site-wide mode: LLM runs on web server, tools fan out to all online machines.
- */
-async function handleSiteWideMode(
-  db: FirebaseFirestore.Firestore,
-  userId: string,
-  siteId: string,
-  messages: UIMessage[],
-  chatId: string,
-  access: SiteAccessLevel,
-): Promise<Response> {
-  const onlineMachines = await getOnlineMachines(db, siteId);
-  if (onlineMachines.length === 0) {
-    return NextResponse.json(
-      { error: 'No machines are currently online in this site.' },
-      { status: 503 },
-    );
-  }
-
-  const [llmConfig, requireTier3Approval] = await Promise.all([
-    resolveLlmConfig(db, userId, siteId),
-    getCortexRequireTier3Approval(db, siteId),
-  ]);
-
-  const toolDefs = getToolsByTier(resolveCortexMaxTier(access));
-  const executableTools = buildExecutableTools(
-    db, siteId, SITE_TARGET_ID, chatId, toolDefs,
-    true, onlineMachines, { userId, userRole: access.role, requireTier3Approval },
-  );
-
-  const model = createModel(llmConfig);
-
-  // Same dangling-tool-part repair as the single-machine path — see
-  // handleServerSideLLM.
-  const { messages: repairedMessages, repairedToolCallIds } = repairDanglingToolParts(messages);
-  if (repairedToolCallIds.length > 0) {
-    console.warn(
-      `[cortex] repaired ${repairedToolCallIds.length} dangling tool part(s) in chat ${chatId}: ${repairedToolCallIds.join(', ')}`,
-    );
-  }
-
-  const result = streamText({
-    model,
-    system: buildSystemPrompt('', true),
-    messages: await convertToModelMessages(repairedMessages, { tools: executableTools }),
-    tools: executableTools,
-    stopWhen: stepCountIs(10),
-  });
-
-  return result.toUIMessageStreamResponse();
 }

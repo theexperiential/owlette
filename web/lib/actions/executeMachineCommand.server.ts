@@ -42,6 +42,8 @@ import { FieldValue } from 'firebase-admin/firestore';
  *   command surface (used by `useDisplayActions`).
  * - `restart_process` / `start_process` / `stop_process` /
  *   `kill_process` - process-control commands emitted by the public API.
+ * - `cancel_mcp_tool` — kill an in-flight `mcp_tool_call` subprocess by
+ *   its command id (cortex cancel button — `/api/cortex/cancel-tool`).
  * - `update_owlette` — agent self-update command issued by
  *   `lib/firebase.ts:sendOwletteUpdateCommand`.
  */
@@ -63,6 +65,7 @@ export const ALLOWED_COMMAND_TYPES: ReadonlySet<string> = new Set<string>([
   'enumerate_display_modes',
   'test_display_apply',
   'mcp_tool_call',
+  'cancel_mcp_tool',
   'update_owlette',
 ]);
 

@@ -15,26 +15,13 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
 import { createCheapModel } from '@/lib/llm';
 import { resolveLlmConfig, verifyUserSiteAccess } from '@/lib/cortex-utils.server';
+import {
+  CHAT_CATEGORIES,
+  buildTitleCategoryPrompt,
+  categorizeNewChat,
+  parseChatCategory,
+} from '@/lib/cortex/categorizeChat.server';
 import { getUserIdFromSession, withRateLimit } from '@/lib/withRateLimit';
-
-const CATEGORIES = [
-  'Performance',
-  'Crashes',
-  'Network',
-  'Display',
-  'Processes',
-  'System Info',
-  'Configuration',
-  'General',
-] as const;
-
-type Category = typeof CATEGORIES[number];
-
-function parseCategory(text: string): Category {
-  return CATEGORIES.find(
-    (c) => c.toLowerCase() === text.trim().toLowerCase()
-  ) || 'General';
-}
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -91,20 +78,14 @@ export const POST = withRateLimit(async (request: NextRequest) => {
               // Categorize + title from first message
               const { text } = await generateText({
                 model,
-                prompt: `You manage IT/media-server systems. Given this user question, respond with exactly two lines:
-Line 1: A short title (max 6 words, no quotes) summarizing the topic
-Line 2: One category from: ${CATEGORIES.join(', ')}
-
-User question: "${typeof firstMsg === 'string' ? firstMsg.slice(0, 500) : JSON.stringify(firstMsg).slice(0, 500)}"
-
-Example response:
-CPU and memory stability check
-Performance`,
+                prompt: buildTitleCategoryPrompt(
+                  typeof firstMsg === 'string' ? firstMsg.slice(0, 500) : JSON.stringify(firstMsg).slice(0, 500),
+                ),
               });
 
               const lines = text.trim().split('\n').map((l) => l.trim()).filter(Boolean);
               const newTitle = lines[0]?.slice(0, 80) || 'untitled';
-              const category = lines[1] ? parseCategory(lines[1]) : 'General';
+              const category = lines[1] ? parseChatCategory(lines[1]) : 'General';
               await db.collection('chats').doc(chatId).update({ title: newTitle, category });
               results[chatId] = category;
               return;
@@ -112,14 +93,14 @@ Performance`,
 
             const { text } = await generateText({
               model,
-              prompt: `Categorize this IT/media-server management conversation into exactly one of: ${CATEGORIES.join(', ')}.
+              prompt: `Categorize this IT/media-server management conversation into exactly one of: ${CHAT_CATEGORIES.join(', ')}.
 
 Title: "${title}"
 
 Reply with only the category name, nothing else.`,
             });
 
-            const category = parseCategory(text);
+            const category = parseChatCategory(text);
             await db.collection('chats').doc(chatId).update({ category });
             results[chatId] = category;
           } catch (err) {
@@ -143,25 +124,8 @@ Reply with only the category name, nothing else.`,
       return NextResponse.json({ error: 'Chat not found' }, { status: 404 });
     }
 
-    const { text } = await generateText({
-      model,
-      prompt: `You manage IT/media-server systems. Given this user question, respond with exactly two lines:
-Line 1: A short title (max 6 words, no quotes) summarizing the topic
-Line 2: One category from: ${CATEGORIES.join(', ')}
-
-User question: "${message}"
-
-Example response:
-CPU and memory stability check
-Performance`,
-    });
-
-    const lines = text.trim().split('\n').map((l) => l.trim()).filter(Boolean);
-    const title = lines[0]?.slice(0, 80) || message.slice(0, 100);
-    const category = lines[1] ? parseCategory(lines[1]) : 'General';
-
-    // Write both title and category to the chat document
-    await db.collection('chats').doc(chatId).update({ title, category });
+    // Generate title + category and write both to the chat document
+    const { title, category } = await categorizeNewChat(db, model, chatId, message);
 
     return NextResponse.json({ title, category });
   } catch (error) {

@@ -103,6 +103,79 @@ class OwletteConfigApp:
         self.master.after(1000, self.update_process_list_periodically)
         self.master.after(1000, self.update_firebase_status_periodically)  # Refresh connection status (initial fast check)
 
+        # E2E introspection shim: read-only, side-file only, and a no-op unless
+        # OWLETTE_E2E=1. CustomTkinter widgets are invisible to Windows
+        # UIAutomation, so the full-machine e2e harness can't locate the
+        # add-process controls the usual way; this publishes their on-screen
+        # rects to a side file so pywinauto can drive them by coordinate. It
+        # must never affect normal (unset) operation. See _e2e_dump_widget_rects.
+        if os.environ.get('OWLETTE_E2E') == '1':
+            try:
+                logging.info("OWLETTE_E2E=1 - starting read-only widget introspection shim")
+                self.master.after(1000, self._e2e_dump_widget_rects)
+            except Exception:
+                logging.exception("e2e introspection shim failed to start (ignored)")
+
+    def _e2e_dump_widget_rects(self):
+        """Publish driver-relevant widget rectangles to a side file, then
+        reschedule. Active only under OWLETTE_E2E=1 (guarded at the call site).
+
+        Strictly read-only: it uses winfo_* geometry getters exclusively and
+        never reads/writes config or touches Firebase. Any failure is swallowed
+        so the shim can never destabilize the GUI it is observing. Coordinates
+        are absolute screen pixels (winfo_rootx/rooty) so pywinauto can click
+        them directly; cx/cy are the widget centre.
+        """
+        # Logical name -> attribute on self. These are the controls the Wave 2
+        # add-process flow drives (header "+" plus the detail-form fields).
+        E2E_WIDGETS = (
+            'new_button', 'details_toggle_button', 'name_entry', 'exe_path_entry',
+            'file_path_entry', 'cwd_entry', 'time_delay_entry', 'time_to_init_entry',
+            'relaunch_attempts_entry', 'priority_menu', 'visibility_menu',
+            'launch_mode_menu', 'process_list',
+        )
+        try:
+            rects = {}
+            for name in E2E_WIDGETS:
+                widget = getattr(self, name, None)
+                if widget is None:
+                    continue
+                try:
+                    if not (widget.winfo_exists() and widget.winfo_ismapped()):
+                        continue
+                    x, y = widget.winfo_rootx(), widget.winfo_rooty()
+                    w, h = widget.winfo_width(), widget.winfo_height()
+                except Exception:
+                    continue
+                rects[name] = {'x': x, 'y': y, 'width': w, 'height': h,
+                               'cx': x + w // 2, 'cy': y + h // 2}
+            payload = {
+                'schema': 1,
+                'pid': os.getpid(),
+                'updated_at': int(time.time()),
+                'window': {
+                    'x': self.master.winfo_rootx(), 'y': self.master.winfo_rooty(),
+                    'width': self.master.winfo_width(), 'height': self.master.winfo_height(),
+                    'title': self.master.title(),
+                },
+                'rects': rects,
+            }
+            path = shared_utils.get_data_path('tmp/e2e_widget_rects.json')
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = f"{path}.{os.getpid()}.tmp"
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(payload, f)
+            os.replace(tmp, path)  # atomic publish so a reader never sees a partial file
+        except Exception:
+            logging.debug("e2e widget-rect dump failed (ignored)", exc_info=True)
+        finally:
+            # Keep refreshing while the window lives (rects move if it does).
+            try:
+                if self.master.winfo_exists():
+                    self.master.after(1000, self._e2e_dump_widget_rects)
+            except Exception:
+                pass
+
     def _start_background_initialization(self):
         """Start heavy operations in background threads"""
         # Thread 1: Check service status

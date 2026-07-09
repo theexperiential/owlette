@@ -1009,7 +1009,7 @@ const tier3Tools: McpToolDefinition[] = [
   },
   {
     name: 'execute_script',
-    description: 'Execute a PowerShell script on the remote machine with no command restrictions. Use for installing software, running diagnostics, stress tests, managing services, editing the registry, configuring the system, or any other administration task. Returns stdout, stderr, and exit code.',
+    description: 'Execute a PowerShell script on the remote machine with no command restrictions. Use for installing software, running diagnostics, stress tests, managing services, editing the registry, configuring the system, or any other administration task. Returns stdout, stderr, and exit code. Timeouts are capped at 3300 seconds (55 minutes). For jobs that may run longer, launch them detached instead (Start-Process with output redirected to a log file), return immediately, and schedule a follow-up to check the log or result later.',
     tier: 3,
     parameters: {
       type: 'object',
@@ -1020,7 +1020,7 @@ const tier3Tools: McpToolDefinition[] = [
         },
         timeout_seconds: {
           type: 'number',
-          description: 'Timeout in seconds (default: 120). Set higher for long operations like software installs.',
+          description: 'Timeout in seconds (default: 120, maximum: 3300 — 55 minutes). Set higher for long operations like software installs. Anything longer must run detached.',
           default: 120,
         },
         working_directory: {

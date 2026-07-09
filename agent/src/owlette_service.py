@@ -3909,7 +3909,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                 import mcp_tools
                 config = shared_utils.read_config()
-                result = mcp_tools.execute_tool(tool_name, tool_params, config)
+                # command_id lets execute_script register its subprocess for
+                # cancellation via the cancel_mcp_tool command
+                result = mcp_tools.execute_tool(tool_name, tool_params, config, command_id=cmd_id)
 
                 self._log_cortex_tool(tool_name, tool_params, result)
 
@@ -4827,7 +4829,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         f"{drifted} with drift"
                     )
             except Exception as e:
-                logging.warning(f"roost scrub failed: {e}")
+                # exc_info so an unexpected failure (e.g. a schema mismatch)
+                # surfaces its stack instead of just a bare message.
+                logging.warning(f"roost scrub failed: {e}", exc_info=True)
 
         t = threading.Thread(target=_run_scrub, daemon=True, name='roost-scrub')
         t.start()

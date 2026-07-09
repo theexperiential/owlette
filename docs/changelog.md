@@ -9,6 +9,42 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [2.12.18] - 2026-07-09
+
+### fixed
+
+- **Cortex "cancel" now actually stops a running tool.** The cancel control reached the agent but couldn't identify which command to kill (it read the target command id from the wrong place), so the tool ran to its timeout as if nothing happened. Cancelling a `run_command` / `run_powershell` / `execute_script` now terminates the process tree within a few seconds and resolves the tool card to "cancelled by user".
+
+## [2.12.17] - 2026-07-08
+
+### fixed
+
+- **Agent roost sync-state database migrates itself.** Agents whose local roost sync database predated an internal rename would fail their hourly integrity check (and any future sync) with an internal "No item with that key" error. The database now upgrades itself in place on startup, preserving existing state.
+
+## [2.12.16] - 2026-07-07
+
+### fixed
+
+- **Cancelling a running tool now works for every shell tool.** The cancel control added in 2.12.15 only stopped `execute_script` — a running `run_powershell` or `run_command` ignored the cancel and ran to completion. All three shell tools now register their process, so cancel terminates the process tree within a few seconds and the tool card resolves to "cancelled by user".
+
+## [2.12.15] - 2026-07-07
+
+### added
+
+- **Antifragile Cortex chat (async turns).** A chat turn's model loop and tool execution are now decoupled from the browser connection. Long-running tools (e.g. `sfc /scannow`, DISM, multi-minute scripts) keep running and their results still land in the chat even if the connection drops, the tab is closed, or the page is reloaded mid-turn — the client reattaches to the in-flight turn and streams it live from the backend.
+- **Cancel a running tool.** Running tool calls now show a cancel control that terminates the process tree on the machine within a few seconds and reports the cancellation back to the chat.
+- **Stop a turn.** The stop control now halts the whole turn server-side instead of only the local view.
+
+### fixed
+
+- **Chats can no longer be bricked by an interrupted tool call.** A tool call whose result was lost mid-stream is repaired into an honest error (or recovered from the machine's completed-command record) so the conversation always continues; sending a new message while a tool is still running no longer produces a provider error.
+- **Agent robustness.** Long tool scripts are terminated cleanly on cancellation; a mid-command service restart no longer silently re-runs the interrupted command or strands a deployment as in-progress; `execute_script` timeouts are capped to keep results retrievable.
+- **User-attached images** in Cortex chat now align with the sender's message.
+
+### security
+
+- **Cortex chat ownership is enforced server-side.** Sending or stopping a turn now verifies the caller owns the target conversation, preventing cross-user chat modification.
+
 ## [2.12.14] - 2026-07-03
 
 ### fixed

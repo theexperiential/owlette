@@ -16,6 +16,7 @@ import re
 import shlex
 import socket
 import subprocess
+import threading
 import time
 import json
 from datetime import datetime
@@ -44,6 +45,80 @@ MAX_OUTPUT_SIZE = 50000
 
 # Subprocess timeout (seconds)
 SUBPROCESS_TIMEOUT = 25
+
+# Maximum execute_script timeout (seconds). 55 minutes — safely under the
+# 1-hour pending-entry GC in firebase_client._cleanup_stale_commands: a script
+# that outlives its pending entry can never deliver a result. The web side
+# clamps to the same value; longer jobs use the detached-job + follow-up
+# pattern instead.
+MAX_SCRIPT_TIMEOUT = 3300
+
+# ─── Running-process registry (cancel support) ──────────────────────────────
+# Maps in-flight command_id → subprocess PID for every shell-spawning tool
+# (execute_script, run_powershell, run_command), so a cancel_mcp_tool command
+# (handled in firebase_client) can kill the process tree of a specific running
+# command. Entries are removed when the command finishes, times out, or errors.
+_RUNNING_COMMANDS = {}
+_RUNNING_COMMANDS_LOCK = threading.Lock()
+
+
+def cancel_running_command(command_id):
+    """Kill the process tree of an in-flight command registered via
+    _run_tracked_subprocess (execute_script, run_powershell, run_command).
+
+    Returns True if a running process was found and killed, False if the
+    command is unknown or already finished (idempotent — cancelling twice,
+    or cancelling a completed command, is not an error).
+    """
+    with _RUNNING_COMMANDS_LOCK:
+        pid = _RUNNING_COMMANDS.get(command_id)
+    if pid is None:
+        return False
+    logger.info(f"[MCP-AUDIT] cancel_mcp_tool: killing process tree for command {command_id} (PID {pid})")
+    _kill_process_tree(pid)
+    return True
+
+
+def _run_tracked_subprocess(cmd, timeout, command_id, cwd=None):
+    """Run a subprocess via Popen while tracking its PID in _RUNNING_COMMANDS.
+
+    Registering the PID (when command_id is provided) is what lets a
+    cancel_mcp_tool interrupt kill this process mid-flight — the whole tree,
+    via CREATE_NEW_PROCESS_GROUP, so children spawned by the script die too.
+    The registry entry is always removed in the finally block.
+
+    Returns (returncode, stdout, stderr, timed_out). On timeout the process
+    tree is killed, returncode is None, timed_out is True, and any partial
+    output captured before the kill is returned.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        cwd=cwd,
+        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+
+    if command_id is not None:
+        with _RUNNING_COMMANDS_LOCK:
+            _RUNNING_COMMANDS[command_id] = proc.pid
+
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            return proc.returncode, stdout, stderr, False
+        except subprocess.TimeoutExpired:
+            # Kill the entire process tree, not just the root, then drain any
+            # remaining output.
+            _kill_process_tree(proc.pid)
+            stdout, stderr = proc.communicate(timeout=5)
+            return None, stdout or '', stderr or '', True
+    except Exception:
+        _kill_process_tree(proc.pid)
+        raise
+    finally:
+        if command_id is not None:
+            with _RUNNING_COMMANDS_LOCK:
+                _RUNNING_COMMANDS.pop(command_id, None)
 
 # ─── Tier 2 safety: critical processes that manage_process must never kill ──
 _CRITICAL_PROCESSES = frozenset({
@@ -123,7 +198,13 @@ def _validate_registry_path(hive, key_path):
     )
 
 
-def execute_tool(tool_name, tool_params, config=None):
+# Tools that spawn a shell subprocess and register it for cancellation. These
+# handlers take an extra command_id arg (routed through _run_tracked_subprocess)
+# so a cancel_mcp_tool interrupt can kill the running process tree.
+_CANCELLABLE_TOOLS = frozenset({'execute_script', 'run_powershell', 'run_command'})
+
+
+def execute_tool(tool_name, tool_params, config=None, command_id=None):
     """
     Dispatch a tool call to the appropriate handler.
 
@@ -131,6 +212,9 @@ def execute_tool(tool_name, tool_params, config=None):
         tool_name: Name of the tool to execute
         tool_params: Dict of parameters for the tool
         config: Optional agent config dict (avoids re-reading from disk)
+        command_id: Optional originating Firestore command id — lets the
+            shell-spawning tools (execute_script, run_powershell, run_command)
+            register their subprocess for cancellation
 
     Returns:
         Dict with tool result or error
@@ -179,6 +263,11 @@ def execute_tool(tool_name, tool_params, config=None):
         return {'error': f'Unknown tool: {tool_name}'}
 
     try:
+        # Shell-spawning tools track their subprocess for cancellation and take
+        # the (params, config, command_id) signature; every other handler keeps
+        # the (params, config) signature.
+        if tool_name in _CANCELLABLE_TOOLS:
+            return handler(tool_params, config, command_id=command_id)
         return handler(tool_params, config)
     except Exception as e:
         logger.error(f"Tool '{tool_name}' failed: {e}")
@@ -783,12 +872,15 @@ def _get_display_layout(params, config):
 # ─── Tier 3: Privileged Tools ───────────────────────────────────────────────
 
 
-def _run_command(params, config):
+def _run_command(params, config, command_id=None):
     """Execute a shell command (validated against allow-list).
 
     Security: uses shell=False with shlex.split() to prevent shell injection
     via metacharacters (&&, |, ;, etc.). Only the first token is validated
     against the allow-list; remaining tokens are passed as arguments.
+
+    When command_id is provided the subprocess is registered in
+    _RUNNING_COMMANDS so cancel_mcp_tool can kill it mid-flight.
     """
     command = params.get('command', '').strip()
     if not command:
@@ -815,32 +907,28 @@ def _run_command(params, config):
 
     logger.info(f"[MCP-AUDIT] run_command: {cmd_base} (args: {len(cmd_parts) - 1})")
 
-    try:
-        result = subprocess.run(
-            cmd_parts,
-            capture_output=True, text=True, shell=False,
-            timeout=SUBPROCESS_TIMEOUT,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-
-        stdout = result.stdout[:MAX_OUTPUT_SIZE]
-        stderr = result.stderr[:MAX_OUTPUT_SIZE]
-
-        return {
-            'command': command,
-            'exit_code': result.returncode,
-            'stdout': stdout,
-            'stderr': stderr,
-        }
-    except subprocess.TimeoutExpired:
+    returncode, stdout, stderr, timed_out = _run_tracked_subprocess(
+        cmd_parts, SUBPROCESS_TIMEOUT, command_id,
+    )
+    if timed_out:
         return {'error': f'Command timed out after {SUBPROCESS_TIMEOUT} seconds'}
 
+    return {
+        'command': command,
+        'exit_code': returncode,
+        'stdout': stdout[:MAX_OUTPUT_SIZE],
+        'stderr': stderr[:MAX_OUTPUT_SIZE],
+    }
 
-def _run_powershell(params, config):
+
+def _run_powershell(params, config, command_id=None):
     """Execute a PowerShell command. No allow-list — accountability comes from
     the Firestore audit trail (site logs / cortex-events) and the [MCP-AUDIT]
     local log. For novel/long-running scripts with configurable timeouts and
     process-tree cleanup, prefer execute_script.
+
+    When command_id is provided the subprocess is registered in
+    _RUNNING_COMMANDS so cancel_mcp_tool can kill it mid-flight.
     """
     del config  # unused
     script = params.get('script', '').strip()
@@ -855,39 +943,40 @@ def _run_powershell(params, config):
     _truncated = '...' if len(script) > 500 else ''
     logger.info(f"[MCP-AUDIT] run_powershell ({len(script)} chars): {_preview}{_truncated}")
 
-    try:
-        result = subprocess.run(
-            ['powershell', '-NoProfile', '-Command', script],
-            capture_output=True, text=True,
-            timeout=SUBPROCESS_TIMEOUT,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-
-        stdout = result.stdout[:MAX_OUTPUT_SIZE]
-        stderr = result.stderr[:MAX_OUTPUT_SIZE]
-
-        return {
-            'script': script,
-            'exit_code': result.returncode,
-            'stdout': stdout,
-            'stderr': stderr,
-        }
-    except subprocess.TimeoutExpired:
+    returncode, stdout, stderr, timed_out = _run_tracked_subprocess(
+        ['powershell', '-NoProfile', '-Command', script],
+        SUBPROCESS_TIMEOUT, command_id,
+    )
+    if timed_out:
         return {'error': f'PowerShell command timed out after {SUBPROCESS_TIMEOUT} seconds'}
 
+    return {
+        'script': script,
+        'exit_code': returncode,
+        'stdout': stdout[:MAX_OUTPUT_SIZE],
+        'stderr': stderr[:MAX_OUTPUT_SIZE],
+    }
 
-def _execute_script(params, config):
+
+def _execute_script(params, config, command_id=None):
     """Execute a PowerShell script with no command restrictions.
 
     Uses Popen with a job object so the entire process tree (including
     child processes spawned by Start-Job, Start-Process, etc.) is killed
     on timeout instead of leaving orphans.
+
+    When command_id is provided, the subprocess PID is registered in
+    _RUNNING_COMMANDS for the duration of the run so cancel_mcp_tool can
+    kill it mid-flight.
     """
     script = params.get('script', '').strip()
     if not script:
         return {'error': 'script parameter is required'}
 
     timeout = params.get('timeout_seconds', 120)
+    if timeout > MAX_SCRIPT_TIMEOUT:
+        logger.info(f"[MCP-AUDIT] execute_script timeout_seconds clamped: {timeout}s -> {MAX_SCRIPT_TIMEOUT}s")
+        timeout = MAX_SCRIPT_TIMEOUT
     cwd = params.get('working_directory', None)
 
     if cwd and not os.path.isdir(cwd):
@@ -898,39 +987,26 @@ def _execute_script(params, config):
     # -ExecutionPolicy Bypass is required for kiosks with Group Policy set to
     # AllSigned/Restricted. It's not a security boundary (SYSTEM can already
     # do anything), it's a compatibility flag for hardened deployments.
-    proc = subprocess.Popen(
+    returncode, stdout, stderr, timed_out = _run_tracked_subprocess(
         ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        cwd=cwd,
-        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+        timeout, command_id, cwd=cwd,
     )
-
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-
+    if timed_out:
         return {
             'script': script[:500],
-            'exit_code': proc.returncode,
             'stdout': stdout[:MAX_OUTPUT_SIZE],
             'stderr': stderr[:MAX_OUTPUT_SIZE],
-            'timed_out': False,
-        }
-    except subprocess.TimeoutExpired:
-        # Kill the entire process tree, not just the root
-        _kill_process_tree(proc.pid)
-        # Drain any remaining output
-        stdout, stderr = proc.communicate(timeout=5)
-
-        return {
-            'script': script[:500],
-            'stdout': (stdout or '')[:MAX_OUTPUT_SIZE],
-            'stderr': (stderr or '')[:MAX_OUTPUT_SIZE],
             'error': f'Script timed out after {timeout} seconds — all child processes have been terminated',
             'timed_out': True,
         }
-    except Exception:
-        _kill_process_tree(proc.pid)
-        raise
+
+    return {
+        'script': script[:500],
+        'exit_code': returncode,
+        'stdout': stdout[:MAX_OUTPUT_SIZE],
+        'stderr': stderr[:MAX_OUTPUT_SIZE],
+        'timed_out': False,
+    }
 
 
 def _get_allowed_file_bases(config):

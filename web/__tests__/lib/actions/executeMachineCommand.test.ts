@@ -275,6 +275,7 @@ describe('executeMachineCommand — allowlist', () => {
       'enumerate_display_modes',
       'test_display_apply',
       'mcp_tool_call',
+      'cancel_mcp_tool',
       'update_owlette',
     ];
     for (const t of expected) {
