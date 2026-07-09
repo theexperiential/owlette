@@ -1,0 +1,61 @@
+version: 2
+
+updates:
+  # GitHub Actions across all workflows (.github/workflows/*), grouped into one
+  # weekly PR. Dependabot bumps version tags today; once actions are pinned to
+  # SHAs it bumps the SHA and its trailing "# vX" comment together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: ci
+
+  # Node dependencies. Each of these has its own package-lock.json: the repo
+  # root, the CLI, the Cloudflare Functions, the published Node SDK, and the web
+  # app. Minor/patch bumps are grouped; majors open their own PR.
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /cli
+      - /functions
+      - /sdks/node
+      - /web
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: deps
+
+  # Python dependencies: the agent, docs toolchain, the published Python SDK,
+  # and the integration / agent-runner test harnesses.
+  - package-ecosystem: pip
+    directories:
+      - /agent
+      - /docs
+      - /sdks/python
+      - /test/integration
+      - /test/infra/agent-runner
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      pip-minor-patch:
+        update-types:
+          - minor
+          - patch
+    commit-message:
+      prefix: deps
