@@ -47,7 +47,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # full history so the VERSION + changelog commit that triggered
           # the tag are in the source tree for the build to reference.
@@ -88,7 +88,7 @@ jobs:
           }
 
       - name: pin Python toolchain version
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -134,7 +134,7 @@ jobs:
           "subjects-b64=$subjectsB64" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: owlette-installer
           path: agent/build/installer_output/Owlette-Installer-v${{ steps.version.outputs.version }}.exe
@@ -175,13 +175,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: owlette-installer
           path: .
 
       - name: upload installer to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             Owlette-Installer-v${{ needs.build.outputs.version }}.exe
@@ -210,7 +210,7 @@ jobs:
           chmod +x /usr/local/bin/slsa-verifier
 
       - name: download installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: owlette-installer
           path: .
