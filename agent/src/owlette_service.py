@@ -1335,6 +1335,21 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         try:
             if command_type == 'kill_process':
+                discovered = False
+                if not (last_pid and Util.is_pid_running(last_pid)):
+                    # Off-mode (and other untracked-but-alive) processes are never
+                    # adopted by the monitor loop, so last_started holds no live PID
+                    # for them. Fall back to strict discovery by exe/file_path so a
+                    # kill still lands. Strict matching never kills on a bare image name.
+                    exe_path = target.get('exe_path', '')
+                    file_path = target.get('file_path', '')
+                    fallback_pid = (
+                        self._find_running_process_by_exe(exe_path, file_path, strict=True)
+                        if exe_path else None
+                    )
+                    if fallback_pid:
+                        last_pid = fallback_pid
+                        discovered = True
                 if last_pid and Util.is_pid_running(last_pid):
                     shared_utils.graceful_terminate(last_pid)
                     shared_utils.update_process_status_in_json(
@@ -1343,8 +1358,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # an empty last_started as "untracked -> needs launch".
                     self.last_started[process_list_id] = {
                         'killed': True, 'time': datetime.datetime.now()}
+                    note = ' (PID discovered by exe/file_path lookup)' if discovered else ''
                     return {'status': 'completed',
-                            'result': f'Process {process_name} terminated (PID {last_pid})'}
+                            'result': f'Process {process_name} terminated (PID {last_pid}){note}'}
                 return {'status': 'completed',
                         'result': f'Process {process_name} was not running'}
             else:
@@ -1414,7 +1430,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # ─── End Cortex ───────────────────────────────────────────────────────
 
-    def _find_running_process_by_exe(self, exe_path, file_path=None):
+    def _find_running_process_by_exe(self, exe_path, file_path=None, strict=False):
         """Find a running process by its executable path.
 
         Used during startup to detect processes that survived a service restart
@@ -1424,6 +1440,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         When file_path is provided, also checks the command line to distinguish
         between multiple instances of the same exe (e.g. different .toe files).
+
+        strict=True tightens matching for the manual-kill fallback: a process
+        matches only if its full exe path equals exe_path, OR its basename
+        matches AND file_path was provided AND the cmdline contains file_path.
+        A bare basename match (no file_path corroboration) is never accepted —
+        the owner's hard rule is kill-by-specific-PID, never by image name.
         """
         try:
             exe_lower = exe_path.replace('/', '\\').lower()
@@ -1433,16 +1455,24 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 try:
                     if proc.info['exe']:
                         proc_exe = proc.info['exe'].lower()
-                        if proc_exe == exe_lower or os.path.basename(proc_exe) == exe_basename:
-                            # If file_path specified, check command line to distinguish instances
-                            if file_path_lower:
-                                try:
-                                    cmdline = ' '.join(proc.cmdline()).lower()
-                                    if file_path_lower not in cmdline:
-                                        continue  # Wrong instance, keep looking
-                                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                                    continue  # Can't verify cmdline, skip to avoid false match
-                            return proc.info['pid']
+                        full_match = proc_exe == exe_lower
+                        basename_match = os.path.basename(proc_exe) == exe_basename
+                        if not (full_match or basename_match):
+                            continue
+                        # Strict kill matching: never accept a bare basename match —
+                        # require an exact exe-path match, or a basename match
+                        # corroborated by file_path in the command line.
+                        if strict and not full_match and not file_path_lower:
+                            continue
+                        # If file_path specified, check command line to distinguish instances
+                        if file_path_lower:
+                            try:
+                                cmdline = ' '.join(proc.cmdline()).lower()
+                                if file_path_lower not in cmdline:
+                                    continue  # Wrong instance, keep looking
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                continue  # Can't verify cmdline, skip to avoid false match
+                        return proc.info['pid']
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
         except Exception:
@@ -3112,14 +3142,31 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         process_list_id = process['id']
                         last_info = self.last_started.get(process_list_id, {})
                         last_pid = last_info.get('pid')
+                        discovered = False
+                        if not (last_pid and Util.is_pid_running(last_pid)):
+                            # Off-mode (and other untracked-but-alive) processes are
+                            # never launched/adopted by the monitor loop, so
+                            # last_started holds no live PID for them. Fall back to
+                            # strict discovery by exe/file_path so a manual kill still
+                            # lands. Strict matching never kills on a bare image name.
+                            exe_path = process.get('exe_path', '')
+                            file_path = process.get('file_path', '')
+                            fallback_pid = (
+                                self._find_running_process_by_exe(exe_path, file_path, strict=True)
+                                if exe_path else None
+                            )
+                            if fallback_pid:
+                                last_pid = fallback_pid
+                                discovered = True
                         if last_pid and Util.is_pid_running(last_pid):
                             shared_utils.graceful_terminate(last_pid)
                             status = 'STOPPED' if cmd_type == 'stop_process' else 'KILLED'
                             action = 'process_stopped' if cmd_type == 'stop_process' else 'process_killed'
+                            discovered_note = ' (PID discovered by exe/file_path lookup)' if discovered else ''
                             details = (
-                                f'Manual stop via dashboard - PID: {last_pid}'
+                                f'Manual stop via dashboard - PID: {last_pid}{discovered_note}'
                                 if cmd_type == 'stop_process'
-                                else f'Manual kill via dashboard - PID: {last_pid}'
+                                else f'Manual kill via dashboard - PID: {last_pid}{discovered_note}'
                             )
                             # Update status and sync to Firebase immediately
                             shared_utils.update_process_status_in_json(last_pid, status, self.firebase_client, process_id=process_list_id)
