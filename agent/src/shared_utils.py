@@ -2177,6 +2177,118 @@ def update_process_status_in_json(pid, new_status, firebase_client=None, process
     # (removed immediate Firebase sync to eliminate duplicate uploads and reduce Firebase writes)
     # Removed verbose logging - status changes sync every ~30s to Firebase
 
+def find_running_process_by_exe(exe_path, file_path=None, strict=False):
+    """Find a running process by its executable path.
+
+    Shared by the service (startup adoption, dashboard/Cortex kill fallback)
+    and the GUI (kill/restart of untracked processes). Matches by exe filename
+    (basename) to handle version/path differences when file association
+    launches a different version than configured. When file_path is provided,
+    also checks the command line to distinguish between multiple instances of
+    the same exe (e.g. different .toe files).
+
+    .bat/.cmd targets run through cmd.exe, so for a script exe_path the match
+    is a cmd.exe whose command line references the script path.
+
+    strict=True tightens matching for kill/restart fallbacks: a bare basename
+    match (no file_path corroboration) is never accepted, and when file_path
+    offers no corroboration the match must be UNIQUE — with several candidate
+    instances of the same exe there is no way to know which one the operator
+    meant, so none is returned rather than risking an unrelated process.
+    """
+    try:
+        exe_lower = exe_path.replace('/', '\\').lower()
+        exe_basename = os.path.basename(exe_lower)
+        file_path_lower = file_path.replace('/', '\\').lower() if file_path else None
+        is_script = exe_lower.endswith(('.bat', '.cmd'))
+        candidates = []
+        for proc in psutil.process_iter(['pid', 'exe']):
+            try:
+                if not proc.info['exe']:
+                    continue
+                proc_exe = proc.info['exe'].lower()
+                if is_script:
+                    # Match the cmd.exe wrapper by its command line.
+                    if os.path.basename(proc_exe) != 'cmd.exe':
+                        continue
+                    try:
+                        cmdline = ' '.join(proc.cmdline()).replace('/', '\\').lower()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+                    if exe_lower not in cmdline:
+                        continue
+                    if file_path_lower and file_path_lower not in cmdline:
+                        continue
+                    return proc.info['pid']
+                full_match = proc_exe == exe_lower
+                basename_match = os.path.basename(proc_exe) == exe_basename
+                if not (full_match or basename_match):
+                    continue
+                # Strict: never accept a bare basename match — require an exact
+                # exe-path match, or a basename match corroborated by file_path
+                # in the command line.
+                if strict and not full_match and not file_path_lower:
+                    continue
+                if file_path_lower:
+                    try:
+                        cmdline = ' '.join(proc.cmdline()).replace('/', '\\').lower()
+                        if file_path_lower not in cmdline:
+                            continue  # Wrong instance, keep looking
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue  # Can't verify cmdline, skip to avoid false match
+                    return proc.info['pid']  # cmdline-corroborated — unambiguous
+                if not strict:
+                    return proc.info['pid']
+                candidates.append(proc.info['pid'])
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        if strict and len(candidates) == 1:
+            return candidates[0]
+        if strict and len(candidates) > 1:
+            logging.warning(
+                f"find_running_process_by_exe: {len(candidates)} instances of "
+                f"{exe_basename} match with no file_path to disambiguate — refusing"
+            )
+    except Exception:
+        pass
+    return None
+
+
+def pid_matches_exe(pid, exe_path, file_path=None):
+    """True if PID is alive and its image matches the configured exe_path.
+
+    Kill/restart flows must never terminate a PID whose executable doesn't
+    match the process entry it was resolved from — state-file entries go
+    stale once a process is no longer monitored (e.g. launch mode off), and
+    Windows reuses PIDs. .bat/.cmd entries run through cmd.exe, so those
+    match a cmd.exe whose command line references the script. When file_path
+    is provided the command line must reference it too.
+    """
+    if not pid or not exe_path:
+        return False
+    exe_lower = exe_path.replace('/', '\\').lower()
+    try:
+        proc = psutil.Process(int(pid))
+        proc_exe = (proc.exe() or '').lower()
+        cmdline = None
+        if exe_lower.endswith(('.bat', '.cmd')):
+            if os.path.basename(proc_exe) != 'cmd.exe':
+                return False
+            cmdline = ' '.join(proc.cmdline()).replace('/', '\\').lower()
+            if exe_lower not in cmdline:
+                return False
+        elif proc_exe != exe_lower and os.path.basename(proc_exe) != os.path.basename(exe_lower):
+            return False
+        if file_path:
+            if cmdline is None:
+                cmdline = ' '.join(proc.cmdline()).replace('/', '\\').lower()
+            if file_path.replace('/', '\\').lower() not in cmdline:
+                return False
+        return True
+    except (psutil.Error, OSError, ValueError):
+        return False
+
+
 def fetch_process_by_id(id, data):
     return next((process for process in data['processes'] if process['id'] == id), None)
 

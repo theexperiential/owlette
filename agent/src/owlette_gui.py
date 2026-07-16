@@ -7,6 +7,7 @@ from custom_messagebox import OwletteMessagebox as CTkMessagebox
 from CTkToolTip import CTkToolTip
 import os
 import signal
+import copy
 import json
 import logging
 import uuid
@@ -579,9 +580,9 @@ class OwletteConfigApp:
         _lazy_tooltip(self.launch_mode_menu, message="Off: not managed | Always On: 24/7 with crash recovery | Scheduled: runs during configured time windows", **tooltip_opts)
         _lazy_tooltip(self.name_label, message="Display name for this process", **tooltip_opts)
         _lazy_tooltip(self.name_entry, message="Display name for this process", **tooltip_opts)
-        _lazy_tooltip(self.exe_path_label, message="Full path to the executable (.exe)", **tooltip_opts)
-        _lazy_tooltip(self.exe_path_entry, message="Full path to the executable (.exe)", **tooltip_opts)
-        _lazy_tooltip(self.exe_browse_button, message="Browse for an executable file", **tooltip_opts)
+        _lazy_tooltip(self.exe_path_label, message="Full path to the executable or script (.exe, .bat, .cmd)", **tooltip_opts)
+        _lazy_tooltip(self.exe_path_entry, message="Full path to the executable or script (.exe, .bat, .cmd)", **tooltip_opts)
+        _lazy_tooltip(self.exe_browse_button, message="Browse for an executable or script", **tooltip_opts)
         _lazy_tooltip(self.file_path_label, message="A file to open with the executable, or CLI arguments", **tooltip_opts)
         _lazy_tooltip(self.file_path_entry, message="A file to open with the executable (e.g. a .toe project),\nor command line arguments (e.g. --verbose --port 8080)", **tooltip_opts)
         _lazy_tooltip(self.file_browse_button, message="Browse for a file to pass to the executable", **tooltip_opts)
@@ -1115,7 +1116,7 @@ class OwletteConfigApp:
     # BROWSING FOR FILES
 
     def browse_exe(self):
-        exe_path = filedialog.askopenfilename(initialdir="C:/", title="Select Exe File", filetypes=[("Executable files", "*.exe")])
+        exe_path = filedialog.askopenfilename(initialdir="C:/", title="Select Executable or Script", filetypes=[("Executables & scripts", "*.exe *.bat *.cmd *.com"), ("All files", "*.*")])
         if not exe_path:
             return
         self.exe_path_entry.delete(0, tk.END)
@@ -1159,6 +1160,25 @@ class OwletteConfigApp:
         last_pid = max(pids, key=int) if pids else None
         return int(last_pid) if last_pid else None
 
+    def _resolve_live_pid(self, process):
+        """Resolve a live, identity-checked PID for a config process entry.
+
+        The state file can hold stale PIDs — a process switched to launch
+        mode off is no longer monitored, so its entry outlives the real
+        process — and Windows reuses PIDs. Validate the state-file PID
+        against the configured exe before trusting it, then fall back to
+        discovering the running instance by exe/file_path (strict matching:
+        never a bare image-name match).
+        """
+        exe_path = process.get('exe_path', '')
+        file_path = process.get('file_path', '')
+        os_pid = self.get_os_pid_by_process_id(process.get('id'), shared_utils.RESULT_FILE_PATH)
+        if os_pid and shared_utils.pid_matches_exe(os_pid, exe_path, file_path):
+            return os_pid
+        if exe_path:
+            return shared_utils.find_running_process_by_exe(exe_path, file_path, strict=True)
+        return None
+
     def restart_process(self):
         # Restart mirrors the kill_process flow: terminate the OS PID locally
         # via shared_utils.graceful_terminate, then rely on the service's main
@@ -1171,12 +1191,10 @@ class OwletteConfigApp:
                           message="You must select a process to restart it.", icon="cancel")
             return
 
-        # Resolve process name for the confirmation dialog and audit log
-        process_name = None
-        for process in self.config.get('processes', []):
-            if process.get('id') == self.selected_process:
-                process_name = process.get('name')
-                break
+        # Resolve the full config entry — name for the dialog/audit copy,
+        # exe/file_path for live-PID validation
+        process_entry = shared_utils.fetch_process_by_id(self.selected_process, self.config)
+        process_name = process_entry.get('name') if process_entry else None
 
         # Confirmation — copy intentionally lowercase to match UI voice
         display_name = process_name or self.selected_process
@@ -1191,11 +1209,11 @@ class OwletteConfigApp:
         if response.get() != 'Yes':
             return
 
-        os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
+        os_pid = self._resolve_live_pid(process_entry) if process_entry else None
 
         if not os_pid:
             CTkMessagebox(master=self.master, title="Error",
-                          message="No OS process ID found for the selected process.", icon="cancel")
+                          message="No running instance found for the selected process.", icon="cancel")
             return
 
         # Run terminate in background thread to avoid freezing the GUI
@@ -1231,12 +1249,10 @@ class OwletteConfigApp:
 
     def kill_process(self):
         if self.selected_process:
-            # Get process name for logging + confirmation copy
-            process_name = None
-            for process in self.config.get('processes', []):
-                if process.get('id') == self.selected_process:
-                    process_name = process.get('name')
-                    break
+            # Full config entry — name for logging/confirmation copy,
+            # exe/file_path for live-PID validation
+            process_entry = shared_utils.fetch_process_by_id(self.selected_process, self.config)
+            process_name = process_entry.get('name') if process_entry else None
 
             # Confirmation — mirrors restart_process; copy intentionally
             # lowercase to match UI voice.
@@ -1252,7 +1268,7 @@ class OwletteConfigApp:
             if response.get() != 'Yes':
                 return
 
-            os_pid = self.get_os_pid_by_process_id(self.selected_process, shared_utils.RESULT_FILE_PATH)
+            os_pid = self._resolve_live_pid(process_entry) if process_entry else None
 
             if os_pid:
                 # Run kill in background thread to avoid freezing the GUI
@@ -1282,7 +1298,7 @@ class OwletteConfigApp:
 
                 threading.Thread(target=_do_kill, daemon=True).start()
             else:
-                CTkMessagebox(master=self.master, title="Error", message="No OS process ID found for the selected process.", icon="cancel")
+                CTkMessagebox(master=self.master, title="Error", message="No running instance found for the selected process.", icon="cancel")
         else:
             CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to kill it.", icon="cancel")
 
@@ -1484,6 +1500,58 @@ class OwletteConfigApp:
                 CTkMessagebox(master=self.master, title="Error", message=f"No process found with the name '{self.selected_process}'", icon="cancel")
         else:
             CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to remove it.", icon="cancel")
+
+    def duplicate_process(self):
+        if self.selected_process:
+            process = shared_utils.fetch_process_by_id(self.selected_process, self.config)
+            if process:
+                # Deep copy so the clone shares no nested references (schedules, etc.)
+                clone = copy.deepcopy(process)
+                clone['id'] = str(uuid.uuid4())
+
+                # Ensure a unique name — the web side rejects duplicate names (409),
+                # so the clone must never sync a name that already exists locally.
+                existing_names = {p.get('name') for p in self.config.get('processes', [])}
+                original_name = process.get('name', '')
+                clone_name = f"{original_name} (copy)"
+                copy_index = 2
+                while clone_name in existing_names:
+                    clone_name = f"{original_name} (copy {copy_index})"
+                    copy_index += 1
+                clone['name'] = clone_name
+
+                # Safety: never auto-launch a second instance of the same exe on clone.
+                clone['launch_mode'] = 'off'
+                if 'autolaunch' in clone:
+                    clone['autolaunch'] = False
+
+                self.config['processes'].append(clone)
+                shared_utils.save_config(self.config)
+
+                # Upload to Firestore immediately for fast sync (in background thread)
+                if self.firebase_client:
+                    def upload_in_background():
+                        try:
+                            # Upload config first
+                            self.firebase_client.upload_config(self._get_config_for_firestore())
+                            logging.debug("Config uploaded to Firestore immediately after process duplication")
+
+                            # Then push metrics so web app sees the change immediately
+                            metrics = shared_utils.get_system_metrics(skip_gpu=True)
+                            self.firebase_client._upload_metrics(metrics)
+                            logging.debug("Metrics pushed to Firestore after process duplication")
+                        except Exception as e:
+                            logging.error(f"Failed to upload to Firestore: {e}")
+
+                    # Run in background thread so GUI stays responsive
+                    upload_thread = threading.Thread(target=upload_in_background, daemon=True)
+                    upload_thread.start()
+
+                self.update_process_list()
+            else:
+                CTkMessagebox(master=self.master, title="Error", message=f"No process found with the name '{self.selected_process}'", icon="cancel")
+        else:
+            CTkMessagebox(master=self.master, title="Error", message=f"You must select a process to duplicate it.", icon="cancel")
 
     def move_up(self):
         if self.selected_process:
@@ -1699,6 +1767,9 @@ class OwletteConfigApp:
             ctk.CTkButton(frame, text="  move down", state="disabled", text_color="#475569",
                           fg_color="transparent", hover_color=shared_utils.FRAME_COLOR, hover=False, anchor="w",
                           width=160, height=32, corner_radius=4, font=("Segoe UI", 13)).pack(fill='x', padx=4)
+
+        # Duplicate
+        ctk.CTkButton(frame, text="  duplicate", command=make_action(self.duplicate_process), **btn_opts).pack(fill='x', padx=4)
 
         # Separator
         ctk.CTkFrame(frame, fg_color=shared_utils.BORDER_COLOR, height=1).pack(fill='x', padx=8, pady=3)

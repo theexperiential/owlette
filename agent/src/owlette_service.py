@@ -1433,51 +1433,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
     def _find_running_process_by_exe(self, exe_path, file_path=None, strict=False):
         """Find a running process by its executable path.
 
-        Used during startup to detect processes that survived a service restart
-        (thanks to AppKillProcessTree=0), so we adopt them instead of launching duplicates.
-        Matches by exe filename (basename) to handle version/path differences when
-        file association launches a different version than configured.
-
-        When file_path is provided, also checks the command line to distinguish
-        between multiple instances of the same exe (e.g. different .toe files).
-
-        strict=True tightens matching for the manual-kill fallback: a process
-        matches only if its full exe path equals exe_path, OR its basename
-        matches AND file_path was provided AND the cmdline contains file_path.
-        A bare basename match (no file_path corroboration) is never accepted —
-        the owner's hard rule is kill-by-specific-PID, never by image name.
+        Delegates to shared_utils.find_running_process_by_exe (shared with the
+        GUI's kill/restart flow) — see its docstring for the matching rules:
+        startup-adoption basename matching, strict kill semantics (unique-match
+        requirement without file_path corroboration), and .bat/.cmd
+        cmd.exe-wrapper handling.
         """
-        try:
-            exe_lower = exe_path.replace('/', '\\').lower()
-            exe_basename = os.path.basename(exe_lower)
-            file_path_lower = file_path.replace('/', '\\').lower() if file_path else None
-            for proc in psutil.process_iter(['pid', 'exe']):
-                try:
-                    if proc.info['exe']:
-                        proc_exe = proc.info['exe'].lower()
-                        full_match = proc_exe == exe_lower
-                        basename_match = os.path.basename(proc_exe) == exe_basename
-                        if not (full_match or basename_match):
-                            continue
-                        # Strict kill matching: never accept a bare basename match —
-                        # require an exact exe-path match, or a basename match
-                        # corroborated by file_path in the command line.
-                        if strict and not full_match and not file_path_lower:
-                            continue
-                        # If file_path specified, check command line to distinguish instances
-                        if file_path_lower:
-                            try:
-                                cmdline = ' '.join(proc.cmdline()).lower()
-                                if file_path_lower not in cmdline:
-                                    continue  # Wrong instance, keep looking
-                            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                                continue  # Can't verify cmdline, skip to avoid false match
-                        return proc.info['pid']
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
-        except Exception:
-            pass
-        return None
+        return shared_utils.find_running_process_by_exe(exe_path, file_path, strict=strict)
 
     def _enable_privileges(self):
         """Enable critical privileges in the service process token.
