@@ -25,7 +25,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, RotateCw, Settings2, BellOff, Monitor } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Copy, Square, Plus, Clock, AlertTriangle, X, RotateCcw, RotateCw, Settings2, BellOff, Monitor } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
@@ -53,6 +53,7 @@ interface MachineCardViewProps {
   siteTimezone?: string;
   siteTimeFormat?: '12h' | '24h';
   onEditProcess: (machineId: string, process: Process) => void;
+  onDuplicateProcess?: (machineId: string, process: Process) => void;
   onCreateProcess: (machineId: string) => void;
   onKillProcess: (machineId: string, processId: string, processName: string) => void;
   onRestartProcess: (machineId: string, processId: string, processName: string) => void;
@@ -88,6 +89,7 @@ interface MachineCardProps {
   onToggleProcesses: () => void;
   onToggleDisplays?: () => void;
   onEditProcess: (process: Process) => void;
+  onDuplicateProcess?: (process: Process) => void;
   onCreateProcess: () => void;
   onKillProcess: (processId: string, processName: string) => void;
   onRestartProcess: (processId: string, processName: string) => void;
@@ -120,6 +122,7 @@ function MachineCard({
   onToggleProcesses,
   onToggleDisplays,
   onEditProcess,
+  onDuplicateProcess,
   onCreateProcess,
   onKillProcess,
   onRestartProcess,
@@ -893,6 +896,24 @@ function MachineCard({
                               >
                                 <Pencil className="h-3 w-3" />
                               </Button>
+                              {onDuplicateProcess && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => onDuplicateProcess(process)}
+                                      aria-label={`duplicate ${process.name}`}
+                                      className="bg-card border border-border/50 text-foreground p-2"
+                                    >
+                                      <Copy className="h-3 w-3" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>duplicate process</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
@@ -918,7 +939,7 @@ function MachineCard({
                                     onClick={() => onKillProcess(process.id, process.name)}
                                     aria-label={`kill ${process.name}`}
                                     className="bg-card border border-border/50 text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 p-2"
-                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED' && process.launch_mode !== 'off'}
                                   >
                                     <Square className="h-3 w-3" />
                                   </Button>
@@ -982,6 +1003,7 @@ export function MachineCardView({
   siteTimezone = 'UTC',
   siteTimeFormat = '12h',
   onEditProcess,
+  onDuplicateProcess,
   onCreateProcess,
   onKillProcess,
   onRestartProcess,
@@ -1027,6 +1049,7 @@ export function MachineCardView({
           onToggleProcesses={onToggleProcesses}
           onToggleDisplays={onToggleDisplays}
           onEditProcess={(process) => onEditProcess(machine.machineId, process)}
+          onDuplicateProcess={onDuplicateProcess ? (process) => onDuplicateProcess(machine.machineId, process) : undefined}
           onCreateProcess={() => onCreateProcess(machine.machineId)}
           onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}
           onRestartProcess={(processId, processName) => onRestartProcess(machine.machineId, processId, processName)}
