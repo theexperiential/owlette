@@ -808,8 +808,12 @@ function MachineCard({
             <div className="relative px-6 pb-2 pt-0 md:pb-4 md:pt-0">
               <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
                 {machine.processes.map((process) => (
-                  <div key={process.id} className="flex items-center justify-between px-3 py-2.5 pl-4">
-                        <div className="flex-1 min-w-0 flex items-center gap-2">
+                  <div key={process.id} className="flex flex-wrap items-center justify-between gap-y-2 px-3 py-2.5 pl-4">
+                        {/* min-w-40 (not 0): with flex-wrap, line packing uses
+                            flex-basis clamped by min-width — at min-w-0 the
+                            flex-1 name contributes nothing, never wraps, and
+                            gets squeezed to 0px by the shrink-0 action cluster */}
+                        <div className="flex-1 min-w-40 flex items-center gap-2">
                           <span className="text-sm md:text-base text-white font-medium truncate select-text">{process.name}</span>
                           <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted' : process.status === 'RUNNING' ? 'bg-green-600' : process.status === 'INACTIVE' ? 'bg-slate-600 text-slate-200' : process.status === 'LAUNCH_FAILED' || process.status === 'STOPPED' || process.status === 'KILLED' ? 'bg-red-600' : 'bg-yellow-600'}`}>
                             {(!machine.online ? 'unknown' : process.status === 'LAUNCH_FAILED' ? 'failed' : process.status).toLowerCase()}

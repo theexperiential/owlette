@@ -693,8 +693,10 @@ export function MachineRow({
                       card view instead of the old floating bordered cards. */}
                   <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
                     {machine.processes.map((process) => (
-                      <div key={process.id} className="flex items-center justify-between p-3">
-                          <div className="flex-1 min-w-0">
+                      <div key={process.id} className="flex flex-wrap items-center justify-between gap-y-2 p-3">
+                          {/* min-w-40 (not 0): see MachineCardView — at min-w-0 the
+                              flex-1 name block never wraps and squeezes to 0px */}
+                          <div className="flex-1 min-w-40">
                             <div className="flex items-center gap-2 mb-1">
                               <Cog className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                               <span className="text-white font-medium truncate select-text">{process.name}</span>
