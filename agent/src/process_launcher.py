@@ -23,6 +23,27 @@ import ctypes.wintypes
 import subprocess
 
 
+def build_hidden_batch_command(exe_path, launch_args):
+    """Build the cmd.exe command line for a hidden .bat/.cmd launch.
+
+    .bat/.cmd can't run via CreateProcess directly (WinError 193), so they go
+    through cmd.exe /c. Passing a list would let list2cmdline quote the script
+    path and each spaced argument separately — and with more than two quote
+    characters after /c, cmd.exe strips the first and last quote and mangles
+    the command ('C:\\Program' is not recognized...). /s plus an explicit outer
+    quote pair pins cmd.exe's parsing: it strips exactly that outer pair and
+    executes the remainder verbatim.
+    """
+    # shlex.split(posix=False) keeps surrounding quotes on tokens; strip them
+    # so list2cmdline re-quotes exactly once.
+    normalized = [
+        a[1:-1] if len(a) >= 2 and a[0] == a[-1] == '"' else a
+        for a in launch_args
+    ]
+    inner = subprocess.list2cmdline([exe_path] + normalized)
+    return f'cmd.exe /s /c "{inner}"'
+
+
 def write_result(pid_file, pid=None, error=None, adopted=False):
     """Write launch result to PID file as JSON."""
     result = {}
@@ -137,23 +158,33 @@ def main():
                 parameters = file_path
 
         if visibility == 'Hidden':
-            # Hidden processes don't need shell context — use subprocess directly
-            cmd = [exe_path]
+            # Hidden processes don't need shell context — use subprocess directly.
+            launch_args = []
             if file_path:
                 if os.path.isfile(file_path):
-                    cmd.append(file_path)
+                    launch_args.append(file_path)
                 else:
                     # Split CLI args string into list for subprocess
                     import shlex
-                    cmd.extend(shlex.split(file_path, posix=False))
+                    launch_args = shlex.split(file_path, posix=False)
+            if exe_path.lower().endswith(('.bat', '.cmd')):
+                # .bat/.cmd can't run via CreateProcess (WinError 193) — wrap
+                # in cmd.exe. Built as a single /s /c string, not a list: see
+                # build_hidden_batch_command for the quote-stripping trap.
+                cmd = build_hidden_batch_command(exe_path, launch_args)
+            else:
+                cmd = [exe_path] + launch_args
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags = subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = 0  # SW_HIDE
+            # CREATE_NO_WINDOW suppresses the console that a console-subsystem
+            # target (.bat via cmd.exe, console .exe) would otherwise allocate
+            # a visible window for; SW_HIDE alone only affects GUI windows.
             proc = subprocess.Popen(
                 cmd,
                 cwd=cwd or None,
                 startupinfo=startupinfo,
-                creationflags=subprocess.DETACHED_PROCESS
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
             pid = proc.pid
         else:
