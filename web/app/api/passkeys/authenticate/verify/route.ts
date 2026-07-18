@@ -1,8 +1,12 @@
 /**
  * Passkey Authentication Verification API
  *
- * Verifies the WebAuthn authentication response, creates a Firebase
- * custom token and iron-session. Passkey login skips 2FA entirely.
+ * Verifies the WebAuthn authentication response, then creates the session
+ * via `createSession` and mints a Firebase custom token. Passkey login does
+ * NOT bypass 2FA: `createSession` re-derives MFA state from Firestore, so a
+ * TOTP-enrolled user is still redirected to `/verify-2fa` by the proxy unless
+ * the session was already verified (same-user preserve) or the device carries
+ * a valid `owlette_device_trust` cookie.
  *
  * POST /api/passkeys/authenticate/verify
  * Request: { credential: AuthenticationResponseJSON, challengeId: string }

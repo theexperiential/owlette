@@ -457,6 +457,7 @@ or by the catch-all deny rule.
 | `mfa_pending/{userId}` | Temporary MFA setup secret and expiry. |
 | `webauthn_challenges/{challengeId}` | Single-use passkey registration/authentication challenge. |
 | `users/{userId}/passkeys/{credentialId}` | Passkey credentials and metadata, managed by passkey APIs. |
+| `users/{userId}/trustedDevices/{tokenHash}` | SHA-256-hashed MFA device-trust tokens for the "trust this device for 30 days" feature. The raw token lives only in the HTTPOnly `owlette_device_trust` cookie; records carry a ~30-day expiry and are revoked when MFA is disabled or the account is deleted. |
 | `installer_uploads/{uploadId}` | Temporary installer upload sessions. |
 | `bug_reports/{reportId}` | User/agent feedback and bug submissions. |
 | `global/security_config` | Platform security kill-switch config. |
