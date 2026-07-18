@@ -1,12 +1,21 @@
 import crypto from 'crypto';
 import { test, expect } from '@playwright/test';
 import { authenticator } from 'otplib';
-import { getAdminDb } from '../../helpers/emulator';
+import { E2E_BASE_URL, getAdminDb } from '../../helpers/emulator';
 import { dedicatedUser, seedDedicatedUser } from '../../helpers/coverageSeed';
+import type { TestUser } from '../../helpers/seed';
 
 authenticator.options = { step: 30, window: 1 };
 
 test.use({ storageState: { cookies: [], origins: [] } });
+
+// Local mirror of the server-side device-trust contract. We deliberately do NOT
+// import web/lib/deviceTrust.server.ts here: it pulls in @/lib/firebase-admin
+// (the production Admin init), which would collide with the emulator Admin SDK
+// the e2e helpers stand up. The cookie name + 30-day window are load-bearing
+// literals owned by deviceTrust.server.ts — keep them in sync if that changes.
+const DEVICE_TRUST_COOKIE = 'owlette_device_trust';
+const DEVICE_TRUST_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 
 async function signIn(page: import('@playwright/test').Page, email: string, password: string) {
   await page.goto('/login');
@@ -21,6 +30,48 @@ async function fillFreshTotp(page: import('@playwright/test').Page, secret: stri
     await page.waitForTimeout((secondsUntilNextCode + 1) * 1000);
   }
   await page.getByPlaceholder('000000').fill(authenticator.generate(secret));
+}
+
+// Seed a dedicated, MFA-enrolled user (unique per run) with a TOTP secret and a
+// single hashed backup code — the same inline shape the original verify-login
+// test used, hoisted so the trust-scoping test can seed two of them.
+async function seedMfaUser(suffix: string): Promise<{ user: TestUser; secret: string }> {
+  const user = await seedDedicatedUser(dedicatedUser('member', suffix));
+  const secret = authenticator.generateSecret();
+  const backupCode = 'ABCDEF12';
+  await getAdminDb().collection('users').doc(user.uid).set(
+    {
+      mfaEnrolled: true,
+      requiresMfaSetup: false,
+      mfaSecret: secret,
+      backupCodes: [crypto.createHash('sha256').update(backupCode).digest('hex')],
+    },
+    { merge: true },
+  );
+  return { user, secret };
+}
+
+// Directly mint a trusted-device record + raw cookie token for `uid`, mirroring
+// deviceTrust.server.ts createTrustedDevice. Lets a fresh context carry a
+// pre-trusted cookie for one user without re-running the interactive verify
+// flow — used by the negative user-scoping test.
+async function seedTrustedDevice(uid: string): Promise<string> {
+  const raw = crypto.randomBytes(32).toString('base64url');
+  const hash = crypto.createHash('sha256').update(raw).digest('hex');
+  const now = Date.now();
+  await getAdminDb()
+    .collection('users')
+    .doc(uid)
+    .collection('trustedDevices')
+    .doc(hash)
+    .set({
+      tokenHash: hash,
+      createdAt: now,
+      expiresAt: now + DEVICE_TRUST_DURATION_MS,
+      userAgent: 'e2e-seed',
+      lastUsedAt: now,
+    });
+  return raw;
 }
 
 test('setup-2fa generates a manual secret, verifies TOTP, and shows backup codes', async ({ page }) => {
@@ -43,21 +94,14 @@ test('setup-2fa generates a manual secret, verifies TOTP, and shows backup codes
   await expect(page.getByRole('button', { name: /continue to dashboard/i })).toBeVisible();
 });
 
-test('verify-2fa accepts enrolled-user TOTP with trust-device option', async ({ page }) => {
-  const suffix = `mfa-login-${Date.now()}`;
-  const user = await seedDedicatedUser(dedicatedUser('member', suffix));
-  const secret = authenticator.generateSecret();
-  const backupCode = 'ABCDEF12';
-  await getAdminDb().collection('users').doc(user.uid).set(
-    {
-      mfaEnrolled: true,
-      requiresMfaSetup: false,
-      mfaSecret: secret,
-      backupCodes: [crypto.createHash('sha256').update(backupCode).digest('hex')],
-    },
-    { merge: true },
-  );
+test('verify-2fa with trust-device mints a 30-day cookie and skips the challenge on reload + re-login', async ({
+  page,
+  context,
+  browser,
+}) => {
+  const { user, secret } = await seedMfaUser(`mfa-login-${Date.now()}`);
 
+  // ── Phase A: complete the 2FA challenge with "trust this device" checked ──
   await signIn(page, user.email, user.password);
   await expect(page).toHaveURL(/\/verify-2fa/, { timeout: 20_000 });
 
@@ -65,5 +109,186 @@ test('verify-2fa accepts enrolled-user TOTP with trust-device option', async ({ 
   await page.getByLabel(/trust this device/i).click();
   await fillFreshTotp(page, secret);
   await page.getByRole('button', { name: /^verify$/i }).click();
+
+  // The trusted toast gates on the server's deviceTrusted=true response — its
+  // presence proves the server actually minted the trust record + cookie.
+  await expect(
+    page.getByText('This device has been trusted for 30 days.', { exact: true }),
+  ).toBeVisible();
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+
+  // ── Phase B: the device-trust cookie was minted (httpOnly, secure, ~30d) ──
+  // Read the FULL jar (no URL filter): the e2e webServer runs the PRODUCTION
+  // Next build (see playwright.config.ts webServer), so the cookie is Secure —
+  // and Playwright's URL-filtered cookies() can drop Secure cookies for an
+  // http:// loopback base URL even though the browser stored (and will send)
+  // them to the 127.0.0.1 origin.
+  const cookies = await context.cookies();
+  const trustCookie = cookies.find((c) => c.name === DEVICE_TRUST_COOKIE);
+  expect(trustCookie, 'device-trust cookie should be set').toBeTruthy();
+  expect(trustCookie!.httpOnly).toBe(true);
+  // The e2e server serves the production build (NODE_ENV=production), so the
+  // cookie carries Secure. Chromium still sends it to the loopback origin.
+  expect(trustCookie!.secure).toBe(true);
+  const nowSec = Date.now() / 1000;
+  expect(trustCookie!.expires).toBeGreaterThan(nowSec + 29 * 24 * 60 * 60);
+  expect(trustCookie!.expires).toBeLessThan(nowSec + 31 * 24 * 60 * 60);
+
+  // ── Phase C: reloading / re-navigating never bounces back to /verify-2fa ──
+  // (bug-1 regression: every load re-POSTs /api/auth/session; createSession must
+  // preserve the verified state rather than clobber it.)
+  let sawVerifyDuringReload = false;
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame() && frame.url().includes('/verify-2fa')) {
+      sawVerifyDuringReload = true;
+    }
+  });
+  await page.reload();
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+  await page.goto('/dashboard');
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+  expect(sawVerifyDuringReload, 'reload must not re-challenge at /verify-2fa').toBe(false);
+
+  // ── Phase D: a fresh context carrying ONLY the trust cookie skips the ──
+  // challenge on re-login. Deliberately no __session cookie — carrying it would
+  // let the test pass for the wrong reason (preserve path instead of trust).
+  const trustedContext = await browser.newContext({ baseURL: E2E_BASE_URL });
+  try {
+    await trustedContext.addCookies([trustCookie!]);
+    const trustedPage = await trustedContext.newPage();
+    let sawVerifyDuringRelogin = false;
+    trustedPage.on('framenavigated', (frame) => {
+      if (frame === trustedPage.mainFrame() && frame.url().includes('/verify-2fa')) {
+        sawVerifyDuringRelogin = true;
+      }
+    });
+
+    await signIn(trustedPage, user.email, user.password);
+    await expect(trustedPage).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+    expect(
+      sawVerifyDuringRelogin,
+      'trusted re-login must not visit /verify-2fa',
+    ).toBe(false);
+  } finally {
+    await trustedContext.close();
+  }
+});
+
+test('verify-2fa WITHOUT trust: session survives reload (preserve path, no device-trust backstop)', async ({
+  page,
+  context,
+}) => {
+  const { user, secret } = await seedMfaUser(`mfa-preserve-${Date.now()}`);
+
+  // Complete the 2FA challenge but leave "trust this device" UNCHECKED, so the
+  // server mints no device-trust cookie. This isolates createSession's preserve
+  // wiring — the primary fix of this feature — from the trust backstop, which
+  // would otherwise carry a reload even if preserve regressed. (The existing
+  // trust test's reload assertion runs with a valid trust cookie present, so it
+  // cannot catch a preserve-only regression.)
+  await signIn(page, user.email, user.password);
+  await expect(page).toHaveURL(/\/verify-2fa/, { timeout: 20_000 });
+
+  await expect(page.getByText(/two-factor authentication/i).first()).toBeVisible();
+  await fillFreshTotp(page, secret);
+  await page.getByRole('button', { name: /^verify$/i }).click();
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+
+  // No trust checkbox → no device-trust cookie. Read the FULL jar (unfiltered)
+  // so a Secure cookie on the http:// loopback origin can't be silently dropped
+  // by the URL filter: the cookie's true absence is what proves the reload
+  // below cannot be carried by device trust.
+  const cookies = await context.cookies();
+  expect(
+    cookies.find((c) => c.name === DEVICE_TRUST_COOKIE),
+    'no device-trust cookie should exist without the trust checkbox',
+  ).toBeUndefined();
+
+  // With no trust backstop, only createSession's preserve branch can keep
+  // mfaVerified=true across the every-load /api/auth/session POST. Both a
+  // reload and a fresh navigation must stay on /dashboard, never bouncing to
+  // /verify-2fa.
+  let sawVerifyDuringReload = false;
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame() && frame.url().includes('/verify-2fa')) {
+      sawVerifyDuringReload = true;
+    }
+  });
+  await page.reload();
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+  await page.goto('/dashboard');
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+  expect(
+    sawVerifyDuringReload,
+    'reload without device trust must not re-challenge at /verify-2fa (preserve path)',
+  ).toBe(false);
+});
+
+test('device trust is user-scoped — a different user on the same browser is still challenged', async ({
+  browser,
+}) => {
+  const suffix = `mfa-scope-${Date.now()}`;
+  const userA = await seedMfaUser(`${suffix}-a`);
+  const userB = await seedMfaUser(`${suffix}-b`);
+
+  // User A trusts this device (record under A's uid + A's raw cookie token).
+  const rawTokenA = await seedTrustedDevice(userA.user.uid);
+
+  // A's cookie in the exact shape the production server sets it (Secure,
+  // HTTPOnly, domain/path scoped) — not via `url:`, which can strip Secure.
+  // Chromium still delivers a Secure cookie to the 127.0.0.1 loopback origin.
+  // Reused verbatim by both the positive control (A) and the negative
+  // assertion (B) so they exercise the identical injected token + record.
+  const trustCookieA = {
+    name: DEVICE_TRUST_COOKIE,
+    value: rawTokenA,
+    domain: new URL(E2E_BASE_URL).hostname,
+    path: '/',
+    secure: true,
+    httpOnly: true,
+    sameSite: 'Lax' as const,
+    expires: Math.floor((Date.now() + DEVICE_TRUST_DURATION_MS) / 1000),
+  };
+
+  // ── Positive control: A carrying its own trust cookie skips the challenge ──
+  // Without this, B being challenged proves nothing — B would be challenged
+  // even if the hand-built cookie never reached the server. Proving A (the same
+  // cookie, the same seeded record) DOES skip the challenge establishes that
+  // the cookie is delivered and the record grants trust, making B's challenge
+  // below meaningful evidence of user-scoping rather than a vacuous pass.
+  const contextA = await browser.newContext({ baseURL: E2E_BASE_URL });
+  try {
+    await contextA.addCookies([trustCookieA]);
+    const pageA = await contextA.newPage();
+    let sawVerifyForA = false;
+    pageA.on('framenavigated', (frame) => {
+      if (frame === pageA.mainFrame() && frame.url().includes('/verify-2fa')) {
+        sawVerifyForA = true;
+      }
+    });
+
+    await signIn(pageA, userA.user.email, userA.user.password);
+    await expect(pageA).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+    expect(
+      sawVerifyForA,
+      'positive control: A with its own trust cookie must not be challenged',
+    ).toBe(false);
+  } finally {
+    await contextA.close();
+  }
+
+  // ── Negative assertion: B carrying A's trust cookie is still challenged ──
+  // A separate fresh context so the cookie jars never cross-contaminate. The
+  // record is scoped to A's uid, so createSession(B) finds nothing under B →
+  // challenge, even though the very same cookie skipped the challenge for A.
+  const contextB = await browser.newContext({ baseURL: E2E_BASE_URL });
+  try {
+    await contextB.addCookies([trustCookieA]);
+    const pageB = await contextB.newPage();
+
+    await signIn(pageB, userB.user.email, userB.user.password);
+    await expect(pageB).toHaveURL(/\/verify-2fa/, { timeout: 20_000 });
+  } finally {
+    await contextB.close();
+  }
 });
