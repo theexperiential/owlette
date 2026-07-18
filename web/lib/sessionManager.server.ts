@@ -16,8 +16,14 @@
  *     - `mfaRequired`: cached from `users/{uid}.mfaEnrolled` so the proxy
  *       can decide whether to gate protected paths without a Firestore
  *       lookup on every request.
- *     - `mfaVerified`: set true on session create when no MFA is required,
- *       or after a successful TOTP/backup-code challenge mid-session.
+ *     - `mfaVerified`: `mfaRequired` is always re-derived fresh from
+ *       Firestore, but `mfaVerified` is NOT blindly reset on every create.
+ *       When MFA is required, `createSession` preserves a prior verified
+ *       state (same uid, unexpired, prior session actually passed a
+ *       challenge) so AuthContext's every-load `POST /api/auth/session`
+ *       stops clobbering `mfaVerified` on page loads. It can also be born
+ *       verified via a valid device-trust cookie ("remember this device for
+ *       30 days"). See `resolveMfaOnSessionCreate()` for the exact rule.
  *   The proxy refuses access to protected paths whenever
  *   `mfaRequired && !mfaVerified`, redirecting to `/verify-2fa`.
  *
@@ -29,6 +35,10 @@ import { getIronSession, IronSession, SessionOptions } from 'iron-session';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminDb } from '@/lib/firebase-admin';
+import {
+  DEVICE_TRUST_COOKIE,
+  findValidTrustedDevice,
+} from '@/lib/deviceTrust.server';
 
 // Session data structure
 export interface SessionData {
@@ -149,14 +159,134 @@ async function resolveMfaStateForUser(userId: string): Promise<{
 }
 
 /**
+ * True when the prior session proves an MFA challenge was actually cleared for
+ * THIS user in a still-live session — the exact precondition for preserving a
+ * verified state across AuthContext's every-load re-POST of `/api/auth/session`.
+ *
+ * Both `prev.mfaRequired === true` AND `prev.mfaVerified === true` are demanded
+ * because that pairing is the only one a real challenge produces. It
+ * deliberately excludes:
+ *   - post-disable sessions (`mfaRequired=false, mfaVerified=true`), and
+ *   - pre-enrollment / no-MFA sessions (`mfaRequired=false`),
+ * neither of which should let a newly-required session skip the challenge.
+ *
+ * Extracted as the single source of truth for the preserve condition so
+ * `createSession` (which uses it to gate the device-trust I/O) and
+ * `resolveMfaOnSessionCreate` (which uses it to decide the field values) can
+ * never drift apart.
+ */
+function canPreserveVerifiedMfa(
+  prev: {
+    userId?: string;
+    expiresAt?: number;
+    mfaRequired?: boolean;
+    mfaVerified?: boolean;
+  },
+  userId: string,
+  now: number
+): boolean {
+  return (
+    prev.userId === userId &&
+    typeof prev.expiresAt === 'number' &&
+    prev.expiresAt > now &&
+    prev.mfaRequired === true &&
+    prev.mfaVerified === true
+  );
+}
+
+/**
+ * Pure decision function for the `(mfaVerified, mfaCompletedAt)` a session
+ * should be born with. `mfaRequired` is always taken verbatim from `resolved`
+ * (the fresh Firestore truth); this helper only decides the verification state,
+ * so it can be unit-tested without any iron-session / Firestore mocks.
+ *
+ * The verified outcomes, in priority order:
+ *
+ *   1. NOT required (`resolved.mfaRequired === false`) → verified, but WITHOUT
+ *      `mfaCompletedAt`. No-MFA / first-login users are "verified" at creation
+ *      yet never completed a challenge, so a completion timestamp would be
+ *      misleading (preserves the historical no-MFA behaviour).
+ *
+ *   2. PRESERVE (`canPreserveVerifiedMfa`) → required, and the prior session
+ *      proves a challenge was already cleared for this uid and is still live.
+ *      Verified, carrying `prev.mfaCompletedAt` forward so the original
+ *      completion time survives AuthContext's every-load re-POST.
+ *
+ *   3. DEVICE TRUST (`deviceTrusted`) → required, preserve did not apply, but a
+ *      valid `owlette_device_trust` cookie was found for this uid. The grant IS
+ *      a fresh verification event, so `mfaCompletedAt = now`.
+ *
+ * Otherwise (required, no preserve, untrusted device) → NOT verified, forcing
+ * the `/verify-2fa` challenge; no `mfaCompletedAt`. Preserve outranks device
+ * trust, so when both apply the completion time comes from `prev`, not `now`.
+ */
+export function resolveMfaOnSessionCreate(input: {
+  prev: {
+    userId?: string;
+    expiresAt?: number;
+    mfaRequired?: boolean;
+    mfaVerified?: boolean;
+    mfaCompletedAt?: number;
+  };
+  resolved: { mfaRequired: boolean; mfaVerified: boolean };
+  userId: string;
+  now: number;
+  deviceTrusted: boolean;
+}): { mfaRequired: boolean; mfaVerified: boolean; mfaCompletedAt?: number } {
+  const { prev, resolved, userId, now, deviceTrusted } = input;
+
+  // mfaRequired is always the fresh Firestore truth.
+  if (!resolved.mfaRequired) {
+    // Not required → verified, but no completion timestamp (outcome #1).
+    return { mfaRequired: false, mfaVerified: true };
+  }
+
+  // Required. Preserve a prior, genuinely-challenged, still-live session.
+  if (canPreserveVerifiedMfa(prev, userId, now)) {
+    return {
+      mfaRequired: true,
+      mfaVerified: true,
+      mfaCompletedAt: prev.mfaCompletedAt,
+    };
+  }
+
+  // Required, no preserve. A valid device-trust cookie births a verified
+  // session; the grant is itself a fresh verification event.
+  if (deviceTrusted) {
+    return { mfaRequired: true, mfaVerified: true, mfaCompletedAt: now };
+  }
+
+  // Required, no preserve, untrusted → challenge.
+  return { mfaRequired: true, mfaVerified: false };
+}
+
+/**
  * Create a new session
  * @param userId - Firebase user ID
  * @param durationDays - Session duration in days (default: 7)
  *
- * Reads `users/{uid}.mfaEnrolled` synchronously so the session is born with
- * the correct (mfaRequired, mfaVerified) pair. A small extra cost on login
- * (one Firestore read) in exchange for the proxy never having to do that
- * lookup on the hot path.
+ * Reads `users/{uid}.mfaEnrolled` synchronously so the session is born with the
+ * correct `mfaRequired`. `mfaRequired` is ALWAYS re-derived fresh from
+ * Firestore, but `mfaVerified` is NOT blindly reset:
+ *
+ *   - PRESERVE: when MFA is required and the prior cookie proves a challenge was
+ *     already cleared for this uid in a still-live session
+ *     (`canPreserveVerifiedMfa`), the verified state — and its original
+ *     `mfaCompletedAt` — carry forward. This stops AuthContext's every-load
+ *     `POST /api/auth/session` from clobbering `mfaVerified` on page loads.
+ *   - DEVICE TRUST: otherwise, when MFA is required, the `owlette_device_trust`
+ *     cookie is consulted (only then — never when preserve already applies or
+ *     MFA isn't required). A valid, unexpired record under this uid births the
+ *     session `mfaVerified: true` with `mfaCompletedAt = now`.
+ *
+ * See `resolveMfaOnSessionCreate` for the exact rule. The signature is fixed at
+ * `(userId, durationDays)`; the device-trust cookie is read internally so both
+ * the session POST and the passkey verify route pick this up unchanged.
+ *
+ * Fail-closed: any error reading/looking up the device-trust cookie is caught
+ * and treated as untrusted (a challenge). `resolveMfaStateForUser`'s own throw
+ * still propagates exactly as before — a Firestore failure resolving MFA state
+ * must never silently mint a session.
  */
 export async function createSession(
   userId: string,
@@ -164,19 +294,66 @@ export async function createSession(
 ): Promise<void> {
   const session = await getSession();
 
-  const expiresAt = Date.now() + durationDays * 24 * 60 * 60 * 1000;
-  const { mfaRequired, mfaVerified } = await resolveMfaStateForUser(userId);
+  // Capture the PRIOR session's MFA-relevant fields BEFORE overwriting anything
+  // below — the preserve rule reads these to decide whether an already-verified
+  // session stays verified across AuthContext's every-load re-POST.
+  const prev = {
+    userId: session.userId,
+    expiresAt: session.expiresAt,
+    mfaRequired: session.mfaRequired,
+    mfaVerified: session.mfaVerified,
+    mfaCompletedAt: session.mfaCompletedAt,
+  };
+
+  const now = Date.now();
+  const expiresAt = now + durationDays * 24 * 60 * 60 * 1000;
+
+  // Fresh Firestore truth. resolveMfaStateForUser stays fail-closed/throwing;
+  // let its throw propagate exactly as before (never swallow it here).
+  const resolved = await resolveMfaStateForUser(userId);
+
+  // Preserve is I/O-free, so decide it first: only read the device-trust cookie
+  // when MFA is required AND we cannot already preserve a verified state.
+  let deviceTrusted = false;
+  if (resolved.mfaRequired && !canPreserveVerifiedMfa(prev, userId, now)) {
+    // Fail-CLOSED: ANY error reading the cookie or looking up the record means
+    // untrusted → challenge. Logged so on-call sees it, but the error must
+    // never escape createSession through this path, and must never flip an
+    // untrusted device into a trusted one.
+    try {
+      const cookieStore = await cookies();
+      const raw = cookieStore.get(DEVICE_TRUST_COOKIE)?.value;
+      if (raw) {
+        deviceTrusted = await findValidTrustedDevice(userId, raw, now);
+      }
+    } catch (err) {
+      console.error(
+        '[Session] device-trust lookup failed for',
+        userId,
+        '— treating device as untrusted (fail-closed)',
+        err
+      );
+      deviceTrusted = false;
+    }
+  }
+
+  const mfa = resolveMfaOnSessionCreate({
+    prev,
+    resolved,
+    userId,
+    now,
+    deviceTrusted,
+  });
 
   session.userId = userId;
   session.expiresAt = expiresAt;
-  session.mfaRequired = mfaRequired;
-  session.mfaVerified = mfaVerified;
-  if (mfaVerified && !mfaRequired) {
-    // First-login / no-MFA users are "verified" at creation but never
-    // completed a challenge. `mfaCompletedAt` would be misleading there;
-    // omit it.
-    delete session.mfaCompletedAt;
+  session.mfaRequired = mfa.mfaRequired;
+  session.mfaVerified = mfa.mfaVerified;
+  if (typeof mfa.mfaCompletedAt === 'number') {
+    session.mfaCompletedAt = mfa.mfaCompletedAt;
   } else {
+    // No-MFA, freshly-challenged-elsewhere, or unverified: no completion
+    // timestamp to carry. Clear any stale value from a reused cookie.
     delete session.mfaCompletedAt;
   }
 
@@ -185,8 +362,9 @@ export async function createSession(
   console.log(
     '[Session] Created for user:', userId,
     'expires:', new Date(expiresAt).toISOString(),
-    'mfaRequired:', mfaRequired,
-    'mfaVerified:', mfaVerified
+    'mfaRequired:', mfa.mfaRequired,
+    'mfaVerified:', mfa.mfaVerified,
+    'deviceTrusted:', deviceTrusted
   );
 }
 

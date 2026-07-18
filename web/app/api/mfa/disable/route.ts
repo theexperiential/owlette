@@ -61,6 +61,11 @@ import {
 } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
 import { markSessionMfaDisabled } from '@/lib/sessionManager.server';
+import {
+  revokeAllTrustedDevices,
+  DEVICE_TRUST_COOKIE,
+  deviceTrustCookieOptions,
+} from '@/lib/deviceTrust.server';
 import { emitMutation } from '@/lib/auditLogClient';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
@@ -187,6 +192,17 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     // an MFA configuration that no longer exists.
     await markSessionMfaDisabled();
 
+    // Purge every trusted-device record so a later re-enroll can't inherit
+    // stale trust. These records are already unusable once mfaEnrolled=false
+    // (trust is only consulted when mfaRequired === true), so a revocation
+    // failure must never block the disable — log and continue with count 0.
+    let trustedDevicesRevoked = 0;
+    try {
+      trustedDevicesRevoked = await revokeAllTrustedDevices(userId);
+    } catch (revokeError) {
+      console.error('[MFA Disable] failed to revoke trusted devices', revokeError);
+    }
+
     // Audit. Platform-tenant mutation (siteId = '') so the cloud function
     // records it on the platform partition, not under any specific site.
     emitMutation({
@@ -199,10 +215,18 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         method: 'POST',
         verb: 'mfa_disabled',
         factorUsed: useBackup ? 'backup_code' : 'totp',
+        trustedDevicesRevoked,
       },
     });
 
-    return NextResponse.json({ success: true, backupCodeUsed });
+    // Expire the device-trust cookie so the just-revoked token can't linger
+    // in the browser (the server-side records are gone; clear the client too).
+    const response = NextResponse.json({ success: true, backupCodeUsed });
+    response.cookies.set(DEVICE_TRUST_COOKIE, '', {
+      ...deviceTrustCookieOptions(),
+      maxAge: 0,
+    });
+    return response;
   } catch (error) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

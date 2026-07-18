@@ -5,8 +5,8 @@
  * Decrypts the stored secret, verifies the code, never exposes secret to client
  *
  * POST /api/mfa/verify-login
- * Request: { userId: string, code: string, isBackupCode?: boolean }
- * Response: { success: boolean, backupCodeUsed?: boolean }
+ * Request: { userId: string, code: string, isBackupCode?: boolean, trustDevice?: boolean }
+ * Response: { success: boolean, backupCodeUsed: boolean, deviceTrusted: boolean }
  *
  * SECURITY:
  * - Secret is decrypted only server-side
@@ -22,11 +22,17 @@ import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, assertActiveUser, requireSessionUser } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
 import { markSessionMfaVerified } from '@/lib/sessionManager.server';
+import {
+  createTrustedDevice,
+  mintDeviceTrustToken,
+  DEVICE_TRUST_COOKIE,
+  deviceTrustCookieOptions,
+} from '@/lib/deviceTrust.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
     const body = await request.json();
-    const { userId, code, isBackupCode = false } = body;
+    const { userId, code, isBackupCode = false, trustDevice = false } = body;
 
     // Validate inputs
     if (!userId || typeof userId !== 'string') {
@@ -154,10 +160,46 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     // server-side check.
     await markSessionMfaVerified();
 
-    return NextResponse.json({
+    // "Trust this device for 30 days": when the user opted in, mint an opaque
+    // device-trust token, persist only its SHA-256 hash under this uid, and set
+    // the raw token in an HTTPOnly cookie on the success response. A future
+    // createSession() reads that cookie and is born mfaVerified without
+    // re-challenging. This is keyed off the same trustDevice flag for BOTH the
+    // TOTP and backup-code paths (mint happens once, here at the shared success
+    // point, strictly after the isValid gate). A persistence failure must NOT
+    // fail the 2FA verification itself — the user is verified regardless; only
+    // the trust convenience is skipped, so we log and continue with no cookie.
+    let rawTrustToken: string | null = null;
+    if (trustDevice === true) {
+      try {
+        const { raw, hash } = mintDeviceTrustToken();
+        await createTrustedDevice(
+          userId,
+          hash,
+          request.headers.get('user-agent') ?? '',
+          Date.now()
+        );
+        rawTrustToken = raw;
+      } catch (error) {
+        console.error('[MFA Verify Login] Failed to persist device trust:', error);
+      }
+    }
+
+    const response = NextResponse.json({
       success: true,
       backupCodeUsed,
+      deviceTrusted: rawTrustToken !== null,
     });
+
+    if (rawTrustToken !== null) {
+      response.cookies.set(
+        DEVICE_TRUST_COOKIE,
+        rawTrustToken,
+        deviceTrustCookieOptions()
+      );
+    }
+
+    return response;
   } catch (error) {
     if (error instanceof ApiAuthError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

@@ -20,7 +20,6 @@ import { auth, db, storage } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { toast } from 'sonner';
-import { clearMfaSession } from '@/lib/mfaSession';
 import * as Sentry from '@sentry/nextjs';
 
 // Shallow-compare two arrays by value (for string arrays like userSites)
@@ -617,7 +616,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       await firebaseSignOut(auth);
       await destroySessionCookie();
-      clearMfaSession(); // Clear MFA verification status
       toast.success('Signed Out', {
         description: 'You have been signed out successfully.',
       });

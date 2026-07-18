@@ -20,6 +20,11 @@ const mockIsEncryptionConfigured = jest.fn().mockReturnValue(true);
 const mockRequireSessionUser = jest.fn();
 const mockAssertActiveUser = jest.fn();
 const mockMarkSessionMfaVerified = jest.fn();
+const mockMintDeviceTrustToken = jest.fn();
+const mockCreateTrustedDevice = jest.fn();
+
+/** Kept in sync with the real DEVICE_TRUST_COOKIE constant. */
+const TRUST_COOKIE = 'owlette_device_trust';
 
 jest.mock('@sentry/nextjs', () => ({
   captureException: jest.fn(),
@@ -58,6 +63,19 @@ jest.mock('@/lib/encryption.server', () => ({
 jest.mock('@/lib/sessionManager.server', () => ({
   markSessionMfaVerified: (...a: unknown[]) =>
     mockMarkSessionMfaVerified(...a),
+}));
+
+jest.mock('@/lib/deviceTrust.server', () => ({
+  DEVICE_TRUST_COOKIE: 'owlette_device_trust',
+  mintDeviceTrustToken: () => mockMintDeviceTrustToken(),
+  createTrustedDevice: (...a: unknown[]) => mockCreateTrustedDevice(...a),
+  deviceTrustCookieOptions: () => ({
+    httpOnly: true,
+    secure: false,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 30 * 24 * 60 * 60,
+  }),
 }));
 
 /**
@@ -165,6 +183,13 @@ beforeEach(() => {
   mockVerifyBackupCode.mockImplementation(
     (_code: string, hash: string) => hash === 'hash-bk-1',
   );
+
+  // Device-trust defaults: a fixed token pair, persistence resolves.
+  mockMintDeviceTrustToken.mockReturnValue({
+    raw: 'raw-token-123',
+    hash: 'hash-token-123',
+  });
+  mockCreateTrustedDevice.mockResolvedValue(undefined);
 });
 
 function verifyReq() {
@@ -201,9 +226,126 @@ describe('POST /api/mfa/verify-login — backup code single-use under concurrenc
     expect(r1.status).toBe(200);
     expect(docState.data.backupCodes).toEqual(['hash-bk-2']);
 
+    // The request body omits trustDevice → no device-trust mint, no Set-Cookie.
+    expect(mockMintDeviceTrustToken).not.toHaveBeenCalled();
+    expect(mockCreateTrustedDevice).not.toHaveBeenCalled();
+    expect(r1.cookies.get(TRUST_COOKIE)).toBeUndefined();
+
     // Replay should fail since the code is now consumed.
     const r2 = await POST(verifyReq());
     expect(r2.status).toBe(400);
     expect(docState.data.backupCodes).toEqual(['hash-bk-2']);
+  });
+});
+
+describe('POST /api/mfa/verify-login — device trust ("remember this device")', () => {
+  const USER_AGENT = 'jest-test-agent';
+
+  function totpReq(overrides: Record<string, unknown> = {}) {
+    return createMockRequest('http://localhost/api/mfa/verify-login', {
+      method: 'POST',
+      headers: { 'user-agent': USER_AGENT },
+      body: {
+        userId: 'user-1',
+        code: '123456',
+        ...overrides,
+      },
+    });
+  }
+
+  beforeEach(() => {
+    // The TOTP path reads userData.mfaSecret; a colon-free value takes the
+    // legacy "use as-is" branch, so verifyTOTP is consulted directly and no
+    // decrypt mock is needed.
+    docState.data.mfaSecret = 'PLAINSECRET';
+    mockVerifyTOTP.mockReturnValue(true);
+  });
+
+  it('(a) trustDevice:true + valid TOTP → persists device, sets cookie, deviceTrusted:true', async () => {
+    const res = await POST(totpReq({ trustDevice: true }));
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body).toMatchObject({ success: true, deviceTrusted: true });
+
+    expect(mockCreateTrustedDevice).toHaveBeenCalledTimes(1);
+    expect(mockCreateTrustedDevice).toHaveBeenCalledWith(
+      'user-1',
+      'hash-token-123',
+      USER_AGENT,
+      expect.any(Number),
+    );
+
+    expect(res.cookies.get(TRUST_COOKIE)?.value).toBe('raw-token-123');
+  });
+
+  it('(b) trustDevice:false → no mint, no cookie, deviceTrusted:false', async () => {
+    const res = await POST(totpReq({ trustDevice: false }));
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.deviceTrusted).toBe(false);
+    expect(mockMintDeviceTrustToken).not.toHaveBeenCalled();
+    expect(mockCreateTrustedDevice).not.toHaveBeenCalled();
+    expect(res.cookies.get(TRUST_COOKIE)).toBeUndefined();
+  });
+
+  it('(b) trustDevice omitted → no mint, no cookie, deviceTrusted:false', async () => {
+    const res = await POST(totpReq());
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.deviceTrusted).toBe(false);
+    expect(mockMintDeviceTrustToken).not.toHaveBeenCalled();
+    expect(mockCreateTrustedDevice).not.toHaveBeenCalled();
+    expect(res.cookies.get(TRUST_COOKIE)).toBeUndefined();
+  });
+
+  it('(b) truthy-but-non-strict trustDevice (string "true") is treated as false', async () => {
+    const res = await POST(totpReq({ trustDevice: 'true' }));
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.deviceTrusted).toBe(false);
+    expect(mockMintDeviceTrustToken).not.toHaveBeenCalled();
+    expect(mockCreateTrustedDevice).not.toHaveBeenCalled();
+    expect(res.cookies.get(TRUST_COOKIE)).toBeUndefined();
+  });
+
+  it('(c) trustDevice:true + INVALID code → 400, no mint, no cookie', async () => {
+    mockVerifyTOTP.mockReturnValue(false);
+
+    const res = await POST(totpReq({ trustDevice: true }));
+    expect(res.status).toBe(400);
+    expect(mockMintDeviceTrustToken).not.toHaveBeenCalled();
+    expect(mockCreateTrustedDevice).not.toHaveBeenCalled();
+    expect(res.cookies.get(TRUST_COOKIE)).toBeUndefined();
+  });
+
+  it('(d) createTrustedDevice rejects → 200, deviceTrusted:false, no cookie, verification still succeeds', async () => {
+    const consoleErrorSpy = jest
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+    mockCreateTrustedDevice.mockRejectedValue(new Error('firestore down'));
+
+    const res = await POST(totpReq({ trustDevice: true }));
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    // The 2FA verification itself must still succeed; only trust persistence failed.
+    expect(body.success).toBe(true);
+    expect(body.deviceTrusted).toBe(false);
+
+    // Mint was attempted, persistence failed, and no cookie was set.
+    expect(mockMintDeviceTrustToken).toHaveBeenCalledTimes(1);
+    expect(res.cookies.get(TRUST_COOKIE)).toBeUndefined();
+    expect(consoleErrorSpy).toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('still marks the session mfa-verified when trusting the device', async () => {
+    await POST(totpReq({ trustDevice: true }));
+    expect(mockMarkSessionMfaVerified).toHaveBeenCalledTimes(1);
   });
 });

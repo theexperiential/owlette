@@ -12,7 +12,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { toast } from 'sonner';
-import { trustDevice } from '@/lib/mfaSession';
 
 function Verify2FAContent() {
   const { user, loading, signOut } = useAuth();
@@ -98,6 +97,7 @@ function Verify2FAContent() {
           userId: user.uid,
           code: verificationCode,
           isBackupCode: useBackupCode,
+          trustDevice: trustThisDevice,
         }),
       });
 
@@ -125,13 +125,11 @@ function Verify2FAContent() {
       // session cookie to mfaVerified=true. No client-side flag needed
       // for the proxy to allow the next navigation.
 
-      // Trust device for 30 days if checked. This is currently a
-      // client-side hint only — the proxy still gates protected paths
-      // on the server-side session, which always requires MFA when
-      // enrolled. Wave 3 will wire trusted-device support into the
-      // session cookie so this checkbox behaves as labelled.
-      if (trustThisDevice) {
-        trustDevice(user.uid);
+      // The "trust this device" checkbox is now server-authoritative: when
+      // checked, /api/mfa/verify-login mints an HTTPOnly device-trust cookie
+      // (consumed at session creation) and reports deviceTrusted=true. Only
+      // claim the device was trusted when the server actually did so.
+      if (data.deviceTrusted) {
         toast.success('Verification Successful', {
           description: 'This device has been trusted for 30 days.',
         });
@@ -185,6 +183,9 @@ function Verify2FAContent() {
             <div className="space-y-2">
               <Input
                 type="text"
+                name="otp"
+                autoComplete="one-time-code"
+                inputMode={useBackupCode ? 'text' : 'numeric'}
                 placeholder={useBackupCode ? 'Backup Code' : '000000'}
                 value={verificationCode}
                 onChange={(e) => {

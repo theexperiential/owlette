@@ -978,7 +978,7 @@ describe('deleteOwnAccount — edge cases', () => {
     expect(fake.deleteCalls).toEqual([`users/${userId}`]);
   });
 
-  it('drains user-scoped subcollections (passkeys, api_keys) and top-level api_keys lookups', async () => {
+  it('drains user-scoped subcollections (passkeys, trustedDevices, api_keys) and top-level api_keys lookups', async () => {
     const userId = 'uid_subs';
     const fake = buildFakeDb({
       seedDocs: {
@@ -988,6 +988,14 @@ describe('deleteOwnAccount — edge cases', () => {
         },
         [`users/${userId}/passkeys/pk1`]: { exists: true, data: { id: 'pk1' } },
         [`users/${userId}/passkeys/pk2`]: { exists: true, data: { id: 'pk2' } },
+        [`users/${userId}/trustedDevices/td1`]: {
+          exists: true,
+          data: { tokenHash: 'td1' },
+        },
+        [`users/${userId}/trustedDevices/td2`]: {
+          exists: true,
+          data: { tokenHash: 'td2' },
+        },
         [`users/${userId}/api_keys/key_a`]: {
           exists: true,
           data: { keyHash: 'hash_a' },
@@ -1001,6 +1009,7 @@ describe('deleteOwnAccount — edge cases', () => {
       },
       seedCollections: {
         [`users/${userId}/passkeys`]: ['pk1', 'pk2'],
+        [`users/${userId}/trustedDevices`]: ['td1', 'td2'],
         [`users/${userId}/api_keys`]: ['key_a', 'key_b'],
       },
     });
@@ -1015,6 +1024,7 @@ describe('deleteOwnAccount — edge cases', () => {
 
     if (result.kind !== 'ok') throw new Error('expected ok result');
     expect(result.deletedCounts.passkeys).toBe(2);
+    expect(result.deletedCounts.trustedDevices).toBe(2);
     expect(result.deletedCounts.apiKeys).toBe(2);
     expect(result.deletedCounts.apiKeyLookups).toBe(2);
 
@@ -1022,6 +1032,8 @@ describe('deleteOwnAccount — edge cases', () => {
       expect.arrayContaining([
         `users/${userId}/passkeys/pk1`,
         `users/${userId}/passkeys/pk2`,
+        `users/${userId}/trustedDevices/td1`,
+        `users/${userId}/trustedDevices/td2`,
         `users/${userId}/api_keys/key_a`,
         `users/${userId}/api_keys/key_b`,
         'api_keys/hash_a',

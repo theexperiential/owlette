@@ -24,6 +24,7 @@ const mockVerifyBackupCode = jest.fn();
 const mockDecrypt = jest.fn();
 const mockIsEncryptionConfigured = jest.fn();
 const mockMarkSessionMfaDisabled = jest.fn();
+const mockRevokeAllTrustedDevices = jest.fn();
 const mockEmitMutation = jest.fn();
 
 jest.mock('@sentry/nextjs', () => ({
@@ -64,6 +65,23 @@ jest.mock('@/lib/encryption.server', () => ({
 
 jest.mock('@/lib/sessionManager.server', () => ({
   markSessionMfaDisabled: (...a: unknown[]) => mockMarkSessionMfaDisabled(...a),
+}));
+
+// jest.mock replaces the whole module, so the route's real
+// `@/lib/deviceTrust.server` import MUST be stubbed here too — otherwise the
+// route would pull in the Admin-SDK-backed implementation and every existing
+// test would TypeError. `DEVICE_TRUST_COOKIE` / `deviceTrustCookieOptions`
+// mirror the real values so the cookie-expiry assertions are meaningful.
+jest.mock('@/lib/deviceTrust.server', () => ({
+  revokeAllTrustedDevices: (...a: unknown[]) => mockRevokeAllTrustedDevices(...a),
+  DEVICE_TRUST_COOKIE: 'owlette_device_trust',
+  deviceTrustCookieOptions: () => ({
+    httpOnly: true,
+    secure: false,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: 30 * 24 * 60 * 60,
+  }),
 }));
 
 jest.mock('@/lib/auditLogClient', () => ({
@@ -155,6 +173,7 @@ beforeEach(() => {
   mockVerifyTOTP.mockReturnValue(true);
   mockVerifyBackupCode.mockReturnValue(false);
   mockMarkSessionMfaDisabled.mockResolvedValue(undefined);
+  mockRevokeAllTrustedDevices.mockResolvedValue(0);
 });
 
 function disableReq(body: unknown) {
@@ -317,5 +336,56 @@ describe('POST /api/mfa/disable — backup-code path', () => {
     expect(
       updateCalls.find((c) => Array.isArray(c.payload.backupCodes)),
     ).toBeUndefined();
+  });
+});
+
+describe('POST /api/mfa/disable — device trust revocation', () => {
+  it('revokes all trusted devices for the session user and expires the trust cookie', async () => {
+    mockRevokeAllTrustedDevices.mockResolvedValue(4);
+
+    const res = await POST(disableReq({ code: '123456' }));
+    expect(res.status).toBe(200);
+
+    // Trust records are purged for the session's OWN user (no userId param).
+    expect(mockRevokeAllTrustedDevices).toHaveBeenCalledTimes(1);
+    expect(mockRevokeAllTrustedDevices).toHaveBeenCalledWith('user-1');
+
+    // The revoked count rides on the SINGLE existing audit emission — no
+    // second emitMutation (audit invariant).
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    const audit = mockEmitMutation.mock.calls[0][0];
+    expect(audit.attributes.trustedDevicesRevoked).toBe(4);
+
+    // The device-trust cookie is expired on the response.
+    const cookie = res.cookies.get('owlette_device_trust');
+    expect(cookie?.value).toBe('');
+    expect(cookie?.maxAge).toBe(0);
+  });
+
+  it('still succeeds (200) and expires the cookie when revocation throws', async () => {
+    mockRevokeAllTrustedDevices.mockRejectedValue(new Error('firestore down'));
+
+    const res = await POST(disableReq({ code: '123456' }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+
+    // MFA was still torn down despite the revocation failure.
+    expect(
+      updateCalls.find(
+        (c) => 'mfaEnrolled' in c.payload && c.payload.mfaEnrolled === false,
+      ),
+    ).toBeTruthy();
+    expect(mockMarkSessionMfaDisabled).toHaveBeenCalledTimes(1);
+
+    // Exactly one audit emission, with the fallback count of 0.
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    const audit = mockEmitMutation.mock.calls[0][0];
+    expect(audit.attributes.trustedDevicesRevoked).toBe(0);
+
+    // Cookie is still expired even though revocation threw.
+    const cookie = res.cookies.get('owlette_device_trust');
+    expect(cookie?.value).toBe('');
+    expect(cookie?.maxAge).toBe(0);
   });
 });
