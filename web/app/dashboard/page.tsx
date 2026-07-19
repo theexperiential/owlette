@@ -40,6 +40,7 @@ import { MachineRow, MachineTableHeader, type DeviceUnion, type ShowDropdownFlag
 import { useDevicePrefs } from '@/hooks/useDevicePrefs';
 import { useSlidePanel } from '@/hooks/useSlidePanel';
 import { unionIds } from '@/lib/deviceResolvers';
+import { nextDuplicateName } from '@/lib/processNaming';
 import { AddMachineButton } from './components/AddMachineButton';
 import { useDeviceCodeAuthorize } from '@/hooks/useDeviceCodeAuthorize';
 import { LoadingWord } from '@/components/LoadingWord';
@@ -610,6 +611,35 @@ export default function DashboardPage() {
     }
   };
 
+  const handleDuplicateProcess = async (machineId: string, process: Process) => {
+    // Suffix the name so it clears the server's per-machine unique-name check,
+    // and clone with launch_mode 'off' so the copy never auto-launches a
+    // second instance of the same executable.
+    const machine = machines.find((m) => m.machineId === machineId);
+    const existingNames = machine?.processes?.map((p) => p.name) ?? [];
+    const newName = nextDuplicateName(process.name, existingNames);
+
+    try {
+      await createProcess(machineId, {
+        name: newName,
+        exe_path: process.exe_path,
+        file_path: process.file_path,
+        cwd: process.cwd,
+        priority: process.priority,
+        visibility: process.visibility,
+        time_delay: process.time_delay,
+        time_to_init: process.time_to_init,
+        relaunch_attempts: process.relaunch_attempts,
+        launch_mode: 'off',
+        schedules: process.schedules ?? null,
+      });
+      toast.success(`duplicated "${process.name}" as "${newName}"`);
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'failed to duplicate process';
+      toast.error(msg);
+    }
+  };
+
   const handleDeleteProcess = async () => {
     try {
       await deleteProcess(editingMachineId, editingProcessId);
@@ -1035,6 +1065,7 @@ export default function DashboardPage() {
                   siteTimezone={currentSite?.timezone}
                   siteTimeFormat={userPreferences.timeFormat || '12h'}
                   onEditProcess={openEditProcessDialog}
+                  onDuplicateProcess={handleDuplicateProcess}
                   onCreateProcess={openCreateProcessDialog}
                   onKillProcess={handleKillProcess}
                   onRestartProcess={handleRestartProcess}
@@ -1083,6 +1114,7 @@ export default function DashboardPage() {
                         isSiteAdmin={isSiteAdmin(currentSiteId)}
                         onToggleExpanded={() => toggleMachineExpanded(machine.machineId)}
                         onEditProcess={(process) => openEditProcessDialog(machine.machineId, process)}
+                        onDuplicateProcess={(process) => handleDuplicateProcess(machine.machineId, process)}
                         onCreateProcess={() => openCreateProcessDialog(machine.machineId)}
                         onKillProcess={(processId, processName) => handleKillProcess(machine.machineId, processId, processName)}
                         onRestartProcess={(processId, processName) => handleRestartProcess(machine.machineId, processId, processName)}

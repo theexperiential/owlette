@@ -32,6 +32,7 @@ interface DocSeed {
 }
 let docs: Map<string, DocSeed>;
 let updateCalls: Array<{ path: string; payload: Record<string, unknown> }>;
+let deletePaths: string[];
 
 function makeDocRef(path: string): Record<string, unknown> {
   return {
@@ -53,9 +54,34 @@ function makeDocRef(path: string): Record<string, unknown> {
       });
     },
     delete: async () => {
+      deletePaths.push(path);
       docs.set(path, { exists: false });
     },
   };
+}
+
+/**
+ * Return snapshot docs for the direct children of a collection path — i.e.
+ * seeded `docs` entries whose parent is exactly `path`. Enables the
+ * subcollection-sweep assertions (passkeys / trustedDevices) without any
+ * per-collection seeding plumbing.
+ */
+function collectionDocs(path: string): Array<Record<string, unknown>> {
+  const prefix = `${path}/`;
+  const out: Array<Record<string, unknown>> = [];
+  for (const [docPath, seed] of docs.entries()) {
+    if (!seed.exists) continue;
+    if (!docPath.startsWith(prefix)) continue;
+    // Direct children only — skip nested subcollection paths.
+    if (docPath.slice(prefix.length).includes('/')) continue;
+    const id = docPath.slice(prefix.length);
+    out.push({
+      id,
+      data: () => seed.data,
+      ref: makeDocRef(docPath),
+    });
+  }
+  return out;
 }
 
 function makeCollectionRef(path: string): Record<string, unknown> {
@@ -71,7 +97,7 @@ function makeCollectionRef(path: string): Record<string, unknown> {
         return { docs: [] };
       },
     }),
-    get: async () => ({ docs: [] }),
+    get: async () => ({ docs: collectionDocs(path) }),
   };
 }
 
@@ -95,6 +121,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   docs = new Map();
   updateCalls = [];
+  deletePaths = [];
   mockRevokeRefreshTokens.mockResolvedValue(undefined);
   mockUpdateUser.mockResolvedValue(undefined);
   adminAuthFactory.mockReturnValue({
@@ -209,5 +236,33 @@ describe('performUserDeleteCascade — Firebase Auth revoke side-effect', () => 
     expect(outcome.kind).toBe('already_deleted');
     expect(mockRevokeRefreshTokens).not.toHaveBeenCalled();
     expect(mockUpdateUser).not.toHaveBeenCalled();
+  });
+
+  it('sweeps the trustedDevices subcollection so stale device-trust cookies die', async () => {
+    docs.set('users/uid-td', {
+      exists: true,
+      data: { uid: 'uid-td', role: 'member', sites: [] },
+    });
+    // Two hashed-token device-trust records (doc id === token hash).
+    docs.set('users/uid-td/trustedDevices/hash-1', {
+      exists: true,
+      data: { tokenHash: 'hash-1' },
+    });
+    docs.set('users/uid-td/trustedDevices/hash-2', {
+      exists: true,
+      data: { tokenHash: 'hash-2' },
+    });
+
+    const outcome = await performUserDeleteCascade('uid-td');
+
+    expect(outcome.kind).toBe('deleted');
+    if (outcome.kind !== 'deleted') throw new Error('expected deleted');
+
+    // Both device-trust docs were deleted — a surviving cookie can no longer
+    // resolve to a valid record and skip the MFA challenge post-deletion.
+    expect(deletePaths).toContain('users/uid-td/trustedDevices/hash-1');
+    expect(deletePaths).toContain('users/uid-td/trustedDevices/hash-2');
+    expect(docs.get('users/uid-td/trustedDevices/hash-1')?.exists).toBe(false);
+    expect(docs.get('users/uid-td/trustedDevices/hash-2')?.exists).toBe(false);
   });
 });

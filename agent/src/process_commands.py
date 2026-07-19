@@ -108,7 +108,19 @@ def _stop_if_running(service: Any, process: dict, timeout_seconds: int) -> Optio
     from owlette_service import Util  # local import — avoid circular
 
     if not last_pid or not Util.is_pid_running(last_pid):
-        return None
+        # off-mode (and other untracked-but-alive) processes are never
+        # adopted by the monitor loop, so last_started holds no live PID for
+        # them. fall back to strict discovery by exe/file_path so a restart
+        # terminates the live instance instead of launching a duplicate on
+        # top of it. strict matching never kills on a bare image name.
+        exe_path = process.get("exe_path", "")
+        file_path = process.get("file_path", "")
+        last_pid = (
+            service._find_running_process_by_exe(exe_path, file_path, strict=True)
+            if exe_path else None
+        )
+        if not last_pid or not Util.is_pid_running(last_pid):
+            return None
 
     # mark as KILLED so the crash-detection path in handle_process()
     # doesn't fire an alert when it sees the PID gone next loop tick.

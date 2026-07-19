@@ -24,14 +24,15 @@
  * paths so a self-deleted user leaves no residue:
  *
  *   1. `users/{uid}/passkeys/*`            — passkey subcollection
- *   2. `users/{uid}/api_keys/*`            — owned api keys
- *   3. `api_keys/{keyHash}` (top-level)    — lookup docs matching the user
- *   4. `mfa_pending/{uid}`                 — pending MFA enrollment doc
- *   5. `agent_refresh_tokens` where
+ *   2. `users/{uid}/trustedDevices/*`      — device-trust tokens
+ *   3. `users/{uid}/api_keys/*`            — owned api keys
+ *   4. `api_keys/{keyHash}` (top-level)    — lookup docs matching the user
+ *   5. `mfa_pending/{uid}`                 — pending MFA enrollment doc
+ *   6. `agent_refresh_tokens` where
  *      `createdBy == uid`                  — disables the user's agents
- *   6. `chats/{chatId}` where
+ *   7. `chats/{chatId}` where
  *      `userId == uid`                     — Cortex conversation history
- *   7. Firebase Storage `users/{uid}/*`    — avatar / user-scoped assets
+ *   8. Firebase Storage `users/{uid}/*`    — avatar / user-scoped assets
  *
  * Finally — after the Firestore cascade — the Firebase Auth user is
  * revoked + deleted server-side. The client used to call
@@ -138,6 +139,7 @@ export type DeleteOwnAccountResult =
         users: number;
         memberSitesRemoved: number;
         passkeys: number;
+        trustedDevices: number;
         apiKeys: number;
         apiKeyLookups: number;
         mfaPending: number;
@@ -185,6 +187,7 @@ function emptyDeletedCounts() {
     users: 0,
     memberSitesRemoved: 0,
     passkeys: 0,
+    trustedDevices: 0,
     apiKeys: 0,
     apiKeyLookups: 0,
     mfaPending: 0,
@@ -250,8 +253,8 @@ async function drainSiteSubcollection(
 }
 
 /**
- * Drain a flat subcollection under `users/{uid}` (passkeys, api_keys).
- * Returns the number of docs deleted (or counted in dry-run).
+ * Drain a flat subcollection under `users/{uid}` (passkeys, trustedDevices,
+ * api_keys). Returns the number of docs deleted (or counted in dry-run).
  */
 async function drainUserSubcollection(
   ctx: CascadeContext,
@@ -712,6 +715,7 @@ export async function deleteOwnAccount(
             users: numberOr0(counts.users),
             memberSitesRemoved: numberOr0(counts.memberSitesRemoved),
             passkeys: numberOr0(counts.passkeys),
+            trustedDevices: numberOr0(counts.trustedDevices),
             apiKeys: numberOr0(counts.apiKeys),
             apiKeyLookups: numberOr0(counts.apiKeyLookups),
             mfaPending: numberOr0(counts.mfaPending),
@@ -832,6 +836,10 @@ export async function deleteOwnAccount(
 
   // ── 5. User-scoped subcollections + cross-collection sweeps ────────────
   const passkeys = await drainUserSubcollection(ctx, 'passkeys');
+  // Device-trust records live under the same user root; drain them so a stale
+  // device-trust cookie can't skip MFA for a later account re-created under
+  // the same uid.
+  const trustedDevices = await drainUserSubcollection(ctx, 'trustedDevices');
   const { apiKeys, apiKeyLookups } = await drainApiKeys(ctx);
   const mfaPending = await deleteMfaPending(ctx);
   const agentTokens = await drainQueryWhereEqualsUser(
@@ -866,6 +874,7 @@ export async function deleteOwnAccount(
     users: usersDeleted,
     memberSitesRemoved,
     passkeys,
+    trustedDevices,
     apiKeys,
     apiKeyLookups,
     mfaPending,

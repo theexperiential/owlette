@@ -227,6 +227,9 @@ export default function Setup2FAPage() {
                   onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   maxLength={6}
                   className="text-center text-2xl font-mono tracking-widest h-16 px-4"
+                  autoComplete="one-time-code"
+                  inputMode="numeric"
+                  name="otp"
                   autoFocus
                 />
               </div>

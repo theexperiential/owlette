@@ -5,6 +5,27 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
+## [2.12.19] - 2026-07-15
+
+### added
+
+- **Duplicate a process.** Right-click a process in the agent app or use the new duplicate action on the dashboard (list and card views) to clone its full configuration. The copy gets a "(copy)" name and starts with launch mode off, so it never spawns a second instance until you're ready.
+
+### fixed
+
+- **Hidden window mode now works for scripts and console apps.** Processes set to hidden no longer show a command-prompt window when the target is a `.bat`/`.cmd` script or a console `.exe` — including scripts under paths with spaces.
+- **`.bat` and `.cmd` are first-class process targets.** The agent's file browser now lets you pick scripts (`.exe`, `.bat`, `.cmd`, `.com`, or any file) instead of requiring a hand-typed path, and hidden script launches work end-to-end.
+- **Kill works regardless of launch mode.** Killing a process whose launch mode is off (or that owlette didn't start itself) now finds and terminates the live instance — from the dashboard, the agent app, and Cortex. The agent app previously killed a stale recorded process id and reported success while the real process kept running; it now validates the recorded id against the configured executable (so it can never terminate an unrelated recycled process id) and falls back to locating the live instance, refusing rather than guessing when several instances of the same executable are indistinguishable. Restarting such a process no longer launches a duplicate on top of the live one.
+- **The restart countdown window matches the app theme.** The countdown dialog now uses the dark navy/cyan theme instead of the legacy grey, and the timer is zero-padded (1:05, not 1:5).
+- **"open owlette" from the tray reliably shows the window.** The tray could focus one of the app's invisible tooltip popups (they share the main window's title) instead of the app itself, leaving an already-open window in the background. It now targets the real window and restores it, doesn't respawn the app while a fresh launch is still starting up, and launches the app with the bundled interpreter instead of whatever python is on PATH (which could crash silently on machines with another Python installed).
+- **"Trust this device for 30 days" now works.** Checking the box at the two-factor prompt stores a secure token in that browser, so sign-ins from it skip the code for the next 30 days. Signing out doesn't clear it; disabling 2FA or deleting the account revokes every trusted device.
+- **No more daily two-factor prompts.** A verified session now survives page reloads and new tabs for its full lifetime — previously any fresh page load could reset the session's verified state and bounce you back to the code screen.
+- **2FA codes autofill.** The verification fields identify themselves as one-time-code inputs, so password managers and phone keyboards offer the code automatically (backup codes still type normally).
+
+### changed
+
+- **Offline alert emails are consolidated and accurate.** When several machines at a site go offline around the same time, one email now lists the full picture — machines not responding, machines that reported shutting down, and machines still offline from an earlier alert — with a subject count that matches the list. Previously a staggered site-wide outage produced several emails with partial counts. Alerts wait for the situation to stabilize (about ten minutes) before sending.
+
 ## [2.12.18] - 2026-07-09
 
 ### fixed

@@ -50,6 +50,21 @@ const PLANNED_DOWNTIME_GRACE_MS = 15 * 60 * 1000; // 15 minutes, applied symmetr
 // emailing, so a one-off blip never pages.
 const STALE_CONFIRM_MS = OFFLINE_THRESHOLD_MS; // ~one extra cron interval of confirmed staleness
 
+// Site-level settling window. A machine confirmed not-responding is added to the
+// site's pending set rather than emailed immediately; the consolidated alert is
+// only sent once the pending set has stopped GROWING for this long. Sized as the
+// 5-minute cron interval plus margin so a staggered shutdown (machines crossing to
+// offline across several scans) coalesces into ONE email with the full count,
+// instead of a burst of disjoint partial-count batches. The trade-off is a small
+// added latency (~one extra cron interval) before the first offline email.
+const SETTLE_MS = 7 * 60 * 1000; // 7 minutes (cron interval + margin)
+
+// A machine that gracefully announced shutdown (online:false) with a heartbeat at
+// least this recent is shown as context ("reported shutting down") in the offline
+// email — recent enough to belong to the current outage picture, not a box that
+// was decommissioned or powered down days ago.
+const RECENT_SHUTDOWN_WINDOW_MS = 6 * 60 * 60 * 1000; // 6 hours
+
 function timestampToMillis(value: unknown): number {
   return (value as FirebaseFirestore.Timestamp | null)?.toMillis?.() ?? 0;
 }
@@ -148,28 +163,62 @@ export function classifyMachineHealth(m: MachineHealthSnapshot, now: number): He
   return { action: 'alert', heartbeatAgeMinutes: Math.floor(heartbeatAge / 60000) };
 }
 
-interface OfflineAlert {
-  siteId: string;
+// A machine that is confirmed not-responding this scan, carried through the
+// site-level settling aggregation and (once settled) into the alert email. The
+// ref is retained so the per-machine cooldown stamp can be written at send time.
+interface PendingMachine {
   machineId: string;
+  ref: FirebaseFirestore.DocumentReference;
   lastHeartbeatMs: number;
   heartbeatAgeMinutes: number;
   timezone?: string;
 }
 
-function buildOfflineEmail(siteLabel: string, alerts: OfflineAlert[], unsubscribeUrl?: string): string {
-  const rows = alerts
+// A single machine row rendered in one of the offline email's sections.
+interface OfflineRow {
+  machineId: string;
+  heartbeatAgeMinutes: number;
+}
+
+// The three buckets that together describe a site's full offline picture, so the
+// email's count always reconciles with reality.
+interface OfflineSections {
+  notResponding: OfflineRow[]; // confirmed stale with no shutdown announcement — the page trigger
+  shuttingDown: OfflineRow[]; // online:false with a recent heartbeat — graceful, context only
+  stillOffline: OfflineRow[]; // stale but inside their per-machine re-alert cooldown — context only
+}
+
+// A settled per-site alert, queued during the scan phase and emailed afterwards.
+interface SendPlan {
+  siteId: string;
+  siteName: string;
+  sections: OfflineSections;
+  webhookMachines: { machineId: string; lastHeartbeatMs: number }[];
+  timezone?: string;
+}
+
+function heartbeatAgeMinutes(lastHeartbeatMs: number, now: number): number {
+  if (lastHeartbeatMs <= 0) return 0;
+  return Math.max(0, Math.floor((now - lastHeartbeatMs) / 60000));
+}
+
+function offlineRowsHtml(rows: OfflineRow[]): string {
+  return rows
     .map(
-      (a) => `
+      (r) => `
       <tr>
-        <td style="padding:10px 14px;color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(a.machineId)}</td>
-        <td style="padding:10px 14px;color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${a.heartbeatAgeMinutes} minute(s) ago</td>
+        <td style="padding:10px 14px;color:${EMAIL_COLORS.text};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${escapeHtml(r.machineId)}</td>
+        <td style="padding:10px 14px;color:${EMAIL_COLORS.muted};border-bottom:1px solid ${EMAIL_COLORS.border};font-size:13px;">${r.heartbeatAgeMinutes} minute(s) ago</td>
       </tr>`
     )
     .join('');
+}
 
-  const content = `
-    <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">machines offline</h2>
-    <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">${alerts.length} machine(s) in site <strong style="color:${EMAIL_COLORS.text};">${escapeHtml(siteLabel)}</strong> appear to be offline.</p>
+function offlineSectionHtml(label: string, description: string, accent: string, rows: OfflineRow[]): string {
+  if (rows.length === 0) return '';
+  return `
+    <p style="margin:22px 0 6px;color:${accent};font-size:13px;font-weight:700;text-transform:lowercase;">${label} (${rows.length})</p>
+    <p style="margin:0 0 10px;color:${EMAIL_COLORS.muted};font-size:12px;">${description}</p>
     <table width="100%" style="border-collapse:collapse;border:1px solid ${EMAIL_COLORS.border};border-radius:6px;overflow:hidden;" cellpadding="0" cellspacing="0">
       <thead>
         <tr>
@@ -177,17 +226,85 @@ function buildOfflineEmail(siteLabel: string, alerts: OfflineAlert[], unsubscrib
           <th style="padding:10px 14px;text-align:left;background:${EMAIL_COLORS.altRow};color:${EMAIL_COLORS.muted};font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid ${EMAIL_COLORS.border};">last seen</th>
         </tr>
       </thead>
-      <tbody>${rows}</tbody>
-    </table>
+      <tbody>${offlineRowsHtml(rows)}</tbody>
+    </table>`;
+}
+
+/**
+ * Build the consolidated offline email for a site. Sections describe the full
+ * picture — machines that stopped responding (the page trigger) plus the two
+ * context buckets (graceful shutdowns and machines still down from an earlier
+ * alert). The subject count (computed by the caller) matches the total number of
+ * machines listed here, so the count always reconciles with the body.
+ */
+function buildOfflineEmail(
+  siteLabel: string,
+  sections: OfflineSections,
+  timezone?: string,
+  unsubscribeUrl?: string
+): string {
+  const total = sections.notResponding.length + sections.shuttingDown.length + sections.stillOffline.length;
+
+  const content = `
+    <h2 style="color:${EMAIL_COLORS.red};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">machines offline</h2>
+    <p style="margin:0 0 4px;color:${EMAIL_COLORS.muted};">${total} machine(s) in site <strong style="color:${EMAIL_COLORS.text};">${escapeHtml(siteLabel)}</strong> are offline or not responding.</p>
+    ${offlineSectionHtml('not responding', 'no heartbeat received — these machines may have crashed or lost their connection.', EMAIL_COLORS.red, sections.notResponding)}
+    ${offlineSectionHtml('reported shutting down', 'the agent announced a shutdown before going offline.', EMAIL_COLORS.amber, sections.shuttingDown)}
+    ${offlineSectionHtml('still offline', 'already alerted earlier and still not responding.', EMAIL_COLORS.muted, sections.stillOffline)}
     <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">please check each machine and verify that the owlette service is running.</p>
-    <p style="margin:8px 0 0;color:${EMAIL_COLORS.border};font-size:11px;">checked at ${emailTimestamp(new Date(), alerts[0]?.timezone)}</p>
+    <p style="margin:8px 0 0;color:${EMAIL_COLORS.border};font-size:11px;">checked at ${emailTimestamp(new Date(), timezone)}</p>
     <p style="margin:8px 0 0;color:${EMAIL_COLORS.border};font-size:11px;">alerts are sent at most once per hour per machine.</p>
   `;
 
   return wrapEmailLayout(content, {
     unsubscribeUrl,
-    preheader: `${alerts.length} machine(s) offline in ${siteLabel}`,
+    preheader: `${total} machine(s) offline in ${siteLabel}`,
   });
+}
+
+/**
+ * Drop machines the recipient has muted from every section. The not-responding
+ * set is the page trigger; if the user muted all of it, the caller skips them.
+ */
+function filterSectionsForRecipient(sections: OfflineSections, mutedMachines: string[]): OfflineSections {
+  if (mutedMachines.length === 0) return sections;
+  const muted = new Set(mutedMachines);
+  const keep = (r: OfflineRow) => !muted.has(r.machineId);
+  return {
+    notResponding: sections.notResponding.filter(keep),
+    shuttingDown: sections.shuttingDown.filter(keep),
+    stillOffline: sections.stillOffline.filter(keep),
+  };
+}
+
+/**
+ * Merge-write the site-level offline-alert state (health.offlineAlert). Isolated
+ * in its own try/catch so a failed site-doc write degrades gracefully (logged)
+ * without aborting the run — per-machine writes and every other site still
+ * process. `merge:true` deep-merges the nested map, so this only touches the
+ * fields supplied here and leaves the rest of health.* untouched.
+ */
+async function writeSiteOfflineState(
+  ref: FirebaseFirestore.DocumentReference,
+  siteId: string,
+  opts: {
+    pendingIds?: string[];
+    bumpPendingUpdatedAt?: boolean;
+    clearPendingUpdatedAt?: boolean;
+    setLastAlertAt?: boolean;
+  }
+): Promise<void> {
+  const offlineAlert: Record<string, unknown> = {};
+  if (opts.pendingIds !== undefined) offlineAlert.pendingIds = opts.pendingIds;
+  if (opts.bumpPendingUpdatedAt) offlineAlert.pendingUpdatedAt = FieldValue.serverTimestamp();
+  else if (opts.clearPendingUpdatedAt) offlineAlert.pendingUpdatedAt = FieldValue.delete();
+  if (opts.setLastAlertAt) offlineAlert.lastAlertAt = FieldValue.serverTimestamp();
+
+  try {
+    await ref.set({ health: { offlineAlert } }, { merge: true });
+  } catch (error) {
+    console.error(`[cron/health-check] Failed to persist offline state for site ${siteId}:`, error);
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -199,9 +316,10 @@ export async function GET(request: NextRequest) {
 
   const db = getAdminDb();
   const now = Date.now();
-  const allAlerts: OfflineAlert[] = [];
+  const sendPlans: SendPlan[] = [];
   let sitesChecked = 0;
   let machinesChecked = 0;
+  let offlineMachines = 0;
 
   try {
     const sitesSnap = await db.collection('sites').get();
@@ -209,6 +327,7 @@ export async function GET(request: NextRequest) {
 
     for (const siteDoc of sitesSnap.docs) {
       const siteId = siteDoc.id;
+      const siteData = siteDoc.data();
 
       const machinesSnap = await db
         .collection('sites')
@@ -218,11 +337,20 @@ export async function GET(request: NextRequest) {
 
       machinesChecked += machinesSnap.size;
 
+      // Buckets for this site: the page trigger plus the two context sections.
+      const notResponding: PendingMachine[] = [];
+      const shuttingDown: OfflineRow[] = [];
+      const stillOffline: OfflineRow[] = [];
+
       for (const machineDoc of machinesSnap.docs) {
         const machine = machineDoc.data();
 
         const lastHeartbeatMs = timestampToMillis(machine.lastHeartbeat);
         const staleSinceMs = timestampToMillis(machine.health?.staleSince);
+        // Prefer the IANA name (the only value Intl accepts); the sibling
+        // machine_timezone holds the Windows registry name and would fall back
+        // to UTC in emailTimestamp.
+        const timezone = machine.machine_timezone_iana || machine.machine_timezone || undefined;
 
         const snapshot: MachineHealthSnapshot = {
           online: machine.online === true,
@@ -259,11 +387,10 @@ export async function GET(request: NextRequest) {
 
         const decision = classifyMachineHealth(snapshot, now);
 
-        if (decision.action === 'ignore') continue;
-
         if (decision.action === 'ok') {
           // Heartbeat recovered — drop any stale marker so the next outage
-          // debounces cleanly from scratch.
+          // debounces cleanly from scratch. Removal from the site's pending set
+          // (if it was there) happens in the aggregation below.
           if (staleSinceMs > 0) {
             await machineDoc.ref.set(
               { health: { staleSince: FieldValue.delete() } },
@@ -286,51 +413,148 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        // decision.action === 'alert' — mark as alerted to dedup this hour.
-        await machineDoc.ref.set(
-          { health: { lastCronAlertAt: FieldValue.serverTimestamp() } },
-          { merge: true }
-        );
+        if (decision.action === 'alert') {
+          // Confirmed not-responding. Do NOT email or stamp cooldown yet — feed
+          // it into the site's settling aggregation below.
+          notResponding.push({
+            machineId: machineDoc.id,
+            ref: machineDoc.ref,
+            lastHeartbeatMs,
+            heartbeatAgeMinutes: decision.heartbeatAgeMinutes,
+            timezone,
+          });
+          continue;
+        }
 
-        allAlerts.push({
-          siteId,
-          machineId: machineDoc.id,
-          lastHeartbeatMs,
-          heartbeatAgeMinutes: decision.heartbeatAgeMinutes,
-          timezone: machine.machine_timezone || undefined,
-        });
+        // decision.action === 'ignore' — never a page trigger, but a machine can
+        // still belong to the email's context sections so the count is complete.
+        if (
+          machine.online === false &&
+          lastHeartbeatMs > 0 &&
+          now - lastHeartbeatMs <= RECENT_SHUTDOWN_WINDOW_MS
+        ) {
+          // The agent explicitly flushed online:false — a graceful shutdown.
+          shuttingDown.push({
+            machineId: machineDoc.id,
+            heartbeatAgeMinutes: heartbeatAgeMinutes(lastHeartbeatMs, now),
+          });
+        } else if (decision.reason === 'cooldown') {
+          // Still stale, already alerted within the last hour.
+          stillOffline.push({
+            machineId: machineDoc.id,
+            heartbeatAgeMinutes: heartbeatAgeMinutes(lastHeartbeatMs, now),
+          });
+        }
       }
+
+      // --- Site-level settling aggregation -----------------------------------
+      // Persist the pending (not-responding) set on the site doc and only fire
+      // once it has stopped growing for SETTLE_MS, so a staggered shutdown emits
+      // ONE consolidated email instead of a burst of partial-count batches.
+      const priorState = (siteData.health?.offlineAlert ?? {}) as {
+        pendingIds?: unknown;
+        pendingUpdatedAt?: unknown;
+      };
+      const priorPendingIds = Array.isArray(priorState.pendingIds)
+        ? (priorState.pendingIds as string[])
+        : [];
+      const priorPendingSet = new Set(priorPendingIds);
+      const priorPendingUpdatedAtMs = timestampToMillis(priorState.pendingUpdatedAt);
+
+      const currentIds = notResponding.map((m) => m.machineId);
+      const currentSet = new Set(currentIds);
+      const newIdAdded = currentIds.some((id) => !priorPendingSet.has(id));
+      const idRemoved = priorPendingIds.some((id) => !currentSet.has(id));
+
+      if (currentIds.length === 0) {
+        // Nothing not-responding right now. Clear any lingering pending state so
+        // a future outage settles from a clean slate. (Recovered/settled machines
+        // both land here.)
+        if (priorPendingIds.length > 0) {
+          await writeSiteOfflineState(siteDoc.ref, siteId, {
+            pendingIds: [],
+            clearPendingUpdatedAt: true,
+          });
+        }
+        continue;
+      }
+
+      // Reset the settle timer only when a NEW machine joins the set (a growing
+      // outage keeps settling). A missing timestamp forces one more cycle rather
+      // than firing immediately on partial state.
+      const bump = newIdAdded || priorPendingUpdatedAtMs <= 0;
+      const settled = !bump && now - priorPendingUpdatedAtMs >= SETTLE_MS;
+
+      if (!settled) {
+        // Still settling — persist the current set (bumping the timer only on
+        // growth; removals keep the existing timer running). Skip the write when
+        // nothing changed to avoid needless churn.
+        if (bump || idRemoved) {
+          await writeSiteOfflineState(siteDoc.ref, siteId, {
+            pendingIds: currentIds,
+            bumpPendingUpdatedAt: bump,
+          });
+        }
+        continue;
+      }
+
+      // Settled — commit the consolidated alert. Stamp each pending machine's
+      // per-machine cooldown (preserving the ~1h re-alert cadence, now naturally
+      // consolidated per site) and clear the pending set BEFORE sending, so a
+      // send failure can never loop into repeated re-alerts. Each write degrades
+      // independently.
+      for (const m of notResponding) {
+        try {
+          await m.ref.set(
+            { health: { lastCronAlertAt: FieldValue.serverTimestamp() } },
+            { merge: true }
+          );
+        } catch (error) {
+          console.error(`[cron/health-check] Failed to stamp cooldown for ${siteId}/${m.machineId}:`, error);
+        }
+      }
+      await writeSiteOfflineState(siteDoc.ref, siteId, {
+        pendingIds: [],
+        clearPendingUpdatedAt: true,
+        setLastAlertAt: true,
+      });
+
+      offlineMachines += notResponding.length;
+      sendPlans.push({
+        siteId,
+        siteName: (siteData.name as string) || siteId,
+        sections: {
+          notResponding: notResponding.map(({ machineId, heartbeatAgeMinutes }) => ({ machineId, heartbeatAgeMinutes })),
+          shuttingDown,
+          stillOffline,
+        },
+        webhookMachines: notResponding.map(({ machineId, lastHeartbeatMs }) => ({ machineId, lastHeartbeatMs })),
+        timezone: notResponding[0]?.timezone,
+      });
     }
   } catch (error) {
     return apiError(error, 'cron/health-check');
   }
 
-  if (allAlerts.length === 0) {
+  if (sendPlans.length === 0) {
     return NextResponse.json({
       ok: true,
       sitesChecked,
       machinesChecked,
+      offlineMachines: 0,
       alertsSent: 0,
     });
-  }
-
-  // Group alerts by site and send individual emails (each with a personalized unsubscribe link)
-  const alertsBySite = new Map<string, OfflineAlert[]>();
-  for (const alert of allAlerts) {
-    const existing = alertsBySite.get(alert.siteId) ?? [];
-    existing.push(alert);
-    alertsBySite.set(alert.siteId, existing);
   }
 
   const resendClient = getResend();
   const baseUrl = request.nextUrl.origin;
   let alertsSent = 0;
 
-  for (const [siteId, siteAlerts] of alertsBySite) {
+  for (const plan of sendPlans) {
     try {
-      const recipients = await getSiteAlertRecipients(siteId, 'healthAlerts');
+      const recipients = await getSiteAlertRecipients(plan.siteId, 'healthAlerts');
       if (recipients.length === 0) {
-        console.warn(`[cron/health-check] No recipients for site ${siteId}`);
+        console.warn(`[cron/health-check] No recipients for site ${plan.siteId}`);
         continue;
       }
 
@@ -339,14 +563,18 @@ export async function GET(request: NextRequest) {
         continue;
       }
 
-      const siteLabel = await getSiteLabel(siteId);
+      const siteLabel = await getSiteLabel(plan.siteId);
 
       // Send individual emails so each user gets their own unsubscribe link
       for (const recipient of recipients) {
         try {
-          // Filter out alerts for machines this user has muted
-          const userAlerts = siteAlerts.filter(a => !recipient.mutedMachines.includes(a.machineId));
-          if (userAlerts.length === 0) continue;
+          const sections = filterSectionsForRecipient(plan.sections, recipient.mutedMachines);
+          // The not-responding set is the page trigger; if the user muted every
+          // triggering machine, they've opted out of this page — skip them even
+          // if context rows remain.
+          if (sections.notResponding.length === 0) continue;
+
+          const total = sections.notResponding.length + sections.shuttingDown.length + sections.stillOffline.length;
 
           const unsubscribeUrl = recipient.userId !== 'fallback'
             ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
@@ -356,8 +584,8 @@ export async function GET(request: NextRequest) {
             from: FROM_EMAIL,
             to: [recipient.email],
             ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
-            subject: safeEmailSubject(`${userAlerts.length} machine(s) offline in ${siteLabel}`),
-            html: buildOfflineEmail(siteLabel, userAlerts, unsubscribeUrl),
+            subject: safeEmailSubject(`${total} machine(s) offline in ${siteLabel}`),
+            html: buildOfflineEmail(siteLabel, sections, plan.timezone, unsubscribeUrl),
           });
 
           if (result.error) {
@@ -371,20 +599,18 @@ export async function GET(request: NextRequest) {
       }
 
       console.log(
-        `[cron/health-check] Alert sent for site ${siteId}: ` +
-          `${siteAlerts.length} machine(s) offline, ${recipients.length} recipient(s)`
+        `[cron/health-check] Alert sent for site ${plan.siteId}: ` +
+          `${plan.sections.notResponding.length} not responding, ${recipients.length} recipient(s)`
       );
 
-      // Fire webhooks for each offline machine (non-blocking)
-      const siteDoc = await db.collection('sites').doc(siteId).get();
-      const siteName = siteDoc.data()?.name || siteId;
-      for (const alert of siteAlerts) {
-        fireWebhooks(siteId, siteName, 'machine.offline', {
-          machine: { id: alert.machineId, name: alert.machineId, lastSeen: new Date(alert.lastHeartbeatMs).toISOString() },
+      // Fire webhooks for each not-responding machine (non-blocking)
+      for (const m of plan.webhookMachines) {
+        fireWebhooks(plan.siteId, plan.siteName, 'machine.offline', {
+          machine: { id: m.machineId, name: m.machineId, lastSeen: new Date(m.lastHeartbeatMs).toISOString() },
         }).catch(console.error);
       }
     } catch (error) {
-      console.error(`[cron/health-check] Failed to send alert for site ${siteId}:`, error);
+      console.error(`[cron/health-check] Failed to send alert for site ${plan.siteId}:`, error);
     }
   }
 
@@ -392,7 +618,7 @@ export async function GET(request: NextRequest) {
     ok: true,
     sitesChecked,
     machinesChecked,
-    offlineMachines: allAlerts.length,
+    offlineMachines,
     alertsSent,
   });
 }

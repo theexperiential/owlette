@@ -362,20 +362,61 @@ def is_process_running(pid):
         logging.error(f"Failed to check if process is running: {e}")
         return False
 
+def find_owlette_windows(title):
+    """Enumerate top-level windows with this exact title and a caption bar.
+
+    FindWindow(None, title) is ambiguous for owlette windows: CTkToolTip
+    toplevels inherit the Tk application name, so dozens of hidden,
+    captionless tooltip popups share the GUI's title and FindWindow can
+    return one of those instead of the app — focusing (or closing) an
+    invisible tooltip while the real window stays in the background.
+    Real owlette windows have a caption bar; tooltips never do.
+    """
+    matches = []
+
+    def _cb(hwnd, _):
+        if win32gui.GetWindowText(hwnd) == title:
+            style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+            if style & win32con.WS_CAPTION:
+                matches.append(hwnd)
+        return True
+
+    win32gui.EnumWindows(_cb, None)
+    return matches
+
+
+# Spawn timestamp for the GUI process — lets open_config_gui distinguish a
+# still-starting GUI (no window yet) from a dead/zombie one.
+gui_spawn_time = 0
+GUI_STARTUP_GRACE_SECONDS = 15
+
 # Function to open configuration
 def open_config_gui(icon, item):
-    global pid
+    global pid, gui_spawn_time
     gui_title = shared_utils.WINDOW_TITLES.get("owlette_gui")
     # First, try to find and focus an existing GUI window
-    try:
-        hwnd = win32gui.FindWindow(None, gui_title)
-        logging.info(f"[TRAY] open_config_gui: FindWindow('{gui_title}') = {hwnd}, pid={pid}, running={is_process_running(pid)}")
-        if hwnd:
-            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(hwnd)
-            return
-    except Exception as e:
-        logging.error(f"Failed to bring owlette GUI to the front: {e}")
+    hwnds = find_owlette_windows(gui_title)
+    logging.info(f"[TRAY] open_config_gui: windows={hwnds}, pid={pid}, running={is_process_running(pid)}")
+    if hwnds:
+        try:
+            win32gui.ShowWindow(hwnds[0], win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(hwnds[0])
+        except Exception as e:
+            # Focus can be denied by the foreground lock — flash the taskbar
+            # button instead of silently doing nothing, and never fall
+            # through to a respawn while a real window exists.
+            logging.error(f"Failed to bring owlette GUI to the front: {e}")
+            try:
+                win32gui.FlashWindow(hwnds[0], True)
+            except Exception:
+                pass
+        return
+
+    # No window yet, but a recently spawned GUI may still be initializing —
+    # don't kill it (or stack a duplicate) while it starts up.
+    if is_process_running(pid) and time.time() - gui_spawn_time < GUI_STARTUP_GRACE_SECONDS:
+        logging.info(f"[TRAY] GUI process {pid} still starting — not respawning")
+        return
 
     # No visible window — kill any zombie process and spawn fresh
     if is_process_running(pid):
@@ -385,11 +426,15 @@ def open_config_gui(icon, item):
         except Exception:
             pass
     try:
+        # sys.executable — the tray already runs under the bundled interpreter;
+        # a bare "pythonw" resolves via PATH and can hit a different Python
+        # without our dependencies, which crashes the GUI on import.
         process = subprocess.Popen(
-            ["pythonw", shared_utils.get_path('owlette_gui.py')],
+            [sys.executable, shared_utils.get_path('owlette_gui.py')],
             creationflags=subprocess.CREATE_NO_WINDOW
         )
         pid = process.pid
+        gui_spawn_time = time.time()
         logging.info(f"[TRAY] Spawned GUI process {pid}")
     except Exception as e:
         logging.error(f"Failed to open owlette GUI: {e}")
@@ -432,11 +477,11 @@ def restart_service(icon, item):
         except:
             pass
 
-        # Close all owlette windows first
+        # Close all owlette windows first (all captioned matches — FindWindow
+        # alone can land on a same-titled tooltip and miss the real window)
         for window_title in shared_utils.WINDOW_TITLES.values():
             try:
-                hwnd = win32gui.FindWindow(None, window_title)
-                if hwnd:
+                for hwnd in find_owlette_windows(window_title):
                     win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
                     logging.info(f"Closed window: {window_title}")
             except Exception as e:
@@ -481,11 +526,11 @@ def exit_action(icon, item):
     a non-elevated process to stop a service.
     """
     try:
-        # Close all owlette GUI windows first.
+        # Close all owlette GUI windows first (all captioned matches — see
+        # find_owlette_windows for why FindWindow alone is not enough).
         for key, window_title in shared_utils.WINDOW_TITLES.items():
             try:
-                hwnd = win32gui.FindWindow(None, window_title)
-                if hwnd:
+                for hwnd in find_owlette_windows(window_title):
                     win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
             except Exception as e:
                 logging.debug(f"Could not close window '{window_title}': {e}")

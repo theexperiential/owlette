@@ -25,7 +25,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, AlertTriangle, X, RotateCcw, RotateCw, Settings2, BellOff, Monitor } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Copy, Square, Plus, Clock, AlertTriangle, X, RotateCcw, RotateCw, Settings2, BellOff, Monitor } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatTemperature, getTemperatureColorClass } from '@/lib/temperatureUtils';
 import { getUsageColorClass } from '@/lib/usageColorUtils';
@@ -53,6 +53,7 @@ interface MachineCardViewProps {
   siteTimezone?: string;
   siteTimeFormat?: '12h' | '24h';
   onEditProcess: (machineId: string, process: Process) => void;
+  onDuplicateProcess?: (machineId: string, process: Process) => void;
   onCreateProcess: (machineId: string) => void;
   onKillProcess: (machineId: string, processId: string, processName: string) => void;
   onRestartProcess: (machineId: string, processId: string, processName: string) => void;
@@ -88,6 +89,7 @@ interface MachineCardProps {
   onToggleProcesses: () => void;
   onToggleDisplays?: () => void;
   onEditProcess: (process: Process) => void;
+  onDuplicateProcess?: (process: Process) => void;
   onCreateProcess: () => void;
   onKillProcess: (processId: string, processName: string) => void;
   onRestartProcess: (processId: string, processName: string) => void;
@@ -120,6 +122,7 @@ function MachineCard({
   onToggleProcesses,
   onToggleDisplays,
   onEditProcess,
+  onDuplicateProcess,
   onCreateProcess,
   onKillProcess,
   onRestartProcess,
@@ -805,8 +808,12 @@ function MachineCard({
             <div className="relative px-6 pb-2 pt-0 md:pb-4 md:pt-0">
               <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
                 {machine.processes.map((process) => (
-                  <div key={process.id} className="flex items-center justify-between px-3 py-2.5 pl-4">
-                        <div className="flex-1 min-w-0 flex items-center gap-2">
+                  <div key={process.id} className="flex flex-wrap items-center justify-between gap-y-2 px-3 py-2.5 pl-4">
+                        {/* min-w-40 (not 0): with flex-wrap, line packing uses
+                            flex-basis clamped by min-width — at min-w-0 the
+                            flex-1 name contributes nothing, never wraps, and
+                            gets squeezed to 0px by the shrink-0 action cluster */}
+                        <div className="flex-1 min-w-40 flex items-center gap-2">
                           <span className="text-sm md:text-base text-white font-medium truncate select-text">{process.name}</span>
                           <Badge className={`text-xs flex-shrink-0 select-none ${!machine.online ? 'bg-muted' : process.status === 'RUNNING' ? 'bg-green-600' : process.status === 'INACTIVE' ? 'bg-slate-600 text-slate-200' : process.status === 'LAUNCH_FAILED' || process.status === 'STOPPED' || process.status === 'KILLED' ? 'bg-red-600' : 'bg-yellow-600'}`}>
                             {(!machine.online ? 'unknown' : process.status === 'LAUNCH_FAILED' ? 'failed' : process.status).toLowerCase()}
@@ -893,6 +900,24 @@ function MachineCard({
                               >
                                 <Pencil className="h-3 w-3" />
                               </Button>
+                              {onDuplicateProcess && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => onDuplicateProcess(process)}
+                                      aria-label={`duplicate ${process.name}`}
+                                      className="bg-card border border-border/50 text-foreground p-2"
+                                    >
+                                      <Copy className="h-3 w-3" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>duplicate process</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
@@ -918,7 +943,7 @@ function MachineCard({
                                     onClick={() => onKillProcess(process.id, process.name)}
                                     aria-label={`kill ${process.name}`}
                                     className="bg-card border border-border/50 text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 p-2"
-                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED' && process.launch_mode !== 'off'}
                                   >
                                     <Square className="h-3 w-3" />
                                   </Button>
@@ -982,6 +1007,7 @@ export function MachineCardView({
   siteTimezone = 'UTC',
   siteTimeFormat = '12h',
   onEditProcess,
+  onDuplicateProcess,
   onCreateProcess,
   onKillProcess,
   onRestartProcess,
@@ -1027,6 +1053,7 @@ export function MachineCardView({
           onToggleProcesses={onToggleProcesses}
           onToggleDisplays={onToggleDisplays}
           onEditProcess={(process) => onEditProcess(machine.machineId, process)}
+          onDuplicateProcess={onDuplicateProcess ? (process) => onDuplicateProcess(machine.machineId, process) : undefined}
           onCreateProcess={() => onCreateProcess(machine.machineId)}
           onKillProcess={(processId, processName) => onKillProcess(machine.machineId, processId, processName)}
           onRestartProcess={(processId, processName) => onRestartProcess(machine.machineId, processId, processName)}

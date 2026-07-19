@@ -221,6 +221,31 @@ export async function performUserDeleteCascade(
     );
   }
 
+  // Revoke device-trust records: delete every hashed-token doc under the
+  // user's trustedDevices subcollection so a stale device-trust cookie can
+  // no longer skip the MFA challenge after the account is gone. Best-effort
+  // (mirrors the passkeys sweep) — a failure here must not abort the cascade.
+  try {
+    const trustedDevicesSnap = await userRef.collection('trustedDevices').get();
+    for (const trustedDeviceDoc of trustedDevicesSnap.docs) {
+      try {
+        await trustedDeviceDoc.ref.delete();
+      } catch (err) {
+        console.warn(
+          `[userDeleteCascade] failed to delete trusted device ${trustedDeviceDoc.id}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
+  } catch (err) {
+    console.warn(
+      `[userDeleteCascade] failed to enumerate trusted devices: ${
+        (err as Error).message
+      }`,
+    );
+  }
+
   // 7. Drop any pending MFA setup challenge. Stored MFA state is cleared
   //    atomically with the soft-delete stamp below.
   try {

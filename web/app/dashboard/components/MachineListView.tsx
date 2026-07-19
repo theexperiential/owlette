@@ -27,7 +27,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff, RotateCw } from 'lucide-react';
+import { ChevronDown, ChevronUp, Pencil, Copy, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff, RotateCw } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -232,6 +232,7 @@ interface MachineRowProps {
   isSiteAdmin?: boolean;
   onToggleExpanded: () => void;
   onEditProcess: (process: Process) => void;
+  onDuplicateProcess?: (process: Process) => void;
   onCreateProcess: () => void;
   onKillProcess: (processId: string, processName: string) => void;
   onRestartProcess: (processId: string, processName: string) => void;
@@ -264,6 +265,7 @@ export function MachineRow({
   isSiteAdmin,
   onToggleExpanded,
   onEditProcess,
+  onDuplicateProcess,
   onCreateProcess,
   onKillProcess,
   onRestartProcess,
@@ -691,8 +693,10 @@ export function MachineRow({
                       card view instead of the old floating bordered cards. */}
                   <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
                     {machine.processes.map((process) => (
-                      <div key={process.id} className="flex items-center justify-between p-3">
-                          <div className="flex-1 min-w-0">
+                      <div key={process.id} className="flex flex-wrap items-center justify-between gap-y-2 p-3">
+                          {/* min-w-40 (not 0): see MachineCardView — at min-w-0 the
+                              flex-1 name block never wraps and squeezes to 0px */}
+                          <div className="flex-1 min-w-40">
                             <div className="flex items-center gap-2 mb-1">
                               <Cog className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
                               <span className="text-white font-medium truncate select-text">{process.name}</span>
@@ -803,6 +807,17 @@ export function MachineRow({
                                     <Pencil className="h-3 w-3 mr-1" />
                                     edit
                                   </Button>
+                                  {onDuplicateProcess && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => onDuplicateProcess(process)}
+                                    className="bg-card border border-border text-foreground"
+                                  >
+                                    <Copy className="h-3 w-3 mr-1" />
+                                    duplicate
+                                  </Button>
+                                  )}
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -818,7 +833,7 @@ export function MachineRow({
                                     size="sm"
                                     onClick={() => onKillProcess(process.id, process.name)}
                                     className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
-                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                    disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED' && process.launch_mode !== 'off'}
                                   >
                                     <Square className="h-3 w-3 mr-1" />
                                     kill
@@ -889,6 +904,15 @@ export function MachineRow({
                                         <Pencil className="mr-2 h-3.5 w-3.5" />
                                         edit process
                                       </DropdownMenuItem>
+                                      {onDuplicateProcess && (
+                                        <DropdownMenuItem
+                                          onClick={() => onDuplicateProcess(process)}
+                                          className="cursor-pointer"
+                                        >
+                                          <Copy className="mr-2 h-3.5 w-3.5" />
+                                          duplicate process
+                                        </DropdownMenuItem>
+                                      )}
                                     </DropdownMenuContent>
                                   </DropdownMenu>
                                   <Tooltip>
@@ -916,7 +940,7 @@ export function MachineRow({
                                         onClick={() => onKillProcess(process.id, process.name)}
                                         aria-label={`kill ${process.name}`}
                                         className="bg-card border border-border text-red-400 hover:bg-red-950/50 hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50 h-8 w-8 p-0"
-                                        disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED'}
+                                        disabled={process.status !== 'RUNNING' && process.status !== 'LAUNCHING' && process.status !== 'STALLED' && process.launch_mode !== 'off'}
                                       >
                                         <Square className="h-3 w-3" />
                                       </Button>
