@@ -28,7 +28,7 @@ test.describe('/admin/users — stats row', () => {
 
     // Confirm their visual order in the DOM matches ascending-privilege.
     const texts = await page
-      .locator('p.text-sm.text-muted-foreground')
+      .locator('p.text-xs.text-muted-foreground')
       .filter({ hasText: /total users|members|site admins|superadmins/ })
       .allTextContents();
     expect(texts).toEqual(labels);
@@ -37,15 +37,15 @@ test.describe('/admin/users — stats row', () => {
   test('counts reflect seeded fleet (1 super, 1 admin, 1 member)', async ({ page }) => {
     await page.goto('/admin/users');
 
-    // Each stat card is a `.bg-card.rounded-lg` wrapping the count (p.text-2xl)
-    // and label (p.text-sm). Find the card by its label, then read the count.
+    // Each stat chip is a `.bg-card.rounded-lg` wrapping the count (p.text-lg)
+    // and label (p.text-xs). Find the chip by its label, then read the count.
     const card = (label: string) =>
       page.locator('div.bg-card.rounded-lg').filter({ hasText: label });
 
-    await expect(card('total users').locator('p.text-2xl')).toHaveText('3');
-    await expect(card('members').locator('p.text-2xl')).toHaveText('1');
-    await expect(card('site admins').locator('p.text-2xl')).toHaveText('1');
-    await expect(card('superadmins').locator('p.text-2xl')).toHaveText('1');
+    await expect(card('total users').locator('p.text-lg')).toHaveText('3');
+    await expect(card('members').locator('p.text-lg')).toHaveText('1');
+    await expect(card('site admins').locator('p.text-lg')).toHaveText('1');
+    await expect(card('superadmins').locator('p.text-lg')).toHaveText('1');
   });
 });
 
