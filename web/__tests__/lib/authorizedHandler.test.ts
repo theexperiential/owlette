@@ -544,6 +544,52 @@ describe('authorizedPlatformHandler', () => {
     expect(res.status).toBe(503);
     expect(handler).not.toHaveBeenCalled();
   });
+
+  it('records the platform sentinel as audit target when no targetIdParam is set', async () => {
+    const handler = makePlatformHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedPlatformHandler({ capability: 'GLOBAL_SETTINGS_WRITE' })(handler);
+
+    await wrapped(makeRequest('http://localhost/api/platform/security/kill-switch', 'POST'));
+    const allow = setCalls.find((c) => (c.payload as { outcome?: string }).outcome === 'allow');
+    expect((allow!.payload as { target?: { id?: string } }).target?.id).toBe('__platform__');
+  });
+
+  it('records the route param as audit target when targetIdParam is set', async () => {
+    const handler = makePlatformHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedPlatformHandler<{ uid: string }>({
+      capability: 'USER_DELETE',
+      targetKind: 'user',
+      targetIdParam: 'uid',
+    })(handler as Parameters<ReturnType<typeof authorizedPlatformHandler<{ uid: string }>>>[0]);
+
+    const res = await wrapped(makeRequest('http://localhost/api/users/uid_bob', 'DELETE'), {
+      params: Promise.resolve({ uid: 'uid_bob' }),
+    });
+    expect(res.status).toBe(200);
+    const allow = setCalls.find((c) => (c.payload as { outcome?: string }).outcome === 'allow');
+    expect((allow!.payload as { target?: { kind?: string; id?: string } }).target).toEqual({
+      kind: 'user',
+      id: 'uid_bob',
+    });
+  });
+
+  it('names the target on deny audits too, so blocked deletes are attributable', async () => {
+    userDoc = { exists: true, data: () => ({ role: 'admin', sites: [] }) };
+    const handler = makePlatformHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedPlatformHandler<{ uid: string }>({
+      capability: 'USER_DELETE',
+      targetKind: 'user',
+      targetIdParam: 'uid',
+    })(handler as Parameters<ReturnType<typeof authorizedPlatformHandler<{ uid: string }>>>[0]);
+
+    const res = await wrapped(makeRequest('http://localhost/api/users/uid_bob', 'DELETE'), {
+      params: Promise.resolve({ uid: 'uid_bob' }),
+    });
+    expect(res.status).toBe(403);
+    await new Promise((r) => setImmediate(r));
+    const deny = setCalls.find((c) => (c.payload as { outcome?: string }).outcome === 'deny');
+    expect((deny!.payload as { target?: { id?: string } }).target?.id).toBe('uid_bob');
+  });
 });
 
 /* -------------------------------------------------------------------------- */
