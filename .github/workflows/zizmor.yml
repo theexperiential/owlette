@@ -1,0 +1,37 @@
+name: Actions Security
+
+# Static analysis of the GitHub Actions workflows themselves (zizmor). Runs on
+# every PR and on pushes to main so misconfigurations (unpinned actions, leaked
+# credentials, injection, over-broad permissions) are caught before they ship.
+#
+# This repo is public, so results are uploaded as SARIF to the Security tab
+# (free code scanning). In this mode zizmor reports findings without failing the
+# job, so it does not block the existing publish workflows — triage the findings
+# (e.g. pinning actions to SHAs) from the Security tab.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+# Least-privilege default: grant nothing at the top level, widen per job.
+permissions: {}
+
+concurrency:
+  group: zizmor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout
+      security-events: write # upload SARIF to the Security tab (public repo -> free)
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
