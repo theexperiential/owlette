@@ -1,10 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useUserManagement, type UserRole } from '@/hooks/useUserManagement';
+import { useDevicePrefFlag } from '@/hooks/useDevicePrefFlag';
 import type { FirestoreTs } from '@/hooks/useFirestore';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { Users, Shield, ShieldAlert, Crown, Loader2, Settings, MoreVertical, UserCog, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
@@ -69,6 +72,45 @@ interface UserActivity {
 }
 
 /**
+ * Audit target id recorded by platform routes that act on the platform itself
+ * rather than one addressable resource. Admin-delete rows written before
+ * `/api/users/{uid}` started passing `targetIdParam` carry this instead of the
+ * deleted uid, so the feed shows "user not recorded" for them.
+ */
+const PLATFORM_TARGET_ID = '__platform__';
+
+/** Per-device pref field on `users/{uid}/devicePrefs/global`. */
+const SHOW_DELETED_USERS_PREF = 'adminShowDeletedUsers';
+
+/**
+ * Compact tally chip. Lives in the page header (right of the title) rather
+ * than in a full-width card row so the users table gets the vertical space.
+ */
+function StatChip({
+  icon: Icon,
+  iconBg,
+  count,
+  label,
+}: {
+  icon: typeof Users;
+  iconBg: string;
+  count: number;
+  label: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2">
+      <div className={`p-1.5 rounded-md ${iconBg}`}>
+        <Icon className="h-4 w-4 text-foreground" />
+      </div>
+      <div className="leading-tight">
+        <p className="text-lg font-bold text-foreground">{count}</p>
+        <p className="text-xs text-muted-foreground whitespace-nowrap">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+/**
  * User Management Page
  *
  * Admin-only page for managing user roles and permissions.
@@ -89,9 +131,35 @@ export default function UserManagementPage() {
   const [userToDelete, setUserToDelete] = useState<{ uid: string; email: string } | null>(null);
   const [userToChangeRole, setUserToChangeRole] = useState<{ uid: string; email: string; currentRole: UserRole; newRole: UserRole } | null>(null);
   const [deletions, setDeletions] = useState<DeletionView[]>([]);
+  const [deletionsLoading, setDeletionsLoading] = useState(false);
   const [activity, setActivity] = useState<Record<string, UserActivity>>({});
 
+  // Show/hide deleted accounts in the users table, persisted per device so the
+  // choice survives reloads. Defaults to shown — hiding them is opt-in, since
+  // silently dropping rows would be a surprise for anyone who never toggles it.
+  const { value: showDeletedUsers, setValue: setShowDeletedUsers } = useDevicePrefFlag(
+    SHOW_DELETED_USERS_PREF,
+    true,
+  );
+
   const counts = getUserCounts();
+
+  // The tally chips already count active accounts only, so hiding deleted rows
+  // keeps the table and the chips telling the same story.
+  const visibleUsers = useMemo(
+    () => (showDeletedUsers ? users : users.filter((u) => u.deletedAt == null)),
+    [users, showDeletedUsers],
+  );
+
+  // uid -> display label, so audit rows can name people instead of raw uids.
+  // Soft-deleted users stay in `users`, so deleted accounts still resolve.
+  const userLabels = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const u of users) {
+      map[u.uid] = u.email || u.displayName || u.uid;
+    }
+    return map;
+  }, [users]);
 
   // Fetch the account-deletion audit feed once. Non-fatal: on error we log and
   // leave `deletions` empty so the panel renders its empty state.
@@ -99,6 +167,7 @@ export default function UserManagementPage() {
     let cancelled = false;
 
     (async () => {
+      setDeletionsLoading(true);
       try {
         const response = await fetch('/api/users/deletions');
         if (!response.ok) {
@@ -110,6 +179,8 @@ export default function UserManagementPage() {
         setDeletions(Array.isArray(body.deletions) ? body.deletions : []);
       } catch (err) {
         console.error('Error fetching account deletions:', err);
+      } finally {
+        if (!cancelled) setDeletionsLoading(false);
       }
     })();
 
@@ -248,62 +319,22 @@ export default function UserManagementPage() {
   return (
     <div className="p-8">
       <div className="max-w-screen-2xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground mb-2">user management</h1>
-        <p className="text-muted-foreground">manage user roles and permissions</p>
-      </div>
+        {/* Header — tally chips sit beside the title (not in a full-width card
+            row) so the users table keeps the vertical space. Chips are ordered
+            by ascending privilege, so the platform tier sits last. */}
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-x-6 gap-y-4">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground mb-2">user management</h1>
+            <p className="text-muted-foreground">manage user roles and permissions</p>
+          </div>
 
-      {/* Stats Cards — ordered by ascending privilege so the platform tier sits last. */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-8">
-        <div className="bg-card border border-border rounded-lg p-6">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-accent-cyan rounded-lg">
-              <Users className="h-6 w-6 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-foreground">{counts.total}</p>
-              <p className="text-sm text-muted-foreground">total users</p>
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatChip icon={Users} iconBg="bg-accent-cyan" count={counts.total} label="total users" />
+            <StatChip icon={Users} iconBg="bg-muted" count={counts.members} label="members" />
+            <StatChip icon={Shield} iconBg="bg-green-600" count={counts.admins} label="site admins" />
+            <StatChip icon={Crown} iconBg="bg-red-600" count={counts.superadmins} label="superadmins" />
           </div>
         </div>
-
-        <div className="bg-card border border-border rounded-lg p-6">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-muted rounded-lg">
-              <Users className="h-6 w-6 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-foreground">{counts.members}</p>
-              <p className="text-sm text-muted-foreground">members</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-card border border-border rounded-lg p-6">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-green-600 rounded-lg">
-              <Shield className="h-6 w-6 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-foreground">{counts.admins}</p>
-              <p className="text-sm text-muted-foreground">site admins</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-card border border-border rounded-lg p-6">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-red-600 rounded-lg">
-              <Crown className="h-6 w-6 text-foreground" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-foreground">{counts.superadmins}</p>
-              <p className="text-sm text-muted-foreground">superadmins</p>
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* Error State */}
       {error && (
@@ -323,6 +354,24 @@ export default function UserManagementPage() {
       {/* Users Table */}
       {!loading && !error && (
         <div className="bg-card border border-border rounded-lg overflow-hidden">
+          {/* Table toolbar — deleted accounts are soft-deleted and stay listed
+              for auditability, so they're filterable rather than dropped. */}
+          <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2 px-4 py-3 border-b border-border">
+            {!showDeletedUsers && counts.deleted > 0 && (
+              <span className="text-xs text-muted-foreground mr-auto">
+                {counts.deleted} deleted account{counts.deleted === 1 ? '' : 's'} hidden
+              </span>
+            )}
+            <Label htmlFor="show-deleted-users" className="text-sm text-muted-foreground cursor-pointer">
+              show deleted accounts
+            </Label>
+            <Switch
+              id="show-deleted-users"
+              checked={showDeletedUsers}
+              onCheckedChange={setShowDeletedUsers}
+              aria-label="show deleted accounts"
+            />
+          </div>
           <table className="w-full">
             <thead>
               <tr className="border-b border-border bg-background/50">
@@ -335,14 +384,14 @@ export default function UserManagementPage() {
               </tr>
             </thead>
             <tbody>
-              {users.length === 0 ? (
+              {visibleUsers.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-muted-foreground">
-                    no users found
+                    {users.length === 0 ? 'no users found' : 'no active users — every account here is deleted'}
                   </td>
                 </tr>
               ) : (
-                users.map((user) => {
+                visibleUsers.map((user) => {
                   const isDeleted = user.deletedAt != null;
                   return (
                   <tr
@@ -535,26 +584,76 @@ export default function UserManagementPage() {
       {/* Account-deletions audit feed — self-deletes + admin-deletes, newest-first. */}
       {!loading && !error && (
         <div className="mt-6 bg-card border border-border rounded-lg p-6">
-          <h2 className="text-lg font-semibold text-foreground mb-4">account deletions</h2>
-          {deletions.length === 0 ? (
-            <p className="text-sm text-muted-foreground italic">no recent deletions</p>
+          <h2 className="text-lg font-semibold text-foreground">account deletions</h2>
+          <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+            a record of accounts that were removed — anyone can delete their own account from
+            settings, and superadmins can delete others from this page. each entry shows who was
+            removed, who removed them, and what the cascade cleaned up.
+          </p>
+
+          {deletionsLoading && deletions.length === 0 ? (
+            <div className="flex items-center gap-2 mt-4 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              loading deletions...
+            </div>
+          ) : deletions.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic mt-4">no accounts have been deleted</p>
           ) : (
-            <ul className="divide-y divide-border">
-              {deletions.map((d) => (
-                <li key={d.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm">
-                  <Badge className="bg-secondary border border-border text-muted-foreground text-xs">
-                    {d.capability === 'USER_SELF_DELETE' ? 'self-delete' : 'admin-delete'}
-                  </Badge>
-                  <span className="font-mono text-foreground">{d.uid ?? 'unknown'}</span>
-                  <span className="text-muted-foreground">{formatDate(d.timestamp)}</span>
-                  <span className="text-muted-foreground">{d.outcome}</span>
-                  {d.counts && (
-                    <span className="text-muted-foreground">
-                      {d.counts.sites ?? 0} site{d.counts.sites !== 1 ? 's' : ''} · {d.counts.machines ?? 0} machine{d.counts.machines !== 1 ? 's' : ''}
-                    </span>
-                  )}
-                </li>
-              ))}
+            <ul className="divide-y divide-border mt-4">
+              {deletions.map((d) => {
+                const selfDelete = d.capability === 'USER_SELF_DELETE';
+                // Legacy admin-delete rows recorded the platform sentinel rather
+                // than the deleted uid — surface that instead of the raw token.
+                const targetUid = d.uid && d.uid !== PLATFORM_TARGET_ID ? d.uid : null;
+                const targetLabel = targetUid ? userLabels[targetUid] ?? targetUid : null;
+                const actorLabel = d.actorUid ? userLabels[d.actorUid] ?? d.actorUid : 'an unknown actor';
+                const blocked = d.outcome !== 'allow';
+
+                const detail = [
+                  blocked
+                    ? selfDelete
+                      ? 'requested their own deletion'
+                      : `requested by ${actorLabel}`
+                    : selfDelete
+                      ? 'deleted their own account'
+                      : `deleted by ${actorLabel}`,
+                  formatDate(d.timestamp),
+                  ...(d.counts && !blocked
+                    ? [`removed ${d.counts.sites ?? 0} site${d.counts.sites === 1 ? '' : 's'}, ${d.counts.machines ?? 0} machine${d.counts.machines === 1 ? '' : 's'}`]
+                    : []),
+                ].join(' · ');
+
+                return (
+                  <li key={d.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-3 text-sm">
+                    <Badge className="bg-secondary border border-border text-muted-foreground text-xs">
+                      {selfDelete ? 'self-delete' : 'admin-delete'}
+                    </Badge>
+                    {targetLabel ? (
+                      <span className="text-foreground font-medium">{targetLabel}</span>
+                    ) : (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="text-muted-foreground italic">account not recorded</span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="max-w-xs">
+                            this entry predates the fix that records which account was deleted; only
+                            the actor and timestamp were logged.
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    )}
+                    {blocked && (
+                      <Badge className="bg-red-950/40 border border-red-900/60 text-red-300 text-xs">
+                        {d.outcome === 'deny'
+                          ? `blocked${d.denyReason ? ` · ${d.denyReason.replace(/_/g, ' ')}` : ''}`
+                          : 'failed'}
+                      </Badge>
+                    )}
+                    <span className="text-muted-foreground">{detail}</span>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

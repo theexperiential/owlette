@@ -1,11 +1,7 @@
 import Link from 'next/link';
 import { ArrowRight, Check, Eye, Layers, RotateCcw, AlertTriangle } from 'lucide-react';
 
-interface DisplaySectionProps {
-  nonce?: string;
-}
-
-export function DisplaySection({ nonce }: DisplaySectionProps) {
+export function DisplaySection() {
   return (
     <section className="py-16 sm:py-24 px-4 sm:px-6 relative">
       <div className="max-w-5xl mx-auto">
@@ -211,7 +207,11 @@ export function DisplaySection({ nonce }: DisplaySectionProps) {
           glowing slightly; otherwise it sits at rest. The drift frame's
           displaced monitors (2, 3) animate into their off-baseline position
           during the drift phase only. */}
-      <style nonce={nonce}>{`
+      {/* No nonce: the CSP grants styles via `style-src 'self' 'unsafe-inline'`
+          with no style nonce at all (see proxy.ts), so a nonce here would be
+          inert — and browsers blank the `nonce` content attribute on insert,
+          which made React's hydration diff report a false mismatch. */}
+      <style>{`
         @keyframes display-section-pulse {
           0%, 100% { opacity: 1; }
           50%      { opacity: 0.35; }

@@ -12,7 +12,7 @@ import { PRODUCT_JSONLD } from '@/lib/product-facts';
 // Lazy-load below-fold sections to reduce initial JS bundle
 // Note: ValuePropSection stays static because it contains the LCP image (dashboard.png)
 const UseCaseSection = dynamic(() => import('@/components/landing/UseCaseSection').then(m => ({ default: m.UseCaseSection })));
-const DisplaySection = dynamic<{ nonce?: string }>(() => import('@/components/landing/DisplaySection').then(m => ({ default: m.DisplaySection })));
+const DisplaySection = dynamic(() => import('@/components/landing/DisplaySection').then(m => ({ default: m.DisplaySection })));
 const DeveloperSection = dynamic(() => import('@/components/landing/DeveloperSection').then(m => ({ default: m.DeveloperSection })));
 const FeatureGrid = dynamic(() => import('@/components/landing/FeatureGrid').then(m => ({ default: m.FeatureGrid })));
 const ProofStrip = dynamic(() => import('@/components/landing/ProofStrip').then(m => ({ default: m.ProofStrip })));
@@ -27,9 +27,16 @@ export default async function LandingPage() {
 
   return (
     <div className="min-h-screen relative">
+      {/* suppressHydrationWarning: browsers blank the `nonce` content attribute
+          once the element is inserted (the value moves to the `.nonce` IDL
+          property, so CSS attribute selectors can't exfiltrate it). React's
+          hydration diff reads the attribute, sees "", and reports a mismatch
+          against the nonce it rendered — a false positive, since the browser
+          has already applied the real value. */}
       <script
         nonce={nonce}
         type="application/ld+json"
+        suppressHydrationWarning
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
       {/* Page-wide dot grid background */}
@@ -39,7 +46,7 @@ export default async function LandingPage() {
         <HeroSection />
         <ValuePropSection />
         <UseCaseSection />
-        <DisplaySection nonce={nonce} />
+        <DisplaySection />
         <DeveloperSection />
         <FeatureGrid />
         <PricingSection />

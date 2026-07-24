@@ -121,6 +121,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<Ro
 export const DELETE = authorizedPlatformHandler<RouteParams>({
   capability: Capability.USER_DELETE,
   targetKind: 'user',
+  // Record the deleted uid as the audit target — the account-deletions feed
+  // (`GET /api/users/deletions`) reads `target.id` to name who was removed.
+  targetIdParam: 'uid',
   apiKeyScope: { resource: 'user', permission: 'admin' },
 })(async (request: NextRequest, ctx: PlatformHandlerContext, routeContext) => {
   try {

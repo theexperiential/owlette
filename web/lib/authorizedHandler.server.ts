@@ -146,6 +146,13 @@ export interface PlatformHandlerOptions {
   capability: Capability;
   targetKind?: AuditTargetKind;
   /**
+   * Dynamic route param to use as the audit target id. Omit for routes that
+   * act on the platform itself — those record `__platform__`. Routes that
+   * mutate one addressable resource (e.g. `/api/users/{uid}`) MUST pass their
+   * param so the audit row names the resource that changed.
+   */
+  targetIdParam?: string;
+  /**
    * API-key scope that callers must hold to invoke this route. Sessions
    * and id-token auth bypass scope (consistent with `requireScope`); only
    * api-key callers are gated. Defaults to `{ resource: 'user', permission: 'admin' }`
@@ -342,6 +349,12 @@ function platformDenyAudit(entry: AuditEntryInput): void {
 // Firestore reserves document ids matching `__.*__`; platform routes still
 // need a stable bucket for rate-limit counters, so use a non-reserved id.
 const PLATFORM_RATE_LIMIT_SITE_ID = 'platform_global';
+
+// Audit `target.id` for platform routes that act on the platform itself
+// (global settings, kill-switch) rather than a single addressable resource.
+// Routes that DO act on one resource pass `targetIdParam` so the audit row
+// names it — readers (e.g. the account-deletions feed) rely on that id.
+const PLATFORM_TARGET_ID = '__platform__';
 
 function auditActorRoleLabel(actor: AuditEntryInput['actor']): string {
   if (actor.type === 'system') return `system:${actor.name}`;
@@ -661,6 +674,16 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
     ): Promise<NextResponse> {
       const correlationId = generateCorrelationId();
       const targetKind: AuditTargetKind = options.targetKind ?? 'site';
+      // Resolved once, up front, so every audit row this wrapper writes
+      // (deny, allow, error) names the same target. Falls back to the
+      // platform sentinel when the route has no addressable resource.
+      const targetId = options.targetIdParam
+        ? (await extractRouteParam(
+            (routeContext?.params ?? Promise.resolve({} as TParams)) as Promise<Record<string, string | undefined>>,
+            options.targetIdParam,
+          )) ?? PLATFORM_TARGET_ID
+        : PLATFORM_TARGET_ID;
+      const auditTarget = { kind: targetKind, id: targetId } as AuditTarget;
 
       let auth: ResolvedAuth;
       try {
@@ -690,7 +713,7 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
           correlationId,
           actor,
           capability: options.capability,
-          target: { kind: targetKind, id: '__platform__' } as AuditTarget,
+          target: auditTarget,
           outcome: 'deny',
           denyReason: 'role_insufficient',
           metadata: { route: request.nextUrl.pathname, method: request.method },
@@ -710,7 +733,7 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
             correlationId,
             actor,
             capability: options.capability,
-            target: { kind: targetKind, id: '__platform__' } as AuditTarget,
+            target: auditTarget,
             outcome: 'deny',
             denyReason: 'scope_insufficient',
             metadata: { route: request.nextUrl.pathname, method: request.method },
@@ -730,7 +753,7 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
             correlationId,
             actor,
             capability: options.capability,
-            target: { kind: targetKind, id: '__platform__' } as AuditTarget,
+            target: auditTarget,
             outcome: 'deny',
             denyReason: 'capability_missing',
             metadata: { route: request.nextUrl.pathname, method: request.method },
@@ -755,7 +778,7 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
             correlationId,
             actor,
             capability: options.capability,
-            target: { kind: targetKind, id: '__platform__' } as AuditTarget,
+            target: auditTarget,
             outcome: 'deny',
             denyReason: 'rate_limited',
             metadata: {
@@ -783,7 +806,7 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
           correlationId,
           actor,
           capability: options.capability,
-          target: { kind: targetKind, id: '__platform__' } as AuditTarget,
+          target: auditTarget,
           outcome: 'allow',
           metadata: bypassMeta,
           enforcementBypassed: Boolean(enforcementBypassed) || rateLimitBypassed,
@@ -812,7 +835,7 @@ export function authorizedPlatformHandler<TParams extends Record<string, string 
           correlationId,
           actor,
           capability: options.capability,
-          target: { kind: targetKind, id: '__platform__' } as AuditTarget,
+          target: auditTarget,
           outcome: 'error',
           errorCode: err instanceof Error ? err.name : 'handler_error',
           metadata: { route: request.nextUrl.pathname, method: request.method },
