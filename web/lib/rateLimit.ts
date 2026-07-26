@@ -25,10 +25,31 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
   });
   console.log('[RateLimit] Upstash Redis initialized');
 } else {
+  // NOT "disabled" — `checkRateLimit` falls back to `checkInMemoryRateLimit`,
+  // a per-process fixed window. The message used to say "disabled", which is
+  // both wrong and dangerously reassuring in the wrong direction: the real
+  // consequence is that every endpoint silently collapses to the SAME flat
+  // 15/min/identifier budget, per replica. For a tight limiter like
+  // `signupRateLimit` (10/hr) that is roughly a 90x loosening before you even
+  // multiply by the replica count.
   console.warn(
-    '[RateLimit] Upstash Redis not configured. Rate limiting disabled. ' +
-    'Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to enable.'
+    '[RateLimit] Upstash Redis not configured — falling back to a per-process ' +
+    'in-memory limiter (15 req/min/identifier, NOT shared across replicas). ' +
+    'Per-endpoint limits are not enforced in this mode. ' +
+    'Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN to enable ' +
+    'distributed rate limiting.'
   );
+}
+
+/**
+ * Whether the distributed (Upstash-backed) rate limiter is active.
+ *
+ * When false, rate limiting still happens, but only via the per-process
+ * in-memory fallback — see the warning above for why that matters in
+ * production. Consumed by the startup check in `instrumentation.ts`.
+ */
+export function isDistributedRateLimitEnabled(): boolean {
+  return redis !== null;
 }
 
 // Environment detection for dev-aware rate limits
