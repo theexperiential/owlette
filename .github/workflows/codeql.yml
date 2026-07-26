@@ -1,0 +1,65 @@
+name: CodeQL
+
+# Static application security testing across the monorepo's two languages:
+# TypeScript/JavaScript (web, cli, functions, sdks/node) and Python (agent,
+# sdks/python). Complements the existing gates rather than duplicating them:
+#   - zizmor.yml   -> the GitHub Actions workflows themselves
+#   - no-token-logs.yml -> our own "never log a token" rule
+#   - dependency-review.yml -> known-vulnerable dependencies on PRs
+#   - CodeQL (here) -> vulnerabilities in the code we write
+#
+# This repo is public, so code scanning is free. Results land in the Security
+# tab. CodeQL does not fail the build on findings by default — triage from the
+# Security tab and promote to a required check once the backlog is at zero.
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+  schedule:
+    # Weekly sweep so newly-published queries run against unchanged code.
+    # Monday 09:17 UTC — off the hour to avoid GitHub's scheduling stampede.
+    - cron: '17 9 * * 1'
+  workflow_dispatch:
+
+# Least-privilege default: grant nothing at the top level, widen per job.
+permissions: {}
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # checkout
+      security-events: write # upload results to the Security tab
+      actions: read # read workflow run metadata for the analysis
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          category: /language:${{ matrix.language }}
