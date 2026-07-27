@@ -36,10 +36,39 @@ async function checkRateLimitBackend() {
   Sentry.captureMessage(message, "error");
 }
 
+/**
+ * Warn when a production server boots without Turnstile configured.
+ *
+ * Unlike the rate limiter, the request path here already fails CLOSED when
+ * `TURNSTILE_SECRET` is absent in production (see lib/turnstile.server.ts) —
+ * register and password-reset would start returning 403. This check exists so
+ * the cause is obvious in the logs instead of being diagnosed from user
+ * reports of a broken signup form.
+ */
+function checkTurnstileConfigured() {
+  if (process.env.NEXT_PHASE === "phase-production-build") return;
+  if (process.env.NODE_ENV !== "production") return;
+  if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === "true") return;
+  if (process.env.TURNSTILE_SECRET) return;
+
+  const message =
+    "[Turnstile] PRODUCTION BOOT WITHOUT TURNSTILE_SECRET. " +
+    "Registration (/api/users/bootstrap for password signups) and " +
+    "/api/auth/forgot-password will reject every request with 403 until this " +
+    "is set.";
+
+  console.error("=".repeat(72));
+  console.error(message);
+  console.error("=".repeat(72));
+
+  Sentry.captureMessage(message, "error");
+}
+
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     await import("./sentry.server.config");
     await checkRateLimitBackend();
+    checkTurnstileConfigured();
   }
 
   if (process.env.NEXT_RUNTIME === "edge") {

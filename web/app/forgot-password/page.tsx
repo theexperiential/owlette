@@ -1,24 +1,27 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
+import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
 
 export default function ForgotPasswordPage() {
   const { sendPasswordReset } = useAuth();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileRef = useRef<TurnstileHandle>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      await sendPasswordReset(email);
+      await sendPasswordReset(email, turnstileToken);
       // Existence-agnostic by design: we show the same confirmation whether or
       // not an account exists for this address (Firebase email-enumeration
       // protection makes sendPasswordReset resolve either way).
@@ -26,6 +29,9 @@ export default function ForgotPasswordPage() {
     } catch {
       // sendPasswordReset surfaces its own error toast (invalid email,
       // rate-limit, misconfiguration). Stay on the form so the user can retry.
+      // Turnstile tokens are single-use, so the consumed one must be cleared
+      // or the retry fails with timeout-or-duplicate.
+      turnstileRef.current?.reset();
     } finally {
       setLoading(false);
     }
@@ -84,10 +90,16 @@ export default function ForgotPasswordPage() {
                     className="bg-input border-border text-foreground placeholder:text-muted-foreground"
                   />
                 </div>
+                <TurnstileWidget
+                  action="forgot-password"
+                  onToken={setTurnstileToken}
+                  ref={turnstileRef}
+                  className="flex justify-center"
+                />
                 <Button
                   type="submit"
                   className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={loading || !email}
+                  disabled={loading || !email || (TURNSTILE_ENABLED && !turnstileToken)}
                 >
                   {loading ? 'sending...' : 'send reset link'}
                 </Button>

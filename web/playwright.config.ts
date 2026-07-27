@@ -134,6 +134,17 @@ export default defineConfig({
       // unset. Required for any spec that lets POST /versions go through
       // the real finalize handler.
       OWLETTE_E2E: '1',
+      // Cloudflare's documented always-pass Turnstile test keys. Using these
+      // rather than a bypass flag means the specs exercise the REAL
+      // verifyTurnstileToken() path — script load, explicit render, token
+      // submit, and a live siteverify round-trip — instead of skipping it.
+      //
+      // The dummy secret answers `hostname: "example.com"` and returns NO
+      // `action` field, hence example.com in the allowlist below and the
+      // `result_with_testing_key` branch in lib/turnstile.server.ts.
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
+      TURNSTILE_SECRET: '1x0000000000000000000000000000000AA',
+      TURNSTILE_HOSTNAMES: 'example.com,localhost,127.0.0.1',
     },
   },
 });

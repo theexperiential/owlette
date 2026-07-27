@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import { validatePassword, validateEmail } from '@/lib/validators';
 import { sanitizeError } from '@/lib/errorHandler';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
+import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
 
 export default function RegisterPage() {
   const [firstName, setFirstName] = useState('');
@@ -22,6 +23,8 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileRef = useRef<TurnstileHandle>(null);
   const { signUp, signInWithGoogle } = useAuth();
   const router = useRouter();
 
@@ -57,12 +60,15 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      await signUp(email, password, firstName, lastName);
+      await signUp(email, password, firstName, lastName, turnstileToken);
       toast.success('account created successfully!');
       // Redirect to 2FA setup (mandatory for new users)
       router.push('/setup-2fa');
     } catch (error) {
       toast.error(sanitizeError(error));
+      // Turnstile tokens are single-use. The page stays mounted after a failed
+      // submit, so the consumed token has to be cleared before a retry.
+      turnstileRef.current?.reset();
     } finally {
       setLoading(false);
     }
@@ -193,7 +199,13 @@ export default function RegisterPage() {
                 </Link>
               </Label>
             </div>
-            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || !agreedToTerms}>
+            <TurnstileWidget
+              action="register"
+              onToken={setTurnstileToken}
+              ref={turnstileRef}
+              className="flex justify-center"
+            />
+            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || !agreedToTerms || (TURNSTILE_ENABLED && !turnstileToken)}>
               {loading ? 'creating account...' : 'create account'}
             </Button>
           </form>
