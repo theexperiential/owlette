@@ -12,6 +12,7 @@ import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { LoadingWord } from '@/components/LoadingWord';
 import { EyeIcon, EyeOffIcon } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { FormError } from '@/components/ui/form-error';
 
 type Status = 'verifying' | 'ready' | 'invalid';
 
@@ -138,7 +139,7 @@ function ResetPasswordForm() {
           )}
 
           {status === 'ready' && (
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
               <div className="space-y-2">
                 <Label htmlFor="newPassword" className="text-foreground">new password</Label>
                 <div className="relative">
@@ -178,11 +179,7 @@ function ResetPasswordForm() {
                 />
               </div>
 
-              {error && (
-                <div className="rounded-md bg-red-900/20 border border-red-800 p-3">
-                  <p className="text-sm text-red-400">{error}</p>
-                </div>
-              )}
+              <FormError message={error} />
 
               <Button
                 type="submit"

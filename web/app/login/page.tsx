@@ -15,6 +15,7 @@ import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { auth as firebaseAuth } from '@/lib/firebase';
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
 import { LoadingWord } from '@/components/LoadingWord';
+import { FormError } from '@/components/ui/form-error';
 
 function LoginForm() {
   const [email, setEmail] = useState('');
@@ -27,6 +28,8 @@ function LoginForm() {
    * never closes, so a partly-filled form can't collapse mid-entry.
    */
   const [emailFormOpen, setEmailFormOpen] = useState(false);
+  /** Inline validation message — see components/ui/form-error.tsx. */
+  const [formError, setFormError] = useState('');
   const [redirectUrl, setRedirectUrl] = useState('/dashboard');
   // WebAuthn support can only be detected client-side (browserSupportsWebAuthn
   // reads window.PublicKeyCredential). Calling it during render makes the
@@ -93,6 +96,19 @@ function LoginForm() {
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
+
+    // Ours now that the form is noValidate — the native bubble no longer
+    // covers these, and it never matched the rest of the UI anyway.
+    if (!email.trim()) {
+      setFormError('enter your email address');
+      return;
+    }
+    if (!password) {
+      setFormError('enter your password');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -290,7 +306,7 @@ function LoginForm() {
               </div>
             </div>
 
-            <form onSubmit={handleEmailLogin} className="space-y-5">
+            <form onSubmit={handleEmailLogin} className="space-y-5" noValidate>
               <div className="space-y-2">
                 <Label htmlFor="email" className="text-foreground">email</Label>
                 <Input
@@ -324,6 +340,7 @@ function LoginForm() {
                       className="bg-input border-border text-foreground placeholder:text-muted-foreground"
                     />
                   </div>
+                  <FormError message={formError} />
                   <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
                     {loading ? 'signing in...' : 'sign in with email'}
                   </Button>

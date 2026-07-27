@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
+import { FormError } from '@/components/ui/form-error';
 
 export default function ForgotPasswordPage() {
   const { sendPasswordReset } = useAuth();
@@ -15,10 +16,17 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState('');
+  /** Inline validation message — see components/ui/form-error.tsx. */
+  const [formError, setFormError] = useState('');
   const turnstileRef = useRef<TurnstileHandle>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
+    if (!email.trim()) {
+      setFormError('enter your email address');
+      return;
+    }
     setLoading(true);
     try {
       await sendPasswordReset(email, turnstileToken);
@@ -76,7 +84,7 @@ export default function ForgotPasswordPage() {
             </>
           ) : (
             <>
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                 <div className="space-y-2">
                   <Label htmlFor="email" className="text-foreground">email</Label>
                   <Input
@@ -95,6 +103,7 @@ export default function ForgotPasswordPage() {
                   onToken={setTurnstileToken}
                   ref={turnstileRef}
                 />
+                <FormError message={formError} />
                 <Button
                   type="submit"
                   className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"

@@ -14,6 +14,7 @@ import { validatePassword, validateEmail } from '@/lib/validators';
 import { sanitizeError } from '@/lib/errorHandler';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
+import { FormError } from '@/components/ui/form-error';
 
 export default function RegisterPage() {
   const [firstName, setFirstName] = useState('');
@@ -30,36 +31,47 @@ export default function RegisterPage() {
    * never closes, so a partly-filled form can't collapse mid-entry.
    */
   const [emailFormOpen, setEmailFormOpen] = useState(false);
+  /** Inline validation message — see components/ui/form-error.tsx for why this
+   *  is not a toast and not the browser's native bubble. */
+  const [formError, setFormError] = useState('');
   const turnstileRef = useRef<TurnstileHandle>(null);
   const { signUp, signInWithGoogle } = useAuth();
   const router = useRouter();
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
 
-    // Check terms agreement
-    if (!agreedToTerms) {
-      toast.error('you must agree to the terms of service and privacy policy');
+    // Empty-field checks are ours now: the form is noValidate, so the browser's
+    // native bubble no longer fires (and never could be styled to match).
+    if (!email.trim()) {
+      setFormError('enter your email address');
+      return;
+    }
+    if (!password) {
+      setFormError('choose a password');
       return;
     }
 
-    // Validate email
     const emailValidation = validateEmail(email);
     if (!emailValidation.isValid) {
-      toast.error(emailValidation.error);
+      setFormError(emailValidation.error ?? 'enter a valid email address');
       return;
     }
 
-    // Validate password strength
     const passwordValidation = validatePassword(password);
     if (!passwordValidation.isValid) {
-      toast.error(passwordValidation.error);
+      setFormError(passwordValidation.error ?? 'choose a stronger password');
       return;
     }
 
-    // Check password confirmation
     if (password !== confirmPassword) {
-      toast.error('passwords do not match');
+      setFormError('passwords do not match');
+      return;
+    }
+
+    if (!agreedToTerms) {
+      setFormError('agree to the terms of service and privacy policy to continue');
       return;
     }
 
@@ -202,7 +214,7 @@ export default function RegisterPage() {
             </div>
           </div>
 
-          <form onSubmit={handleRegister} className="space-y-5">
+          <form onSubmit={handleRegister} className="space-y-5" noValidate>
             <div className="space-y-2">
               <Label htmlFor="email" className="text-foreground">email</Label>
               <Input
@@ -315,7 +327,8 @@ export default function RegisterPage() {
                   onToken={setTurnstileToken}
                   ref={turnstileRef}
                 />
-                <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || !agreedToTerms || (TURNSTILE_ENABLED && !turnstileToken)}>
+                <FormError message={formError} />
+                <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || (TURNSTILE_ENABLED && !turnstileToken)}>
                   {loading ? 'creating account...' : 'create account'}
                 </Button>
               </>
