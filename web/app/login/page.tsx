@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Fingerprint } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { sanitizeError } from '@/lib/errorHandler';
 import { signInWithCustomToken } from 'firebase/auth';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
@@ -20,6 +20,13 @@ function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  /**
+   * Progressive disclosure for the email path, mirroring /register. Collapsed
+   * by default so Google and passkey are the only buttons on first paint and
+   * therefore carry the visual weight; latches open on first email focus and
+   * never closes, so a partly-filled form can't collapse mid-entry.
+   */
+  const [emailFormOpen, setEmailFormOpen] = useState(false);
   const [redirectUrl, setRedirectUrl] = useState('/dashboard');
   // WebAuthn support can only be detected client-side (browserSupportsWebAuthn
   // reads window.PublicKeyCredential). Calling it during render makes the
@@ -197,117 +204,152 @@ function LoginForm() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center p-4">
+    <div className="relative flex min-h-screen items-center justify-center p-4 pb-32">
       {/* Grid background */}
       <div className="absolute inset-0 dot-grid opacity-30" />
       <div className="absolute inset-0 blueprint-grid opacity-15" />
-      <Card className="relative z-10 w-full max-w-md border-border bg-card">
-        <CardHeader className="space-y-4 flex flex-col items-center">
-          <OwletteEyeIcon size={80} />
-          <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              attention is all you need
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <form onSubmit={handleEmailLogin} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-foreground">email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={loading}
-                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-              />
+      {/* Mirrors /register: brand on the left from md up, controls on the
+          right, stacking to one column below md. */}
+      <Card className="relative z-10 w-full max-w-md overflow-hidden border-border bg-card p-0 md:max-w-4xl">
+        <div className="grid md:grid-cols-2">
+          {/* Brand panel = hero, not a second grey. Same fill as the form
+              column — near-identical flat fills sharing an edge read as a
+              mistake — so the difference is carried by KIND instead of degree:
+              the brand dot-grid texture plus a radial vignette easing to
+              --card-recessed at the corners. The column border remains the
+              single boundary encoding. */}
+          <CardHeader className="relative flex flex-col items-center justify-center space-y-4 p-8 text-center md:h-full md:border-r md:border-border">
+            <div className="dot-grid absolute inset-0 -z-10 opacity-25" aria-hidden="true" />
+            <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(120%_120%_at_50%_50%,transparent_35%,var(--card-recessed)_100%)]" aria-hidden="true" />
+            <OwletteEyeIcon size={80} />
+            <div className="space-y-1">
+              <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
+              <CardDescription className="text-muted-foreground">
+                attention is all you need
+              </CardDescription>
             </div>
+          </CardHeader>
+          <CardContent className="space-y-6 bg-card p-8">
+            {/* Passwordless first. Google and passkey are one group of
+                alternatives, so they sit tight together while space-y-6
+                separates them from the email form. */}
             <div className="space-y-2">
-              <Label htmlFor="password" className="text-foreground">password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full bg-input border-border text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleGoogleLogin}
                 disabled={loading}
-                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-              />
+              >
+                <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
+                  <path
+                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                    fill="#4285F4"
+                  />
+                  <path
+                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                    fill="#34A853"
+                  />
+                  <path
+                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                    fill="#FBBC05"
+                  />
+                  <path
+                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                    fill="#EA4335"
+                  />
+                </svg>
+                continue with Google
+              </Button>
+
+              {canUsePasskey && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full bg-input border-border text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  onClick={handlePasskeyLogin}
+                  disabled={loading}
+                >
+                  <Fingerprint className="mr-2 h-4 w-4" />
+                  continue with passkey
+                </Button>
+              )}
             </div>
-            <div className="flex justify-end">
-              <a href="/forgot-password" className="text-sm text-accent-cyan hover:text-accent-cyan-hover hover:underline">
+
+            {/* -mx-8 cancels CardContent's p-8 so the rule runs edge to edge of
+                the column instead of floating inset. Card is overflow-hidden,
+                so the bleed can't create a horizontal scrollbar. */}
+            <div className="relative -mx-8">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">
+                  or
+                </span>
+              </div>
+            </div>
+
+            <form onSubmit={handleEmailLogin} className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="email" className="text-foreground">email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  // Focus (not click) so keyboard tabbing expands it too.
+                  // e2e global-setup fills email before password, and fill()
+                  // focuses first, so this opens the form for the suite too.
+                  onFocus={() => setEmailFormOpen(true)}
+                  required
+                  disabled={loading}
+                  className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+                />
+              </div>
+
+              {emailFormOpen && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="password" className="text-foreground">password</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      placeholder="••••••••"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      required
+                      disabled={loading}
+                      className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+                    />
+                  </div>
+                  <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
+                    {loading ? 'signing in...' : 'sign in with email'}
+                  </Button>
+                </>
+              )}
+            </form>
+
+            {/* Full-bleed band: -mx-8/-mb-8 cancel CardContent's p-8 on three
+                sides so this owns its own spacing, then symmetric py-6 centers
+                the text within the band. Relying on the card's bottom padding
+                instead left 24px above the text and 32px below it, which read
+                as visually low. */}
+            {/* Hairline only — the fill experiment is retired. One signal per
+                boundary: the border plus symmetric py-6 does the separating. */}
+            <div className="-mx-8 -mb-8 text-balance border-t border-border px-8 py-6 text-center text-sm text-muted-foreground">
+              <a href="/forgot-password" className="whitespace-nowrap font-medium hl-link text-accent-cyan">
                 forgot password?
               </a>
+              <span className="px-2 text-border" aria-hidden="true">·</span>
+              don&apos;t have an account?{' '}
+              <a href="/register" className="whitespace-nowrap font-medium hl-link text-accent-cyan">
+                sign up
+              </a>
             </div>
-            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
-              {loading ? 'signing in...' : 'sign in with email'}
-            </Button>
-          </form>
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-border" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">
-                or continue with
-              </span>
-            </div>
-          </div>
-
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full bg-input border-border text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-            onClick={handleGoogleLogin}
-            disabled={loading}
-          >
-            <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
-              <path
-                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                fill="#4285F4"
-              />
-              <path
-                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                fill="#34A853"
-              />
-              <path
-                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
-                fill="#FBBC05"
-              />
-              <path
-                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                fill="#EA4335"
-              />
-            </svg>
-            Google
-          </Button>
-
-          {canUsePasskey && (
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full bg-input border-border text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={handlePasskeyLogin}
-              disabled={loading}
-            >
-              <Fingerprint className="mr-2 h-4 w-4" />
-              passkey
-            </Button>
-          )}
-
-          <div className="text-center text-sm text-muted-foreground">
-            don&apos;t have an account?{' '}
-            <a href="/register" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
-              sign up
-            </a>
-          </div>
-        </CardContent>
+          </CardContent>
+        </div>
       </Card>
     </div>
   );
@@ -316,23 +358,29 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <Suspense fallback={
-      <div className="relative flex min-h-screen items-center justify-center p-4">
+      <div className="relative flex min-h-screen items-center justify-center p-4 pb-32">
         {/* Grid background */}
         <div className="absolute inset-0 dot-grid opacity-30" />
         <div className="absolute inset-0 blueprint-grid opacity-15" />
-        <Card className="relative z-10 w-full max-w-md border-border bg-card">
-          <CardHeader className="space-y-4 flex flex-col items-center">
-            <OwletteEyeIcon size={80} />
-            <div className="space-y-1 text-center">
-              <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
-              <CardDescription className="text-muted-foreground">
-                attention is all you need
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-center text-muted-foreground"><LoadingWord /></div>
-          </CardContent>
+        {/* Same two-column shell as the loaded form, so the card doesn't
+            change shape when the suspense boundary resolves. */}
+        <Card className="relative z-10 w-full max-w-md overflow-hidden border-border bg-card p-0 md:max-w-4xl">
+          <div className="grid md:grid-cols-2">
+            <CardHeader className="relative flex flex-col items-center justify-center space-y-4 p-8 text-center md:h-full md:border-r md:border-border">
+              <div className="dot-grid absolute inset-0 -z-10 opacity-25" aria-hidden="true" />
+              <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(120%_120%_at_50%_50%,transparent_35%,var(--card-recessed)_100%)]" aria-hidden="true" />
+              <OwletteEyeIcon size={80} />
+              <div className="space-y-1">
+                <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
+                <CardDescription className="text-muted-foreground">
+                  attention is all you need
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent className="flex items-center justify-center p-8">
+              <div className="text-center text-muted-foreground"><LoadingWord /></div>
+            </CardContent>
+          </div>
         </Card>
       </div>
     }>

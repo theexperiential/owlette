@@ -74,6 +74,9 @@ async function signInStatus(email: string, password: string): Promise<number> {
 
 test('forgot-password link triggers the branded reset route and shows the confirmation', async ({ page }) => {
   await page.goto('/login');
+  // "forgot password?" lives in the always-visible footer band alongside
+  // "sign up", NOT inside the progressive email form — password recovery must
+  // stay one click away for a user who cannot get in.
   await page.getByRole('link', { name: /forgot password/i }).click();
   await expect(page).toHaveURL(/\/forgot-password/);
 

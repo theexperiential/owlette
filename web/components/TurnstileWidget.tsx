@@ -38,6 +38,7 @@ interface TurnstileApi {
       sitekey: string;
       action?: string;
       theme?: 'light' | 'dark' | 'auto';
+      size?: 'normal' | 'flexible' | 'compact';
       callback?: (token: string) => void;
       'expired-callback'?: () => void;
       'error-callback'?: () => void;
@@ -133,7 +134,15 @@ export const TurnstileWidget = forwardRef<TurnstileHandle, TurnstileWidgetProps>
           widgetIdRef.current = window.turnstile.render(containerRef.current, {
             sitekey: siteKey,
             action,
-            theme: 'auto',
+            // 'dark', NOT 'auto'. `auto` follows the OS prefers-color-scheme,
+            // but the app is hard-pinned dark (`<html className="dark">` in
+            // layout.tsx) with no light mode — so `auto` renders a white widget
+            // on a dark page for every visitor whose OS is in light mode.
+            // Revisit only if a real light theme ever ships.
+            theme: 'dark',
+            // Span the container instead of a fixed ~300px box, so the widget
+            // lines up with the form inputs rather than floating inside them.
+            size: 'flexible',
             callback: emit,
             'expired-callback': () => emit(''),
             'error-callback': () => emit(''),

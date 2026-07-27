@@ -38,7 +38,7 @@ export default function ForgotPasswordPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center p-4">
+    <div className="relative flex min-h-screen items-center justify-center p-4 pb-32">
       {/* Grid background */}
       <div className="absolute inset-0 dot-grid opacity-30" />
       <div className="absolute inset-0 blueprint-grid opacity-15" />
@@ -69,7 +69,7 @@ export default function ForgotPasswordPage() {
                 use a different email
               </Button>
               <div className="text-center text-sm text-muted-foreground">
-                <a href="/login" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
+                <a href="/login" className="hl-link text-accent-cyan">
                   back to sign in
                 </a>
               </div>
@@ -94,7 +94,6 @@ export default function ForgotPasswordPage() {
                   action="forgot-password"
                   onToken={setTurnstileToken}
                   ref={turnstileRef}
-                  className="flex justify-center"
                 />
                 <Button
                   type="submit"
@@ -107,7 +106,7 @@ export default function ForgotPasswordPage() {
 
               <div className="text-center text-sm text-muted-foreground">
                 remember your password?{' '}
-                <a href="/login" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
+                <a href="/login" className="hl-link text-accent-cyan">
                   sign in
                 </a>
               </div>
