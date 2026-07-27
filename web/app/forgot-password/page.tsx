@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
 import { FormError } from '@/components/ui/form-error';
+import { useFieldError } from '@/hooks/useFieldError';
 
 export default function ForgotPasswordPage() {
   const { sendPasswordReset } = useAuth();
@@ -16,16 +17,15 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
   const [turnstileToken, setTurnstileToken] = useState('');
-  /** Inline validation message — see components/ui/form-error.tsx. */
-  const [formError, setFormError] = useState('');
+  /** Field-targeted validation — see hooks/useFieldError.ts. */
+  const { error: formError, fail, clear: clearError, fieldProps } = useFieldError('forgot-form-error');
   const turnstileRef = useRef<TurnstileHandle>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setFormError('');
+    clearError();
     if (!email.trim()) {
-      setFormError('enter your email address');
-      return;
+      return fail('email', 'enter your email address');
     }
     setLoading(true);
     try {
@@ -89,6 +89,7 @@ export default function ForgotPasswordPage() {
                   <Label htmlFor="email" className="text-foreground">email</Label>
                   <Input
                     id="email"
+                    {...fieldProps('email')}
                     type="email"
                     placeholder="you@example.com"
                     value={email}
@@ -103,7 +104,7 @@ export default function ForgotPasswordPage() {
                   onToken={setTurnstileToken}
                   ref={turnstileRef}
                 />
-                <FormError message={formError} />
+                <FormError message={formError?.message} id="forgot-form-error" />
                 <Button
                   type="submit"
                   className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"

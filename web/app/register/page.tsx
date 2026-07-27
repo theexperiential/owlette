@@ -15,6 +15,7 @@ import { sanitizeError } from '@/lib/errorHandler';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
 import { FormError } from '@/components/ui/form-error';
+import { useFieldError } from '@/hooks/useFieldError';
 
 export default function RegisterPage() {
   const [firstName, setFirstName] = useState('');
@@ -31,48 +32,43 @@ export default function RegisterPage() {
    * never closes, so a partly-filled form can't collapse mid-entry.
    */
   const [emailFormOpen, setEmailFormOpen] = useState(false);
-  /** Inline validation message — see components/ui/form-error.tsx for why this
-   *  is not a toast and not the browser's native bubble. */
-  const [formError, setFormError] = useState('');
+  /** Field-targeted validation — see hooks/useFieldError.ts. Marks the
+   *  offending input invalid (red outline) and focuses it, as well as showing
+   *  the message; a message alone does not say WHERE to fix it. */
+  const { error: formError, fail, clear: clearError, fieldProps } = useFieldError('register-form-error');
   const turnstileRef = useRef<TurnstileHandle>(null);
   const { signUp, signInWithGoogle } = useAuth();
   const router = useRouter();
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    setFormError('');
+    clearError();
 
     // Empty-field checks are ours now: the form is noValidate, so the browser's
     // native bubble no longer fires (and never could be styled to match).
     if (!email.trim()) {
-      setFormError('enter your email address');
-      return;
+      return fail('email', 'enter your email address');
     }
     if (!password) {
-      setFormError('choose a password');
-      return;
+      return fail('password', 'choose a password');
     }
 
     const emailValidation = validateEmail(email);
     if (!emailValidation.isValid) {
-      setFormError(emailValidation.error ?? 'enter a valid email address');
-      return;
+      return fail('email', emailValidation.error ?? 'enter a valid email address');
     }
 
     const passwordValidation = validatePassword(password);
     if (!passwordValidation.isValid) {
-      setFormError(passwordValidation.error ?? 'choose a stronger password');
-      return;
+      return fail('password', passwordValidation.error ?? 'choose a stronger password');
     }
 
     if (password !== confirmPassword) {
-      setFormError('passwords do not match');
-      return;
+      return fail('confirmPassword', 'passwords do not match');
     }
 
     if (!agreedToTerms) {
-      setFormError('agree to the terms of service and privacy policy to continue');
-      return;
+      return fail('terms', 'agree to the terms of service and privacy policy to continue');
     }
 
     setLoading(true);
@@ -219,6 +215,7 @@ export default function RegisterPage() {
               <Label htmlFor="email" className="text-foreground">email</Label>
               <Input
                 id="email"
+                {...fieldProps('email')}
                 type="email"
                 placeholder="you@example.com"
                 value={email}
@@ -265,6 +262,7 @@ export default function RegisterPage() {
                   <Label htmlFor="password" className="text-foreground">password</Label>
                   <Input
                     id="password"
+                    {...fieldProps('password')}
                     type="password"
                     placeholder="••••••••"
                     value={password}
@@ -281,6 +279,7 @@ export default function RegisterPage() {
                   <Label htmlFor="confirmPassword" className="text-foreground">confirm password</Label>
                   <Input
                     id="confirmPassword"
+                    {...fieldProps('confirmPassword')}
                     type="password"
                     placeholder="••••••••"
                     value={confirmPassword}
@@ -327,7 +326,7 @@ export default function RegisterPage() {
                   onToken={setTurnstileToken}
                   ref={turnstileRef}
                 />
-                <FormError message={formError} />
+                <FormError message={formError?.message} id="register-form-error" />
                 <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || (TURNSTILE_ENABLED && !turnstileToken)}>
                   {loading ? 'creating account...' : 'create account'}
                 </Button>
