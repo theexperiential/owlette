@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { FolderArchive, Link2, Loader2, Pencil, Plus, Save, Trash2, TriangleAlert, Upload, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useMachines } from '@/hooks/useFirestore';
 import { ProjectDistribution } from '@/hooks/useProjectDistributions';
 import {

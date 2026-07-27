@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Package, Plus, Loader2, Download, Trash2, CheckCircle, Copy, Sparkles, Paintbrush } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import UploadInstallerDialog from '@/components/admin/UploadInstallerDialog';
 import { formatFileSize } from '@/lib/storageUtils';
 

@@ -23,7 +23,7 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import { UpdateOwletteButton } from '@/components/UpdateOwletteButton';
 import { useUninstall } from '@/hooks/useUninstall';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 function getStatusIcon(status: string) {
   switch (status) {

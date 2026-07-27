@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Users, Shield, ShieldAlert, Crown, Loader2, Settings, MoreVertical, UserCog, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { ManageUserSitesDialog } from '@/components/ManageUserSitesDialog';
 import {

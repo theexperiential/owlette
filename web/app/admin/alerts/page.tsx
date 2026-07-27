@@ -27,7 +27,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Bell, Plus, Trash2, Loader2, Zap, Pencil, Sparkles, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 /**
  * [B4.3] Display alerts launch banner. Auto-hides after this date regardless

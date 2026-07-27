@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { PasskeyManager } from '@/components/PasskeyManager';
 /* eslint-disable @next/next/no-img-element */
 

@@ -19,7 +19,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'fi
 import { auth, db, storage } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
 import { getBrowserTimezone } from '@/lib/timeUtils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import * as Sentry from '@sentry/nextjs';
 
 // Shallow-compare two arrays by value (for string arrays like userSites)

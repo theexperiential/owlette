@@ -9,7 +9,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 /**
  * DownloadButton Component

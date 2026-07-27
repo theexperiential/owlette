@@ -33,7 +33,7 @@ import {
   Loader2,
   Pencil,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface WebhookData {
   id: string;

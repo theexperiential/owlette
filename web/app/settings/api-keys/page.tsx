@@ -7,7 +7,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Loader2, Plus, KeyRound, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { CopyButton } from '@/components/CopyButton';
 import { CreateKeyDialog } from './CreateKeyDialog';
 import { KeyCard, type ApiKeyListItem } from './KeyCard';

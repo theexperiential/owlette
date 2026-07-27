@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dialog';
 import { usePasskeys } from '@/hooks/usePasskeys';
 import { LoadingWord } from '@/components/LoadingWord';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface PasskeyManagerProps {
   userId: string;

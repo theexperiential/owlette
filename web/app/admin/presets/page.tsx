@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Plus, Loader2, Pencil, Trash2, Package } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import SystemPresetDialog from '@/components/SystemPresetDialog';
 
 /**

@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2, KeyRound, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   DEFAULT_TTL_DAYS,
   MAX_TTL_DAYS,

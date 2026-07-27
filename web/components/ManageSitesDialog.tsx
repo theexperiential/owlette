@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Pencil, Trash2, Check, X, Plus, User, Search } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { useUserManagement } from '@/hooks/useUserManagement';
 

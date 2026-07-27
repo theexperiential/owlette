@@ -30,7 +30,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Card, CardContent } from '@/components/ui/card';

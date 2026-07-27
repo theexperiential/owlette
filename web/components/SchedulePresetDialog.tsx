@@ -10,7 +10,7 @@ import WeekSummaryBar from '@/components/WeekSummaryBar';
 import { DEFAULT_SCHEDULE } from '@/lib/scheduleDefaults';
 import { useSchedulePresets, type SchedulePreset } from '@/hooks/useSchedulePresets';
 import type { ScheduleBlock } from '@/hooks/useFirestore';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Loader2 } from 'lucide-react';
 
 interface SchedulePresetDialogProps {

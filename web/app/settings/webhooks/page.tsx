@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2, Plus, Webhook, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { CopyButton } from '@/components/CopyButton';
 import { CreateWebhookDialog } from './CreateWebhookDialog';
 import { WebhookCard, type WebhookListItem } from './WebhookCard';

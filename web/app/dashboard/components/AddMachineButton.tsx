@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Plus, Loader2, CheckCircle2, Copy, Monitor, Terminal, Download, RefreshCw } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { useDeviceCodeAuthorize } from '@/hooks/useDeviceCodeAuthorize';
 

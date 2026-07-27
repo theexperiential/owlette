@@ -10,7 +10,7 @@ import type { ScheduleBlock } from '@/hooks/useFirestore';
 import type { SchedulePreset } from '@/hooks/useSchedulePresets';
 import { BLOCK_COLORS, BUILT_IN_PRESETS, ensureBlockColors } from '@/lib/scheduleDefaults';
 import { useAuth } from '@/contexts/AuthContext';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import DayPillSelector from '@/components/DayPillSelector';
 import { TimezoneChip } from '@/components/TimezoneChip';
 

@@ -29,7 +29,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { RefreshCw, AlertCircle, AlertTriangle, CheckCircle2, Loader2, X } from 'lucide-react';
 import { useOwletteUpdates } from '@/hooks/useOwletteUpdates';
 import { Machine } from '@/hooks/useFirestore';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface UpdateOwletteButtonProps {
   siteId: string;

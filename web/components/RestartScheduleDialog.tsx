@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { Plus, X, Save, Pencil, Trash2, Users } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import DayPillSelector from '@/components/DayPillSelector';
 import { TimePicker } from '@/components/ScheduleEditor';
 import ApplyScheduleToMachinesDialog from '@/components/ApplyScheduleToMachinesDialog';

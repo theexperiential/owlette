@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Plus, X, Loader2, Search } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useSites } from '@/hooks/useFirestore';
 import { useAuth } from '@/contexts/AuthContext';
 import type { UserRole } from '@/hooks/useUserManagement';
