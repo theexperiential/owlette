@@ -2,8 +2,9 @@
 
 import { NextRequest } from 'next/server';
 
-const mockBatchDelete = jest.fn();
-const mockBatchCommit = jest.fn().mockResolvedValue(undefined);
+const mockWriterDelete = jest.fn(() => Promise.resolve());
+const mockWriterClose = jest.fn().mockResolvedValue(undefined);
+const mockOnWriteError = jest.fn();
 const mockSitesGet = jest.fn();
 
 /** Records every query built against a subcollection, for assertions. */
@@ -54,7 +55,13 @@ const mockDb = {
     if (name === 'sites') return { get: mockSitesGet };
     return collectionStub(name, []);
   },
-  batch: () => ({ delete: mockBatchDelete, commit: mockBatchCommit }),
+  // Deletion goes through BulkWriter, not db.batch() — a batched commit of 400
+  // deletes fails in real Firestore with "Transaction too big".
+  bulkWriter: () => ({
+    delete: mockWriterDelete,
+    onWriteError: mockOnWriteError,
+    close: mockWriterClose,
+  }),
 };
 
 jest.mock('@/lib/firebase-admin', () => ({
@@ -131,7 +138,7 @@ describe('GET /api/cron/retention', () => {
     expect(res.status).toBe(200);
     expect(body.deleted).toEqual({ metrics: 0, logs: 0 });
     expect(body.truncated).toBe(false);
-    expect(mockBatchCommit).not.toHaveBeenCalled();
+    expect(mockWriterDelete).not.toHaveBeenCalled();
   });
 
   it('deletes stale logs and metric buckets and reports the counts', async () => {
@@ -145,7 +152,7 @@ describe('GET /api/cron/retention', () => {
 
     expect(res.status).toBe(200);
     expect(body.deleted).toEqual({ metrics: 3, logs: 2 });
-    expect(mockBatchDelete).toHaveBeenCalledTimes(5);
+    expect(mockWriterDelete).toHaveBeenCalledTimes(5);
     expect(body.retentionDays).toEqual({
       metrics: METRICS_RETENTION_DAYS,
       logs: LOGS_RETENTION_DAYS,

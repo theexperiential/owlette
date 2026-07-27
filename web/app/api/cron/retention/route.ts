@@ -36,30 +36,56 @@ import { formatDayBucketId } from '@/lib/metricsHistoryBuckets';
 export const METRICS_RETENTION_DAYS = 90;
 export const LOGS_RETENTION_DAYS = 90;
 
-/**
- * Ceiling on documents removed per invocation, across both collections.
- * Firestore commits cap at 500 writes per batch; this is a whole-run budget.
- */
+/** Ceiling on documents removed per invocation, across both collections. */
 const MAX_DELETES_PER_RUN = 2_000;
-const BATCH_SIZE = 400;
+/** Documents fetched per query. Not a commit size — see deleteRefs(). */
+const QUERY_PAGE_SIZE = 400;
+/** Retry budget per document before a delete is counted as failed. */
+const MAX_WRITE_ATTEMPTS = 5;
 
 function daysAgo(days: number): Date {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
-/** Commit `refs` in chunks that respect the 500-writes-per-batch limit. */
+/**
+ * Delete `refs` via BulkWriter.
+ *
+ * NOT db.batch(). A batched commit of 400 deletes failed in production with
+ * `3 INVALID_ARGUMENT: Transaction too big` — the documented 500-writes-per-
+ * commit figure is a ceiling, and the effective limit is lower because the
+ * backend counts more than one unit per document. BulkWriter is Firestore's
+ * supported primitive for bulk deletion: it batches internally, ramps
+ * throughput to avoid contention, and retries retryable failures.
+ *
+ * Returns the number actually removed, so a partial failure is reported as a
+ * smaller count rather than silently inflating the run's totals.
+ */
 async function deleteRefs(
   db: FirebaseFirestore.Firestore,
   refs: FirebaseFirestore.DocumentReference[]
 ): Promise<number> {
-  let removed = 0;
-  for (let i = 0; i < refs.length; i += BATCH_SIZE) {
-    const batch = db.batch();
-    for (const ref of refs.slice(i, i + BATCH_SIZE)) batch.delete(ref);
-    await batch.commit();
-    removed += Math.min(BATCH_SIZE, refs.length - i);
+  if (refs.length === 0) return 0;
+
+  const writer = db.bulkWriter();
+  let failed = 0;
+
+  writer.onWriteError(error => {
+    if (error.failedAttempts < MAX_WRITE_ATTEMPTS) return true;
+    failed += 1;
+    console.error(
+      `[retention] gave up deleting ${error.documentRef.path}: ${error.message}`
+    );
+    return false;
+  });
+
+  for (const ref of refs) {
+    // The per-op promise rejects once onWriteError stops retrying; that case is
+    // already counted above, so swallow it here to avoid an unhandled rejection.
+    void writer.delete(ref).catch(() => undefined);
   }
-  return removed;
+
+  await writer.close();
+  return refs.length - failed;
 }
 
 export async function GET(request: NextRequest) {
@@ -87,7 +113,7 @@ export async function GET(request: NextRequest) {
         .collection('logs')
         .where('timestamp', '<', logsCutoff)
         .orderBy('timestamp', 'asc')
-        .limit(Math.min(budget, BATCH_SIZE))
+        .limit(Math.min(budget, QUERY_PAGE_SIZE))
         .get();
 
       if (!staleLogs.empty) {
@@ -107,7 +133,7 @@ export async function GET(request: NextRequest) {
           .collection('metrics_history')
           .where(FieldPath.documentId(), '<', metricsCutoffBucket)
           .orderBy(FieldPath.documentId(), 'asc')
-          .limit(Math.min(budget, BATCH_SIZE))
+          .limit(Math.min(budget, QUERY_PAGE_SIZE))
           .get();
 
         if (staleBuckets.empty) continue;
