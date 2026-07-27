@@ -5,24 +5,24 @@ import { useMemo } from "react";
 import { usePathname } from "next/navigation";
 
 const RANDOM_EMOJIS = [
-  "❤️", "💙", "💚", "💛", "💜", "🧡", // hearts
-  "✨", "🌟", "⭐", "💫", "🌈", // sparkles
-  "🔥", "⚡", "💥", "🚀", // energy
-  "🎨", "🎭", "🎪", "🎯", // creative
-  "🦉", "🦆", "🐧", "🦜", // birds (owlette!)
-  "☕", "🍕", "🌮", "🍔", // food
-  "🎵", "🎸", "🎹", "🎤", // music
-  "💻", "🖥️", "⌨️", "🖱️", // tech
-  "🎲", "🎮", "🕹️", // games
-  "🌙", "☀️", "⛅", "🌤️", // weather
-  "🤪", "😜", "😝", "🥴", "😵‍💫", "🤡", "🥳", "😎", // goofy faces
-  "💨", "🌪️", "💩", "🧻", // wind/farts
-  "🦄", "🦖", "🦕", "🐙", "🦑", "🦞", // silly animals
-  "🍌", "🥒", "🌽", "🍆", "🥑", "🧀", // funny food
-  "🎃", "👻", "💀", "👽", "🤖", "🛸", // spooky/weird
-  "🦷", "👀", "👁️", "🧠", "🦴", // body parts (weird!)
-  "💯", "🆒", "🤙", "🤘", "✌️", "🫰", // gestures
-  "🪐", "🌮", "🦥", "🐢", "🐌", // random fun
+"❤️", "💙", "💚", "💛", "💜", "🧡", // hearts
+"✨", "🌟", "⭐", "💫", "🌈", // sparkles
+"🔥", "⚡", "💥", "🚀", // energy
+"🎨", "🎭", "🎪", "🎯", // creative
+"🦉", "🦆", "🐧", "🦜", // birds (owlette!)
+"☕", "🍕", "🌮", "🍔", // food
+"🎵", "🎸", "🎹", "🎤", // music
+"💻", "🖥️", "⌨️", "🖱️", // tech
+"🎲", "🎮", "🕹️", // games
+"🌙", "☀️", "⛅", "🌤️", // weather
+"🤪", "😜", "😝", "🥴", "😵‍💫", "🤡", "🥳", "😎", // goofy faces
+"💨", "🌪️", "💩", "🧻", // wind/farts
+"🦄", "🦖", "🦕", "🐙", "🦑", "🦞", // silly animals
+"🍌", "🥒", "🌽", "🍆", "🥑", "🧀", // funny food
+"🎃", "👻", "💀", "👽", "🤖", "🛸", // spooky/weird
+"🦷", "👀", "👁️", "🧠", "🦴", // body parts (weird!)
+"💯", "🆒", "🤙", "🤘", "✌️", "🫰", // gestures
+"🪐", "🌮", "🦥", "🐢", "🐌", // random fun
 ];
 
 export function Footer() {

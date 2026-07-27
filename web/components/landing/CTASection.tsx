@@ -18,7 +18,7 @@ export function CTASection() {
         <Button
           asChild
           size="lg"
-          className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-semibold px-10 h-14 text-lg group"
+          className="text-background font-semibold px-10 h-14 text-lg group"
         >
           <Link href="/register" className="flex items-center gap-2">
             get started

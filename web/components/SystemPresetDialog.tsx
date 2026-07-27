@@ -442,7 +442,7 @@ export default function SystemPresetDialog({
           <Button
             onClick={handleSave}
             disabled={saving}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             {saving ? (
               <>

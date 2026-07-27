@@ -256,7 +256,7 @@ export function ManageSitesDialog({
                 </Button>
               </div>
               {/* Search + close share one centered flex row with the title and
-                  "new site" so all four header controls sit on one axis. gap-6
+"new site" so all four header controls sit on one axis. gap-6
                   keeps the close ✕ equidistant from the search field and the
                   panel edge (the p-6 gutter is also 24px). */}
               <div className="flex items-center gap-6">
@@ -383,7 +383,7 @@ export function ManageSitesDialog({
                             size="sm"
                             onClick={() => handleSaveSite(site.id)}
                             disabled={isSaving}
-                            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                            className="text-gray-900 cursor-pointer"
                           >
                             <Check className="h-4 w-4 mr-1" />
                             {isSaving ? 'saving...' : 'save'}

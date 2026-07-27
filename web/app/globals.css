@@ -659,6 +659,57 @@ input[type="week"] {
     color: var(--hl-fg);
   }
 }
+/* ── Button hover sweep ───────────────────────────────────────────────────
+ * The .hl-link mechanic applied to buttons: the hover fill sweeps in L→R and
+ * exits L→R too, via the same background-size + anchor-flip trick (grow
+ * anchored left, shrink anchored right).
+ *
+ * Layering: a button's resting fill is its `background-color` (bg-primary,
+ * bg-input, …). The sweep is a `background-image` gradient, which paints ABOVE
+ * background-color — so the resting fill needs no changes and transparent
+ * variants (ghost) work unmodified.
+ *
+ * --btn-hover is a translucent light SCRIM, not a named colour, and that is
+ * deliberate. ~110 Button call sites across the app carry bespoke
+ * `hover:bg-*` (red-700 destructives, amber, gray, cyan tints) that encode
+ * real semantics. A palette-specific sweep would fight every one of them — a
+ * cyan wash dragging across a red delete button. A scrim instead LIGHTENS
+ * whatever is underneath, so it composes with any resting colour: cyan
+ * brightens, red brightens, ghost picks up a faint wash. Those call sites
+ * keep cross-fading their base colour while the scrim adds the directional
+ * pass on top, so no per-instance edits are needed.
+ *
+ * Built from --foreground (near-white) rather than a literal, per the
+ * no-hardcoded-colours rule. A variant may still override --btn-hover for a
+ * specific target; `link` sets none and opts out entirely (.hl-link instead).
+ *
+ * 200ms — a touch slower than links, because a button is a bigger surface and
+ * the same duration reads as faster across it. Unlayered so it outranks the
+ * base `transition-all`, which would otherwise time the sweep.
+ */
+.btn-sweep {
+  --btn-hover: color-mix(in oklch, var(--foreground) 14%, transparent);
+  background-image: linear-gradient(var(--btn-hover), var(--btn-hover));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  background-position: 100% 0; /* anchored right: the exit sweep continues L→R */
+  transition:
+    background-size 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.btn-sweep:hover:not(:disabled),
+.btn-sweep:focus-visible:not(:disabled) {
+  background-position: 0 0; /* anchored left: the enter sweep runs L→R */
+  background-size: 100% 100%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-sweep {
+    transition: none;
+  }
+}
+
 /* Quiet variant — footer and other muted contexts. Same mechanic. */
 .hl-link-muted {
   --hl-bg: var(--secondary);

@@ -108,15 +108,15 @@ export default async function RootLayout({
 
           ╔═══════════════════════════════════════════╗
           ║                                           ║
-          ║          "Do you like our owl?"           ║
+          ║"Do you like our owl?"           ║
           ║                                           ║
-          ║                     "It's artificial?"    ║
+          ║"It's artificial?"    ║
           ║                                           ║
-          ║          "Of course it is."               ║
+          ║"Of course it is."               ║
           ║                                           ║
-          ║                     "Must be expensive."  ║
+          ║"Must be expensive."  ║
           ║                                           ║
-          ║          "Very."                          ║
+          ║"Very."                          ║
           ║                                           ║
           ╚═══════════════════════════════════════════╝
 

@@ -636,7 +636,7 @@ export function DisplayLayoutPanel({
     const msg = formatError(e);
     if (msg.includes('unsupported_mode')) {
       return (
-        "restore failed: one or more monitors can't do the requested " +
+"restore failed: one or more monitors can't do the requested " +
         'resolution or refresh rate — pick a supported mode from the ' +
         'dropdowns and try again'
       );

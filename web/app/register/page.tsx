@@ -144,7 +144,7 @@ export default function RegisterPage() {
           <Button
             type="button"
             variant="outline"
-            className="w-full bg-input border-border text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleGoogleSignup}
             disabled={loading}
           >
@@ -315,7 +315,7 @@ export default function RegisterPage() {
                   onToken={setTurnstileToken}
                   ref={turnstileRef}
                 />
-                <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || !agreedToTerms || (TURNSTILE_ENABLED && !turnstileToken)}>
+                <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || !agreedToTerms || (TURNSTILE_ENABLED && !turnstileToken)}>
                   {loading ? 'creating account...' : 'create account'}
                 </Button>
               </>

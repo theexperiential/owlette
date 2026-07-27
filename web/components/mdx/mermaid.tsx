@@ -22,7 +22,7 @@ import { useTheme } from "next-themes";
  *  - We pass an explicit `fontFamily` (Geist) and await `document.fonts.ready`
  *    before rendering. Mermaid sizes each node from a text measurement; if the
  *    measure font and render font differ (e.g. the upstream `fontFamily:
- *    "inherit"`, or a web font that loads late), boxes come out ~1 glyph too
+ *"inherit"`, or a web font that loads late), boxes come out ~1 glyph too
  *    narrow and clip the last character. Same font + loaded font = no clipping.
  */
 const subscribe = () => () => {};

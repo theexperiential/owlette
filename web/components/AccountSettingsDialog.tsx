@@ -915,7 +915,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                           setLlmSaving(false);
                         }}
                         disabled={!llmApiKey || llmSaving}
-                        className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 h-8"
+                        className="cursor-pointer text-gray-900 h-8"
                       >
                         {llmSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : 'save key'}
                       </Button>
@@ -1216,7 +1216,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                           setCreatingKey(false);
                         }}
                         disabled={creatingKey}
-                        className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 h-9 flex-shrink-0"
+                        className="cursor-pointer text-gray-900 h-9 flex-shrink-0"
                       >
                         {creatingKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5 mr-1" /> create key</>}
                       </Button>
@@ -1359,7 +1359,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                 </Button>
                 <Button
                   onClick={handleSave}
-                  className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900"
+                  className="cursor-pointer text-gray-900"
                   disabled={loading}
                 >
                   {loading ? 'saving...' : 'save changes'}

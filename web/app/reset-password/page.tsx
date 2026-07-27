@@ -125,7 +125,7 @@ function ResetPasswordForm() {
               <Button
                 type="button"
                 onClick={() => router.push('/forgot-password')}
-                className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer"
+                className="w-full text-background font-medium cursor-pointer"
               >
                 request a new link
               </Button>
@@ -186,7 +186,7 @@ function ResetPasswordForm() {
 
               <Button
                 type="submit"
-                className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={submitting || !password || !confirm}
               >
                 {submitting ? 'resetting...' : 'reset password'}

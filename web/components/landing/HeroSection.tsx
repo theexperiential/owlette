@@ -61,7 +61,7 @@ export function HeroSection() {
 
         {/* CTA */}
         <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center hero-enter-delay-2">
-          <Button asChild size="lg" className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-semibold px-8 h-12 text-base">
+          <Button asChild size="lg" className="text-background font-semibold px-8 h-12 text-base">
             <Link href="/register">get started</Link>
           </Button>
           <Button asChild variant="outline" size="lg" className="border-border/50 hover:bg-accent-warm/10 hover:border-accent-warm/30 h-12 text-base text-muted-foreground">

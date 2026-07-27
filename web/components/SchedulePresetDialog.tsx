@@ -149,7 +149,7 @@ export default function SchedulePresetDialog({
           <Button
             onClick={handleSave}
             disabled={saving}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {isEditing ? 'Save Changes' : 'Create Preset'}

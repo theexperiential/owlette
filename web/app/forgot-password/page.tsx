@@ -97,7 +97,7 @@ export default function ForgotPasswordPage() {
                 />
                 <Button
                   type="submit"
-                  className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={loading || !email || (TURNSTILE_ENABLED && !turnstileToken)}
                 >
                   {loading ? 'sending...' : 'send reset link'}

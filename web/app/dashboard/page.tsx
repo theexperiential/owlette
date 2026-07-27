@@ -336,61 +336,61 @@ export default function DashboardPage() {
 
   // Random cheesy tech jokes (memoized)
   const techJokes = useMemo(() => [
-    "Your pixels are in good hands",
-    "Keeping your GPUs well-fed and happy",
-    "Because Ctrl+Alt+Delete is so 2000s",
-    "Herding your processes since 2025",
-    "Making sure your renders don't surrender",
-    "Your CPU's personal trainer",
-    "We put the 'auto' in autolaunch",
-    "Babysitting processes so you don't have to",
-    "Keeping the frames flowing",
-    "Process management: Now streaming",
-    "Your digital janitor service",
-    "Making computers computier since 2025",
-    "Because someone has to babysit your GPUs",
-    "Turning crashes into... well, less crashes",
-    "Your processes' favorite nanny",
-    "We'll handle the restarts, you handle the art",
-    "Keeping your render farm from going on strike",
-    "Process wrangling at its finest",
-    "Making sure your video doesn't get stagefright",
-    "Your machines' remote control, literally",
-    "Teaching old GPUs new tricks",
-    "We don't judge your 47 Chrome tabs",
-    "Remotely judging your cable management",
-    "Making Windows behave since 2025",
-    "Your processes called, they want a manager",
-    "Turning blue screens into green lights",
-    "The cloud's favorite floor manager",
-    "Because 'Have you tried turning it off and on again?' gets old",
-    "Your GPU's therapist",
-    "Making sure your RAM doesn't feel lonely",
-    "Process management with extra cheese",
-    "We put the 'service' in Windows Service",
-    "Keeping your video walls from having a meltdown",
-    "Because manual restarts are for peasants",
-    "Your installation's guardian angel",
-    "Making TouchDesigner touch easier",
-    "Render farm to table, fresh processes daily",
-    "We speak fluent GPU",
-    "Your digital signage's best friend",
-    "Because someone needs to watch the watchers",
-    "Turning 'It works on my machine' into reality",
-    "Process therapy, cloud edition",
-    "Making Resolume resolve to stay running",
-    "Your kiosk's remote babysitter",
-    "Because uptime is updog",
-    "GPU whisperer extraordinaire",
-    "Making your media servers less dramatic",
-    "We've seen things... running things",
-    "Your process's life coach",
-    "Because closing Task Manager won't fix this",
-    "Keeping your renders rendering since 2025",
-    "The owl watches over your processes",
-    "Making Windows services less mysterious",
-    "Your exhibition's technical director",
-    "Process management: It's not rocket science, it's harder"
+"Your pixels are in good hands",
+"Keeping your GPUs well-fed and happy",
+"Because Ctrl+Alt+Delete is so 2000s",
+"Herding your processes since 2025",
+"Making sure your renders don't surrender",
+"Your CPU's personal trainer",
+"We put the 'auto' in autolaunch",
+"Babysitting processes so you don't have to",
+"Keeping the frames flowing",
+"Process management: Now streaming",
+"Your digital janitor service",
+"Making computers computier since 2025",
+"Because someone has to babysit your GPUs",
+"Turning crashes into... well, less crashes",
+"Your processes' favorite nanny",
+"We'll handle the restarts, you handle the art",
+"Keeping your render farm from going on strike",
+"Process wrangling at its finest",
+"Making sure your video doesn't get stagefright",
+"Your machines' remote control, literally",
+"Teaching old GPUs new tricks",
+"We don't judge your 47 Chrome tabs",
+"Remotely judging your cable management",
+"Making Windows behave since 2025",
+"Your processes called, they want a manager",
+"Turning blue screens into green lights",
+"The cloud's favorite floor manager",
+"Because 'Have you tried turning it off and on again?' gets old",
+"Your GPU's therapist",
+"Making sure your RAM doesn't feel lonely",
+"Process management with extra cheese",
+"We put the 'service' in Windows Service",
+"Keeping your video walls from having a meltdown",
+"Because manual restarts are for peasants",
+"Your installation's guardian angel",
+"Making TouchDesigner touch easier",
+"Render farm to table, fresh processes daily",
+"We speak fluent GPU",
+"Your digital signage's best friend",
+"Because someone needs to watch the watchers",
+"Turning 'It works on my machine' into reality",
+"Process therapy, cloud edition",
+"Making Resolume resolve to stay running",
+"Your kiosk's remote babysitter",
+"Because uptime is updog",
+"GPU whisperer extraordinaire",
+"Making your media servers less dramatic",
+"We've seen things... running things",
+"Your process's life coach",
+"Because closing Task Manager won't fix this",
+"Keeping your renders rendering since 2025",
+"The owl watches over your processes",
+"Making Windows services less mysterious",
+"Your exhibition's technical director",
+"Process management: It's not rocket science, it's harder"
   ], []);
 
   const [randomWelcome] = useState(() => welcomeMessages[Math.floor(Math.random() * welcomeMessages.length)]);
@@ -1150,7 +1150,7 @@ export default function DashboardPage() {
                 connect your first machine to start managing processes
               </CardDescription>
               {/* Header "+" — reachable even with zero machines, so the manual
-                  "enter code" and bulk "generate code" pairing paths aren't
+"enter code" and bulk "generate code" pairing paths aren't
                   gated behind already having a machine. */}
               {sites.length > 0 && (
                 <CardAction>
@@ -1176,7 +1176,7 @@ export default function DashboardPage() {
                   </p>
                   <Button
                     onClick={() => setCreateDialogOpen(true)}
-                    className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 font-semibold px-6 py-3 cursor-pointer"
+                    className="text-gray-900 font-semibold px-6 py-3 cursor-pointer"
                   >
                     <Plus className="h-4 w-4 mr-2" />
                     create your first site
@@ -1214,7 +1214,7 @@ export default function DashboardPage() {
                       }
                     }}
                     disabled={!downloadUrl}
-                    className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                    className="flex-1 text-gray-900 cursor-pointer"
                   >
                     <Download className="h-4 w-4 mr-2" />
                     <span>download {version && `v${version}`}</span>
@@ -1239,7 +1239,7 @@ export default function DashboardPage() {
                       }
                     }}
                     disabled={!downloadUrl}
-                    className="flex-1 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                    className="flex-1 text-gray-900 cursor-pointer"
                   >
                     <Copy className="h-4 w-4 mr-2" />
                     <span>copy link</span>
@@ -1281,7 +1281,7 @@ export default function DashboardPage() {
                       <Button
                         onClick={() => emptyStateAuthorize.authorize()}
                         disabled={!emptyStateAuthorize.phrase.trim() || emptyStateAuthorize.isAuthorizing}
-                        className="shrink-0 bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="shrink-0 text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         data-testid="getting-started-authorize"
                       >
                         {emptyStateAuthorize.isAuthorizing ? (
@@ -1545,7 +1545,7 @@ export default function DashboardPage() {
               </Button>
               <Button
                 onClick={handleSaveProcess}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                className="text-gray-900 cursor-pointer"
               >
                 {processDialogMode === 'create' ? 'create process' : 'save changes'}
               </Button>

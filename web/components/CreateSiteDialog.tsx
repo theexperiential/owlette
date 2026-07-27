@@ -274,7 +274,7 @@ export function CreateSiteDialog({
           <Button
             onClick={handleCreateSite}
             disabled={isCreating || availabilityStatus !== 'available'}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isCreating ? 'creating...' : 'create site'}
           </Button>

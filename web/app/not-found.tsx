@@ -134,7 +134,7 @@ export default function NotFound() {
         {/* Single CTA */}
         <Button
           asChild
-          className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-semibold px-7 h-11 text-sm animate-in fade-in slide-in-from-bottom-6 duration-700 delay-500"
+          className="text-background font-semibold px-7 h-11 text-sm animate-in fade-in slide-in-from-bottom-6 duration-700 delay-500"
         >
           <Link href="/">go home</Link>
         </Button>

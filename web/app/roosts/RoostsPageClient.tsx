@@ -363,7 +363,7 @@ export default function RoostsPageClient() {
               <div className="mt-6">
                 <Button
                   asChild
-                  className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                  className="text-gray-900 cursor-pointer"
                 >
                   <Link href="/#pricing">see pricing →</Link>
                 </Button>
@@ -480,7 +480,7 @@ export default function RoostsPageClient() {
                 setNewVersionContext(null);
                 setDistributionDialogOpen(true);
               }}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               <Plus className="h-4 w-4 mr-2" />
               new roost

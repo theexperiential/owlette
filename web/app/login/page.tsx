@@ -237,7 +237,7 @@ function LoginForm() {
               <Button
                 type="button"
                 variant="outline"
-                className="w-full bg-input border-border text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={handleGoogleLogin}
                 disabled={loading}
               >
@@ -266,7 +266,7 @@ function LoginForm() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="w-full bg-input border-border text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   onClick={handlePasskeyLogin}
                   disabled={loading}
                 >
@@ -324,7 +324,7 @@ function LoginForm() {
                       className="bg-input border-border text-foreground placeholder:text-muted-foreground"
                     />
                   </div>
-                  <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
+                  <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
                     {loading ? 'signing in...' : 'sign in with email'}
                   </Button>
                 </>

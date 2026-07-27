@@ -120,7 +120,7 @@ export default function SchedulePresetsPage() {
               )}
               <Button
                 onClick={handleCreateNew}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                className="text-gray-900 cursor-pointer"
               >
                 <Plus className="h-5 w-5 mr-2" />
                 create preset

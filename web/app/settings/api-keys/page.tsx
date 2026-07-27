@@ -92,7 +92,7 @@ export default function ApiKeysSettingsPage() {
           <Button
             type="button"
             onClick={() => setCreateOpen(true)}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             <Plus className="h-4 w-4 mr-1" /> create key
           </Button>
@@ -140,7 +140,7 @@ export default function ApiKeysSettingsPage() {
               type="button"
               size="sm"
               onClick={() => setCreateOpen(true)}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               <Plus className="h-3.5 w-3.5 mr-1" /> create your first key
             </Button>

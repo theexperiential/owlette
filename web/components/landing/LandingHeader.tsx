@@ -78,14 +78,14 @@ export function LandingHeader() {
               {linkEl(link)}
             </Button>
           ))}
-          <Button asChild size="sm" className="ml-1.5 bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium">
+          <Button asChild size="sm" className="ml-1.5 text-background font-medium">
             <Link href="/register">get started</Link>
           </Button>
         </div>
 
         {/* Mobile / tablet: get started + hamburger */}
         <div className="flex lg:hidden items-center gap-2">
-          <Button asChild size="sm" className="bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium">
+          <Button asChild size="sm" className="text-background font-medium">
             <Link href="/register">get started</Link>
           </Button>
           <button

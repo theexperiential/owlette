@@ -293,7 +293,7 @@ export default function UploadInstallerDialog({
           <Button
             onClick={handleUpload}
             disabled={uploading || !file || !version}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             {uploading ? (
               <>

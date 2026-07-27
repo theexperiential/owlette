@@ -210,7 +210,7 @@ export function CreateWebhookDialog({
             type="button"
             onClick={handleSubmit}
             disabled={busy}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'create webhook'}
           </Button>

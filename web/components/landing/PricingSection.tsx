@@ -115,7 +115,7 @@ function TierCard({ name, price, unit, features, highlighted = false, preludeNot
         <Button
           asChild
           size="lg"
-          className="w-full sm:w-auto mx-auto bg-accent-cyan hover:bg-accent-cyan-hover text-background font-semibold px-10 h-12 text-base"
+          className="w-full sm:w-auto mx-auto text-background font-semibold px-10 h-12 text-base"
         >
           <Link href="/register">get started</Link>
         </Button>

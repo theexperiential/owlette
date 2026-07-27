@@ -267,7 +267,7 @@ export function ProcessDialog({
             </Button>
             <Button
               onClick={onSave}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               {mode === 'create' ? 'create process' : 'save changes'}
             </Button>

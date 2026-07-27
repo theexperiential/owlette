@@ -676,7 +676,7 @@ export default function ScheduleEditor({
           <Button variant="ghost" onClick={() => onOpenChange(false)} className="bg-secondary border border-border cursor-pointer">
             cancel
           </Button>
-          <Button onClick={handleSave} className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer">
+          <Button onClick={handleSave} className="text-gray-900 cursor-pointer">
             save schedule
           </Button>
         </DialogFooter>

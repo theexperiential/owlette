@@ -941,7 +941,7 @@ export default function ProjectDistributionDialog({
 
           {/* Description (optional, ≤500 chars). Plaintext, no markdown.
               In "+ new version" mode this is the commit-message style
-              "what changed?" textarea. In new-roost mode it doubles as
+"what changed?" textarea. In new-roost mode it doubles as
               the first version's description. */}
           <div className="space-y-2">
             <Label htmlFor="distribution-description" className="text-white">
@@ -1208,9 +1208,9 @@ export default function ProjectDistributionDialog({
                     add (or append to) the <code className="font-mono">agent_config</code> block:
                     <pre className="mt-1 ml-4 p-2 rounded bg-background/60 text-[10px] leading-snug overflow-x-auto">
 {`"agent_config": {
-  "allowed_extract_roots": [
-    "~/Documents",
-    "${resolveExtractPath(extractPath).replace(/\\\\/g, '\\\\')}"
+"allowed_extract_roots": [
+"~/Documents",
+"${resolveExtractPath(extractPath).replace(/\\\\/g, '\\\\')}"
   ]
 }`}
                     </pre>
@@ -1399,7 +1399,7 @@ export default function ProjectDistributionDialog({
                   onClick={
                     sourceMode === 'upload' ? handleUploadDistribute : handleDistribute
                   }
-                  className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                  className="text-gray-900 cursor-pointer"
                   disabled={distributeDisabled}
                   title={distributeReason}
                 >

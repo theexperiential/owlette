@@ -346,7 +346,7 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: Props) {
             type="button"
             onClick={handleCreate}
             disabled={creating || !name.trim()}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : 'create key'}
           </Button>

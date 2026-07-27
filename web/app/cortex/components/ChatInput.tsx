@@ -172,7 +172,7 @@ export function ChatInput({
               onClick={onStop}
               size="icon"
               aria-label="stop response"
-              className="!h-auto w-10 rounded-lg bg-accent-cyan hover:bg-accent-cyan-hover flex-shrink-0"
+              className="!h-auto w-10 rounded-lg flex-shrink-0"
             >
               <Square className="h-4 w-4 text-gray-900 fill-gray-900" />
             </Button>
@@ -182,7 +182,7 @@ export function ChatInput({
               size="icon"
               disabled={!canSend}
               aria-label="send message"
-              className="!h-auto w-10 rounded-lg bg-accent-cyan hover:bg-accent-cyan-hover disabled:opacity-50 flex-shrink-0"
+              className="!h-auto w-10 rounded-lg disabled:opacity-50 flex-shrink-0"
             >
               <Send className="h-4 w-4 text-gray-900" />
             </Button>

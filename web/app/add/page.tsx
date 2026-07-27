@@ -180,7 +180,7 @@ export default function AddMachinePage() {
             </div>
             <Button
               onClick={() => router.push('/dashboard')}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               go to dashboard
             </Button>
@@ -251,7 +251,7 @@ export default function AddMachinePage() {
             <Button
               onClick={handleAuthorize}
               disabled={isAuthorizing}
-              className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               size="lg"
             >
               {isAuthorizing ? (

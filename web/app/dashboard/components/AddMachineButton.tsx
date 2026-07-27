@@ -271,7 +271,7 @@ export function AddMachineButton({
                   <Button
                     onClick={handleAuthorize}
                     disabled={!enterPhrase.trim() || isAuthorizing}
-                    className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isAuthorizing ? (
                       <>
@@ -374,7 +374,7 @@ export function AddMachineButton({
                   <Button
                     onClick={handleGenerate}
                     disabled={isGenerating}
-                    className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isGenerating ? (
                       <>

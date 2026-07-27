@@ -203,7 +203,7 @@ export default function EmailPage() {
           <Button
             onClick={sendTestEmail}
             disabled={isSending}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             {isSending ? (
               <>

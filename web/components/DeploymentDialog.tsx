@@ -738,7 +738,7 @@ export default function DeploymentDialog({
           </Button>
           <Button
             onClick={handleDeploy}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
             disabled={deploying}
           >
             {deploying ? (

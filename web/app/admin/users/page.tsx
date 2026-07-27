@@ -766,7 +766,7 @@ export default function UserManagementPage() {
             <Button
               onClick={handleConfirmRoleChange}
               disabled={!userToChangeRole || userToChangeRole.newRole === userToChangeRole.currentRole}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               <UserCog className="h-4 w-4 mr-2" />
               save role

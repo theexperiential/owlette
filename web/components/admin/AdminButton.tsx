@@ -11,7 +11,7 @@ const VARIANT_CLASSES = {
   outline: 'border-border bg-background text-foreground hover:bg-accent! hover:text-foreground!',
   card:    'border-border bg-card text-foreground hover:bg-accent! hover:text-foreground!',
   danger:  'border-border text-red-400 hover:bg-red-900! hover:border-red-800! hover:text-red-200!',
-  primary: 'bg-accent-cyan hover:bg-accent-cyan-hover! text-gray-900',
+  primary: '! text-gray-900',
 } as const;
 
 type AdminVariant = keyof typeof VARIANT_CLASSES;
