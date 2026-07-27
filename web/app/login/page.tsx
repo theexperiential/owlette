@@ -326,7 +326,8 @@ function LoginForm() {
               </div>
 
               {emailFormOpen && (
-                <>
+                <div className="form-reveal">
+                  <div className="space-y-5">
                   <div className="space-y-2">
                     <Label htmlFor="password" className="text-foreground">password</Label>
                     <Input
@@ -345,7 +346,8 @@ function LoginForm() {
                   <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading}>
                     {loading ? 'signing in...' : 'sign in with email'}
                   </Button>
-                </>
+                  </div>
+                </div>
               )}
             </form>
 

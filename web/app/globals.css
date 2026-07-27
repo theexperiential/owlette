@@ -710,6 +710,58 @@ input[type="week"] {
   }
 }
 
+/* ── Progressive form reveal ──────────────────────────────────────────────
+ * Slides the progressively-disclosed part of a form open when it mounts
+ * (login / register expand the email path on first focus).
+ *
+ * grid-template-rows 0fr -> 1fr, not max-height: this animates to the
+ * content's NATURAL height, so it works regardless of how tall the revealed
+ * fields are. A max-height guess either clips tall content or eases against
+ * dead space and reads sluggish.
+ *
+ * Runs as an animation rather than a transition because the element animates
+ * ON MOUNT — there is no previous state to transition from. That keeps the
+ * conditional render intact, which matters: the Turnstile widget must not
+ * mount (and hit Cloudflare) until the email path is actually chosen.
+ *
+ * Expand only, deliberately. `emailFormOpen` latches — it is set true on first
+ * focus and never false — so a partly-filled form can't collapse out from
+ * under the user, and a collapse animation would be unreachable code. If a
+ * form ever needs to close, swap the animation for a transition on a
+ * data-attribute and keep the children mounted.
+ *
+ * `min-height: 0` on the child is required or the grid row refuses to
+ * collapse below the content's intrinsic height and nothing animates.
+ */
+.form-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: form-reveal 260ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.form-reveal > * {
+  /* min-height:0 or the grid row refuses to shrink below the content's
+     intrinsic height. overflow:hidden or the content simply spills out of the
+     collapsed row and stays fully visible — the row animates, the reveal does
+     not. Both are required; neither is optional. */
+  min-height: 0;
+  overflow: hidden;
+}
+@keyframes form-reveal {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .form-reveal {
+    animation: none;
+  }
+}
+
 /* Quiet variant — footer and other muted contexts. Same mechanic. */
 .hl-link-muted {
   --hl-bg: var(--secondary);

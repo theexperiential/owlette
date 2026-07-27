@@ -231,7 +231,8 @@ export default function RegisterPage() {
             </div>
 
             {emailFormOpen && (
-              <>
+              <div className="form-reveal">
+                <div className="space-y-5">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="firstName" className="text-foreground">first name</Label>
@@ -289,11 +290,6 @@ export default function RegisterPage() {
                     className="bg-input border-border text-foreground placeholder:text-muted-foreground"
                   />
                 </div>
-              </>
-            )}
-
-            {emailFormOpen && (
-              <>
                 <div className="flex items-start space-x-2">
                   <Checkbox
                     id="terms"
@@ -330,7 +326,8 @@ export default function RegisterPage() {
                 <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || (TURNSTILE_ENABLED && !turnstileToken)}>
                   {loading ? 'creating account...' : 'create account'}
                 </Button>
-              </>
+                </div>
+              </div>
             )}
           </form>
 
