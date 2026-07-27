@@ -25,9 +25,17 @@ function docRef(id: string) {
  * Builds a chainable query stub whose terminal `.get()` yields `docs`.
  * Each subcollection call is recorded so tests can assert the query shape.
  */
-function collectionStub(name: string, docs: Array<{ id: string }>) {
+/**
+ * `docs` is a live backlog: each `.get()` serves the next page and CONSUMES it,
+ * so repeated queries drain rather than returning the same page forever. The
+ * original stub returned an identical page on every call, which made a
+ * one-page-per-site implementation indistinguishable from a draining one — the
+ * exact bug that reached dev.
+ */
+function collectionStub(name: string, backlog: Array<{ id: string }>) {
   const entry: { collection: string; where?: unknown[]; limit?: number } = { collection: name };
   queryLog.push(entry);
+  let pageSize = Number.MAX_SAFE_INTEGER;
   const q = {
     where: (...args: unknown[]) => {
       entry.where = args;
@@ -36,12 +44,17 @@ function collectionStub(name: string, docs: Array<{ id: string }>) {
     orderBy: () => q,
     limit: (n: number) => {
       entry.limit = n;
+      pageSize = n;
       return q;
     },
-    get: async () => ({
-      empty: docs.length === 0,
-      docs: docs.map(d => ({ id: d.id, ref: docRef(d.id) })),
-    }),
+    get: async () => {
+      const page = backlog.splice(0, pageSize);
+      return {
+        empty: page.length === 0,
+        size: page.length,
+        docs: page.map(d => ({ id: d.id, ref: docRef(d.id) })),
+      };
+    },
   };
   return q;
 }
@@ -177,16 +190,41 @@ describe('GET /api/cron/retention', () => {
   });
 
   it('stops at the per-run ceiling and flags truncated', async () => {
-    // 30 sites x 400 stale logs each would exceed the 2000-doc budget.
-    siteLogs = Array.from({ length: 400 }, (_, i) => ({ id: `log${i}` }));
-    mockSitesGet.mockResolvedValue({
-      docs: Array.from({ length: 30 }, (_, i) => siteDoc(`site-${i}`)),
-    });
+    // One site holding far more than the 2000-doc whole-run budget.
+    siteLogs = Array.from({ length: 5000 }, (_, i) => ({ id: `log${i}` }));
+    mockSitesGet.mockResolvedValue({ docs: [siteDoc('site-a')] });
 
     const body = await (await GET(request('cron-secret'))).json();
 
     expect(body.truncated).toBe(true);
-    expect(body.deleted.logs).toBeLessThanOrEqual(2000);
-    expect(body.deleted.logs).toBeGreaterThan(0);
+    expect(body.deleted.logs).toBe(2000);
+  });
+
+  it('drains a site across multiple pages in one run', async () => {
+    // 900 stale logs > one 400-doc page but < the 2000 budget, so a correct
+    // implementation clears all of them and reports truncated:false. A
+    // one-page-per-site implementation would delete 400 and still claim
+    // truncated:false — stale data left behind under an all-clear.
+    siteLogs = Array.from({ length: 900 }, (_, i) => ({ id: `log${i}` }));
+    mockSitesGet.mockResolvedValue({ docs: [siteDoc('site-a')] });
+
+    const body = await (await GET(request('cron-secret'))).json();
+
+    expect(body.deleted.logs).toBe(900);
+    expect(body.truncated).toBe(false);
+    expect(siteLogs).toHaveLength(0);
+  });
+
+  it('drains metrics buckets across pages too', async () => {
+    machines = [{ id: 'm1' }];
+    machineBuckets = Array.from({ length: 750 }, (_, i) => ({
+      id: `2020-01-01-${String(i).padStart(2, '0')}`,
+    }));
+    mockSitesGet.mockResolvedValue({ docs: [siteDoc('site-a')] });
+
+    const body = await (await GET(request('cron-secret'))).json();
+
+    expect(body.deleted.metrics).toBe(750);
+    expect(body.truncated).toBe(false);
   });
 });

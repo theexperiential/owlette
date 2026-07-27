@@ -20,11 +20,15 @@
  * backfilling existing data. This runs on the same cron-job.org schedule as the
  * other four jobs and needs no console-side configuration.
  *
- * Bounded by design. Each run stops at MAX_DELETES_PER_RUN and reports
- * `truncated: true`; the next run continues. That keeps a first run against a
- * large backlog from running long or blowing through Firestore write limits,
- * at the cost of taking several runs to drain. Deleting oldest-first means
- * progress is monotonic.
+ * Bounded by design. Each collection is drained page by page until it is empty
+ * or the whole-run MAX_DELETES_PER_RUN budget is spent; hitting the budget is
+ * the ONLY thing that sets `truncated: true`. Deleting oldest-first means
+ * progress is monotonic across runs.
+ *
+ * `truncated` is a load-bearing signal, not decoration — it is how an operator
+ * knows whether data older than the window still exists. Any change that can
+ * leave stale documents behind while reporting `truncated: false` reintroduces
+ * exactly the silent-underdelivery bug this job was written to remove.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -109,17 +113,27 @@ export async function GET(request: NextRequest) {
       if (budget <= 0) break;
 
       // --- event logs -------------------------------------------------
-      const staleLogs = await site.ref
-        .collection('logs')
-        .where('timestamp', '<', logsCutoff)
-        .orderBy('timestamp', 'asc')
-        .limit(Math.min(budget, QUERY_PAGE_SIZE))
-        .get();
+      // Drain in pages rather than taking a single page per site. A single
+      // page left older data behind while the response still reported
+      // truncated:false, i.e. "nothing left to do" — which is exactly the
+      // silent-underdelivery failure this job exists to prevent.
+      while (budget > 0) {
+        const pageSize = Math.min(budget, QUERY_PAGE_SIZE);
+        const staleLogs = await site.ref
+          .collection('logs')
+          .where('timestamp', '<', logsCutoff)
+          .orderBy('timestamp', 'asc')
+          .limit(pageSize)
+          .get();
 
-      if (!staleLogs.empty) {
+        if (staleLogs.empty) break;
+
         const removed = await deleteRefs(db, staleLogs.docs.map(d => d.ref));
         logsDeleted += removed;
         budget -= removed;
+
+        // A short page means the collection is drained for this cutoff.
+        if (staleLogs.size < pageSize) break;
       }
 
       if (budget <= 0) break;
@@ -129,18 +143,23 @@ export async function GET(request: NextRequest) {
       for (const machine of machines.docs) {
         if (budget <= 0) break;
 
-        const staleBuckets = await machine.ref
-          .collection('metrics_history')
-          .where(FieldPath.documentId(), '<', metricsCutoffBucket)
-          .orderBy(FieldPath.documentId(), 'asc')
-          .limit(Math.min(budget, QUERY_PAGE_SIZE))
-          .get();
+        while (budget > 0) {
+          const pageSize = Math.min(budget, QUERY_PAGE_SIZE);
+          const staleBuckets = await machine.ref
+            .collection('metrics_history')
+            .where(FieldPath.documentId(), '<', metricsCutoffBucket)
+            .orderBy(FieldPath.documentId(), 'asc')
+            .limit(pageSize)
+            .get();
 
-        if (staleBuckets.empty) continue;
+          if (staleBuckets.empty) break;
 
-        const removed = await deleteRefs(db, staleBuckets.docs.map(d => d.ref));
-        metricsDeleted += removed;
-        budget -= removed;
+          const removed = await deleteRefs(db, staleBuckets.docs.map(d => d.ref));
+          metricsDeleted += removed;
+          budget -= removed;
+
+          if (staleBuckets.size < pageSize) break;
+        }
       }
     }
 
