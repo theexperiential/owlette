@@ -149,6 +149,40 @@ The current cron routes require `X-Cron-Secret: <CRON_SECRET>`. Use a scheduler 
 
 ---
 
+## scheduled endpoints
+
+Every scheduled route in the app, in one place. All are `GET`, all authenticate with
+a header, and all must be registered **per environment** — dev and prod use
+different `CRON_SECRET` values, so a prod secret against a dev host correctly
+returns 401.
+
+| endpoint | schedule | auth header | purpose |
+|--|--|--|--|
+| `/api/cron/health-check` | `*/5 * * * *` | `X-Cron-Secret` | flags machines with stale heartbeats |
+| `/api/cron/process-alerts` | `*/3 * * * *` | `X-Cron-Secret` | drains `pending_process_alerts` into email |
+| `/api/cron/display-alerts` | `*/3 * * * *` | `X-Cron-Secret` | drains `pending_display_alerts` into email |
+| `/api/cron/status-ping` | every 60s | `X-Cron-Secret` | writes status pings, publishes to Instatus |
+| `/api/cron/retention` | daily | `X-Cron-Secret` | deletes metrics + logs past 90 days |
+| `/api/cortex/escalation` | every 5 min | `Authorization: Bearer` | Cortex autonomous-mode backstop poller |
+
+<Callout type="warning" title={"Two failure modes that are silent"}>
+
+Most of these fail **quietly** if unscheduled — nothing errors, the work simply
+never happens. The alert digests just let the queue grow. `/api/cron/retention`
+leaves data past its stated retention window, which contradicts the privacy
+policy rather than merely degrading a feature.
+
+`/api/cortex/escalation` is the odd one out: it takes
+`Authorization: Bearer <CRON_SECRET>`, **not** `X-Cron-Secret`.
+
+</Callout>
+
+A healthy response is `200`. `401` means the header or its value is wrong for that
+environment. `500` means the handler threw — check the host logs for the route's
+own prefix, e.g. `[retention] failed:`.
+
+---
+
 ## cron health checks
 
 Set up the machine offline detection cron:
@@ -193,6 +227,47 @@ X-Cron-Secret: <CRON_SECRET value>
 
 Use cron expression `*/3 * * * *`. A missing schedule here fails **silently** — the queue
 just grows and nobody is notified — so confirm it per environment (dev *and* prod).
+
+### cortex escalation backstop
+
+Only needed when autonomous Cortex is enabled for a site. It is a backstop poller,
+so a missed run delays escalations rather than losing them. Every 5 minutes:
+
+```text
+GET https://<your-app>/api/cortex/escalation
+Authorization: Bearer <CRON_SECRET value>
+```
+
+Note the header: this route reads `Authorization: Bearer`, unlike the five
+`X-Cron-Secret` routes. Sending the wrong header shape returns 401 with no other
+symptom, so verify a run returns 200 after scheduling it.
+
+### data retention sweep
+
+Deletes machine metrics and event logs older than 90 days. This is what backs the
+retention commitment in the privacy policy — without it, that statement is not
+true. Schedule daily, in every environment:
+
+```text
+GET https://<your-app>/api/cron/retention
+X-Cron-Secret: <CRON_SECRET value>
+```
+
+Use cron expression `0 4 * * *` (or any quiet hour). A successful run returns:
+
+```json
+{"ok":true,"deleted":{"metrics":107,"logs":496},
+ "retentionDays":{"metrics":90,"logs":90},"truncated":false}
+```
+
+`truncated: true` means the run hit its 2000-document ceiling and older data
+still remains — the next run continues from the same oldest-first position.
+Against a large first-time backlog, schedule it hourly until a run reports
+`truncated: false`, then drop back to daily.
+
+Changing the window means changing **both** `METRICS_RETENTION_DAYS` /
+`LOGS_RETENTION_DAYS` in the route and the stated periods in the privacy policy.
+They are a pair; changing one alone makes the policy inaccurate.
 
 ### public status-page ping
 
