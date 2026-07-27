@@ -348,7 +348,7 @@ export default function PrivacyPage() {
               <h3 className="text-lg font-medium text-foreground mt-6 mb-3">how to exercise your rights</h3>
               <p>
                 email{' '}
-                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan underline underline-offset-2">
+                <a href="mailto:support@owlette.app" className="hl-link text-accent-cyan">
                   support@owlette.app
                 </a>{' '}
                 from the address on your account, or contact us as described in section 15. we respond
@@ -401,7 +401,7 @@ export default function PrivacyPage() {
               </p>
               <p className="mt-4">
                 to report a suspected vulnerability or security issue, email{' '}
-                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan underline underline-offset-2">
+                <a href="mailto:support@owlette.app" className="hl-link text-accent-cyan">
                   support@owlette.app
                 </a>{' '}
                 with &quot;security&quot; in the subject line.
@@ -439,7 +439,7 @@ export default function PrivacyPage() {
               </p>
               <p className="mt-4">
                 <strong>email:</strong>{' '}
-                <a href="mailto:support@owlette.app" className="text-accent-cyan hover:text-accent-cyan underline underline-offset-2">
+                <a href="mailto:support@owlette.app" className="hl-link text-accent-cyan">
                   support@owlette.app
                 </a>
               </p>

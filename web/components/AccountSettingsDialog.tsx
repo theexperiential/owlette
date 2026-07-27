@@ -14,7 +14,7 @@ import { Switch } from '@/components/ui/switch';
 import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User, Bell, BellOff, Trash2, Key, Plus, X, Code } from 'lucide-react';
 import { CopyButton } from '@/components/CopyButton';
 import Link from 'next/link';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { PasskeyManager } from '@/components/PasskeyManager';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import {
@@ -1179,7 +1179,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                         <Link
                           href="/settings/api-keys"
                           onClick={() => onOpenChange(false)}
-                          className="text-accent-cyan hover:underline"
+                          className="hl-link text-accent-cyan"
                         >
                           manage api keys
                         </Link>

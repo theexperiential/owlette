@@ -286,7 +286,7 @@ export function FolderDropzone({
                     type="button"
                     onClick={handleFsaPick}
                     disabled={disabled || enumerating}
-                    className="underline underline-offset-2 hover:text-accent-cyan disabled:opacity-50 disabled:no-underline cursor-pointer"
+                    className="hl-link disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
                   >
                     folder
                   </button>
@@ -295,14 +295,14 @@ export function FolderDropzone({
                     type="button"
                     onClick={handleFsaFilesPick}
                     disabled={disabled || enumerating}
-                    className="underline underline-offset-2 hover:text-accent-cyan disabled:opacity-50 disabled:no-underline cursor-pointer"
+                    className="hl-link disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
                   >
                     more files
                   </button>
                 </>
               ) : (
                 <>
-                  <label className={`underline underline-offset-2 hover:text-accent-cyan ${disabled || enumerating ? 'opacity-50 no-underline cursor-not-allowed' : 'cursor-pointer'}`}>
+                  <label className={`${disabled || enumerating ? 'opacity-50 cursor-not-allowed' : 'hl-link cursor-pointer'}`}>
                     folder
                     <input
                       type="file"
@@ -314,7 +314,7 @@ export function FolderDropzone({
                     />
                   </label>
                   {' or '}
-                  <label className={`underline underline-offset-2 hover:text-accent-cyan ${disabled || enumerating ? 'opacity-50 no-underline cursor-not-allowed' : 'cursor-pointer'}`}>
+                  <label className={`${disabled || enumerating ? 'opacity-50 cursor-not-allowed' : 'hl-link cursor-pointer'}`}>
                     more files
                     <input
                       type="file"

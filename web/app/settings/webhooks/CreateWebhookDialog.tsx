@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { ROOST_WEBHOOK_EVENTS, type RoostWebhookEvent } from '@/lib/webhookEvents';
 
 interface CreateWebhookDialogProps {
@@ -171,7 +171,7 @@ export function CreateWebhookDialog({
               <button
                 type="button"
                 onClick={toggleAll}
-                className="text-xs text-accent-cyan hover:underline cursor-pointer"
+                className="hl-link text-xs text-accent-cyan cursor-pointer"
               >
                 {selected.size === ROOST_WEBHOOK_EVENTS.length
                   ? 'clear all'

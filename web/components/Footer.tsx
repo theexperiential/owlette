@@ -57,7 +57,7 @@ export function Footer() {
             href="https://tridant.io"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-muted-foreground hover:text-muted-foreground hover:underline transition-colors"
+            className="hl-link hl-link-muted text-muted-foreground"
           >
             tridant
           </Link>
@@ -65,28 +65,28 @@ export function Footer() {
         <p className="text-center text-xs text-muted-foreground mt-2 flex items-center justify-center gap-2">
           <Link
             href="/docs"
-            className="hover:text-muted-foreground transition-colors"
+            className="hl-link hl-link-muted"
           >
             docs
           </Link>
           <span>&middot;</span>
           <Link
             href="/privacy"
-            className="hover:text-muted-foreground transition-colors"
+            className="hl-link hl-link-muted"
           >
             privacy
           </Link>
           <span>&middot;</span>
           <Link
             href="/terms"
-            className="hover:text-muted-foreground transition-colors"
+            className="hl-link hl-link-muted"
           >
             terms
           </Link>
           <span>&middot;</span>
           <Link
             href="/for-ai"
-            className="hover:text-muted-foreground transition-colors"
+            className="hl-link hl-link-muted"
           >
             for AI
           </Link>
@@ -95,7 +95,7 @@ export function Footer() {
             href="https://github.com/theexperiential/Owlette"
             target="_blank"
             rel="noopener noreferrer"
-            className="hover:text-muted-foreground transition-colors"
+            className="hl-link hl-link-muted"
           >
             source (FSL-1.1-Apache-2.0)
           </Link>

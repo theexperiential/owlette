@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { LoadingWord } from '@/components/LoadingWord';
 import { EyeIcon, EyeOffIcon } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 type Status = 'verifying' | 'ready' | 'invalid';
 
@@ -130,7 +130,7 @@ function ResetPasswordForm() {
                 request a new link
               </Button>
               <div className="text-center text-sm text-muted-foreground">
-                <a href="/login" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
+                <a href="/login" className="hl-link text-accent-cyan">
                   back to sign in
                 </a>
               </div>
@@ -193,7 +193,7 @@ function ResetPasswordForm() {
               </Button>
 
               <div className="text-center text-sm text-muted-foreground">
-                <a href="/login" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
+                <a href="/login" className="hl-link text-accent-cyan">
                   back to sign in
                 </a>
               </div>

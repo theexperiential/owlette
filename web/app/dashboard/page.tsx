@@ -17,7 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Plus, LayoutGrid, List, ChevronsUpDown, ChevronsDownUp, Square, Copy, Trash2, Download, Monitor, Cog, Settings2, RotateCw, Loader2, CheckCircle2 } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody } from '@/components/ui/table';
@@ -1297,7 +1297,7 @@ export default function DashboardPage() {
                     <button
                       type="button"
                       onClick={() => { setAddMachineTab('generate'); setAddMachineOpen(true); }}
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer underline-offset-2 hover:underline"
+                      className="hl-link hl-link-muted text-xs text-muted-foreground cursor-pointer"
                     >
                       deploying many machines at once? generate a silent-install code
                     </button>
