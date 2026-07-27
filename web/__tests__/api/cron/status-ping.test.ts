@@ -178,15 +178,34 @@ describe('GET /api/cron/status-ping', () => {
     expect(mockSetInstatusComponentStatus).not.toHaveBeenCalled();
   });
 
-  it('uses OWLETTE_STATUS_BASE_URL when configured', async () => {
+  it('never forwards a request-derived origin as the probe target (SSRF guard)', async () => {
+    // The route used to pass `request.nextUrl.origin` as a baseUrl fallback,
+    // which let a caller holding CRON_SECRET steer the outbound probes at an
+    // arbitrary host via the Host header — blind SSRF, plus status-page
+    // poisoning. It must now resolve the target from server env only, inside
+    // publicBaseUrl(), so nothing request-derived reaches runStatusHealthChecks.
+    const res = await GET(
+      new NextRequest('http://attacker.example/api/cron/status-ping', {
+        headers: { 'x-cron-secret': 'cron-secret' },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockRunStatusHealthChecks).toHaveBeenCalledWith({});
+    const [[passed]] = mockRunStatusHealthChecks.mock.calls;
+    expect(JSON.stringify(passed ?? {})).not.toContain('attacker.example');
+  });
+
+  it('leaves OWLETTE_STATUS_BASE_URL resolution to publicBaseUrl, not the route', async () => {
+    // Setting the env var must NOT cause the route to forward it explicitly —
+    // publicBaseUrl() reads it directly. Pinning this keeps the route free of
+    // any baseUrl plumbing that a future edit could re-point at the request.
     process.env.OWLETTE_STATUS_BASE_URL = 'https://status-target.example';
 
     const res = await GET(request('cron-secret'));
 
     expect(res.status).toBe(200);
-    expect(mockRunStatusHealthChecks).toHaveBeenCalledWith({
-      baseUrl: 'https://status-target.example',
-    });
+    expect(mockRunStatusHealthChecks).toHaveBeenCalledWith({});
   });
 
   it('publishes degraded after two consecutive API failures', async () => {

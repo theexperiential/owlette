@@ -203,9 +203,24 @@ export async function GET(request: NextRequest) {
 
   try {
     const previousPings = await latestStatusPings();
-    const results = await runStatusHealthChecks({
-      baseUrl: process.env.OWLETTE_STATUS_BASE_URL || request.nextUrl.origin,
-    });
+    // Server env only — deliberately NOT `request.nextUrl.origin`.
+    //
+    // The origin derives from the Host header, so a caller holding CRON_SECRET
+    // could point these probes at an arbitrary host (blind SSRF: the response
+    // body is discarded, but status code and latency leak internal
+    // reachability) and simultaneously poison the status page with health data
+    // for an origin that isn't ours.
+    //
+    // Omitting the key lets publicBaseUrl() resolve from trusted sources only:
+    // OWLETTE_STATUS_BASE_URL -> NEXT_PUBLIC_APP_URL -> RAILWAY_PUBLIC_DOMAIN
+    // -> https://owlette.app. RAILWAY_PUBLIC_DOMAIN is platform-injected, so on
+    // Railway each service still probes its own domain (dev probes dev, prod
+    // probes prod) with no per-environment config; the Vercel failover origin,
+    // which has no RAILWAY_* vars by design, lands on the owlette.app default.
+    //
+    // Mirrors trustedBaseUrl() in /api/auth/forgot-password, which refuses the
+    // Host header for the same reason.
+    const results = await runStatusHealthChecks({});
     const ping = await writeStatusPing(results);
     const updates = computeComponentStatusUpdates(
       results,
