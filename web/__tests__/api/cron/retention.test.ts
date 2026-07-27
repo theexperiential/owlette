@@ -1,0 +1,185 @@
+/** @jest-environment node */
+
+import { NextRequest } from 'next/server';
+
+const mockBatchDelete = jest.fn();
+const mockBatchCommit = jest.fn().mockResolvedValue(undefined);
+const mockSitesGet = jest.fn();
+
+/** Records every query built against a subcollection, for assertions. */
+const queryLog: Array<{ collection: string; where?: unknown[]; limit?: number }> = [];
+
+jest.mock('firebase-admin/firestore', () => ({
+  FieldPath: { documentId: () => '__name__' },
+  Timestamp: {
+    fromDate: (d: Date) => ({ __ts: d.getTime(), toDate: () => d }),
+  },
+}));
+
+function docRef(id: string) {
+  return { id, __ref: true };
+}
+
+/**
+ * Builds a chainable query stub whose terminal `.get()` yields `docs`.
+ * Each subcollection call is recorded so tests can assert the query shape.
+ */
+function collectionStub(name: string, docs: Array<{ id: string }>) {
+  const entry: { collection: string; where?: unknown[]; limit?: number } = { collection: name };
+  queryLog.push(entry);
+  const q = {
+    where: (...args: unknown[]) => {
+      entry.where = args;
+      return q;
+    },
+    orderBy: () => q,
+    limit: (n: number) => {
+      entry.limit = n;
+      return q;
+    },
+    get: async () => ({
+      empty: docs.length === 0,
+      docs: docs.map(d => ({ id: d.id, ref: docRef(d.id) })),
+    }),
+  };
+  return q;
+}
+
+let siteLogs: Array<{ id: string }> = [];
+let machineBuckets: Array<{ id: string }> = [];
+let machines: Array<{ id: string }> = [];
+
+const mockDb = {
+  collection: (name: string) => {
+    if (name === 'sites') return { get: mockSitesGet };
+    return collectionStub(name, []);
+  },
+  batch: () => ({ delete: mockBatchDelete, commit: mockBatchCommit }),
+};
+
+jest.mock('@/lib/firebase-admin', () => ({
+  getAdminDb: () => mockDb,
+}));
+
+import { GET, METRICS_RETENTION_DAYS, LOGS_RETENTION_DAYS } from '@/app/api/cron/retention/route';
+
+function siteDoc(id: string) {
+  return {
+    id,
+    ref: {
+      collection: (name: string) => {
+        if (name === 'logs') return collectionStub('logs', siteLogs);
+        if (name === 'machines') {
+          return {
+            get: async () => ({
+              docs: machines.map(m => ({
+                id: m.id,
+                ref: {
+                  collection: () => collectionStub('metrics_history', machineBuckets),
+                },
+              })),
+            }),
+          };
+        }
+        return collectionStub(name, []);
+      },
+    },
+  };
+}
+
+function request(secret?: string) {
+  return new NextRequest('http://localhost/api/cron/retention', {
+    headers: secret ? { 'x-cron-secret': secret } : {},
+  });
+}
+
+describe('GET /api/cron/retention', () => {
+  const originalSecret = process.env.CRON_SECRET;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    queryLog.length = 0;
+    siteLogs = [];
+    machineBuckets = [];
+    machines = [];
+    process.env.CRON_SECRET = 'cron-secret';
+    mockSitesGet.mockResolvedValue({ docs: [] });
+  });
+
+  afterAll(() => {
+    process.env.CRON_SECRET = originalSecret;
+  });
+
+  it('rejects a missing cron secret before reading anything', async () => {
+    const res = await GET(request());
+    expect(res.status).toBe(401);
+    expect(mockSitesGet).not.toHaveBeenCalled();
+  });
+
+  it('rejects a wrong cron secret', async () => {
+    const res = await GET(request('nope'));
+    expect(res.status).toBe(401);
+    expect(mockSitesGet).not.toHaveBeenCalled();
+  });
+
+  it('reports zero deletions when nothing is past retention', async () => {
+    mockSitesGet.mockResolvedValue({ docs: [siteDoc('site-a')] });
+
+    const res = await GET(request('cron-secret'));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.deleted).toEqual({ metrics: 0, logs: 0 });
+    expect(body.truncated).toBe(false);
+    expect(mockBatchCommit).not.toHaveBeenCalled();
+  });
+
+  it('deletes stale logs and metric buckets and reports the counts', async () => {
+    siteLogs = [{ id: 'log1' }, { id: 'log2' }];
+    machines = [{ id: 'm1' }];
+    machineBuckets = [{ id: '2020-01-01-00' }, { id: '2020-01-01-01' }, { id: '2020-01-02' }];
+    mockSitesGet.mockResolvedValue({ docs: [siteDoc('site-a')] });
+
+    const res = await GET(request('cron-secret'));
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.deleted).toEqual({ metrics: 3, logs: 2 });
+    expect(mockBatchDelete).toHaveBeenCalledTimes(5);
+    expect(body.retentionDays).toEqual({
+      metrics: METRICS_RETENTION_DAYS,
+      logs: LOGS_RETENTION_DAYS,
+    });
+  });
+
+  it('uses a YYYY-MM-DD cutoff that sorts correctly against both bucket id shapes', async () => {
+    mockSitesGet.mockResolvedValue({ docs: [siteDoc('site-a')] });
+    machines = [{ id: 'm1' }];
+
+    const body = await (await GET(request('cron-secret'))).json();
+    const cutoff: string = body.cutoffs.metricsBucket;
+
+    // Contract from lib/metricsHistoryBuckets.ts: hourly ids are the daily id
+    // plus '-HH'. Lexicographic ordering must place the hour before the cutoff
+    // date below it, and the hour on the cutoff date at or above it.
+    expect(cutoff).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const dayBefore = '2000-01-01';
+    expect(`${dayBefore}-23` < cutoff).toBe(true);
+    expect(`${cutoff}-00` < cutoff).toBe(false);
+    expect(dayBefore < cutoff).toBe(true);
+  });
+
+  it('stops at the per-run ceiling and flags truncated', async () => {
+    // 30 sites x 400 stale logs each would exceed the 2000-doc budget.
+    siteLogs = Array.from({ length: 400 }, (_, i) => ({ id: `log${i}` }));
+    mockSitesGet.mockResolvedValue({
+      docs: Array.from({ length: 30 }, (_, i) => siteDoc(`site-${i}`)),
+    });
+
+    const body = await (await GET(request('cron-secret'))).json();
+
+    expect(body.truncated).toBe(true);
+    expect(body.deleted.logs).toBeLessThanOrEqual(2000);
+    expect(body.deleted.logs).toBeGreaterThan(0);
+  });
+});

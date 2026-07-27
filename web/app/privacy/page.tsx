@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 export default function PrivacyPage() {
-  const lastUpdated = 'July 25, 2026';
+  const lastUpdated = 'July 26, 2026';
   const router = useRouter();
 
   return (
@@ -202,7 +202,8 @@ export default function PrivacyPage() {
                 <li><strong>account data:</strong> for as long as your account is active. when an account is deleted we immediately revoke its API keys, transfer any owned sites to a successor, clear its pending machine commands, and mark the account deleted so it can no longer sign in or reach your data. the underlying user record is then retained in a deleted state for audit and security purposes rather than erased outright &mdash; if you want the record itself erased, ask us and we will process it as an erasure request (see section 9).</li>
                 <li><strong>screenshots:</strong> automatically deleted 30 days after capture. the agent additionally keeps only the most recent 20 captures per machine in its history.</li>
                 <li><strong>queued machine commands:</strong> pending commands expire after 1 hour; completed command records are removed after 24 hours.</li>
-                <li><strong>machine metrics and event logs:</strong> retained for as long as the machine is registered to your account. we are in the process of introducing automatic expiry for these records and will update this policy with specific periods when it is in place.</li>
+                <li><strong>machine metrics:</strong> automatically deleted 90 days after collection.</li>
+                <li><strong>event logs:</strong> automatically deleted 90 days after the logged event.</li>
                 <li><strong>process and configuration data:</strong> until the machine is removed from your account.</li>
                 <li><strong>cortex conversations:</strong> until you delete them. deleting a conversation removes it from every listing and hides it from the interface; the underlying record is retained in a deleted state. ask us if you need it erased.</li>
                 <li><strong>deployment content:</strong> until you delete the associated release or roost.</li>
