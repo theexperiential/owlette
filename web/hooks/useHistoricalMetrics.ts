@@ -22,6 +22,7 @@ import {
   DAY_BUCKET_ID_RE,
   HOUR_BUCKET_ID_RE,
 } from '@/lib/metricsHistoryBuckets';
+import { downsampleTimeUniform, insertGapMarkers } from '@/lib/metricsDownsample';
 import type { TimeRange } from '@/components/charts';
 
 /**
@@ -155,65 +156,20 @@ function getBucketIds(start: Date, end: Date): string[] {
 }
 
 /**
- * Downsample data for performance (max points per range)
+ * All-null point of the chart's shape, used by insertGapMarkers to break the
+ * line across offline periods. Dynamic per-NIC/per-disk keys are simply absent,
+ * which Recharts treats the same as null.
  */
-function downsampleForDisplay(
-  samples: ChartDataPoint[],
-  targetCount: number
-): ChartDataPoint[] {
-  if (samples.length <= targetCount) return samples;
-
-  const step = Math.ceil(samples.length / targetCount);
-  const result: ChartDataPoint[] = [];
-
-  for (let i = 0; i < samples.length; i += step) {
-    result.push(samples[i]);
-  }
-
-  // Always include the last sample
-  if (result[result.length - 1] !== samples[samples.length - 1]) {
-    result.push(samples[samples.length - 1]);
-  }
-
-  return result;
-}
-
-/**
- * Insert null-value gap markers where consecutive samples are too far apart.
- * This causes Recharts to break the line instead of interpolating across offline periods.
- * Gap threshold = 3x the median interval between consecutive points.
- */
-function insertGapMarkers(samples: ChartDataPoint[]): ChartDataPoint[] {
-  if (samples.length < 2) return samples;
-
-  // Calculate all intervals
-  const intervals: number[] = [];
-  for (let i = 1; i < samples.length; i++) {
-    intervals.push(samples[i].time - samples[i - 1].time);
-  }
-
-  // Use median interval to determine gap threshold (robust to outliers)
-  const sorted = [...intervals].sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)];
-  const gapThreshold = Math.max(median * 3, 5 * 60 * 1000); // At least 5 minutes
-
-  const result: ChartDataPoint[] = [];
-  for (let i = 0; i < samples.length; i++) {
-    if (i > 0 && samples[i].time - samples[i - 1].time > gapThreshold) {
-      // Insert a null marker at the midpoint of the gap
-      result.push({
-        time: samples[i - 1].time + 1,
-        cpu: null,
-        memory: null,
-        disk: null,
-        gpu: null,
-        cpuTemp: null,
-        gpuTemp: null,
-      });
-    }
-    result.push(samples[i]);
-  }
-  return result;
+function makeGapPoint(time: number): ChartDataPoint {
+  return {
+    time,
+    cpu: null,
+    memory: null,
+    disk: null,
+    gpu: null,
+    cpuTemp: null,
+    gpuTemp: null,
+  };
 }
 
 /**
@@ -407,9 +363,24 @@ export function useHistoricalMetrics(
 
             allSamples.push(point);
 
+            // Memory guard for large ranges. MUST be time-uniform over the
+            // full window: buckets stream oldest-first, so an index-stepped
+            // trim here re-thins the oldest data on every pass while new
+            // samples arrive at full density — that recency bias is what made
+            // month/year charts render only their back half. Slot sampling is
+            // idempotent for already-trimmed regions, so old data survives any
+            // number of passes. For 'all', startDate is epoch 0 — anchor the
+            // window at the earliest sample instead (stable across passes
+            // because buckets arrive in chronological order).
             if (allSamples.length > MAX_FETCHED_SAMPLES * 2) {
               allSamples.sort((a, b) => a.time - b.time);
-              allSamples.splice(0, allSamples.length, ...downsampleForDisplay(allSamples, MAX_FETCHED_SAMPLES));
+              const domainStart =
+                timeRange === 'all' ? allSamples[0].time : startDate.getTime();
+              allSamples.splice(
+                0,
+                allSamples.length,
+                ...downsampleTimeUniform(allSamples, MAX_FETCHED_SAMPLES, domainStart, now.getTime())
+              );
             }
           }
         }
@@ -418,10 +389,15 @@ export function useHistoricalMetrics(
       // Sort by timestamp
       allSamples.sort((a, b) => a.time - b.time);
 
-      // Downsample for performance
+      // Downsample for display — time-uniform over the same window the chart's
+      // X-axis renders, so every part of the range is represented equally.
       const maxPoints = MAX_POINTS[timeRange];
-      const downsampled = downsampleForDisplay(allSamples, maxPoints);
-      const finalData = insertGapMarkers(downsampled);
+      const domainStart =
+        timeRange === 'all' && allSamples.length > 0
+          ? allSamples[0].time
+          : startDate.getTime();
+      const downsampled = downsampleTimeUniform(allSamples, maxPoints, domainStart, now.getTime());
+      const finalData = insertGapMarkers(downsampled, makeGapPoint);
 
       setData(finalData);
       lastFetchRef.current = Date.now();
