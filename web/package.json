@@ -60,7 +60,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.3.0",
     "firebase": "^12.5.0",
-    "firebase-admin": "^13.5.0",
+    "firebase-admin": "^13.10.0",
     "fumadocs-core": "^16.8.12",
     "fumadocs-mdx": "^15.0.7",
     "fumadocs-ui": "^16.8.12",
@@ -80,7 +80,7 @@
     "react-markdown": "^10.1.0",
     "recharts": "^3.6.0",
     "remark-gfm": "^4.0.1",
-    "resend": "^6.4.2",
+    "resend": "^6.18.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
     "zod": "^4.3.6"
