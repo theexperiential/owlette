@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { CheckCircle2, XCircle, Send, Loader2, ChevronDown } from 'lucide-react';
 
 interface EmailConfig {
@@ -203,7 +203,7 @@ export default function EmailPage() {
           <Button
             onClick={sendTestEmail}
             disabled={isSending}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             {isSending ? (
               <>

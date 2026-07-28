@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/dialog';
 import { KeyRound, Trash2, RefreshCw, AlertTriangle, Clock, CheckCircle, Search, Layers, Eraser } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { AdminButton } from '@/components/admin/AdminButton';
 
 interface TokenInfo {

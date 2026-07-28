@@ -1,0 +1,41 @@
+name: Owlette CodeQL config
+
+# Shared configuration for .github/workflows/codeql.yml.
+#
+# We scan first-party application code only. Test suites, generated output, and
+# vendored provider binaries are excluded: findings there are not shippable
+# vulnerabilities, and the noise is what causes a security tab to get ignored.
+
+queries:
+  # security-extended: the default security queries plus lower-precision ones
+  # that still describe real vulnerabilities. Deliberately NOT
+  # security-and-quality, which layers maintainability findings on top and
+  # would bury the security signal on a codebase this size.
+  - uses: security-extended
+
+paths-ignore:
+  # Build, coverage, and test output
+  - '**/node_modules'
+  - '**/.next'
+  - '**/dist'
+  - '**/build'
+  - web/coverage
+  - web/e2e/.output
+
+  # Test code and fixtures — exploitability here is not a product risk
+  - '**/__tests__'
+  - '**/__mocks__'
+  - '**/*.test.ts'
+  - '**/*.test.tsx'
+  - '**/*.spec.ts'
+  - '**/test_*.py'
+  - test
+
+  # Vendored Terraform provider binaries and plugin cache
+  - infra/cloudflare/.terraform
+
+  # Documentation and internal planning notes (no shipped code)
+  - docs
+  - dev
+  - '**/*.md'
+  - '**/*.mdx'

@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Package, Plus, Loader2, Download, Trash2, CheckCircle, Copy, Sparkles, Paintbrush } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import UploadInstallerDialog from '@/components/admin/UploadInstallerDialog';
 import { formatFileSize } from '@/lib/storageUtils';
 
@@ -217,7 +217,7 @@ export default function InstallerVersionsPage() {
           </Button>
           <Button
             onClick={() => setUploadDialogOpen(true)}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             <Plus className="h-4 w-4 mr-2" />
             upload new version
@@ -497,7 +497,7 @@ export default function InstallerVersionsPage() {
             </Button>
             <Button
               onClick={confirmSetAsLatest}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               OK
             </Button>

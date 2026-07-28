@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Upload, FileUp, X, Loader2, CheckCircle } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { isValidVersion, formatFileSize } from '@/lib/storageUtils';
 import { AdminButton } from './AdminButton';
 
@@ -293,7 +293,7 @@ export default function UploadInstallerDialog({
           <Button
             onClick={handleUpload}
             disabled={uploading || !file || !version}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             {uploading ? (
               <>

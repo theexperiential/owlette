@@ -115,7 +115,7 @@ function TierCard({ name, price, unit, features, highlighted = false, preludeNot
         <Button
           asChild
           size="lg"
-          className="w-full sm:w-auto mx-auto bg-accent-cyan hover:bg-accent-cyan-hover text-background font-semibold px-10 h-12 text-base"
+          className="w-full sm:w-auto mx-auto text-background font-semibold px-10 h-12 text-base"
         >
           <Link href="/register">get started</Link>
         </Button>
@@ -158,7 +158,7 @@ export function PricingSection() {
         <div className="text-center max-w-3xl mx-auto">
           <p className="mt-10 section-subheadline">
             need volume pricing or an enterprise agreement?{' '}
-            <a href="mailto:hey@tridant.io" className="text-foreground hover:underline underline-offset-4">
+            <a href="mailto:hey@tridant.io" className="hl-link hl-link-plain text-foreground">
               get in touch
             </a>
           </p>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -9,10 +9,13 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { validatePassword, validateEmail } from '@/lib/validators';
 import { sanitizeError } from '@/lib/errorHandler';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
+import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
+import { FormError } from '@/components/ui/form-error';
+import { useFieldError } from '@/hooks/useFieldError';
 
 export default function RegisterPage() {
   const [firstName, setFirstName] = useState('');
@@ -22,59 +25,75 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  /**
+   * Progressive disclosure for the email path. Collapsed by default so Google
+   * is the visually dominant option; latches open on first email focus and
+   * never closes, so a partly-filled form can't collapse mid-entry.
+   */
+  const [emailFormOpen, setEmailFormOpen] = useState(false);
+  /** Field-targeted validation — see hooks/useFieldError.ts. Marks the
+   *  offending input invalid (red outline) and focuses it, as well as showing
+   *  the message; a message alone does not say WHERE to fix it. */
+  const { error: formError, fail, clear: clearError, fieldProps } = useFieldError('register-form-error');
+  const turnstileRef = useRef<TurnstileHandle>(null);
   const { signUp, signInWithGoogle } = useAuth();
   const router = useRouter();
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    clearError();
 
-    // Check terms agreement
-    if (!agreedToTerms) {
-      toast.error('you must agree to the terms of service and privacy policy');
-      return;
+    // Empty-field checks are ours now: the form is noValidate, so the browser's
+    // native bubble no longer fires (and never could be styled to match).
+    if (!email.trim()) {
+      return fail('email', 'enter your email address');
+    }
+    if (!password) {
+      return fail('password', 'choose a password');
     }
 
-    // Validate email
     const emailValidation = validateEmail(email);
     if (!emailValidation.isValid) {
-      toast.error(emailValidation.error);
-      return;
+      return fail('email', emailValidation.error ?? 'enter a valid email address');
     }
 
-    // Validate password strength
     const passwordValidation = validatePassword(password);
     if (!passwordValidation.isValid) {
-      toast.error(passwordValidation.error);
-      return;
+      return fail('password', passwordValidation.error ?? 'choose a stronger password');
     }
 
-    // Check password confirmation
     if (password !== confirmPassword) {
-      toast.error('passwords do not match');
-      return;
+      return fail('confirmPassword', 'passwords do not match');
+    }
+
+    if (!agreedToTerms) {
+      return fail('terms', 'agree to the terms of service and privacy policy to continue');
     }
 
     setLoading(true);
 
     try {
-      await signUp(email, password, firstName, lastName);
+      await signUp(email, password, firstName, lastName, turnstileToken);
       toast.success('account created successfully!');
       // Redirect to 2FA setup (mandatory for new users)
       router.push('/setup-2fa');
     } catch (error) {
       toast.error(sanitizeError(error));
+      // Turnstile tokens are single-use. The page stays mounted after a failed
+      // submit, so the consumed token has to be cleared before a retry.
+      turnstileRef.current?.reset();
     } finally {
       setLoading(false);
     }
   };
 
   const handleGoogleSignup = async () => {
-    // Check terms agreement
-    if (!agreedToTerms) {
-      toast.error('you must agree to the terms of service and privacy policy');
-      return;
-    }
-
+    // No agreedToTerms gate here. The explicit checkbox lives inside the email
+    // form, so it is not reachable on the Google path; consent for that path is
+    // given by the notice rendered directly beneath the Google button
+    // ("by continuing you agree to..."), which is the standard pattern for
+    // federated sign-up. Both paths still surface the same two links.
     setLoading(true);
 
     try {
@@ -90,131 +109,52 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center p-4">
+    <div className="relative flex min-h-screen items-center justify-center p-4 pb-32">
       {/* Grid background */}
       <div className="absolute inset-0 dot-grid opacity-30" />
       <div className="absolute inset-0 blueprint-grid opacity-15" />
-      <Card className="relative z-10 w-full max-w-md border-border bg-card">
-        <CardHeader className="space-y-4 flex flex-col items-center">
-          <OwletteEyeIcon size={80} />
-          <div className="space-y-1 text-center">
-            <CardTitle className="text-2xl font-bold text-foreground">create an account</CardTitle>
-            <CardDescription className="text-muted-foreground">
-              join owlette to manage your fleet
-            </CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <form onSubmit={handleRegister} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="firstName" className="text-foreground">first name</Label>
-                <Input
-                  id="firstName"
-                  type="text"
-                  placeholder="John"
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  disabled={loading}
-                  className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="lastName" className="text-foreground">last name</Label>
-                <Input
-                  id="lastName"
-                  type="text"
-                  placeholder="Doe"
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  disabled={loading}
-                  className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-                />
-              </div>
+      {/* Two columns from md up: brand on the left, the actual work on the
+          right. Below md it stacks back to the original single column, so the
+          form is never squeezed on a phone. */}
+      {/* max-w-4xl, not 3xl: splitting a 3xl card in two left the form column
+          narrower than the original single-column card, which made the terms
+          line wrap mid-phrase. 4xl keeps each column wider than the old form. */}
+      <Card className="relative z-10 w-full max-w-md overflow-hidden border-border bg-card p-0 md:max-w-4xl">
+        <div className="grid md:grid-cols-2">
+          {/* Brand panel = hero, not a second grey. Same fill as the form
+              column — near-identical flat fills sharing an edge read as a
+              mistake — so the difference is carried by KIND instead of degree:
+              the brand dot-grid texture plus a radial vignette easing to
+              --card-recessed at the corners. The column border remains the
+              single boundary encoding. */}
+          <CardHeader className="relative flex flex-col items-center justify-center space-y-4 p-8 text-center md:h-full md:border-r md:border-border">
+            <div className="dot-grid absolute inset-0 -z-10 opacity-25" aria-hidden="true" />
+            <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(120%_120%_at_50%_50%,transparent_35%,var(--card-recessed)_100%)]" aria-hidden="true" />
+            <OwletteEyeIcon size={80} />
+            <div className="space-y-1">
+              <CardTitle className="text-2xl font-bold text-foreground">create an account</CardTitle>
+              <CardDescription className="text-muted-foreground">
+                join owlette to manage your fleet
+              </CardDescription>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-foreground">email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={loading}
-                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-foreground">password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={loading}
-                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-              />
-              <p className="text-xs text-muted-foreground">
-                must be 8+ characters with at least 2 of: lowercase, uppercase, numbers, special characters
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword" className="text-foreground">confirm password</Label>
-              <Input
-                id="confirmPassword"
-                type="password"
-                placeholder="••••••••"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                disabled={loading}
-                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
-              />
-            </div>
-            <div className="flex items-start space-x-2">
-              <Checkbox
-                id="terms"
-                checked={agreedToTerms}
-                onCheckedChange={(checked) => setAgreedToTerms(checked === true)}
-                disabled={loading}
-                className="mt-0.5 border-border data-[state=checked]:bg-accent-cyan data-[state=checked]:border-accent-cyan"
-              />
-              <Label htmlFor="terms" className="text-sm text-muted-foreground leading-tight cursor-pointer">
-                i agree to the{' '}
-                <Link href="/terms" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline" target="_blank">
-                  terms of service
-                </Link>
-                {' '}and{' '}
-                <Link href="/privacy" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline" target="_blank">
-                  privacy policy
-                </Link>
-              </Label>
-            </div>
-            <Button type="submit" className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || !agreedToTerms}>
-              {loading ? 'creating account...' : 'create account'}
-            </Button>
-          </form>
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-border" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">
-                or continue with
-              </span>
-            </div>
-          </div>
-
+          </CardHeader>
+          {/* space-y-6 separates the major blocks (google group / divider /
+              form / sign-in). Tighter spacing inside each group is set locally
+              so related controls stay visually attached. */}
+          <CardContent className="space-y-6 bg-card p-8">
+          {/* Google first: it is the fastest path, it needs no password, and it
+              skips the Turnstile challenge entirely (the server only gates
+              password-provider signups). Showing the full email form up front
+              buried it below six inputs. */}
+          {/* Button + its consent notice are one group, so they stay tight to
+              each other while space-y-6 pushes the next section away. */}
+          <div className="space-y-2">
           <Button
             type="button"
             variant="outline"
-            className="w-full bg-input border-border text-foreground cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleGoogleSignup}
-            disabled={loading || !agreedToTerms}
+            disabled={loading}
           >
             <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
               <path
@@ -234,16 +174,181 @@ export default function RegisterPage() {
                 fill="#EA4335"
               />
             </svg>
-            Google
+            continue with Google
           </Button>
 
-          <div className="text-center text-sm text-muted-foreground">
+          {/* Consent for the Google path. The explicit checkbox lives inside
+              the email form, which a Google user never opens, so without this
+              that path would carry no terms notice at all. */}
+          {/* text-balance evens the two lines instead of letting the trailing
+              link drop alone. Needed because the links are whitespace-nowrap
+              (so "terms of service" can't split mid-phrase), which without
+              balancing leaves "privacy policy" orphaned on its own line. */}
+          <p className="text-balance text-center text-xs text-muted-foreground leading-snug">
+            by continuing you agree to the{' '}
+            <Link href="/terms" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
+              terms of service
+            </Link>
+            {' '}and{' '}
+            <Link href="/privacy" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
+              privacy policy
+            </Link>
+          </p>
+          </div>
+
+          {/* -mx-8 cancels CardContent's p-8 so the rule runs edge to edge of
+              the column instead of floating inset. Card is overflow-hidden, so
+              the bleed can't create a horizontal scrollbar. */}
+          <div className="relative -mx-8">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t border-border" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-card px-2 text-muted-foreground">
+                or
+              </span>
+            </div>
+          </div>
+
+          <form onSubmit={handleRegister} className="space-y-5" noValidate>
+            <div className="space-y-2">
+              <Label htmlFor="email" className="text-foreground">email</Label>
+              <Input
+                id="email"
+                {...fieldProps('email')}
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                // Focus reveals the rest of the form. Focus (not click) so
+                // keyboard tabbing expands it too, and it latches on so the
+                // fields never collapse out from under a partly-filled form.
+                onFocus={() => setEmailFormOpen(true)}
+                required
+                disabled={loading}
+                className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+              />
+            </div>
+
+            {emailFormOpen && (
+              <div className="form-reveal">
+                <div className="space-y-5">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="firstName" className="text-foreground">first name</Label>
+                    <Input
+                      id="firstName"
+                      type="text"
+                      placeholder="John"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      disabled={loading}
+                      className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lastName" className="text-foreground">last name</Label>
+                    <Input
+                      id="lastName"
+                      type="text"
+                      placeholder="Doe"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      disabled={loading}
+                      className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="password" className="text-foreground">password</Label>
+                  <Input
+                    id="password"
+                    {...fieldProps('password')}
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    disabled={loading}
+                    className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    must be 8+ characters with at least 2 of: lowercase, uppercase, numbers, special characters
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="confirmPassword" className="text-foreground">confirm password</Label>
+                  <Input
+                    id="confirmPassword"
+                    {...fieldProps('confirmPassword')}
+                    type="password"
+                    placeholder="••••••••"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                    disabled={loading}
+                    className="bg-input border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                </div>
+                <div className="flex items-start space-x-2">
+                  <Checkbox
+                    id="terms"
+                    checked={agreedToTerms}
+                    onCheckedChange={(checked) => setAgreedToTerms(checked === true)}
+                    disabled={loading}
+                    className="mt-0.5 border-border data-[state=checked]:bg-accent-cyan data-[state=checked]:border-accent-cyan"
+                  />
+                  {/* Label defaults to flex, which turns each inline child into
+                      a flex item and lets "terms of service" break mid-phrase
+                      in a narrow column. Force normal inline flow and keep each
+                      link atomic. */}
+                  <Label htmlFor="terms" className="block text-balance text-sm text-muted-foreground leading-snug cursor-pointer">
+                    i agree to the{' '}
+                    <Link href="/terms" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
+                      terms of service
+                    </Link>
+                    {' '}and{' '}
+                    <Link href="/privacy" className="whitespace-nowrap hl-link text-accent-cyan" target="_blank">
+                      privacy policy
+                    </Link>
+                  </Label>
+                </div>
+
+                {/* No justify-center wrapper: size:'flexible' spans its
+                    container, so centering a fixed-width child would defeat it
+                    and leave the widget floating narrower than the inputs. */}
+                <TurnstileWidget
+                  action="register"
+                  onToken={setTurnstileToken}
+                  ref={turnstileRef}
+                />
+                <FormError message={formError?.message} id="register-form-error" />
+                <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || (TURNSTILE_ENABLED && !turnstileToken)}>
+                  {loading ? 'creating account...' : 'create account'}
+                </Button>
+                </div>
+              </div>
+            )}
+          </form>
+
+          {/* Extra top spacing + a divider so this doesn't read as part of the
+              form above it — it was easy to miss sitting flush under the
+              submit button. */}
+          {/* Full-bleed band: -mx-8/-mb-8 cancel CardContent's p-8 on three
+              sides so this owns its own spacing, then symmetric py-6 centers
+              the text within the band. Relying on the card's bottom padding
+              instead left 24px above the text and 32px below it, which read
+              as visually low. */}
+          {/* Hairline only — the fill experiment is retired. One signal per
+              boundary: the border plus symmetric py-6 does the separating. */}
+          <div className="-mx-8 -mb-8 border-t border-border px-8 py-6 text-center text-sm text-muted-foreground">
             already have an account?{' '}
-            <a href="/login" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
+            <a href="/login" className="font-medium hl-link text-accent-cyan">
               sign in
             </a>
           </div>
-        </CardContent>
+          </CardContent>
+        </div>
       </Card>
     </div>
   );

@@ -10,7 +10,7 @@ import WeekSummaryBar from '@/components/WeekSummaryBar';
 import { DEFAULT_SCHEDULE } from '@/lib/scheduleDefaults';
 import { useSchedulePresets, type SchedulePreset } from '@/hooks/useSchedulePresets';
 import type { ScheduleBlock } from '@/hooks/useFirestore';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Loader2 } from 'lucide-react';
 
 interface SchedulePresetDialogProps {
@@ -149,7 +149,7 @@ export default function SchedulePresetDialog({
           <Button
             onClick={handleSave}
             disabled={saving}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {isEditing ? 'Save Changes' : 'Create Preset'}

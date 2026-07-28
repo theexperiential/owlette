@@ -10,7 +10,7 @@ import type { ScheduleBlock } from '@/hooks/useFirestore';
 import type { SchedulePreset } from '@/hooks/useSchedulePresets';
 import { BLOCK_COLORS, BUILT_IN_PRESETS, ensureBlockColors } from '@/lib/scheduleDefaults';
 import { useAuth } from '@/contexts/AuthContext';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import DayPillSelector from '@/components/DayPillSelector';
 import { TimezoneChip } from '@/components/TimezoneChip';
 
@@ -676,7 +676,7 @@ export default function ScheduleEditor({
           <Button variant="ghost" onClick={() => onOpenChange(false)} className="bg-secondary border border-border cursor-pointer">
             cancel
           </Button>
-          <Button onClick={handleSave} className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer">
+          <Button onClick={handleSave} className="text-gray-900 cursor-pointer">
             save schedule
           </Button>
         </DialogFooter>

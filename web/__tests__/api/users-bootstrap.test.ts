@@ -123,6 +123,63 @@ describe('POST /api/users/bootstrap — abuse controls', () => {
     expect(mockBootstrapUser).not.toHaveBeenCalled();
   });
 
+  describe('turnstile challenge (provider-gated)', () => {
+    // The route has two callers: the register form (carries a token) and the
+    // AuthContext auth-state listener (cannot). The gate keys off the VERIFIED
+    // provider so Google sign-in keeps working — see the route comment.
+    const REAL_SECRET = '1x0000000000000000000000000000000AA';
+
+    afterEach(() => {
+      delete process.env.TURNSTILE_SECRET;
+      delete process.env.TURNSTILE_HOSTNAMES;
+    });
+
+    it('rejects a password-provider signup that carries no turnstile token', async () => {
+      process.env.TURNSTILE_SECRET = REAL_SECRET;
+      process.env.TURNSTILE_HOSTNAMES = 'owlette.app';
+      mockGetUser.mockResolvedValue({
+        uid: 'uid-test',
+        email: 'real@gmail.com',
+        providerData: [{ providerId: 'password' }],
+      });
+
+      const res = await POST(bootstrapReq({ displayName: 'Bot' }));
+      const { status } = await parseResponse(res);
+      expect(status).toBe(403);
+      expect(mockBootstrapUser).not.toHaveBeenCalled();
+    });
+
+    it('lets a google-provider signup through without a token', async () => {
+      process.env.TURNSTILE_SECRET = REAL_SECRET;
+      process.env.TURNSTILE_HOSTNAMES = 'owlette.app';
+      mockGetUser.mockResolvedValue({
+        uid: 'uid-test',
+        email: 'real@gmail.com',
+        providerData: [{ providerId: 'google.com' }],
+      });
+
+      const res = await POST(bootstrapReq({ displayName: 'Real Person' }));
+      const { status } = await parseResponse(res);
+      expect(status).toBe(200);
+      expect(mockBootstrapUser).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails closed when providerData is empty — an unverifiable record still needs the challenge', async () => {
+      process.env.TURNSTILE_SECRET = REAL_SECRET;
+      process.env.TURNSTILE_HOSTNAMES = 'owlette.app';
+      mockGetUser.mockResolvedValue({
+        uid: 'uid-test',
+        email: 'real@gmail.com',
+        providerData: [],
+      });
+
+      const res = await POST(bootstrapReq({ displayName: 'Unknown' }));
+      const { status } = await parseResponse(res);
+      expect(status).toBe(403);
+      expect(mockBootstrapUser).not.toHaveBeenCalled();
+    });
+  });
+
   it('returns 429 and never writes when the signup rate limit is exceeded', async () => {
     mockCheckRateLimit.mockResolvedValue({
       success: false,

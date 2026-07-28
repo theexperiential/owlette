@@ -62,7 +62,7 @@ export function EmptyStateUpload({
           <>
             <Button
               onClick={onAddMachine}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               <Download className="h-4 w-4 mr-2" />
               install agent
@@ -79,7 +79,7 @@ export function EmptyStateUpload({
         ) : (
           <Button
             onClick={onNewRoost}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             <Plus className="h-4 w-4 mr-2" />
             new roost

@@ -25,6 +25,8 @@ import { CheckCircle2, Loader2, ScrollText } from 'lucide-react';
 export default function DmcaFormPage() {
   const [state, setState] = useState<'draft' | 'submitting' | 'submitted' | 'error'>('draft');
   const [errorMessage, setErrorMessage] = useState<string>('');
+  /** id of the field that failed validation — drives its aria-invalid outline. */
+  const [invalidField, setInvalidField] = useState<string | null>(null);
   const [acknowledgement, setAcknowledgement] = useState<{
     id: string;
     elementsComplete: boolean;
@@ -36,6 +38,29 @@ export default function DmcaFormPage() {
     setState('submitting');
     setErrorMessage('');
     const form = new FormData(e.currentTarget);
+
+    // The form is noValidate (the browser's native bubble is unstyleable and
+    // foreign to the rest of the UI), so the six statutory elements are checked
+    // here. Marks the offending field invalid — Input/Textarea render the red
+    // aria-invalid outline — and focuses it, so "which box" is obvious.
+    const REQUIRED: ReadonlyArray<readonly [string, string]> = [
+      ['copyrightedWork', 'describe the copyrighted work being infringed'],
+      ['identifiedMaterial', 'identify the material you claim is infringing'],
+      ['name', 'enter your name'],
+      ['email', 'enter your email address'],
+      ['address', 'enter your address'],
+      ['signature', 'type your full legal name as an electronic signature'],
+    ];
+    for (const [field, message] of REQUIRED) {
+      if (!String(form.get(field) ?? '').trim()) {
+        setInvalidField(field);
+        setErrorMessage(message);
+        setState('error');
+        document.getElementById(field)?.focus();
+        return;
+      }
+    }
+    setInvalidField(null);
 
     const payload = {
       signature: form.get('signature'),
@@ -130,7 +155,7 @@ export default function DmcaFormPage() {
         </div>
       </div>
 
-      <form onSubmit={onSubmit} className="space-y-4">
+      <form onSubmit={onSubmit} className="space-y-4" noValidate>
         <Card>
           <CardContent className="space-y-4 pt-6">
             <div className="space-y-1">
@@ -140,6 +165,7 @@ export default function DmcaFormPage() {
               <Textarea
                 id="copyrightedWork"
                 name="copyrightedWork"
+                aria-invalid={invalidField === 'copyrightedWork' || undefined}
                 required
                 rows={3}
                 placeholder='e.g., "Neon Dreams" video installation, registered copyright TXu 2-123-456, created 2024'
@@ -153,6 +179,7 @@ export default function DmcaFormPage() {
               <Textarea
                 id="identifiedMaterial"
                 name="identifiedMaterial"
+                aria-invalid={invalidField === 'identifiedMaterial' || undefined}
                 required
                 rows={3}
                 placeholder="e.g., https://owlette.app/roosts/{roostId}, or the specific version id"
@@ -166,11 +193,17 @@ export default function DmcaFormPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="name">(3) your name</Label>
-                <Input id="name" name="name" required />
+                <Input id="name" name="name" required aria-invalid={invalidField === 'name' || undefined} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="email">email</Label>
-                <Input id="email" name="email" type="email" required />
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  required
+                  aria-invalid={invalidField === 'email' || undefined}
+                />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="phone">phone (optional)</Label>
@@ -182,6 +215,7 @@ export default function DmcaFormPage() {
                   id="address"
                   name="address"
                   required
+                  aria-invalid={invalidField === 'address' || undefined}
                   placeholder="123 Studio Lane, City, State, ZIP"
                 />
               </div>
@@ -216,7 +250,7 @@ export default function DmcaFormPage() {
 
             <div className="space-y-1">
               <Label htmlFor="signature">(6) electronic signature (type your full legal name)</Label>
-              <Input id="signature" name="signature" required />
+              <Input id="signature" name="signature" required aria-invalid={invalidField === 'signature' || undefined} />
             </div>
 
             {state === 'error' && (

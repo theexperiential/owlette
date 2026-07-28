@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Plus, Loader2, CheckCircle2, Copy, Monitor, Terminal, Download, RefreshCw } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
 import { useDeviceCodeAuthorize } from '@/hooks/useDeviceCodeAuthorize';
 
@@ -271,7 +271,7 @@ export function AddMachineButton({
                   <Button
                     onClick={handleAuthorize}
                     disabled={!enterPhrase.trim() || isAuthorizing}
-                    className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isAuthorizing ? (
                       <>
@@ -374,7 +374,7 @@ export function AddMachineButton({
                   <Button
                     onClick={handleGenerate}
                     disabled={isGenerating}
-                    className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full text-gray-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isGenerating ? (
                       <>

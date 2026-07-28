@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Users, Shield, ShieldAlert, Crown, Loader2, Settings, MoreVertical, UserCog, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { ManageUserSitesDialog } from '@/components/ManageUserSitesDialog';
 import {
@@ -766,7 +766,7 @@ export default function UserManagementPage() {
             <Button
               onClick={handleConfirmRoleChange}
               disabled={!userToChangeRole || userToChangeRole.newRole === userToChangeRole.currentRole}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               <UserCog className="h-4 w-4 mr-2" />
               save role

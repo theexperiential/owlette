@@ -12,7 +12,7 @@
 
 import React, { useState } from 'react';
 import { CheckCircle2, CircleDashed, Download, FileCog, Loader2, XCircle, Ban, AlertTriangle } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useTargetStates, type TargetState, type TargetStatus } from '@/hooks/useTargetStates';
 import type { Machine } from '@/hooks/useFirestore';
 

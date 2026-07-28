@@ -99,12 +99,55 @@ function maybeConnectEmulators(
   w.__OWLETTE_EMULATORS_CONNECTED__ = true;
 }
 
+/**
+ * Firebase App Check — attests that calls to Firebase services come from this
+ * app rather than a script hitting the API directly.
+ *
+ * This is the only instrument that reaches the login/register abuse path.
+ * `signInWithEmailAndPassword` and `createUserWithEmailAndPassword` talk to
+ * `identitytoolkit` straight from the browser, so our server is not in that
+ * request and cannot gate it — which is exactly why Turnstile is on
+ * /api/users/bootstrap and /api/auth/forgot-password but deliberately NOT on
+ * the login form (see lib/turnstile.server.ts).
+ *
+ * ⚠️  ENFORCEMENT IS A CONSOLE ACTION AND IS *NOT* IMPLIED BY THIS CODE.
+ * Initializing the SDK only makes clients START SENDING tokens. Read
+ * docs/runbooks/app-check-rollout.md before enabling enforcement on anything.
+ * The short version: enforce Authentication only. Enforcing Cloud Firestore
+ * takes the entire agent fleet offline — agents call
+ * `firestore.googleapis.com` directly over REST
+ * (agent/src/firestore_rest_client.py) and cannot produce App Check tokens,
+ * so every one of them would start getting 403s.
+ *
+ * Inert until `NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY` is set, and always
+ * skipped against the emulator so local dev and the E2E suite are unaffected.
+ */
+async function maybeInitAppCheck(firebaseApp: FirebaseApp) {
+  const siteKey = process.env.NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY;
+  if (!siteKey) return;
+  if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true') return;
+
+  try {
+    const { initializeAppCheck, ReCaptchaEnterpriseProvider } = await import('firebase/app-check');
+    initializeAppCheck(firebaseApp, {
+      provider: new ReCaptchaEnterpriseProvider(siteKey),
+      isTokenAutoRefreshEnabled: true,
+    });
+  } catch (error) {
+    // Never let attestation setup break app startup. While enforcement is off
+    // a missing token changes nothing; once it is on, the failure surfaces as
+    // rejected Firebase calls, which is the intended signal.
+    console.error('[AppCheck] initialization failed:', error);
+  }
+}
+
 if (typeof window !== 'undefined' && !getApps().length && isConfigured) {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   db = getFirestore(app);
   storage = getStorage(app);
   maybeConnectEmulators(auth, db, storage);
+  void maybeInitAppCheck(app);
 } else if (typeof window !== 'undefined' && getApps().length) {
   app = getApps()[0];
   auth = getAuth(app);

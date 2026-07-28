@@ -27,7 +27,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Bell, Plus, Trash2, Loader2, Zap, Pencil, Sparkles, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 /**
  * [B4.3] Display alerts launch banner. Auto-hides after this date regardless
@@ -444,7 +444,7 @@ export default function AlertsPage() {
 
               <Button
                 onClick={openCreateDialog}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                className="text-gray-900 cursor-pointer"
                 disabled={saving}
               >
                 <Plus className="h-5 w-5 mr-2" />
@@ -485,7 +485,7 @@ export default function AlertsPage() {
               </DropdownMenu>
               <Button
                 onClick={openCreateDialog}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                className="text-gray-900 cursor-pointer"
               >
                 <Plus className="h-4 w-4 mr-2" />
                 create rule
@@ -698,7 +698,7 @@ export default function AlertsPage() {
             <Button
               onClick={handleSaveRule}
               disabled={saving}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {editingRule ? 'save' : 'create'}

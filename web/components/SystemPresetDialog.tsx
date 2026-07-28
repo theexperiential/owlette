@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Sparkles } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useSystemPresets, type SystemPreset } from '@/hooks/useSystemPresets';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -442,7 +442,7 @@ export default function SystemPresetDialog({
           <Button
             onClick={handleSave}
             disabled={saving}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             {saving ? (
               <>

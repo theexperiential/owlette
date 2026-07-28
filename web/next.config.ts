@@ -85,16 +85,16 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
-      {
-        // CORS headers for public API endpoints (API key auth, not cookie-based)
-        source: '/api/admin/:path*',
-        headers: [
-          { key: 'Access-Control-Allow-Origin', value: '*' },
-          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' },
-          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, x-api-key, Authorization' },
-          { key: 'Access-Control-Max-Age', value: '86400' },
-        ],
-      },
+      // NOTE: a wildcard CORS block (`Access-Control-Allow-Origin: *`) used to
+      // live here for `/api/admin/:path*`. That namespace was removed in
+      // 644c57f ("feat(api): eliminate admin namespace") and its routes now
+      // live under `/api/platform/*` and `/api/installer/*`. The rule was
+      // therefore dead — but it was also a trap: any future `/api/admin/...`
+      // route would have silently inherited wildcard CORS. The public API is
+      // consumed server-side (CLI, SDKs), which is not subject to CORS, so no
+      // replacement is needed. If a browser client is ever added, scope the
+      // allowed origin explicitly — never `*` on a namespace that can read
+      // cookies.
       {
         // Apply static security headers to all routes.
         // CSP is emitted from proxy.ts instead of next.config.ts because it

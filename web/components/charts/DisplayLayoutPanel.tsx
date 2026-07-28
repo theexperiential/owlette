@@ -30,7 +30,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { Card, CardContent } from '@/components/ui/card';
@@ -636,7 +636,7 @@ export function DisplayLayoutPanel({
     const msg = formatError(e);
     if (msg.includes('unsupported_mode')) {
       return (
-        "restore failed: one or more monitors can't do the requested " +
+"restore failed: one or more monitors can't do the requested " +
         'resolution or refresh rate — pick a supported mode from the ' +
         'dropdowns and try again'
       );

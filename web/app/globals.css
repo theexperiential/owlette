@@ -48,6 +48,7 @@
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
   --color-card-sunken: var(--card-sunken);
+  --color-card-recessed: var(--card-recessed);
   --color-card-header: var(--card-header);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -73,6 +74,10 @@
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
   --card-sunken: oklch(0.96 0 0);
+  /* Light-mode counterpart to the dark --card-recessed below (vignette edge
+     tone, not a panel fill). The app is currently pinned dark, but the token
+     is defined here so a light theme doesn't inherit an undefined surface. */
+  --card-recessed: oklch(0.97 0.008 250);
   /* Header surface: a slight step darker than --card-sunken (midway toward
      --background) so machine headers read as distinct from their content.
      Derived from themed tokens via color-mix and defined only here — it
@@ -117,6 +122,14 @@
   --foreground: oklch(0.985 0.01 250);
   --card: oklch(0.23 0.04 250);
   --card-sunken: oklch(0.19 0.04 250);
+  /* NOT a flat panel fill. Two large flat fills a hair apart, sharing a hard
+     edge, read as a mistake rather than depth — tried twice on the auth pages,
+     failed twice. This is the EDGE tone of the auth brand panel's radial
+     vignette (transparent center -> this at the corners): the darkening exists
+     but has no boundary line where the eye can compare it against --card.
+     Hue 250 matches the surface family on purpose; hue drift between
+     near-identical darks reads as white-balance error, not depth. */
+  --card-recessed: oklch(0.205 0.045 250);
   --card-foreground: oklch(0.985 0.01 250);
   --popover: oklch(0.205 0.04 250);
   --popover-foreground: oklch(0.985 0.01 250);
@@ -541,4 +554,226 @@ input[type="week"] {
 .site-row-cv {
   content-visibility: auto;
   contain-intrinsic-size: auto 44px;
+}
+
+/* ── Link highlight ("highlighter sweep") ─────────────────────────────────
+ * THE global link treatment. Owlette links don't underline on hover — the
+ * text gets a selection-style background fill that sweeps in like a
+ * highlighter: enters left→right and EXITS left→right too (the highlight
+ * runs off the right edge rather than retracting the way it came).
+ *
+ * The same-direction trick: only background-size transitions. While growing,
+ * the gradient is anchored LEFT, so the fill's right edge advances L→R. On
+ * mouse-out the anchor flips to RIGHT — invisible while the fill is at 100%
+ * — so the shrink moves the fill's LEFT edge L→R.
+ *
+ * ONE rule; themed "versions" override two custom properties only:
+ *   --hl-bg  highlight fill      --hl-fg  text color while highlighted
+ * (see .hl-link-muted below — footer palette, same mechanic). Resting color
+ * is deliberately NOT set here: each link keeps its own `text-*` utility.
+ *
+ * Unlayered on purpose (same as the rules above): it must outrank Tailwind's
+ * utilities layer so a stray `hover:text-*` / `hover:underline` left on a
+ * migrated link can't fight the highlight state.
+ *
+ * Applied as a class rather than bare `a { }` on purpose: anchors also render
+ * buttons (shadcn asChild), nav items, and whole-card links, which must not
+ * inherit a text-highlight sweep.
+ */
+.hl-link {
+  --hl-bg: var(--accent-cyan);
+  --hl-fg: var(--background);
+  /* Resting text color. The glyph-accurate version below paints text via
+     background layers, so the rule must own BOTH colors — a `text-*` utility
+     on the link can no longer decide the resting color (it is kept on the
+     markup only as a fallback for the base version). */
+  --hl-rest: var(--accent-cyan);
+  text-decoration: none;
+  border-radius: 0.125rem;
+  /* Slight overhang so the fill reads as selection, not a tight text box.
+     Negative inline margin cancels the padding, so layout never shifts. */
+  padding-inline: 0.15em;
+  margin-inline: -0.15em;
+  padding-block: 0.05em;
+  background-image: linear-gradient(var(--hl-bg), var(--hl-bg));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  background-position: 100% 0; /* anchored right: the exit sweep continues L→R */
+  /* Multi-line links: each wrapped fragment gets its own highlight box,
+     exactly like native text selection. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition:
+    background-size 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.hl-link:hover,
+.hl-link:focus-visible {
+  color: var(--hl-fg);
+  background-position: 0 0; /* anchored left: the enter sweep runs L→R */
+  background-size: 100% 100%;
+}
+/* Glyph-accurate color flip: characters change color one by one as the
+   highlight edge crosses them, instead of the whole text cross-fading.
+   Three stacked layers, top to bottom:
+     1. glyphs in --hl-fg, clipped to text, sweeping in lockstep with the pill
+     2. glyphs in --hl-rest, clipped to text, always full-size (resting paint)
+     3. the pill itself, clipped to the box
+   The element's own color is transparent, so the text you see IS layers 1/2 —
+   wherever the pill has reached, layer 1 covers layer 2, so each glyph flips
+   exactly at the sweep edge. All layers share the padding-box geometry, so
+   the flip edge and the pill edge align pixel-perfect. The rule above stays
+   as the graceful fallback (uniform fade) where background-clip:text is
+   unsupported. */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .hl-link,
+  .hl-link:hover,
+  .hl-link:focus-visible {
+    color: transparent;
+  }
+  .hl-link {
+    background-image:
+      linear-gradient(var(--hl-fg), var(--hl-fg)),
+      linear-gradient(var(--hl-rest), var(--hl-rest)),
+      linear-gradient(var(--hl-bg), var(--hl-bg));
+    -webkit-background-clip: text, text, border-box;
+    background-clip: text, text, border-box;
+    background-size: 0% 100%, 100% 100%, 0% 100%;
+    background-position: 100% 0, 0 0, 100% 0;
+    transition: background-size 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hl-link:hover,
+  .hl-link:focus-visible {
+    background-position: 0 0, 0 0, 0 0;
+    background-size: 100% 100%, 100% 100%, 100% 100%;
+  }
+  /* Icons inside a link paint via currentColor, which is now transparent —
+     keep them visible with an explicit color that follows the states
+     (uniform fade; the glyph sweep is text-only by nature). */
+  .hl-link svg {
+    color: var(--hl-rest);
+    transition: color 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hl-link:hover svg,
+  .hl-link:focus-visible svg {
+    color: var(--hl-fg);
+  }
+}
+/* ── Button hover sweep ───────────────────────────────────────────────────
+ * The .hl-link mechanic applied to buttons: the hover fill sweeps in L→R and
+ * exits L→R too, via the same background-size + anchor-flip trick (grow
+ * anchored left, shrink anchored right).
+ *
+ * Layering: a button's resting fill is its `background-color` (bg-primary,
+ * bg-input, …). The sweep is a `background-image` gradient, which paints ABOVE
+ * background-color — so the resting fill needs no changes and transparent
+ * variants (ghost) work unmodified.
+ *
+ * --btn-hover is a translucent light SCRIM, not a named colour, and that is
+ * deliberate. ~110 Button call sites across the app carry bespoke
+ * `hover:bg-*` (red-700 destructives, amber, gray, cyan tints) that encode
+ * real semantics. A palette-specific sweep would fight every one of them — a
+ * cyan wash dragging across a red delete button. A scrim instead LIGHTENS
+ * whatever is underneath, so it composes with any resting colour: cyan
+ * brightens, red brightens, ghost picks up a faint wash. Those call sites
+ * keep cross-fading their base colour while the scrim adds the directional
+ * pass on top, so no per-instance edits are needed.
+ *
+ * Built from --foreground (near-white) rather than a literal, per the
+ * no-hardcoded-colours rule. A variant may still override --btn-hover for a
+ * specific target; `link` sets none and opts out entirely (.hl-link instead).
+ *
+ * 200ms — a touch slower than links, because a button is a bigger surface and
+ * the same duration reads as faster across it. Unlayered so it outranks the
+ * base `transition-all`, which would otherwise time the sweep.
+ */
+.btn-sweep {
+  --btn-hover: color-mix(in oklch, var(--foreground) 14%, transparent);
+  background-image: linear-gradient(var(--btn-hover), var(--btn-hover));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  background-position: 100% 0; /* anchored right: the exit sweep continues L→R */
+  transition:
+    background-size 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.btn-sweep:hover:not(:disabled),
+.btn-sweep:focus-visible:not(:disabled) {
+  background-position: 0 0; /* anchored left: the enter sweep runs L→R */
+  background-size: 100% 100%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-sweep {
+    transition: none;
+  }
+}
+
+/* ── Progressive form reveal ──────────────────────────────────────────────
+ * Slides the progressively-disclosed part of a form open when it mounts
+ * (login / register expand the email path on first focus).
+ *
+ * grid-template-rows 0fr -> 1fr, not max-height: this animates to the
+ * content's NATURAL height, so it works regardless of how tall the revealed
+ * fields are. A max-height guess either clips tall content or eases against
+ * dead space and reads sluggish.
+ *
+ * Runs as an animation rather than a transition because the element animates
+ * ON MOUNT — there is no previous state to transition from. That keeps the
+ * conditional render intact, which matters: the Turnstile widget must not
+ * mount (and hit Cloudflare) until the email path is actually chosen.
+ *
+ * Expand only, deliberately. `emailFormOpen` latches — it is set true on first
+ * focus and never false — so a partly-filled form can't collapse out from
+ * under the user, and a collapse animation would be unreachable code. If a
+ * form ever needs to close, swap the animation for a transition on a
+ * data-attribute and keep the children mounted.
+ *
+ * `min-height: 0` on the child is required or the grid row refuses to
+ * collapse below the content's intrinsic height and nothing animates.
+ */
+.form-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: form-reveal 260ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.form-reveal > * {
+  /* min-height:0 or the grid row refuses to shrink below the content's
+     intrinsic height. overflow:hidden or the content simply spills out of the
+     collapsed row and stays fully visible — the row animates, the reveal does
+     not. Both are required; neither is optional. */
+  min-height: 0;
+  overflow: hidden;
+}
+@keyframes form-reveal {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .form-reveal {
+    animation: none;
+  }
+}
+
+/* Quiet variant — footer and other muted contexts. Same mechanic. */
+.hl-link-muted {
+  --hl-bg: var(--secondary);
+  --hl-fg: var(--foreground);
+  --hl-rest: var(--muted-foreground);
+}
+/* Neutral-rest variant — links whose resting color is body text, not cyan. */
+.hl-link-plain {
+  --hl-rest: var(--foreground);
+}
+@media (prefers-reduced-motion: reduce) {
+  .hl-link {
+    transition: none;
+  }
 }

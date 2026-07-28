@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { PasskeyManager } from '@/components/PasskeyManager';
 /* eslint-disable @next/next/no-img-element */
 
@@ -196,7 +196,7 @@ export default function Setup2FAPage() {
               <div className="space-y-2">
                 <Button
                   onClick={() => setStep('verify')}
-                  className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                  className="w-full text-gray-900 cursor-pointer"
                 >
                   continue to verification
                 </Button>
@@ -238,7 +238,7 @@ export default function Setup2FAPage() {
                 <Button
                   type="submit"
                   disabled={isSubmitting || verificationCode.length !== 6}
-                  className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                  className="w-full text-gray-900 cursor-pointer"
                 >
                   {isSubmitting ? 'verifying...' : 'verify & enable 2FA'}
                 </Button>
@@ -306,7 +306,7 @@ export default function Setup2FAPage() {
 
               <Button
                 onClick={handleFinish}
-                className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                className="w-full text-gray-900 cursor-pointer"
               >
                 continue to dashboard
               </Button>

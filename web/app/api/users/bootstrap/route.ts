@@ -35,11 +35,14 @@ import {
   ApiAuthError,
   requireSessionOrIdToken,
 } from '@/lib/apiAuth.server';
+import type { UserRecord } from 'firebase-admin/auth';
 import {
+  problemForbidden,
   problemFromError,
   problemUnauthorized,
   problemValidation,
 } from '@/lib/apiErrors';
+import { TURNSTILE_TOKEN_FIELD, verifyTurnstileToken } from '@/lib/turnstile.server';
 import { withIdempotency } from '@/lib/idempotency';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { bootstrapUser } from '@/lib/actions/bootstrapUser.server';
@@ -52,6 +55,8 @@ interface BootstrapBody {
   // email is ignored.
   displayName?: unknown;
   timezone?: unknown;
+  /** Turnstile token from the register form; absent on the listener path. */
+  [TURNSTILE_TOKEN_FIELD]?: unknown;
 }
 
 const EMAIL_REGEX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -84,12 +89,43 @@ async function handleBootstrap(request: NextRequest): Promise<NextResponse> {
         // authenticate with one address (e.g. a disposable one that slips past
         // the block below) while persisting another, or store a wholly
         // falsified address. (issue #22)
-        let verifiedEmail: string | undefined;
+        let userRecord: UserRecord;
         try {
-          verifiedEmail = (await getAdminAuth().getUser(userId)).email?.trim();
+          userRecord = await getAdminAuth().getUser(userId);
         } catch (err) {
           return problemFromError(err, 'users/bootstrap:getUser');
         }
+        const verifiedEmail = userRecord.email?.trim();
+
+        // Bot gate for self-serve email signup, keyed off the provider on the
+        // VERIFIED auth record — never the body or a client-supplied flag.
+        //
+        // Two callers reach this route: the register form, which carries a
+        // Turnstile token, and the auth-state listener in AuthContext, which
+        // cannot — it bootstraps any signed-in user missing a doc, covering
+        // Google sign-in and recovery after a failed first bootstrap. Demanding
+        // a token unconditionally would break Google sign-in, so federated
+        // identities skip the challenge; Google's own flow is the bot gate there.
+        //
+        // The condition is deliberately inverted to fail closed: only a
+        // POSITIVELY federated-only record skips. Empty or absent providerData
+        // means we could not establish that, so the challenge still applies.
+        const providers = userRecord.providerData ?? [];
+        const federatedOnly =
+          providers.length > 0 &&
+          providers.every(provider => provider.providerId !== 'password');
+        if (!federatedOnly) {
+          const challenge = await verifyTurnstileToken(
+            request,
+            body[TURNSTILE_TOKEN_FIELD],
+            'register'
+          );
+          if (!challenge.ok) {
+            console.warn('[users/bootstrap] turnstile rejected:', challenge.reason);
+            return problemForbidden('challenge verification failed');
+          }
+        }
+
         if (!verifiedEmail || !EMAIL_REGEX.test(verifiedEmail)) {
           return problemValidation(
             'no verified email is associated with this account',

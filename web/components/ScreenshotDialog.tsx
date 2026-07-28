@@ -19,7 +19,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useScreenshotHistory, ScreenshotRecord } from '@/hooks/useScreenshotHistory';
 import type { FirestoreTs } from '@/hooks/useFirestore';
 import { TimezoneChip } from '@/components/TimezoneChip';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface ScreenshotDialogProps {
   open: boolean;

@@ -19,7 +19,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'fi
 import { auth, db, storage } from '@/lib/firebase';
 import { handleError } from '@/lib/errorHandler';
 import { getBrowserTimezone } from '@/lib/timeUtils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import * as Sentry from '@sentry/nextjs';
 
 // Shallow-compare two arrays by value (for string arrays like userSites)
@@ -113,7 +113,13 @@ async function readApiError(response: Response, fallback: string): Promise<strin
 
 const bootstrapUserDocument = async (
   user: User,
-  displayName: string
+  displayName: string,
+  /**
+   * Turnstile token from the register form. Omitted by the auth-state
+   * listener path (Google sign-in / recovery), where the server skips the
+   * challenge for non-password providers.
+   */
+  turnstileToken?: string
 ): Promise<{ alreadyExists: boolean }> => {
   const idToken = await user.getIdToken();
   const response = await fetch('/api/users/bootstrap', {
@@ -126,6 +132,7 @@ const bootstrapUserDocument = async (
       email: user.email,
       displayName,
       timezone: getBrowserTimezone(),
+      ...(turnstileToken ? { 'cf-turnstile-response': turnstileToken } : {}),
     }),
   });
 
@@ -211,14 +218,14 @@ interface AuthContextType {
   passkeyEnrolled: boolean; // Whether user has registered passkeys
   userPreferences: UserPreferences; // User preferences (temperature unit, etc.)
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, firstName?: string, lastName?: string) => Promise<void>;
+  signUp: (email: string, password: string, firstName?: string, lastName?: string, turnstileToken?: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   updateUserProfile: (firstName: string, lastName: string) => Promise<void>;
   updateUserPhoto: (photoBlob: Blob | null) => Promise<void>;
   updatePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   /** Send a Firebase password-reset email. Resolves even for unknown addresses (email-enumeration protection) — callers must show a generic confirmation, never confirm/deny account existence. */
-  sendPasswordReset: (email: string) => Promise<void>;
+  sendPasswordReset: (email: string, turnstileToken?: string) => Promise<void>;
   updateUserPreferences: (preferences: Partial<UserPreferences>, options?: { silent?: boolean }) => Promise<void>;
   updateLastSite: (siteId: string) => void;
   updateLastMachine: (siteId: string, machineId: string) => void;
@@ -525,7 +532,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string, firstName?: string, lastName?: string) => {
+  const signUp = useCallback(async (email: string, password: string, firstName?: string, lastName?: string, turnstileToken?: string) => {
     try {
       if (!auth || !db) {
         const error = new Error('Firebase authentication is not configured. Please check your environment variables.');
@@ -546,7 +553,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Immediately bootstrap the user document server-side.
       try {
         const displayName = [firstName, lastName].filter(Boolean).join(' ') || '';
-        const bootstrap = await bootstrapUserDocument(userCredential.user, displayName);
+        const bootstrap = await bootstrapUserDocument(userCredential.user, displayName, turnstileToken);
         console.log('✅ User document created in Firestore:', userCredential.user.uid);
 
         // Send user creation notification
@@ -835,7 +842,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const sendPasswordReset = useCallback(async (email: string) => {
+  const sendPasswordReset = useCallback(async (email: string, turnstileToken?: string) => {
     // Routes through our own server endpoint, which mints the reset link via
     // the Admin SDK and sends a BRANDED email through Resend — instead of
     // Firebase's plain built-in template. The route is enumeration-safe (200
@@ -847,7 +854,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       res = await fetch('/api/auth/forgot-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({
+          email,
+          ...(turnstileToken ? { 'cf-turnstile-response': turnstileToken } : {}),
+        }),
       });
     } catch (error) {
       toast.error('Reset Failed', {
@@ -860,6 +870,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.status === 429) {
         toast.error('Too Many Requests', {
           description: 'Too many attempts. Please wait a few minutes and try again.',
+        });
+      } else if (res.status === 403) {
+        toast.error('Verification Failed', {
+          description: 'Please complete the verification challenge and try again.',
         });
       } else if (res.status === 400) {
         toast.error('Invalid Email', {

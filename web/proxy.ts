@@ -68,7 +68,11 @@ function buildContentSecurityPolicy(nonce: string, pathname: string) {
     // the host allowlist remains as a fallback for older CSP implementations.
     // Dev keeps unsafe-eval for Fast Refresh only; production omits it and
     // does not allow unsafe-inline for scripts.
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' ${isDev ? "'unsafe-eval' " : ''}https://accounts.google.com https://apis.google.com https://*.gstatic.com`,
+    // challenges.cloudflare.com: the Turnstile loader on /register and
+    // /forgot-password. It is injected programmatically by nonce-bearing React
+    // code, so 'strict-dynamic' already covers modern browsers — the explicit
+    // host stays for the older-CSP fallback path, same as the Google hosts.
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' ${isDev ? "'unsafe-eval' " : ''}https://accounts.google.com https://apis.google.com https://*.gstatic.com https://challenges.cloudflare.com`,
     // style-src/style-src-elem allow 'unsafe-inline' because Next.js 16
     // emits inline <style> blocks during client-side navigation/hydration
     // that aren't covered by the request-header nonce propagation (which
@@ -83,8 +87,10 @@ function buildContentSecurityPolicy(nonce: string, pathname: string) {
     "style-src-attr 'unsafe-inline'",
     `img-src 'self' data: blob: https:${isEmulatorBuild ? ' http://127.0.0.1:*' : ''}`,
     `font-src 'self' data:${scalarFontSource}`,
-    `connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com https://*.ingest.sentry.io https://*.r2.cloudflarestorage.com${scalarConnectSource}${isEmulatorBuild ? ' http://127.0.0.1:* ws://127.0.0.1:*' : ''}`,
-    "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com",
+    `connect-src 'self' https://*.firebaseio.com https://*.googleapis.com https://firestore.googleapis.com wss://*.firebaseio.com https://accounts.google.com https://*.ingest.sentry.io https://*.r2.cloudflarestorage.com https://challenges.cloudflare.com${scalarConnectSource}${isEmulatorBuild ? ' http://127.0.0.1:* ws://127.0.0.1:*' : ''}`,
+    // Turnstile renders its challenge in an iframe from challenges.cloudflare.com.
+    // Without this the widget mounts but stays permanently blank.
+    "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com https://challenges.cloudflare.com",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",

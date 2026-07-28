@@ -31,9 +31,14 @@ test('new signup writes role: member and redirects to /setup-2fa', async ({ page
 
   await page.goto('/register');
 
+  // Email FIRST — the form is progressive: only the email field and the terms
+  // checkbox render until email receives focus, at which point the name and
+  // password fields expand in. `fill()` focuses before typing, so filling email
+  // is what opens the rest. Filling any other field first would time out.
+  await page.getByLabel(/^email$/i).fill(email);
+
   await page.getByLabel(/first name/i).fill('E2E');
   await page.getByLabel(/last name/i).fill('Signup');
-  await page.getByLabel(/^email$/i).fill(email);
   await page.getByLabel(/^password$/i).fill(password);
   await page.getByLabel(/confirm password/i).fill(password);
 

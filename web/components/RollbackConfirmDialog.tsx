@@ -32,7 +32,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FilePlus2, FileMinus2, FilePen, History, Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { VersionFileEntry } from '@/lib/chunking';
 import {
   DEFAULT_ROLLOUT_STRATEGY,

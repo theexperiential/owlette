@@ -24,7 +24,7 @@
  */
 
 import { useSyncExternalStore } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface AckEntry {
   ackDeadlineMs: number;

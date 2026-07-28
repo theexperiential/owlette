@@ -11,7 +11,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { LoadingWord } from '@/components/LoadingWord';
 import { EyeIcon, EyeOffIcon } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
+import { FormError } from '@/components/ui/form-error';
 
 type Status = 'verifying' | 'ready' | 'invalid';
 
@@ -125,12 +126,12 @@ function ResetPasswordForm() {
               <Button
                 type="button"
                 onClick={() => router.push('/forgot-password')}
-                className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer"
+                className="w-full text-background font-medium cursor-pointer"
               >
                 request a new link
               </Button>
               <div className="text-center text-sm text-muted-foreground">
-                <a href="/login" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
+                <a href="/login" className="hl-link text-accent-cyan">
                   back to sign in
                 </a>
               </div>
@@ -138,7 +139,7 @@ function ResetPasswordForm() {
           )}
 
           {status === 'ready' && (
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
               <div className="space-y-2">
                 <Label htmlFor="newPassword" className="text-foreground">new password</Label>
                 <div className="relative">
@@ -178,22 +179,18 @@ function ResetPasswordForm() {
                 />
               </div>
 
-              {error && (
-                <div className="rounded-md bg-red-900/20 border border-red-800 p-3">
-                  <p className="text-sm text-red-400">{error}</p>
-                </div>
-              )}
+              <FormError message={error} />
 
               <Button
                 type="submit"
-                className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={submitting || !password || !confirm}
               >
                 {submitting ? 'resetting...' : 'reset password'}
               </Button>
 
               <div className="text-center text-sm text-muted-foreground">
-                <a href="/login" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
+                <a href="/login" className="hl-link text-accent-cyan">
                   back to sign in
                 </a>
               </div>

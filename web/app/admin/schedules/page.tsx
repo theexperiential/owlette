@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, Loader2, Pencil, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 export default function SchedulePresetsPage() {
   const { user, isSuperadmin, userSites, userPreferences } = useAuth();
@@ -120,7 +120,7 @@ export default function SchedulePresetsPage() {
               )}
               <Button
                 onClick={handleCreateNew}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                className="text-gray-900 cursor-pointer"
               >
                 <Plus className="h-5 w-5 mr-2" />
                 create preset

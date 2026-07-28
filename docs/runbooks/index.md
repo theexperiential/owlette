@@ -11,6 +11,7 @@ Each runbook is self-contained - read the one that matches your situation.
 | "I need to release a new agent installer version" | [agent-installer-release.md](agent-installer-release.md) |
 | "prod is broken right now" | [hotfix-rollback.md](hotfix-rollback.md) |
 | "how do dev and main branches actually relate?" | [dev-to-prod-workflow.md](dev-to-prod-workflow.md) |
+| "I'm turning on Firebase App Check enforcement" | [app-check-rollout.md](app-check-rollout.md) |
 | "I'm new to the repo and need a setup path" | [/docs/maintainer-quickstart.md](../maintainer-quickstart.md) |
 
 ## release paths

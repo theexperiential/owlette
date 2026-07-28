@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { AlertTriangle, ChevronDown, ChevronRight, Download, Loader2, Pencil, Save, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useMachines, Process } from '@/hooks/useFirestore';
 import { DeploymentTemplate, Deployment } from '@/hooks/useDeployments';
 import { Badge } from '@/components/ui/badge';
@@ -738,7 +738,7 @@ export default function DeploymentDialog({
           </Button>
           <Button
             onClick={handleDeploy}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
             disabled={deploying}
           >
             {deploying ? (

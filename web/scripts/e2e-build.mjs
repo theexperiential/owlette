@@ -23,6 +23,14 @@ const e2eEnv = {
   NEXT_PUBLIC_FIREBASE_STORAGE_EMULATOR_HOST: storageEmulatorHost,
   NEXT_PUBLIC_SENTRY_DSN: '',
   NEXT_PUBLIC_SENTRY_ENVIRONMENT: 'e2e',
+  // Cloudflare's always-pass Turnstile test sitekey. This MUST be set here and
+  // not only in playwright.config.ts: NEXT_PUBLIC_* is inlined at BUILD time,
+  // while webServer.env applies at RUNTIME. Setting only the latter bakes the
+  // real sitekey from .env.local into the bundle, so the browser renders a live
+  // widget that never auto-solves headless while the server holds the test
+  // secret — the submit button stays disabled and every form spec times out.
+  // The matching TURNSTILE_SECRET / TURNSTILE_HOSTNAMES live in playwright.config.ts.
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY: '1x00000000000000000000AA',
   OWLETTE_NEXT_DIST_DIR: distDir,
 };
 

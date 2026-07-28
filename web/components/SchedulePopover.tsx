@@ -179,7 +179,7 @@ function SchedulePopoverBody({
           <Button
             size="sm"
             onClick={handleApply}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer text-xs"
+            className="text-gray-900 cursor-pointer text-xs"
           >
             apply schedule
           </Button>

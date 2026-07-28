@@ -1,24 +1,35 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
+import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
+import { FormError } from '@/components/ui/form-error';
+import { useFieldError } from '@/hooks/useFieldError';
 
 export default function ForgotPasswordPage() {
   const { sendPasswordReset } = useAuth();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState('');
+  /** Field-targeted validation — see hooks/useFieldError.ts. */
+  const { error: formError, fail, clear: clearError, fieldProps } = useFieldError('forgot-form-error');
+  const turnstileRef = useRef<TurnstileHandle>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    clearError();
+    if (!email.trim()) {
+      return fail('email', 'enter your email address');
+    }
     setLoading(true);
     try {
-      await sendPasswordReset(email);
+      await sendPasswordReset(email, turnstileToken);
       // Existence-agnostic by design: we show the same confirmation whether or
       // not an account exists for this address (Firebase email-enumeration
       // protection makes sendPasswordReset resolve either way).
@@ -26,13 +37,16 @@ export default function ForgotPasswordPage() {
     } catch {
       // sendPasswordReset surfaces its own error toast (invalid email,
       // rate-limit, misconfiguration). Stay on the form so the user can retry.
+      // Turnstile tokens are single-use, so the consumed one must be cleared
+      // or the retry fails with timeout-or-duplicate.
+      turnstileRef.current?.reset();
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center p-4">
+    <div className="relative flex min-h-screen items-center justify-center p-4 pb-32">
       {/* Grid background */}
       <div className="absolute inset-0 dot-grid opacity-30" />
       <div className="absolute inset-0 blueprint-grid opacity-15" />
@@ -63,18 +77,19 @@ export default function ForgotPasswordPage() {
                 use a different email
               </Button>
               <div className="text-center text-sm text-muted-foreground">
-                <a href="/login" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
+                <a href="/login" className="hl-link text-accent-cyan">
                   back to sign in
                 </a>
               </div>
             </>
           ) : (
             <>
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleSubmit} className="space-y-4" noValidate>
                 <div className="space-y-2">
                   <Label htmlFor="email" className="text-foreground">email</Label>
                   <Input
                     id="email"
+                    {...fieldProps('email')}
                     type="email"
                     placeholder="you@example.com"
                     value={email}
@@ -84,10 +99,16 @@ export default function ForgotPasswordPage() {
                     className="bg-input border-border text-foreground placeholder:text-muted-foreground"
                   />
                 </div>
+                <TurnstileWidget
+                  action="forgot-password"
+                  onToken={setTurnstileToken}
+                  ref={turnstileRef}
+                />
+                <FormError message={formError?.message} id="forgot-form-error" />
                 <Button
                   type="submit"
-                  className="w-full bg-accent-cyan hover:bg-accent-cyan-hover text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={loading || !email}
+                  className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={loading || !email || (TURNSTILE_ENABLED && !turnstileToken)}
                 >
                   {loading ? 'sending...' : 'send reset link'}
                 </Button>
@@ -95,7 +116,7 @@ export default function ForgotPasswordPage() {
 
               <div className="text-center text-sm text-muted-foreground">
                 remember your password?{' '}
-                <a href="/login" className="text-accent-cyan hover:text-accent-cyan-hover hover:underline">
+                <a href="/login" className="hl-link text-accent-cyan">
                   sign in
                 </a>
               </div>

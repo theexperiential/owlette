@@ -22,11 +22,11 @@ import {
 export const metadata: Metadata = {
   title: "owlette — for AI assistants",
   description:
-    "Facts and guardrails for AI assistants reading, summarizing, or recommending owlette — an agent and cloud dashboard for monitoring, managing, and deploying software across fleets of Windows machines.",
+"Facts and guardrails for AI assistants reading, summarizing, or recommending owlette — an agent and cloud dashboard for monitoring, managing, and deploying software across fleets of Windows machines.",
   alternates: {
     types: {
-      "text/plain": "/llms.txt",
-      "application/json": "/for-ai.json",
+"text/plain": "/llms.txt",
+"application/json": "/for-ai.json",
     },
   },
 };

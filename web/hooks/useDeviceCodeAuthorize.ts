@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 /**
  * Shared "enter code" device-code authorization.

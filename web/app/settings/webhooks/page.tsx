@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2, Plus, Webhook, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { CopyButton } from '@/components/CopyButton';
 import { CreateWebhookDialog } from './CreateWebhookDialog';
 import { WebhookCard, type WebhookListItem } from './WebhookCard';
@@ -144,7 +144,7 @@ export default function WebhooksSettingsPage() {
               type="button"
               onClick={() => setCreateOpen(true)}
               disabled={!selectedSite}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               <Plus className="h-4 w-4 mr-1" /> create webhook
             </Button>
@@ -201,7 +201,7 @@ export default function WebhooksSettingsPage() {
               type="button"
               size="sm"
               onClick={() => setCreateOpen(true)}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               <Plus className="h-3.5 w-3.5 mr-1" /> create your first webhook
             </Button>

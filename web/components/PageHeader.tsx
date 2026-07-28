@@ -267,7 +267,7 @@ export function PageHeader({
               <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground transition-colors px-2 py-1">
                 sign in
               </Link>
-              <Link href="/register" className="inline-flex items-center gap-1.5 text-sm bg-accent-cyan hover:bg-accent-cyan-hover text-background font-semibold px-4 py-1.5 rounded-md transition-colors group">
+              <Link href="/register" className="inline-flex items-center gap-1.5 text-sm text-background font-semibold px-4 py-1.5 rounded-md transition-colors group">
                 get started
                 <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
               </Link>

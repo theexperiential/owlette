@@ -14,7 +14,7 @@ import { Switch } from '@/components/ui/switch';
 import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, Loader2, User, Bell, BellOff, Trash2, Key, Plus, X, Code } from 'lucide-react';
 import { CopyButton } from '@/components/CopyButton';
 import Link from 'next/link';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { PasskeyManager } from '@/components/PasskeyManager';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import {
@@ -915,7 +915,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                           setLlmSaving(false);
                         }}
                         disabled={!llmApiKey || llmSaving}
-                        className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 h-8"
+                        className="cursor-pointer text-gray-900 h-8"
                       >
                         {llmSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : 'save key'}
                       </Button>
@@ -1179,7 +1179,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                         <Link
                           href="/settings/api-keys"
                           onClick={() => onOpenChange(false)}
-                          className="text-accent-cyan hover:underline"
+                          className="hl-link text-accent-cyan"
                         >
                           manage api keys
                         </Link>
@@ -1216,7 +1216,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                           setCreatingKey(false);
                         }}
                         disabled={creatingKey}
-                        className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 h-9 flex-shrink-0"
+                        className="cursor-pointer text-gray-900 h-9 flex-shrink-0"
                       >
                         {creatingKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5 mr-1" /> create key</>}
                       </Button>
@@ -1359,7 +1359,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                 </Button>
                 <Button
                   onClick={handleSave}
-                  className="cursor-pointer bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900"
+                  className="cursor-pointer text-gray-900"
                   disabled={loading}
                 >
                   {loading ? 'saving...' : 'save changes'}

@@ -27,6 +27,7 @@ import { getAdminAuth } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
 import { getResend, FROM_EMAIL, isProduction } from '@/lib/resendClient.server';
 import { buildPasswordResetEmail } from '@/lib/emailTemplates.server';
+import { TURNSTILE_TOKEN_FIELD, verifyTurnstileToken } from '@/lib/turnstile.server';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -50,6 +51,20 @@ export const POST = withRateLimit(
 
       if (!email || !EMAIL_RE.test(email)) {
         return NextResponse.json({ error: 'Missing or invalid email' }, { status: 400 });
+      }
+
+      // Bot gate. Runs BEFORE the account-existence lookup so a failed
+      // challenge costs an attacker nothing but also tells them nothing —
+      // the 403 is identical for known and unknown addresses, preserving the
+      // enumeration-safety this route is built around.
+      const challenge = await verifyTurnstileToken(
+        request,
+        body?.[TURNSTILE_TOKEN_FIELD],
+        'forgot-password'
+      );
+      if (!challenge.ok) {
+        console.warn('[forgot-password] turnstile rejected:', challenge.reason);
+        return NextResponse.json({ error: 'Challenge verification failed' }, { status: 403 });
       }
 
       // Check the account exists FIRST. getUserByEmail throws a stable,

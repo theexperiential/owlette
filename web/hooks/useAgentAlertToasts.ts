@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { collection, limit, onSnapshot, query, where } from 'firebase/firestore';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { db } from '@/lib/firebase';
 
 export interface ExeMissingToastAlert {

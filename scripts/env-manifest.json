@@ -57,6 +57,7 @@
     "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
     "NEXT_PUBLIC_SENTRY_DSN": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
     "NEXT_PUBLIC_SENTRY_ENVIRONMENT": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
+    "NEXT_PUBLIC_TURNSTILE_SITE_KEY": { "class": "public", "targets": ["railway-dev", "railway-prod", "vercel-prod"], "note": "sitekey is public by design (rendered in the page). One widget covers owlette.app, dev.owlette.app, localhost, 127.0.0.1 — same value everywhere" },
     "R2_S3_ACCESS_KEY_ID": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
     "R2_S3_ENDPOINT": { "class": "config", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
     "R2_S3_SECRET_ACCESS_KEY": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
@@ -69,6 +70,8 @@
     "SENTRY_ORG": { "class": "build", "targets": ["railway-prod", "vercel-prod"] },
     "SENTRY_PROJECT": { "class": "build", "targets": ["railway-prod", "vercel-prod"] },
     "SESSION_SECRET": { "class": "must-match", "targets": ["railway-dev", "railway-prod", "vercel-prod"], "note": "mismatch invalidates every session cookie on failover — all users logged out" },
+    "TURNSTILE_HOSTNAMES": { "class": "config", "targets": ["railway-dev", "railway-prod", "vercel-prod"], "note": "per-deployment frontend hostname allowlist checked against the siteverify response — dev: dev.owlette.app, prod: owlette.app. NEVER include localhost in a prod value" },
+    "TURNSTILE_SECRET": { "class": "must-match", "targets": ["railway-dev", "railway-prod", "vercel-prod"], "note": "one Turnstile widget serves both origins, so railway-prod and vercel-prod must match or failover breaks register + forgot-password" },
     "UPSTASH_REDIS_REST_TOKEN": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
     "UPSTASH_REDIS_REST_URL": { "class": "secret", "targets": ["railway-dev", "railway-prod", "vercel-prod"] },
     "W8_1_DRILL_TS": { "class": "config", "targets": ["railway-dev"], "note": "temporary security-drill marker (wave 8.1) — remove from Railway + this manifest when the drill is retired" }

@@ -23,7 +23,7 @@ import ConfirmDialog from '@/components/ConfirmDialog';
 import { UpdateOwletteButton } from '@/components/UpdateOwletteButton';
 import { useUninstall } from '@/hooks/useUninstall';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 function getStatusIcon(status: string) {
   switch (status) {
@@ -49,7 +49,7 @@ const statusColors: Record<string, string> = {
   uninstalled: 'bg-purple-600 hover:bg-purple-700',
   failed: 'bg-red-600 hover:bg-red-700',
   cancelled: 'bg-orange-600 hover:bg-orange-700',
-  in_progress: 'bg-accent-cyan hover:bg-accent-cyan-hover',
+  in_progress: '',
   partial: 'bg-yellow-600 hover:bg-yellow-700',
   pending: 'bg-muted hover:bg-muted',
   closing_processes: 'bg-amber-600 hover:bg-amber-700',
@@ -541,7 +541,7 @@ export default function DeploymentsPage() {
             <UpdateOwletteButton siteId={currentSiteId} machines={machines} />
             <Button
               onClick={() => setDeployDialogOpen(true)}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               <Plus className="h-4 w-4 mr-2" />
               new deployment
@@ -564,7 +564,7 @@ export default function DeploymentsPage() {
               <p className="text-sm text-muted-foreground mb-4">create your first deployment to install software across your machines</p>
               <Button
                 onClick={() => setDeployDialogOpen(true)}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                className="text-gray-900 cursor-pointer"
                 size="sm"
               >
                 <Plus className="h-4 w-4 mr-1" />

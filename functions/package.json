@@ -27,5 +27,12 @@
     "typescript": "^5.3.0",
     "firebase-functions-test": "^3.0.0"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "protobufjs": "^7.5.5",
+    "websocket-driver": "^0.7.5",
+    "@google-cloud/storage": {
+      "fast-xml-parser": "^4.5.4"
+    }
+  }
 }

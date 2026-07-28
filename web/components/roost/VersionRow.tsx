@@ -15,7 +15,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Copy, FileText, GitCompare, History, MoreVertical, Pencil } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { formatBytes } from '@/lib/preUploadCheck';
 import {
   DropdownMenu,

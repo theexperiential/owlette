@@ -64,7 +64,7 @@ export default function WebhooksPage() {
               <Button
                 onClick={() => setDialogOpen(true)}
                 disabled={!selectedSiteId}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                className="text-gray-900 cursor-pointer"
               >
                 <Plus className="h-4 w-4 mr-2" />
                 add webhook

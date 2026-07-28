@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Plus, Loader2, Pencil, Trash2, Package } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import SystemPresetDialog from '@/components/SystemPresetDialog';
 
 /**
@@ -113,7 +113,7 @@ export default function SystemPresetsPage() {
             </div>
             <Button
               onClick={handleCreateNew}
-              className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+              className="text-gray-900 cursor-pointer"
             >
               <Plus className="h-5 w-5 mr-2" />
               add template
@@ -168,7 +168,7 @@ export default function SystemPresetsPage() {
             {selectedCategory === 'All' && (
               <Button
                 onClick={handleCreateNew}
-                className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+                className="text-gray-900 cursor-pointer"
               >
                 <Plus className="h-5 w-5 mr-2" />
                 add first preset

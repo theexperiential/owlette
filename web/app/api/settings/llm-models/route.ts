@@ -20,6 +20,20 @@ interface ProviderModel {
   name: string;
 }
 
+/**
+ * Thrown when the provider rejects the user-supplied API key (HTTP 401/403).
+ *
+ * This is an expected, user-recoverable condition (revoked, expired, or
+ * mistyped key) — not a server fault — so routes map it to a 4xx and skip
+ * Sentry capture rather than logging it as a 500 exception.
+ */
+class InvalidProviderKeyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidProviderKeyError';
+  }
+}
+
 /** Fetch models from Anthropic's /v1/models endpoint. */
 async function fetchAnthropicModels(apiKey: string): Promise<ProviderModel[]> {
   const res = await fetch('https://api.anthropic.com/v1/models?limit=100', {
@@ -31,7 +45,11 @@ async function fetchAnthropicModels(apiKey: string): Promise<ProviderModel[]> {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Anthropic API error: ${res.status}`);
+    const message = err.error?.message || `Anthropic API error: ${res.status}`;
+    if (res.status === 401 || res.status === 403) {
+      throw new InvalidProviderKeyError(message);
+    }
+    throw new Error(message);
   }
 
   const data = await res.json();
@@ -53,7 +71,11 @@ async function fetchOpenAIModels(apiKey: string): Promise<ProviderModel[]> {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `OpenAI API error: ${res.status}`);
+    const message = err.error?.message || `OpenAI API error: ${res.status}`;
+    if (res.status === 401 || res.status === 403) {
+      throw new InvalidProviderKeyError(message);
+    }
+    throw new Error(message);
   }
 
   const data = await res.json();
@@ -112,6 +134,11 @@ export const GET = withRateLimit(
 
       return NextResponse.json({ models });
     } catch (error: unknown) {
+      // A rejected user API key is an expected 4xx, not a server fault —
+      // return it plainly so it isn't captured to Sentry as a 500.
+      if (error instanceof InvalidProviderKeyError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
       return apiError(error, 'settings/llm-models GET');
     }
   },
@@ -138,6 +165,11 @@ export const POST = withRateLimit(
       const models = await fetchModels(provider, apiKey);
       return NextResponse.json({ models });
     } catch (error: unknown) {
+      // Pre-save validation: an invalid key is the expected negative result,
+      // so surface it as a 4xx without capturing to Sentry as a 500.
+      if (error instanceof InvalidProviderKeyError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
       return apiError(error, 'settings/llm-models POST');
     }
   },

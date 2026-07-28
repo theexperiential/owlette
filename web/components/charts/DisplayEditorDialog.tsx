@@ -342,7 +342,7 @@ export function DisplayEditorDialog({
           <Button
             onClick={handleSave}
             disabled={!monitor || !hasChanges}
-            className="bg-accent-cyan hover:bg-accent-cyan-hover text-gray-900 cursor-pointer"
+            className="text-gray-900 cursor-pointer"
           >
             save
           </Button>

@@ -1,0 +1,44 @@
+name: Dependency Review
+
+# Blocks PRs that introduce a dependency with a known high-or-worse advisory.
+#
+# This is the gap dependabot.yml does not cover: dependabot *raises* update PRs
+# on a weekly cadence, but nothing stops a hand-added package that already has a
+# CVE from landing in between runs. This check runs on the PR diff only, so it
+# is fast and only ever complains about dependencies the PR itself adds.
+on:
+  pull_request:
+  workflow_dispatch:
+
+# Least-privilege default: grant nothing at the top level, widen per job.
+permissions: {}
+
+concurrency:
+  group: dependency-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout + read the dependency graph
+      pull-requests: write # post the summary comment
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          # Start at high: low/moderate advisories on transitive dev deps are
+          # the fastest way to train everyone to ignore a required check.
+          # Tighten to 'moderate' once the pipeline is quiet.
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+          # License gating is deliberately NOT enabled yet. Owlette ships under
+          # FSL-1.1-Apache-2.0 and a copyleft dependency would be a real problem,
+          # but `deny-licenses` also trips on packages with missing or ambiguous
+          # license metadata. Enable after an audit of the current tree:
+          #   deny-licenses: AGPL-3.0, GPL-2.0, GPL-3.0

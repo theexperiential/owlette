@@ -19,7 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import RestartScheduleDialog from '@/components/RestartScheduleDialog';
 import type { RestartSchedule } from '@/hooks/useFirestore';

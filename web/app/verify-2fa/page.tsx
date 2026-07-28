@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 function Verify2FAContent() {
   const { user, loading, signOut } = useAuth();

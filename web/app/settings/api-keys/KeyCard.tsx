@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Loader2, RefreshCw, Trash2, AlertTriangle, Clock, KeyRound } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { ApiKeyScope } from '@/lib/apiKeyTypes';
 
 export interface ApiKeyListItem {
