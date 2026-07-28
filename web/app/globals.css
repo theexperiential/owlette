@@ -437,6 +437,22 @@ input[type="week"] {
   animation: display-test-result-flash 1100ms ease-out 1;
 }
 
+/* Chart loading — a miniature line graph that plots itself on a loop
+   (ChartLoadingIndicator). Requires pathLength=100 on the path so the dash
+   math is geometry-independent: draw the line, hold, fade, repeat. The
+   restart is seamless because opacity returns to 1 only once the dash offset
+   is back at 100 (nothing drawn yet). */
+@keyframes chart-plot-draw {
+  0%   { stroke-dashoffset: 100; opacity: 1; }
+  65%  { stroke-dashoffset: 0;   opacity: 1; }
+  82%  { stroke-dashoffset: 0;   opacity: 1; }
+  100% { stroke-dashoffset: 0;   opacity: 0; }
+}
+.animate-chart-plot-draw {
+  stroke-dasharray: 100;
+  animation: chart-plot-draw 2.4s ease-in-out infinite;
+}
+
 /* Cortex markdown styling */
 .cortex-markdown {
   line-height: 1.75;

@@ -36,9 +36,24 @@ import { FieldPath, Timestamp } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { formatDayBucketId } from '@/lib/metricsHistoryBuckets';
 
-/** Retention windows, in days. Mirrored in the privacy policy (section 6). */
-export const METRICS_RETENTION_DAYS = 90;
-export const LOGS_RETENTION_DAYS = 90;
+/**
+ * Retention windows, in days. Mirrored in the privacy policy (section 6) — these
+ * are a PUBLIC COMMITMENT, so the constant and the policy text move together.
+ *
+ * 400, not 365, and NOT 360. MetricsDetailPanel's "year" range resolves to
+ * exactly `now - 365 days` (useHistoricalMetrics.getStartDate), so anything
+ * below that silently truncates the chart — it renders fine, just with less
+ * history than its own label claims, which is the kind of wrong nobody
+ * notices. 365 exactly would leave the oldest bucket sitting on the deletion
+ * boundary between cron runs; the extra ~5 weeks means the year view is always
+ * fully backed.
+ *
+ * The "all" range is unbounded (`new Date(0)`), so no finite window satisfies
+ * it by definition — it shows whatever is retained, which is the honest
+ * reading of "all".
+ */
+export const METRICS_RETENTION_DAYS = 400;
+export const LOGS_RETENTION_DAYS = 400;
 
 /** Ceiling on documents removed per invocation, across both collections. */
 const MAX_DELETES_PER_RUN = 2_000;

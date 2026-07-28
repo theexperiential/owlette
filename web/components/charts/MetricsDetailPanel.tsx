@@ -43,7 +43,7 @@ import { getNicColors, getDiskColors, getGpuColors, formatThroughput } from '@/l
 import { DISK_IO_COLORS, formatDiskIO, isDiskIOKey, parseDiskIOKey, computeNiceByteTicks } from '@/lib/diskIOUtils';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
-import { LoadingWord } from '@/components/LoadingWord';
+import { ChartLoadingIndicator } from './ChartLoadingIndicator';
 
 interface MetricsDetailPanelProps {
   machineId: string;
@@ -633,19 +633,28 @@ export function MetricsDetailPanel({
   const hour12 = (userPreferences.timeFormat || '12h') === '12h';
 
   // Memoized so Recharts' XAxis/Tooltip don't re-mount on every parent render.
+  // Ticks are denser than labels on the 1d/1m ranges (a gridline per hour/day)
+  // — returning '' keeps the gridline but suppresses the label so the axis
+  // doesn't overcrowd. CartesianGrid draws a vertical line at every tick
+  // regardless of label text.
   const formatXAxisTick = useCallback((timestamp: number): string => {
     const date = new Date(timestamp);
     switch (timeRange) {
       case '1h':
         return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12 });
       case '1d':
-        // Show date at midnight, hour otherwise
+        // Gridline every hour; label only even hours (date at midnight).
+        if (date.getHours() % 2 !== 0) return '';
         return date.getHours() === 0
           ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
           : date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12 });
       case '1w':
         return `W${getISOWeek(date)} ${date.toLocaleDateString(undefined, { weekday: 'short' })}`;
       case '1m':
+        // Gridline every midnight; label only at month starts.
+        return date.getDate() === 1
+          ? date.toLocaleDateString(undefined, { month: 'short' })
+          : '';
       case '1y':
         return date.toLocaleDateString(undefined, { month: 'short' });
       case 'all':
@@ -760,28 +769,27 @@ export function MetricsDetailPanel({
     return computeNiceByteTicks(max);
   }, [bytesAxisActive, diskIOMode, effectiveDiskIO, networkMode, selectedNics, chartData, timeDomain]);
 
-  // Explicit ticks keep the x-axis clean: one label per natural unit
-  // (date / week-day / month), no repeats, and no auto-generated gaps where
-  // the data is sparse.
+  // Explicit ticks keep the x-axis clean: one gridline per natural unit
+  // (hour / date / month), no repeats, and no auto-generated gaps where the
+  // data is sparse. Ticks can be denser than labels — formatXAxisTick returns
+  // '' for the in-between ones (1d labels every 2h, 1m labels at month starts).
   const xTicks = useMemo((): number[] | undefined => {
     const [start, end] = timeDomain;
     if (timeRange === '1h') return undefined; // let recharts auto-tick
     const ticks: number[] = [];
     if (timeRange === '1d') {
-      // One tick per hour. Step 2h so 24 labels don't overcrowd.
+      // One tick (gridline) per hour on the hour.
       const d = new Date(start);
       d.setMinutes(0, 0, 0);
       if (d.getTime() < start) d.setHours(d.getHours() + 1);
-      // Align to even hours so midnight is always a tick when in range.
-      while (d.getHours() % 2 !== 0) d.setHours(d.getHours() + 1);
       while (d.getTime() <= end) {
         ticks.push(d.getTime());
-        d.setHours(d.getHours() + 2);
+        d.setHours(d.getHours() + 1);
       }
       return ticks;
     }
-    if (timeRange === '1w') {
-      // One tick per midnight within the range.
+    if (timeRange === '1w' || timeRange === '1m') {
+      // One tick (gridline) per midnight within the range.
       const d = new Date(start);
       d.setHours(0, 0, 0, 0);
       if (d.getTime() < start) d.setDate(d.getDate() + 1);
@@ -791,7 +799,7 @@ export function MetricsDetailPanel({
       }
       return ticks;
     }
-    // 1m / 1y / all: one tick per calendar month start.
+    // 1y / all: one tick per calendar month start.
     const d = new Date(start);
     d.setDate(1);
     d.setHours(0, 0, 0, 0);
@@ -1088,7 +1096,7 @@ export function MetricsDetailPanel({
             aria-busy="true"
             aria-label="loading metrics"
           >
-            <div className="text-muted-foreground animate-pulse text-sm"><LoadingWord /></div>
+            <ChartLoadingIndicator />
           </div>
         ) : (
         <div className="animate-in fade-in duration-100">

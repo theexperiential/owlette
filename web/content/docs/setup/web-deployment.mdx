@@ -162,7 +162,7 @@ returns 401.
 | `/api/cron/process-alerts` | `*/3 * * * *` | `X-Cron-Secret` | drains `pending_process_alerts` into email |
 | `/api/cron/display-alerts` | `*/3 * * * *` | `X-Cron-Secret` | drains `pending_display_alerts` into email |
 | `/api/cron/status-ping` | every 60s | `X-Cron-Secret` | writes status pings, publishes to Instatus |
-| `/api/cron/retention` | daily | `X-Cron-Secret` | deletes metrics + logs past 90 days |
+| `/api/cron/retention` | daily | `X-Cron-Secret` | deletes metrics + logs past 400 days |
 | `/api/cortex/escalation` | every 5 min | `Authorization: Bearer` | Cortex autonomous-mode backstop poller |
 
 <Callout type="warning" title={"Two failure modes that are silent"}>
@@ -244,7 +244,7 @@ symptom, so verify a run returns 200 after scheduling it.
 
 ### data retention sweep
 
-Deletes machine metrics and event logs older than 90 days. This is what backs the
+Deletes machine metrics and event logs older than 400 days. This is what backs the
 retention commitment in the privacy policy — without it, that statement is not
 true. Schedule daily, in every environment:
 
@@ -257,7 +257,7 @@ Use cron expression `0 4 * * *` (or any quiet hour). A successful run returns:
 
 ```json
 {"ok":true,"deleted":{"metrics":107,"logs":496},
- "retentionDays":{"metrics":90,"logs":90},"truncated":false}
+ "retentionDays":{"metrics":400,"logs":400},"truncated":false}
 ```
 
 `truncated: true` means the run hit its 2000-document ceiling and older data
