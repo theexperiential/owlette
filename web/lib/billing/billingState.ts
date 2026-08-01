@@ -34,8 +34,12 @@ export interface BillingStateSource {
  * A local converter rather than `firestoreTsToMs` from
  * `@/hooks/useFirestore`: that module is `'use client'` and importing its
  * runtime would drag the client Firebase SDK into every server caller.
+ *
+ * Exported because the trial lifecycle sweep (wave 2.2) has to read the same
+ * `trialEndsAt` field to compute reminder milestones — a second converter
+ * would be a second set of shape bugs to keep in sync.
  */
-function toMillis(ts: BillingTimestamp): number | null {
+export function billingTimestampToMillis(ts: BillingTimestamp): number | null {
   if (typeof ts === 'number') return Number.isFinite(ts) ? ts : null;
   if (ts instanceof Date) {
     const ms = ts.getTime();
@@ -109,7 +113,7 @@ export function resolveBillingState(
   const trialEndsAt = customer?.trialEndsAt;
   if (trialEndsAt == null) return 'trialing';
 
-  const endsAtMs = toMillis(trialEndsAt);
+  const endsAtMs = billingTimestampToMillis(trialEndsAt);
   if (endsAtMs === null) return 'trialing';
 
   return endsAtMs > now.getTime() ? 'trialing' : 'expired';

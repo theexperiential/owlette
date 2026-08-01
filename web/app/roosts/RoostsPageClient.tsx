@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
@@ -31,6 +30,7 @@ import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
+import { ChoosePlanDialog } from '@/components/billing/ChoosePlanDialog';
 import DownloadButton from '@/components/DownloadButton';
 import { LoadingWord } from '@/components/LoadingWord';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
@@ -76,6 +76,9 @@ export default function RoostsPageClient() {
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
+  // Conversion entry point for the pro gate below. Only reachable from the
+  // core-tier empty state — a site already on pro has nothing to buy here.
+  const [choosePlanOpen, setChoosePlanOpen] = useState(false);
   // Pending row-level actions. `null` = no prompt open. Each object carries
   // the roost + whatever the action handler needs to fire off after confirm.
   const [pendingDelete, setPendingDelete] = useState<{ roostId: string; name: string } | null>(null);
@@ -346,6 +349,12 @@ export default function RoostsPageClient() {
           onOpenChange={setAccountSettingsOpen}
         />
 
+        <ChoosePlanDialog
+          open={choosePlanOpen}
+          onOpenChange={setChoosePlanOpen}
+          defaultTier="pro"
+        />
+
         <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
           <div className="mt-12 md:mt-16 flex justify-center">
             <div className="max-w-md rounded-lg border border-border bg-card p-8 text-center">
@@ -362,10 +371,10 @@ export default function RoostsPageClient() {
               </p>
               <div className="mt-6">
                 <Button
-                  asChild
+                  onClick={() => setChoosePlanOpen(true)}
                   className="text-gray-900 cursor-pointer"
                 >
-                  <Link href="/#pricing">see pricing →</Link>
+                  upgrade to pro →
                 </Button>
               </div>
             </div>

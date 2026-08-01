@@ -197,6 +197,111 @@ export function buildPasswordResetEmail(resetUrl: string, expiryMinutes = 60): s
 }
 
 /* ------------------------------------------------------------------ */
+/*  Trial lifecycle emails (billing-system wave 2.2)                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The three points in the app-managed 14-day trial that get an email. Day
+ * numbers live in `@/lib/billing/trialLifecycle.server` — this module only
+ * renders the copy.
+ */
+export type TrialEmailMilestone = 'day10' | 'day13' | 'expired';
+
+/**
+ * Query param appended to the dashboard link so the billing UI (wave 2.5 /
+ * 3.1) can open straight onto the tier picker instead of dropping the
+ * customer on a dashboard with no idea why they clicked through.
+ */
+export const CHOOSE_PLAN_QUERY = 'billing=choose-plan';
+
+/**
+ * Format a trial-end date for body copy. Short month name rather than a
+ * numeric date: `8/15/2026` is read as 15 August by half the fleet, and this
+ * date is the whole point of the email. Rendered in UTC — the same reference
+ * frame `trialEndsAt` is stored in — so the date in the email always matches
+ * the date the gate actually flips.
+ */
+function trialDate(date: Date): string {
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
+/**
+ * Build the trial reminder / expiry email.
+ *
+ * Transactional, not an alert: no `unsubscribeUrl` key is passed, which is
+ * how `wrapEmailLayout` decides whether to render the "manage alerts ·
+ * unsubscribe" footer. A customer cannot opt out of being told their trial
+ * is ending — the alternative is a silent lockout.
+ *
+ * @param milestone  which of the three notices this is
+ * @param trialEndsAt when the trial clock runs (or ran) out
+ * @param choosePlanUrl dashboard deep-link to the tier picker
+ */
+export function buildTrialEmail(
+  milestone: TrialEmailMilestone,
+  trialEndsAt: Date,
+  choosePlanUrl: string,
+): { subject: string; html: string } {
+  const endsOn = trialDate(trialEndsAt);
+
+  const copy: Record<
+    TrialEmailMilestone,
+    { subject: string; heading: string; accent: string; lead: string; body: string; cta: string }
+  > = {
+    day10: {
+      subject: '4 days left in your owlette trial',
+      heading: '4 days left in your trial',
+      accent: EMAIL_COLORS.cyan,
+      lead: `your free trial ends on ${endsOn}.`,
+      body: 'choose a plan before then and nothing changes — your machines, deployments, and alerts keep running exactly as they are.',
+      cta: 'choose a plan',
+    },
+    day13: {
+      subject: 'your owlette trial ends tomorrow',
+      heading: 'your trial ends tomorrow',
+      accent: EMAIL_COLORS.amber,
+      lead: `your free trial ends on ${endsOn}.`,
+      body: 'after that the dashboard stays readable but process control, deploys, restarts, and display config are paused until you pick a plan. nothing is deleted.',
+      cta: 'choose a plan',
+    },
+    expired: {
+      subject: 'your owlette trial has ended',
+      heading: 'your trial ended',
+      accent: EMAIL_COLORS.red,
+      lead: `your free trial ended on ${endsOn}.`,
+      body: 'your machines keep reporting in and none of your data has been touched — metrics, logs, and deployments are all still there. process control, deploys, restarts, and display config are paused until you choose a plan. offline alerts keep arriving for 30 more days.',
+      cta: 'choose a plan to reactivate',
+    },
+  };
+
+  const c = copy[milestone];
+
+  const ctaButton =
+    `<table cellpadding="0" cellspacing="0" role="presentation" style="margin:24px 0;">` +
+    `<tr><td style="border-radius:6px;background:${EMAIL_COLORS.cyan};">` +
+    `<a href="${choosePlanUrl}" style="display:inline-block;padding:12px 28px;color:${EMAIL_COLORS.bodyBg};text-decoration:none;font-weight:700;font-size:14px;border-radius:6px;">${c.cta}</a>` +
+    `</td></tr></table>`;
+
+  const content = `
+    <h2 style="color:${c.accent};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">${c.heading}</h2>
+    <p style="margin:0 0 8px;color:${EMAIL_COLORS.muted};">${c.lead}</p>
+    <p style="margin:0 0 8px;color:${EMAIL_COLORS.muted};">${c.body}</p>
+    ${ctaButton}
+    <p style="margin:0;color:${EMAIL_COLORS.muted};font-size:12px;">if the button doesn't work, copy and paste this link into your browser:<br><span style="color:${EMAIL_COLORS.cyan};word-break:break-all;">${choosePlanUrl}</span></p>
+  `;
+
+  return {
+    subject: c.subject,
+    html: wrapEmailLayout(content, { preheader: c.lead }),
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /*  Timestamp helper                                                   */
 /* ------------------------------------------------------------------ */
 

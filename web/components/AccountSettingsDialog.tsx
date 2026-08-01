@@ -12,6 +12,7 @@ import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, CreditCard, Loader2, User, Bell, BellOff, Trash2, Key, Plus, X, Code } from 'lucide-react';
+import { BillingTab } from '@/components/BillingTab';
 import { CopyButton } from '@/components/CopyButton';
 import Link from 'next/link';
 import { toast } from '@/lib/toast';
@@ -26,7 +27,7 @@ import {
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'cortex' | 'security' | 'api' | 'danger';
+type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'cortex' | 'security' | 'api' | 'billing' | 'danger';
 
 const AVAILABLE_MODELS: Record<'anthropic' | 'openai', { id: string; name: string }[]> = {
   anthropic: [
@@ -56,6 +57,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[
   { id: 'cortex', label: 'cortex', icon: Brain },
   { id: 'security', label: 'security', icon: Shield },
   { id: 'api', label: 'api', icon: Code },
+  { id: 'billing', label: 'billing', icon: CreditCard },
   { id: 'danger', label: 'danger zone', icon: Trash2 },
 ];
 
@@ -128,9 +130,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleting, setDeleting] = useState(false);
-
-  // Stripe customer portal state (billing-system wave 1.4)
-  const [portalLoading, setPortalLoading] = useState(false);
 
   // Fetch available models from provider API
   const fetchLlmModels = async (provider: string) => {
@@ -225,7 +224,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setKeyScopePreset('publisher');
       setCreatedKey(null);
       setCreatingKey(false);
-      setPortalLoading(false);
       setActiveSection('profile');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -278,36 +276,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       return false;
     }
     return true;
-  };
-
-  /**
-   * Open the Stripe-hosted billing portal (billing-system wave 1.4).
-   *
-   * The client knows nothing about whether Stripe is configured or whether
-   * this account has a billing profile yet — both are server state, and
-   * shipping either to the browser would leak deployment config. The button
-   * is always offered and the route's problem+json `detail` is surfaced as
-   * the toast, so "billing isn't enabled yet" and "you have no plan yet" both
-   * read as an explanation rather than a failure.
-   *
-   * `portalLoading` is intentionally never cleared on the success path: the
-   * navigation is already in flight, and resetting it would flash the button
-   * back to its idle label while the browser is leaving the page.
-   */
-  const handleManageBilling = async () => {
-    setPortalLoading(true);
-    try {
-      const res = await fetch('/api/billing/portal', { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && typeof data.url === 'string') {
-        window.location.href = data.url;
-        return;
-      }
-      toast.error(data.detail || 'could not open billing portal');
-    } catch {
-      toast.error('could not open billing portal');
-    }
-    setPortalLoading(false);
   };
 
   const handlePhotoPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -545,31 +513,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       readOnly
                     />
                     <p className="text-xs text-muted-foreground">email cannot be changed</p>
-                  </div>
-
-                  {/* Billing — the full billing tab lands in wave 2.5; this is
-                      the one action that already works end to end. */}
-                  <div className="flex items-center justify-between gap-4 rounded-md border border-border bg-card/50 px-4 py-3">
-                    <div className="space-y-0.5 min-w-0">
-                      <p className="text-sm text-white">billing</p>
-                      <p className="text-xs text-muted-foreground">
-                        payment method, invoices, and plan changes
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={handleManageBilling}
-                      disabled={portalLoading}
-                      className="flex-shrink-0"
-                    >
-                      {portalLoading ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <><CreditCard className="h-3.5 w-3.5 mr-1" /> manage billing</>
-                      )}
-                    </Button>
                   </div>
                 </div>
               )}
@@ -1373,6 +1316,13 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                   </div>
                 </div>
               )}
+
+              {/* ─── Billing ─── */}
+              {/* Mounted only while visible, like every other section here —
+                  which is also what gates the fetch: the snapshot route fans
+                  out to a machines read per owned site, and mounting it with
+                  the dialog would spend those reads on every open. */}
+              {activeSection === 'billing' && <BillingTab />}
 
               {/* ─── Danger Zone ─── */}
               {activeSection === 'danger' && (
