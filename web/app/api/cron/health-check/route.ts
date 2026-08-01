@@ -11,6 +11,7 @@ import {
   alertEmailsDisabled,
   type TrialLifecycleCustomer,
 } from '@/lib/billing/trialLifecycle.server';
+import { createWebhookBillingCache } from '@/lib/billing/webhookDelivery.server';
 
 /**
  * GET /api/cron/health-check
@@ -605,15 +606,19 @@ export async function GET(request: NextRequest) {
   const baseUrl = request.nextUrl.origin;
   // One entry per distinct site owner, for the whole run.
   const billingCutoffCache = new Map<string, boolean>();
+  // Separate memo for the webhook-delivery gate (wave 2.6). It answers a
+  // different question than the email cutoff — "is the account locked out?"
+  // vs. "is it 30 days past expiry?" — so the two can't share a map.
+  const webhookBillingCache = createWebhookBillingCache();
   let alertsSent = 0;
   let alertsSuppressed = 0;
 
   for (const plan of sendPlans) {
     try {
       // Billing lockout, last row of the plan's matrix: 30 days past trial
-      // expiry the emails stop. Only the EMAILS — webhook delivery for an
-      // expired account is wave 2's gate to draw, and silently changing it
-      // here would move a line this task doesn't own.
+      // expiry the emails stop. Only the EMAILS — webhook delivery pauses on
+      // a different clock (the moment the account locks out, not 30 days
+      // later), and is gated inside `fireWebhooks` below.
       if (await alertEmailsCutOff(db, plan.ownerUid, now, billingCutoffCache)) {
         alertsSuppressed++;
         console.log(
@@ -673,11 +678,21 @@ export async function GET(request: NextRequest) {
         );
       }
 
-      // Fire webhooks for each not-responding machine (non-blocking)
+      // Fire webhooks for each not-responding machine (non-blocking).
+      // `webhookBillingCache` is shared across the whole run so a fleet of
+      // dead machines under one owner costs one billing lookup, not one per
+      // machine — and the gate stays live, so a mid-run conversion is picked
+      // up by the next run with nothing to invalidate.
       for (const m of plan.webhookMachines) {
-        fireWebhooks(plan.siteId, plan.siteName, 'machine.offline', {
-          machine: { id: m.machineId, name: m.machineId, lastSeen: new Date(m.lastHeartbeatMs).toISOString() },
-        }).catch(console.error);
+        fireWebhooks(
+          plan.siteId,
+          plan.siteName,
+          'machine.offline',
+          {
+            machine: { id: m.machineId, name: m.machineId, lastSeen: new Date(m.lastHeartbeatMs).toISOString() },
+          },
+          { billingCache: webhookBillingCache }
+        ).catch(console.error);
       }
     } catch (error) {
       console.error(`[cron/health-check] Failed to send alert for site ${plan.siteId}:`, error);

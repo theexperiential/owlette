@@ -47,6 +47,8 @@ Click **choose a plan** on the trial banner, in the billing tab, or on any pro-f
 
 Cortex needs your own model API key (OpenAI, Anthropic, or a compatible provider) on both tiers. There are no per-user fees on either tier — members are free.
 
+Core's single site is enforced, not just advertised: once you own a site on a core subscription, creating another answers `403` with code [`tier_insufficient`](/docs/api/errors#tier_insufficient) and the message "core includes one site — upgrade to pro for unlimited sites". Trial accounts are not limited — the trial runs at the pro feature level, so you can lay out as many sites as you like before choosing a tier.
+
 Need volume pricing or an enterprise agreement? Mail [hey@tridant.io](mailto:hey@tridant.io). The full tier comparison also lives on the [pricing section of the owlette home page](/#pricing).
 
 Switching tiers after you subscribe is not a self-service flow in the dashboard yet — the plan picker is for accounts that do not already have an active subscription. Contact support to move between core and pro.
@@ -109,6 +111,7 @@ If the trial ends without a plan, the account becomes **read-only**. It is a pau
 | **restarting machines, changing display layouts, editing machine or process config** | paused |
 | **deployments, roost publish, sync, and rollback** | paused |
 | **public API, CLI, and SDK calls** | paused |
+| **webhook delivery** | paused while expired, resumes on reactivation — events are not queued up and replayed, and your subscriptions are never auto-disabled for the gap |
 | **removing a machine or triggering an uninstall** | works — shrinking your fleet is how you lower your bill, so it is never blocked |
 | **managing members, renaming or deleting a site, revoking agent tokens** | works — security actions never depend on a subscription |
 | **agents reporting in** — heartbeats, metrics, logs, crash events | keeps running, so nothing is missing when you come back |
@@ -129,7 +132,7 @@ Choose a plan at any time — during the trial, the day it ends, or months later
 2. Pick core or pro and continue to Stripe Checkout.
 3. Once Stripe confirms the subscription, controls, deploys, and API access come back and site tiers are set to the plan you chose.
 
-Alert emails that were switched off after the 30-day post-expiry window resume as soon as the account is active again — you do not have to wait for the next daily sweep.
+Alert emails that were switched off after the 30-day post-expiry window resume as soon as the account is active again — you do not have to wait for the next daily sweep. Webhook delivery resumes on the next event for the same reason: entitlement is resolved live, not cached.
 
 ---
 

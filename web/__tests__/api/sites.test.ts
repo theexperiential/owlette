@@ -171,6 +171,7 @@ function makeCollectionRef(parts: string[]): unknown {
         });
       }
       return {
+        empty: docs.length === 0,
         docs: docs.map((d) => ({
           id: d.id,
           exists: true,
@@ -360,6 +361,57 @@ describe('/api/sites/{siteId}', () => {
     expect(body.siteId).toBe('site-new');
     expect(docStore['sites/site-new']?.data?.name).toBe('New Site');
     expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+  });
+
+  // billing-system wave 2.7 — core includes exactly one site.
+  it('answers 403 tier_insufficient when a core subscriber creates a second site', async () => {
+    authedKey('core-uid', 'member', [siteScope('*', 'admin')]);
+    docStore['customers/core-uid'] = {
+      data: {
+        subscriptionStatus: 'active',
+        subscriptionTier: 'core',
+        trialEndsAt: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    };
+    seedSite('site-first', { owner: 'core-uid', tier: 'core' });
+
+    const res = await sitesPOST(
+      createMockRequest('http://localhost/api/sites', {
+        method: 'POST',
+        body: { siteId: 'site-second', name: 'Second Site' },
+      }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(body.code).toBe('tier_insufficient');
+    expect(body.detail).toBe('core includes one site — upgrade to pro for unlimited sites');
+    // Account-scoped failure: no `required` block naming an arbitrary site.
+    expect(body.required).toBeUndefined();
+    expect(docStore['sites/site-second']).toBeUndefined();
+  });
+
+  it('lets a core subscriber create their first site', async () => {
+    authedKey('core-uid', 'member', [siteScope('*', 'admin')]);
+    docStore['customers/core-uid'] = {
+      data: {
+        subscriptionStatus: 'active',
+        subscriptionTier: 'core',
+        trialEndsAt: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    };
+
+    const res = await sitesPOST(
+      createMockRequest('http://localhost/api/sites', {
+        method: 'POST',
+        body: { siteId: 'site-only', name: 'Only Site' },
+      }),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(body.tier).toBe('core');
+    expect(docStore['sites/site-only']?.data?.owner).toBe('core-uid');
   });
 
   it('rejects site creation for API keys without site admin scope', async () => {

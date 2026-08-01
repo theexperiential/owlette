@@ -15,11 +15,13 @@ import {
   problemForbidden,
   problemNotFound,
   problemScopeInsufficient,
+  problemTierInsufficient,
   problemTokenExpired,
   problemValidation,
   problemUnauthorized,
   ProblemType,
 } from '@/lib/apiErrors';
+import { coreSiteLimitDetail } from '@/lib/billing/billingSnapshot.server';
 import {
   ApiAuthError,
   applyAuthDeprecations,
@@ -222,6 +224,13 @@ export const POST = withRateLimit(async (request: NextRequest) => {
             instance: '/api/sites',
             code: 'site_already_exists',
           });
+        }
+        // Core's one-site limit (billing-system wave 2.7). No `required`
+        // block: the failure is about the account, and naming an arbitrary
+        // owned site would point the caller at the wrong upgrade target —
+        // same reasoning as `accountTierInsufficient()` in billingGate.
+        if (result.kind === 'core_site_limit') {
+          return problemTierInsufficient(coreSiteLimitDetail());
         }
 
         return applyScopedAuthDeprecations(

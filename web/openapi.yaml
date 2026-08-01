@@ -2607,6 +2607,11 @@ paths:
       description: |
         Creates a top-level site owned by the caller. Requires a
         superadmin caller; API-key callers must hold `site=*:admin`.
+
+        Core subscriptions include exactly one site: once the caller owns
+        one, this endpoint answers `403` with `code: tier_insufficient`
+        and no `required` block (the failure is account-scoped, not about
+        a particular site). Trialing and pro accounts are unlimited.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -6534,8 +6539,11 @@ components:
         without the required scope (`code: scope_insufficient`), or a
         pro-only operation attempted on a core-tier site
         (`code: tier_insufficient`, with a `required` block naming the
-        site and tier). Accounts on a free trial run at the pro feature
-        level and never receive `tier_insufficient`.
+        site and tier). Account-scoped tier failures — creating an api key,
+        or creating a second site past core's one-site allowance — share
+        the `tier_insufficient` code but carry no `required` block, since
+        no single site is the subject. Accounts on a free trial run at the
+        pro feature level and never receive `tier_insufficient`.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }

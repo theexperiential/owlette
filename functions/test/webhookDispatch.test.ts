@@ -25,11 +25,16 @@ import {
   emit,
   pumpRetryQueue,
   type AttemptDeps,
+  type BillingGate,
   type DeliveryRecord,
   type DeliveryStore,
   type HttpClient,
   type SubscriptionStore,
 } from '../src/webhookDispatch';
+import {
+  resolveBillingState,
+  webhookDeliveryPausedBy,
+} from '../src/lib/billingLogic';
 
 const NOW = new Date('2026-04-20T00:00:00Z');
 
@@ -526,5 +531,230 @@ describe('pumpRetryQueue', () => {
     });
     assert.equal(res.attempted, 0);
     assert.equal(http.calls, 0);
+  });
+});
+
+/* --------------------------------------------------------------------- */
+/*  billing state (mirror of web/lib/billing/billingState.ts)            */
+/* --------------------------------------------------------------------- */
+
+describe('resolveBillingState', () => {
+  const AT = new Date('2026-08-01T00:00:00Z');
+  const future = new Date(AT.getTime() + 60_000);
+  const past = new Date(AT.getTime() - 60_000);
+
+  it('a live subscription outranks the trial clock', () => {
+    assert.equal(resolveBillingState({ subscriptionStatus: 'active', trialEndsAt: past }, AT), 'active');
+    // past_due stays entitled — Stripe dunning owns the recovery window.
+    assert.equal(resolveBillingState({ subscriptionStatus: 'past_due', trialEndsAt: past }, AT), 'active');
+  });
+
+  it('canceled locks out even with time left on the clock', () => {
+    assert.equal(resolveBillingState({ subscriptionStatus: 'canceled', trialEndsAt: future }, AT), 'canceled');
+  });
+
+  it('incomplete and unrecognised statuses fall through to the trial clock', () => {
+    assert.equal(resolveBillingState({ subscriptionStatus: 'incomplete', trialEndsAt: future }, AT), 'trialing');
+    assert.equal(resolveBillingState({ subscriptionStatus: 'incomplete', trialEndsAt: past }, AT), 'expired');
+    // Never read an unknown status as a paid subscription.
+    assert.equal(resolveBillingState({ subscriptionStatus: 'paused', trialEndsAt: past }, AT), 'expired');
+  });
+
+  it('trial clock: future = trialing, now/past = expired', () => {
+    assert.equal(resolveBillingState({ trialEndsAt: future }, AT), 'trialing');
+    assert.equal(resolveBillingState({ trialEndsAt: AT }, AT), 'expired');
+    assert.equal(resolveBillingState({ trialEndsAt: past }, AT), 'expired');
+  });
+
+  it('fails open: absent doc, null sentinel, and unparseable clocks read trialing', () => {
+    assert.equal(resolveBillingState(null, AT), 'trialing');
+    assert.equal(resolveBillingState(undefined, AT), 'trialing');
+    assert.equal(resolveBillingState({ trialEndsAt: null }, AT), 'trialing');
+    assert.equal(resolveBillingState({ trialEndsAt: 'not-a-date' }, AT), 'trialing');
+    assert.equal(resolveBillingState({ trialEndsAt: {} }, AT), 'trialing');
+  });
+
+  it('reads every timestamp shape a customers doc can hold', () => {
+    // admin SDK Timestamp
+    assert.equal(resolveBillingState({ trialEndsAt: { toMillis: () => future.getTime() } }, AT), 'trialing');
+    // REST / export shapes
+    assert.equal(resolveBillingState({ trialEndsAt: { seconds: Math.floor(past.getTime() / 1000) } }, AT), 'expired');
+    assert.equal(resolveBillingState({ trialEndsAt: { _seconds: Math.floor(past.getTime() / 1000) } }, AT), 'expired');
+    // epoch ms + ISO string
+    assert.equal(resolveBillingState({ trialEndsAt: future.getTime() }, AT), 'trialing');
+    assert.equal(resolveBillingState({ trialEndsAt: past.toISOString() }, AT), 'expired');
+  });
+
+  it('webhookDeliveryPausedBy reports the locking state, or null to deliver', () => {
+    assert.equal(webhookDeliveryPausedBy({ trialEndsAt: past }, AT), 'expired');
+    assert.equal(webhookDeliveryPausedBy({ subscriptionStatus: 'canceled' }, AT), 'canceled');
+    assert.equal(webhookDeliveryPausedBy({ trialEndsAt: future }, AT), null);
+    assert.equal(webhookDeliveryPausedBy({ subscriptionStatus: 'active', trialEndsAt: past }, AT), null);
+    // A core subscriber is paid up — tier never pauses delivery.
+    assert.equal(
+      webhookDeliveryPausedBy({ subscriptionStatus: 'active', subscriptionTier: 'core' } as never, AT),
+      null,
+    );
+  });
+});
+
+/* --------------------------------------------------------------------- */
+/*  billing gate on the retry pump (billing sprint wave 2.6)             */
+/* --------------------------------------------------------------------- */
+
+/** Gate that pauses the listed sites and records what it was asked about. */
+function makeBillingGate(paused: Record<string, 'expired' | 'canceled'>): BillingGate & {
+  asked: string[];
+} {
+  const asked: string[] = [];
+  return {
+    asked,
+    async pausedBy(siteId) {
+      asked.push(siteId);
+      return paused[siteId] ?? null;
+    },
+  };
+}
+
+describe('pumpRetryQueue billing gate', () => {
+  it('locked-out site → not sent, and the record is left exactly as it was', async () => {
+    const rec = buildDelivery(samplePayload(), sub(), NOW);
+    const store = makeStore([rec]);
+    const http = fixedHttp([200]);
+
+    const res = await pumpRetryQueue({
+      http,
+      store,
+      subscriptions: makeSubs([]),
+      billing: makeBillingGate({ 'site-a': 'expired' }),
+      now: () => NOW,
+    });
+
+    assert.equal(res.paused, 1);
+    // Not "attempted" — nothing was sent, so nothing was tried.
+    assert.equal(res.attempted, 0);
+    assert.equal(http.calls, 0);
+
+    // Paused, not failed: same state, same attempt count, same due time, so
+    // the next tick after conversion ships it untouched.
+    const after = store.all().find((r) => r.id === rec.id);
+    assert.equal(after?.state, 'pending');
+    assert.equal(after?.attempt, 0);
+    assert.equal(after?.nextAttemptAt, rec.nextAttemptAt);
+    assert.equal(after?.lastError, undefined);
+    assert.equal(after?.lastStatus, undefined);
+  });
+
+  it('canceled account pauses just like expired', async () => {
+    const rec = buildDelivery(samplePayload(), sub(), NOW);
+    const store = makeStore([rec]);
+    const http = fixedHttp([200]);
+
+    const res = await pumpRetryQueue({
+      http,
+      store,
+      subscriptions: makeSubs([]),
+      billing: makeBillingGate({ 'site-a': 'canceled' }),
+      now: () => NOW,
+    });
+
+    assert.equal(res.paused, 1);
+    assert.equal(http.calls, 0);
+  });
+
+  it('entitled site → delivers', async () => {
+    const rec = buildDelivery(samplePayload(), sub(), NOW);
+    const store = makeStore([rec]);
+    const http = fixedHttp([200]);
+
+    const res = await pumpRetryQueue({
+      http,
+      store,
+      subscriptions: makeSubs([]),
+      billing: makeBillingGate({}),
+      now: () => NOW,
+    });
+
+    assert.equal(res.paused, 0);
+    assert.equal(res.attempted, 1);
+    assert.equal(res.succeeded, 1);
+    assert.equal(http.calls, 1);
+  });
+
+  it('one locked-out account never blocks another customer in the same batch', async () => {
+    const locked = buildDelivery(samplePayload({ siteId: 'site-a' }), sub({ siteId: 'site-a' }), NOW);
+    const open = buildDelivery(
+      samplePayload({ siteId: 'site-b' }),
+      sub({ id: 'sub-2', siteId: 'site-b' }),
+      NOW,
+    );
+    const store = makeStore([locked, open]);
+    const http = fixedHttp([200]);
+
+    const res = await pumpRetryQueue({
+      http,
+      store,
+      subscriptions: makeSubs([]),
+      billing: makeBillingGate({ 'site-a': 'expired' }),
+      now: () => NOW,
+    });
+
+    assert.equal(res.paused, 1);
+    assert.equal(res.attempted, 1);
+    assert.equal(res.succeeded, 1);
+    assert.equal(store.all().find((r) => r.id === locked.id)?.state, 'pending');
+    assert.equal(store.all().find((r) => r.id === open.id)?.state, 'succeeded');
+  });
+
+  it('a gate that fails open (returns null on error) still delivers', async () => {
+    const rec = buildDelivery(samplePayload(), sub(), NOW);
+    const store = makeStore([rec]);
+    const http = fixedHttp([200]);
+
+    const res = await pumpRetryQueue({
+      http,
+      store,
+      subscriptions: makeSubs([]),
+      // Mirrors the production wiring's catch: a read fault reads as "deliver".
+      billing: { async pausedBy() { return null; } },
+      now: () => NOW,
+    });
+
+    assert.equal(res.paused, 0);
+    assert.equal(res.succeeded, 1);
+  });
+
+  it('conversion restores delivery on the very next tick', async () => {
+    const rec = buildDelivery(samplePayload(), sub(), NOW);
+    const store = makeStore([rec]);
+    const http = fixedHttp([200]);
+    let locked = true;
+    const billing: BillingGate = {
+      async pausedBy() { return locked ? 'expired' : null; },
+    };
+
+    const first = await pumpRetryQueue({ http, store, subscriptions: makeSubs([]), billing, now: () => NOW });
+    assert.equal(first.paused, 1);
+    assert.equal(http.calls, 0);
+
+    locked = false; // customer completes checkout — no redeploy, no cache to clear
+
+    const second = await pumpRetryQueue({ http, store, subscriptions: makeSubs([]), billing, now: () => NOW });
+    assert.equal(second.paused, 0);
+    assert.equal(second.succeeded, 1);
+    assert.equal(store.all().find((r) => r.id === rec.id)?.state, 'succeeded');
+  });
+
+  it('no gate wired → every due record is attempted (back-compat)', async () => {
+    const rec = buildDelivery(samplePayload(), sub(), NOW);
+    const store = makeStore([rec]);
+    const res = await pumpRetryQueue({
+      http: fixedHttp([200]),
+      store,
+      subscriptions: makeSubs([]),
+      now: () => NOW,
+    });
+    assert.equal(res.paused, 0);
+    assert.equal(res.attempted, 1);
   });
 });

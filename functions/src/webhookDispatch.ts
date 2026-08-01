@@ -11,7 +11,10 @@
  *   processRetryQueue — scheduled every minute. Walks the
  *                    `webhook_deliveries` collection, re-attempting any
  *                    pending delivery whose `nextAttemptAt` is due.
- *                    Applies backoff + give-up logic from webhookLogic.ts.
+ *                    Applies backoff + give-up logic from webhookLogic.ts,
+ *                    and the billing lockout from billingLogic.ts — this is
+ *                    the only place this runtime POSTs to a customer URL,
+ *                    so it is where wave 2.6's delivery gate belongs.
  *
  *   handleInboundProbe — HTTPS GET. Receives verifiable probe signatures
  *                    so operators can test their receiver wiring without
@@ -26,6 +29,11 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import * as admin from 'firebase-admin';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { requireInternalSecret } from './lib/requireInternalSecret';
+import {
+  webhookDeliveryPausedBy,
+  type BillingStateSource,
+  type LockedBillingState,
+} from './lib/billingLogic';
 import {
   canonicalJson,
   classifyResponse,
@@ -92,6 +100,17 @@ export interface SubscriptionStore {
   markDisabled(id: string, reason: string): Promise<void>;
 }
 
+/**
+ * Billing lockout lookup for the retry pump (billing sprint wave 2.6).
+ *
+ * Returns the state pausing this site's delivery, or `null` to deliver.
+ * Implementations must **fail open** — a billing read that throws must not
+ * silently stop a paying customer's webhooks.
+ */
+export interface BillingGate {
+  pausedBy(siteId: string): Promise<LockedBillingState | null>;
+}
+
 /* --------------------------------------------------------------------- */
 /*  Pure orchestrator: prepare a delivery                                */
 /* --------------------------------------------------------------------- */
@@ -153,6 +172,12 @@ export interface AttemptDeps {
   /** Auto-disable after this many consecutive permanent failures. */
   autoDisableAfter?: number;
   now?: () => Date;
+  /**
+   * Billing lockout gate (wave 2.6). Consulted by `pumpRetryQueue` only —
+   * `attemptDelivery` stays the "send this one record" primitive. Omitted in
+   * tests that aren't exercising the gate; production always wires it.
+   */
+  billing?: BillingGate;
 }
 
 export interface AttemptResult {
@@ -267,6 +292,12 @@ export interface EmitDeps {
  * each, persist them as `pending`. The retry pump will pick them up on
  * the next scheduled tick; we don't block the caller on HTTP.
  *
+ * Not billing-gated, on purpose: nothing here reaches a customer endpoint,
+ * and `pumpRetryQueue` — the only thing in this runtime that does — gates
+ * every record at send time. Gating here as well would let a record queued
+ * a millisecond before expiry escape, and would need re-checking at send
+ * anyway.
+ *
  * Returns the records created for observability.
  */
 export async function emit(
@@ -295,6 +326,7 @@ export async function pumpRetryQueue(deps: AttemptDeps): Promise<{
   succeeded: number;
   failed: number;
   retried: number;
+  paused: number;
 }> {
   const now = deps.now ? deps.now() : new Date();
   const due = await deps.store.list({ state: 'pending', dueBefore: now.getTime() });
@@ -302,15 +334,35 @@ export async function pumpRetryQueue(deps: AttemptDeps): Promise<{
   let succeeded = 0;
   let failed = 0;
   let retried = 0;
+  let paused = 0;
+  let attempted = 0;
 
   for (const record of due) {
+    // Billing lockout (wave 2.6). A paused record is left EXACTLY as it is —
+    // still `pending`, same `attempt`, same `nextAttemptAt`. It is not sent,
+    // not counted as a failed attempt, and not given up on: the matrix says
+    // delivery *pauses*, so the moment the account converts the very next
+    // tick picks the record up and ships it, with nothing to redeploy and no
+    // cached flag to invalidate.
+    if (deps.billing) {
+      const pausedBy = await deps.billing.pausedBy(record.siteId);
+      if (pausedBy) {
+        paused++;
+        console.debug(
+          `[webhookDispatch] delivery paused for site ${record.siteId}: account ${pausedBy}`,
+        );
+        continue;
+      }
+    }
+
+    attempted++;
     const result = await attemptDelivery(record, deps);
     if (result.outcome.kind === 'success') succeeded++;
     else if (result.outcome.kind === 'permanent_failure') failed++;
     else retried++;
   }
 
-  return { attempted: due.length, succeeded, failed, retried };
+  return { attempted, succeeded, failed, retried, paused };
 }
 
 /* --------------------------------------------------------------------- */
@@ -360,10 +412,14 @@ export const processRetryQueue = onSchedule(
       http: getDefaultHttpClient(),
       store: getDefaultDeliveryStore(),
       subscriptions: getDefaultSubscriptionStore(),
+      // Fresh gate per tick — the memo inside must not outlive the run, or a
+      // conversion would wait on a cache instead of taking effect at once.
+      billing: getDefaultBillingGate(),
     });
     console.log(
       `[webhookDispatch] retry pump: attempted=${res.attempted} ` +
-        `succeeded=${res.succeeded} failed=${res.failed} retried=${res.retried}`,
+        `succeeded=${res.succeeded} failed=${res.failed} retried=${res.retried} ` +
+        `paused=${res.paused}`,
     );
   },
 );
@@ -409,6 +465,58 @@ function getDefaultDeliveryStore(): DeliveryStore {
     async get(id) {
       const snap = await col.doc(id).get();
       return snap.exists ? (snap.data() as DeliveryRecord) : undefined;
+    },
+  };
+}
+
+/**
+ * Firestore-backed billing gate: `sites/{siteId}.owner` →
+ * `customers/{owner}` → `resolveBillingState()`.
+ *
+ * Memoised at both levels within a single pump run — a site with several
+ * queued retries costs one site read, and several sites under one owner
+ * share the customer read. Mirrors `createWebhookBillingCache()` in
+ * `web/lib/billing/webhookDelivery.server.ts`; deliberately per-invocation
+ * so the decision is always live.
+ *
+ * Fails open on any read error (see {@link BillingGate}) — a Firestore
+ * hiccup must not look like a lockout.
+ */
+function getDefaultBillingGate(): BillingGate {
+  const db = admin.firestore();
+  const siteOwners = new Map<string, string | null>();
+  const ownerStates = new Map<string, LockedBillingState | null>();
+
+  return {
+    async pausedBy(siteId) {
+      try {
+        let ownerUid = siteOwners.get(siteId);
+        if (ownerUid === undefined) {
+          const siteSnap = await db.collection('sites').doc(siteId).get();
+          const rawOwner = siteSnap.exists ? siteSnap.data()?.owner : undefined;
+          ownerUid = typeof rawOwner === 'string' && rawOwner.length > 0 ? rawOwner : null;
+          siteOwners.set(siteId, ownerUid);
+        }
+        if (ownerUid === null) return null;
+
+        const cached = ownerStates.get(ownerUid);
+        if (cached !== undefined) return cached;
+
+        const customerSnap = await db.collection('customers').doc(ownerUid).get();
+        const customer = customerSnap.exists
+          ? (customerSnap.data() as BillingStateSource | undefined) ?? null
+          : null;
+
+        const pausedBy = webhookDeliveryPausedBy(customer);
+        ownerStates.set(ownerUid, pausedBy);
+        return pausedBy;
+      } catch (err) {
+        console.error(
+          `[webhookDispatch] billing lookup failed for site ${siteId}; delivering anyway`,
+          err,
+        );
+        return null;
+      }
     },
   };
 }

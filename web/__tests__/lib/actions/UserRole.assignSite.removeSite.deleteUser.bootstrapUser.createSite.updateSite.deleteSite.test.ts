@@ -83,26 +83,51 @@ class CustomersFailingDb extends FakeDb {
   }
 }
 
+interface FakeQuerySnapshot {
+  docs: Array<{ id: string; data: () => Record<string, unknown> }>;
+  empty: boolean;
+}
+
+/**
+ * Minimal collection/query fake. `where` supports equality only and `limit`
+ * truncates — enough for `createSite`'s `sites where owner == uid` existence
+ * check (billing-system wave 2.7) without pulling in a Firestore emulator.
+ */
 class FakeCollection {
   constructor(
     private readonly db: FakeDb,
     private readonly path: string,
+    private readonly filters: Array<[string, unknown]> = [],
+    private readonly max: number | null = null,
   ) {}
 
   doc(id: string): FakeDoc {
     return new FakeDoc(this.db, `${this.path}/${id}`, id);
   }
 
-  async get(): Promise<{ docs: Array<{ id: string; data: () => Record<string, unknown> }> }> {
+  where(field: string, op: string, value: unknown): FakeCollection {
+    if (op !== '==') throw new Error(`FakeCollection.where: unsupported operator ${op}`);
+    return new FakeCollection(this.db, this.path, [...this.filters, [field, value]], this.max);
+  }
+
+  limit(n: number): FakeCollection {
+    return new FakeCollection(this.db, this.path, this.filters, n);
+  }
+
+  async get(): Promise<FakeQuerySnapshot> {
     const prefix = `${this.path}/`;
-    const docs = [...this.db.docs.entries()]
+    let docs = [...this.db.docs.entries()]
       .filter(([path, data]) => data !== null && path.startsWith(prefix))
       .filter(([path]) => !path.slice(prefix.length).includes('/'))
+      .filter(([, data]) =>
+        this.filters.every(([field, value]) => (data as Record<string, unknown>)[field] === value),
+      )
       .map(([path, data]) => ({
         id: path.slice(prefix.length),
         data: () => ({ ...(data as Record<string, unknown>) }),
       }));
-    return { docs };
+    if (this.max !== null) docs = docs.slice(0, this.max);
+    return { docs, empty: docs.length === 0 };
   }
 }
 
@@ -600,6 +625,140 @@ describe('site CRUD actions', () => {
       const result = await runCreateSite(db);
 
       expect(result).toMatchObject({ kind: 'created', tier: 'pro' });
+    });
+  });
+
+  // billing-system wave 2.7: core includes exactly one site. Enforced here
+  // rather than in marketing copy alone. Route renders `core_site_limit` as
+  // `403 tier_insufficient`.
+  describe('createSite core one-site limit', () => {
+    /** An active core subscriber. */
+    function seedCoreSubscriber(db: FakeDb) {
+      db.seed('users/owner-1', { sites: [] });
+      db.seed('customers/owner-1', {
+        subscriptionStatus: 'active',
+        subscriptionTier: 'core',
+        trialEndsAt: new Date(CREATE_NOW.getTime() - 30 * 24 * 60 * 60 * 1000),
+      });
+    }
+
+    it('blocks a core subscriber who already owns a site', async () => {
+      const db = new FakeDb();
+      seedCoreSubscriber(db);
+      db.seed('sites/site-existing', { name: 'First', owner: 'owner-1', tier: 'core' });
+
+      const result = await runCreateSite(db, 'site-b');
+
+      expect(result).toEqual({ kind: 'core_site_limit' });
+      // Nothing written, and no audit event for a site that was never created.
+      expect(db.docs.has('sites/site-b')).toBe(false);
+      expect(mockEmitMutation).not.toHaveBeenCalled();
+    });
+
+    it('allows a core subscriber their first site', async () => {
+      const db = new FakeDb();
+      seedCoreSubscriber(db);
+
+      const result = await runCreateSite(db);
+
+      expect(result).toMatchObject({ kind: 'created', tier: 'core' });
+      expect(db.docs.get('sites/site-a')).toMatchObject({ owner: 'owner-1', tier: 'core' });
+    });
+
+    it("ignores another owner's sites", async () => {
+      const db = new FakeDb();
+      seedCoreSubscriber(db);
+      db.seed('sites/someone-else', { name: 'Theirs', owner: 'owner-2', tier: 'pro' });
+
+      const result = await runCreateSite(db);
+
+      expect(result).toMatchObject({ kind: 'created', tier: 'core' });
+    });
+
+    it('pro subscribers get unlimited sites', async () => {
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+      db.seed('customers/owner-1', {
+        subscriptionStatus: 'active',
+        subscriptionTier: 'pro',
+        trialEndsAt: new Date(CREATE_NOW.getTime() - 30 * 24 * 60 * 60 * 1000),
+      });
+      db.seed('sites/site-1', { name: 'One', owner: 'owner-1', tier: 'pro' });
+      db.seed('sites/site-2', { name: 'Two', owner: 'owner-1', tier: 'pro' });
+
+      const result = await runCreateSite(db, 'site-3');
+
+      expect(result).toMatchObject({ kind: 'created', tier: 'pro' });
+    });
+
+    it('trialing accounts get unlimited sites — the trial runs at pro level', async () => {
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+      db.seed('customers/owner-1', {
+        subscriptionStatus: null,
+        subscriptionTier: null,
+        trialEndsAt: new Date(CREATE_NOW.getTime() + 5 * 24 * 60 * 60 * 1000),
+      });
+      db.seed('sites/site-1', { name: 'One', owner: 'owner-1', tier: 'pro' });
+
+      const result = await runCreateSite(db, 'site-2');
+
+      expect(result).toMatchObject({ kind: 'created', tier: 'pro' });
+    });
+
+    it('a subscriber with no subscriptionTier stamped yet is not limited', async () => {
+      // Reads as pro (see `deriveSiteTier`); an unstamped paid account must
+      // never be degraded into core's limit by a missing webhook write.
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+      db.seed('customers/owner-1', { subscriptionStatus: 'active', trialEndsAt: null });
+      db.seed('sites/site-1', { name: 'One', owner: 'owner-1' });
+
+      const result = await runCreateSite(db, 'site-2');
+
+      expect(result).toMatchObject({ kind: 'created', tier: 'pro' });
+    });
+
+    it('an expired core account is not answered with the tier error', async () => {
+      // Lockout is the route's gate and the honest remedy is "reactivate",
+      // not "upgrade" — so this path must stay out of `core_site_limit`.
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+      db.seed('customers/owner-1', {
+        subscriptionStatus: null,
+        subscriptionTier: 'core',
+        trialEndsAt: new Date(CREATE_NOW.getTime() - 1),
+      });
+      db.seed('sites/site-1', { name: 'One', owner: 'owner-1', tier: 'core' });
+
+      const result = await runCreateSite(db, 'site-2');
+
+      expect(result).toMatchObject({ kind: 'created' });
+    });
+
+    it('a canceled core account is not answered with the tier error either', async () => {
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+      db.seed('customers/owner-1', {
+        subscriptionStatus: 'canceled',
+        subscriptionTier: 'core',
+        trialEndsAt: null,
+      });
+      db.seed('sites/site-1', { name: 'One', owner: 'owner-1', tier: 'core' });
+
+      const result = await runCreateSite(db, 'site-2');
+
+      expect(result).toMatchObject({ kind: 'created' });
+    });
+
+    it('a colliding site id still reports the collision, not the tier limit', async () => {
+      const db = new FakeDb();
+      seedCoreSubscriber(db);
+      db.seed('sites/site-a', { name: 'Taken', owner: 'owner-1', tier: 'core' });
+
+      const result = await runCreateSite(db, 'site-a');
+
+      expect(result).toEqual({ kind: 'already_exists' });
     });
   });
 

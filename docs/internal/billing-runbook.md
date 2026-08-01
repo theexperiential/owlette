@@ -57,7 +57,7 @@ dunning gives up, Stripe moves the subscription to `canceled`, and that lands he
 | `stripe_events/{eventId}` (top level) | webhook handler | same ledger for events whose customer could not be attributed |
 | `sites/{siteId}` | `createSite`, webhook handler | `tier` (`core` / `pro`), `tierUpgradedAt` |
 | `sites/{siteId}/roost/quota` | roost reconcile | `usedBytes`, `planLimitBytes` (a one-off grant overrides the tier constant) |
-| `config/billing` | task 5.1, by hand | `{ goLiveAt }` — deployment-wide; drives the announcement banner |
+| `config/billing` | `billing-go-live.mjs announce` (task 5.1) | `{ goLiveAt }` — deployment-wide; drives the announcement banner and the bootstrap clock gate |
 | `sites/{siteId}/audit_log` | `authorizedSiteHandler` | lockout denials, `denyReason: 'billing_locked'` |
 
 The billing customer is the **site-owner user's uid**. There is no org entity in this codebase; do
@@ -177,8 +177,8 @@ Check this list before diagnosing anything as broken. As of the wave-3 landing:
 | ~~No admin billing override~~ **RESOLVED 2026-08-01** (task 4.1 landed) | `/admin/customers` UI + `POST /api/admin/billing/customers/{uid}` — see "trial extension / comp" below |
 | **Roost storage metering not wired** | `sites/{siteId}/roost/quota.usedBytes` is not populated from the object store, so overage always measures 0 and always reports 0 to Stripe |
 | **No 110% overage cap** | `functions/src/lib/quotaLogic.ts` hard-stops uploads at **100%** of the included allowance (`402 quota_exceeded` / `quota_would_exceed`). Overage cannot currently accrue through the admission path at all |
-| **Webhook *delivery* is not billing-gated** | the plan's lockout matrix says delivery pauses for an expired account; the dispatch paths (`web/lib/webhookSender.server.ts`, `functions/src/webhookDispatch.ts`) do not consult billing state. Only webhook *creation* is pro-gated. Do not tell a customer their webhooks stop |
-| **Core's one-site limit is not enforced** | nothing prevents a core subscriber creating more sites; each additional site is simply billed at $10/machine |
+| ~~Webhook *delivery* is not billing-gated~~ **RESOLVED 2026-08-01** (task 2.6 landed) | both dispatch paths now pause on `expired` / `canceled`: `fireWebhooks()` (`web/lib/webhookSender.server.ts` → `web/lib/billing/webhookDelivery.server.ts`) and the scheduled retry pump (`functions/src/webhookDispatch.ts` → `functions/src/lib/billingLogic.ts`). Nothing is sent, queued, or recorded as a failure — subscriptions cannot drift toward the 10-strike auto-disable while an account waits to convert. Both gates fail **open** on a read error and resolve live, so conversion restores delivery on the next event with no redeploy. Tier is deliberately not consulted: a core account is paid up, and creation is where pro-only is enforced |
+| ~~Core's one-site limit is not enforced~~ **RESOLVED 2026-08-01** (task 2.7 landed) | `createSite.server.ts` returns `core_site_limit` → `403 tier_insufficient` ("core includes one site — upgrade to pro for unlimited sites") when the owner resolves `active` + `subscriptionTier: 'core'` and already owns a site. Trialing, pro, unstamped subscribers, and locked-out accounts are untouched — the last of those is the lockout gate's 402, not an upgrade prompt |
 | **No self-service tier change** | `POST /api/billing/checkout` answers `409 already_subscribed` for an active subscription. Moving a customer between core and pro is a Stripe-side subscription edit |
 
 ---
@@ -376,16 +376,16 @@ storage overage). Resolution is all-or-nothing: a missing price id for the reque
 Full steps and ordering: wave 5 of `dev/active/billing-system/tasks.md`. Summary of what an operator
 touches, in order:
 
-1. **5.1 — announce (T-30).** Mass email to every account owner, then write
-   `config/billing { goLiveAt: <T0> }` to switch the dashboard banner into its announcement state.
-   Also add `billing` to `RESERVED_SITE_IDS` in `web/lib/validators.ts` while you are there.
+1. **5.1 — announce (T-30).** Mass email to every account owner, then
+   `scripts/billing-go-live.mjs announce --golive=<T0>` to write `config/billing { goLiveAt }`,
+   which switches the dashboard banner into its announcement state and arms the bootstrap clock
+   gate. Also add `billing` to `RESERVED_SITE_IDS` in `web/lib/validators.ts` while you are there.
 2. **5.2 — enable Stripe live mode.** Flip the env vars from test to live. Smoke test with a real
    card ($1 charge, then refund) before any customer can reach checkout. Verify all three meters
    exist in **live** mode with `last` aggregation.
-3. **5.3 — T0: start the clocks.** Run `scripts/billing-go-live.mjs` (dry-run first). It stamps
-   `trialEndsAt = T0 + 14d` on every customer without a subscription, stamps an explicit `tier` on
-   every site doc that lacks one, and emails owners their trial end date. Take a backup snapshot of
-   `customers` and `sites` before this runs.
+3. **5.3 — T0: start the clocks.** Run `scripts/billing-go-live.mjs stamp` (dry-run first). It stamps
+   `trialEndsAt = T0 + 14d` on every customer without a subscription and an explicit `tier` on every
+   site doc that lacks one. Take a backup snapshot of `customers` and `sites` before this runs.
 4. **5.4 — flip the copy.** Marketing surfaces move from "free during beta" to real prices plus "free
    14-day trial". The pinned e2e specs assert the beta copy and gate the deploy, so their updates
    must land in the same commit. Run `/preflight` before pushing.
@@ -394,6 +394,68 @@ Prerequisite for all of it: the backfills (`scripts/backfill-customers.mjs`, the
 `scripts/backfill-stripe-customers.mjs`) must have run in that environment. Both take
 `--env=dev|prod` and `--dry-run`; both prompt for confirmation on a non-dry-run against prod, and the
 Stripe one prompts again when the key resolves to live mode.
+
+### the go-live script
+
+`scripts/billing-go-live.mjs` is the tooling for steps 1 and 3. Same conventions as the backfills:
+`--env=dev|prod` (required), `--dry-run`, three-file `.env.local` loading, `_DEV`/`_PROD` credential
+suffixes with an unsuffixed fallback that warns, batched writes, a y/N confirmation on any non-dry-run
+against prod, and a totals block at the end. It needs no Stripe key — nothing in it touches Stripe.
+
+It sends **no email**. The announcement is 5.1's mass send; the day-10 / day-13 / expiry reminders are
+picked up automatically by the trial cron once the clocks exist.
+
+```bash
+# T-30 — announce. Use an explicit UTC offset; a bare date parses as UTC midnight and a
+# bare datetime parses in the local zone of whatever machine you run it on.
+node scripts/billing-go-live.mjs announce --env=prod --golive=2026-09-15T17:00:00Z --dry-run
+node scripts/billing-go-live.mjs announce --env=prod --golive=2026-09-15T17:00:00Z
+
+# pre-flight, any time
+node scripts/billing-go-live.mjs status --env=prod
+
+# T0 — stamp. Always dry-run first and read the plan.
+node scripts/billing-go-live.mjs stamp --env=prod --dry-run
+node scripts/billing-go-live.mjs stamp --env=prod
+
+# post-run verification: expect 0 null clocks and 0 unstamped sites
+node scripts/billing-go-live.mjs status --env=prod
+```
+
+**What `stamp` writes.** For each `customers/{uid}` with `trialEndsAt: null` **and** no
+`subscriptionId`: `trialEndsAt = goLiveAt + 14d` plus a recomputed `billingState`. For each
+`sites/{siteId}` whose raw stored `tier` is not literally `'core'` or `'pro'`: `tier: 'pro'`.
+`tierUpgradedAt` is deliberately left alone — this records the tier the site already had through
+`BETA_DEFAULT_TIER`, it is not an upgrade. Docs with a live clock, a subscription, or an explicit
+tier are untouched, which is also what makes a re-run a no-op.
+
+**Refusal conditions.** `announce` refuses a `--golive` date in the past. `stamp` refuses if any live
+`users/{uid}` has no `customers/{uid}` doc (run `backfill-customers.mjs` first — soft-deleted users
+are exempt, the backfill skips them on purpose), or if `config/billing.goLiveAt` is absent or has not
+yet passed. `--force` overrides all of them and says so per blocker; a forced `stamp` with no
+announced date anchors every clock on the moment it runs.
+
+**The one warning to actually stop for.** If `goLiveAt + 14d` is already in the past when you stamp —
+go-live slipped and nobody moved the announced date — the run reports `N account(s) would be stamped
+straight into 'expired'`. Those accounts lock out the instant it commits. Re-announce a current date
+before stamping.
+
+**Same-deploy code changes (T0).** Land these on `billing-golive-copy` and deploy it *after* the
+stamp has committed, never before:
+
+- delete `BETA_DEFAULT_TIER` and `getSiteTier()`'s fallback arm in `web/lib/siteTier.ts`
+- delete the hand-mirrored `BETA_DEFAULT_TIER` and `resolveSiteTier()`'s fallback arm in
+  `functions/src/lib/quotaLogic.ts`
+- the 5.4 copy flip plus its pinned e2e spec updates
+
+Ordering is load-bearing: until every site doc carries an explicit tier, an unstamped doc depends on
+that fallback to keep behaving like the pro-tier site it has been all beta. Deleting it first
+silently downgrades every legacy site. `status` prints an explicit "safe to delete
+`BETA_DEFAULT_TIER`" line once the site collection is fully stamped.
+
+The script's planning layer is pure and unit-tested at
+`web/__tests__/scripts/billingGoLive.test.ts`, which also pins the hand-mirrored `TRIAL_LENGTH_DAYS`,
+`trialEndsAtFrom()`, and billing-state derivation against their TypeScript sources.
 
 ---
 
@@ -427,9 +489,21 @@ expired state exactly as it does from a trialing one, and it is what stamps site
 
 - `402` with code `trial_expired` — account-level lockout. They need a plan.
 - `403` with code `tier_insufficient` — a core subscription hitting a pro-only operation (roost and
-  chunk endpoints, webhook creation, API key creation). Listing and revoking stay open on purpose.
+  chunk endpoints, webhook creation, API key creation), or creating a second site past core's
+  one-site allowance. Listing and revoking stay open on purpose.
 - Neither is retryable until the underlying state changes. Codes are documented at
   `owlette.app/docs/api/errors`.
+
+**A customer says their webhooks stopped arriving.**
+
+1. `resolveBillingState()` on the site owner's `customers/{uid}` doc. `expired` / `canceled` pauses
+   delivery (task 2.6) — look for `delivery paused for site <id>: account <state>` in the web logs
+   or `[webhookDispatch]` for the retry pump. Converting resumes it on the next event; nothing was
+   queued for replay, and the subscription was never auto-disabled.
+2. If billing is fine, it is an ordinary delivery failure — check
+   `sites/{siteId}/webhooks/{id}.failCount` / `lastStatus` and the deliveries list in the dashboard.
+   Ten consecutive failures auto-disable a subscription; a billing pause never contributes to that
+   count.
 
 **Where are the audit trails?**
 

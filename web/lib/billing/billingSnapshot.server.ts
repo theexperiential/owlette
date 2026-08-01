@@ -135,6 +135,16 @@ export function tierInsufficientDetail(): string {
 }
 
 /**
+ * Human-readable `detail` for core's one-site limit (billing-system wave
+ * 2.7). Distinct copy from {@link tierInsufficientDetail} even though both
+ * render as `tier_insufficient`: the generic wording points at upgrading *a
+ * site*, and there is no site to upgrade when the request is to create one.
+ */
+export function coreSiteLimitDetail(): string {
+  return 'core includes one site — upgrade to pro for unlimited sites';
+}
+
+/**
  * The `X-Owlette-Billing-Warning` value for a snapshot, or `null` when the
  * response should carry no warning.
  *

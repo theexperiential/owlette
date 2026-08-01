@@ -17,6 +17,9 @@
  * billing-system wave 0.3: the site's `tier` is derived from the owner's
  * billing state (`customers/{ownerUid}`) rather than a flat beta constant —
  * see `deriveSiteTier` below.
+ *
+ * billing-system wave 2.7: a core subscriber's one-site limit is enforced
+ * here — see `coreSiteLimitReached` below.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -28,6 +31,7 @@ import {
   resolveBillingState,
   type BillingStateSource,
 } from '@/lib/billing/billingState';
+import type { BillingState } from '@/lib/types/customer';
 
 const NAME_MAX_LENGTH = 200;
 
@@ -80,12 +84,60 @@ function parseSubscriptionTier(raw: unknown): SiteTier | null {
  * handed a degraded site here; minting `core` now would strand roost data on
  * sites created during the window and read as an enforcement gate that
  * nothing else in the codebase agrees with yet.
+ *
+ * Takes the already-resolved `billingState` rather than resolving its own:
+ * the caller needs the same value for the one-site limit (wave 2.7), and two
+ * independent resolutions of the same doc are two things that can drift.
  */
-function deriveSiteTier(customer: CustomerDocLike | undefined, now: Date): SiteTier {
-  if (resolveBillingState(customer, now) === 'active') {
+function deriveSiteTier(
+  customer: CustomerDocLike | undefined,
+  billingState: BillingState,
+): SiteTier {
+  if (billingState === 'active') {
     return parseSubscriptionTier(customer?.subscriptionTier) ?? UNENTITLED_DEFAULT_TIER;
   }
   return UNENTITLED_DEFAULT_TIER;
+}
+
+/**
+ * Whether this owner has already used up core's single-site allowance
+ * (billing-system wave 2.7).
+ *
+ * Applies to exactly one shape of account: `active` (a real, paying
+ * subscription) **and** `subscriptionTier === 'core'`. Everything else is
+ * untouched, deliberately:
+ *
+ * - `trialing` — the trial runs at the pro feature level, so a customer
+ *   evaluating the product may create as many sites as they like. Whether
+ *   those sites survive a later core conversion is that conversion's
+ *   problem, not a reason to cripple the trial.
+ * - `pro` (and a subscriber with no `subscriptionTier` stamped yet, which
+ *   `deriveSiteTier` reads as pro) — unlimited sites, as sold.
+ * - `expired` / `canceled` — already blocked upstream by the lockout gate.
+ *   Answering `tier_insufficient` here would tell a locked-out customer to
+ *   *upgrade* when what they need is to reactivate.
+ *
+ * Costs one `sites where owner == uid` query, `limit(1)` because this is an
+ * existence check — the exact count is never reported, so reading the whole
+ * portfolio to learn "at least one" would be waste. Sites are hard-deleted
+ * (`deleteSite` removes the doc), so there is no soft-delete tombstone to
+ * filter out and a match is always a live site.
+ */
+async function coreSiteLimitReached(
+  db: Firestore,
+  ownerUid: string,
+  customer: CustomerDocLike | undefined,
+  billingState: BillingState,
+): Promise<boolean> {
+  if (billingState !== 'active') return false;
+  if (parseSubscriptionTier(customer?.subscriptionTier) !== 'core') return false;
+
+  const owned = await db
+    .collection('sites')
+    .where('owner', '==', ownerUid)
+    .limit(1)
+    .get();
+  return !owned.empty;
 }
 
 export interface CreateSiteInput {
@@ -109,6 +161,12 @@ export type CreateSiteResult =
   | { kind: 'invalid_site_id'; reason: string }
   | { kind: 'invalid_name'; reason: string }
   | { kind: 'already_exists' }
+  /**
+   * Owner is on a core subscription and already owns a site (wave 2.7).
+   * The route renders this as `403 tier_insufficient` — see
+   * `coreSiteLimitDetail()` for the copy.
+   */
+  | { kind: 'core_site_limit' }
   | {
       kind: 'created';
       siteId: string;
@@ -161,12 +219,19 @@ export async function createSite(
   // to propagate: the `siteRef.get()` above already proves the db is
   // reachable, so a failure at this point is a real fault, and guessing an
   // entitlement is worse than a retryable error on a rare, user-initiated
-  // action.
+  // action. The same reasoning covers the site-count query below.
   const customerSnap = await db.collection('customers').doc(input.ownerUid).get();
-  const tier = deriveSiteTier(
-    customerSnap.exists ? customerSnap.data() : undefined,
-    nowDate,
-  );
+  const customer = customerSnap.exists ? customerSnap.data() : undefined;
+  const billingState = resolveBillingState(customer, nowDate);
+
+  // Core's one-site limit (wave 2.7). Checked after `already_exists` so a
+  // colliding id still reports the collision — that is the failure the caller
+  // can actually fix by retrying with a different id.
+  if (await coreSiteLimitReached(db, input.ownerUid, customer, billingState)) {
+    return { kind: 'core_site_limit' };
+  }
+
+  const tier = deriveSiteTier(customer, billingState);
 
   await siteRef.set({
     name: trimmedName,
