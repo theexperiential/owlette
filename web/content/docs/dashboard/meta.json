@@ -10,6 +10,7 @@
     "cortex",
     "activity-logs",
     "timezones",
+    "billing",
     "admin"
   ]
 }

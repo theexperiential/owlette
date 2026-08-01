@@ -87,6 +87,10 @@ export const USER_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
   [CapabilityEnum.SYSTEM_PRESET_MANAGE]: { perMinute: 30 },
   [CapabilityEnum.INSTALLER_MANAGE]: { perMinute: 10 },
   [CapabilityEnum.GLOBAL_SETTINGS_WRITE]: { perMinute: 10 },
+  // The billing dashboard refetches on load and after every override, so the
+  // ceiling has to clear a burst of reads — but an override is a rare, manual
+  // intervention, and 30/min is far above any human pace for one.
+  [CapabilityEnum.BILLING_MANAGE]: { perMinute: 30 },
   [CapabilityEnum.USER_SELF_PREFS]: { perMinute: 120 },
   [CapabilityEnum.USER_SELF_DELETE]: { perMinute: 1 },
 };
@@ -114,6 +118,7 @@ export const SYSTEM_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
   [CapabilityEnum.SYSTEM_PRESET_MANAGE]: { perMinute: 150 },
   [CapabilityEnum.INSTALLER_MANAGE]: { perMinute: 50 },
   [CapabilityEnum.GLOBAL_SETTINGS_WRITE]: { perMinute: 50 },
+  [CapabilityEnum.BILLING_MANAGE]: { perMinute: 150 },
   [CapabilityEnum.USER_SELF_PREFS]: { perMinute: 600 },
   [CapabilityEnum.USER_SELF_DELETE]: { perMinute: 5 },
 };

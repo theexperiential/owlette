@@ -347,9 +347,13 @@ describe('bootstrapUser', () => {
     expect(result).toEqual({ kind: 'already_exists', createdAt: 456 });
   });
 
-  // billing-system wave 0.1: bootstrap is the one server-mediated point
-  // where an account comes into existence, so it starts the trial clock.
-  it('mints the paired customers doc with a 14-day trial clock', async () => {
+  // billing-system wave 0.1 + the go-live gate (2026-08-01): bootstrap is
+  // the one server-mediated point where an account comes into existence.
+  // The clock starts only once config/billing.goLiveAt has passed — before
+  // that, new accounts get the same null sentinel as backfilled ones, so a
+  // pre-go-live signup can never resolve `expired` while checkout is
+  // unavailable. 5.3's stamp starts everyone together.
+  it('mints the null trial sentinel while billing has not gone live', async () => {
     const db = new FakeDb();
     const now = new Date('2026-01-02T03:04:05.000Z');
 
@@ -366,12 +370,48 @@ describe('bootstrapUser', () => {
       subscriptionId: null,
       subscriptionStatus: null,
       subscriptionTier: null,
-      trialEndsAt: new Date(now.getTime() + TRIAL_LENGTH_DAYS * 24 * 60 * 60 * 1000),
+      trialEndsAt: null,
       billingState: 'trialing',
       currentPeriodEnd: null,
       defaultPaymentMethod: null,
       taxId: null,
     });
+  });
+
+  it('mints a live 14-day clock once goLiveAt has passed', async () => {
+    const db = new FakeDb();
+    const now = new Date('2026-01-02T03:04:05.000Z');
+    db.seed('config/billing', { goLiveAt: new Date(now.getTime() - 1000) });
+
+    await bootstrapUser(ctx, {
+      uid: 'uid-1',
+      email: 'user@example.com',
+      db: db.asFirestore(),
+      now: () => now,
+    });
+
+    const customer = db.docs.get('customers/uid-1') as Record<string, unknown>;
+    expect(customer).toMatchObject({
+      trialEndsAt: new Date(now.getTime() + TRIAL_LENGTH_DAYS * 24 * 60 * 60 * 1000),
+      billingState: 'trialing',
+    });
+  });
+
+  it('keeps the null sentinel when goLiveAt is still in the future', async () => {
+    const db = new FakeDb();
+    const now = new Date('2026-01-02T03:04:05.000Z');
+    db.seed('config/billing', { goLiveAt: new Date(now.getTime() + 60_000) });
+
+    await bootstrapUser(ctx, {
+      uid: 'uid-1',
+      email: 'user@example.com',
+      db: db.asFirestore(),
+      now: () => now,
+    });
+
+    expect(
+      (db.docs.get('customers/uid-1') as Record<string, unknown>).trialEndsAt,
+    ).toBeNull();
   });
 
   it('never overwrites an existing customers doc', async () => {

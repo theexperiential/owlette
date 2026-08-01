@@ -19,6 +19,13 @@ export const Capability = {
   SYSTEM_PRESET_MANAGE: 'SYSTEM_PRESET_MANAGE',
   INSTALLER_MANAGE: 'INSTALLER_MANAGE',
   GLOBAL_SETTINGS_WRITE: 'GLOBAL_SETTINGS_WRITE',
+  // Read and override any account's billing record (billing-system task 4.1 /
+  // 4.2). Platform-scoped, superadmin-only: it addresses `customers/{uid}`
+  // across the whole deployment, so there is no site to scope it to. Kept
+  // separate from GLOBAL_SETTINGS_WRITE so the audit trail distinguishes
+  // "opened the billing dashboard" from "changed a deployment kill switch",
+  // and so the two can be rate-limited independently.
+  BILLING_MANAGE: 'BILLING_MANAGE',
   USER_SELF_PREFS: 'USER_SELF_PREFS',
   USER_SELF_DELETE: 'USER_SELF_DELETE',
 } as const;

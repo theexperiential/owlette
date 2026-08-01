@@ -55,11 +55,23 @@
  * subscription carries both the per-machine price and the storage-overage
  * price, so "any pro price ⇒ pro" is the only reading that survives a
  * multi-item subscription.
+ *
+ * ## subscription health alerts (wave 4.3)
+ *
+ * Three points below hand off to `billingHealthAlerts.server.ts`, which emails
+ * the account owner and the ops address: a cancellation, a failed subscription
+ * invoice, and the *edge* into `past_due`. Those calls are advisory — that
+ * module swallows every failure of its own — so a mail outage can never turn
+ * an applied event into a 500 and make Stripe redeliver it.
  */
 import type { Firestore } from 'firebase-admin/firestore';
 import type Stripe from 'stripe';
 import type { SiteTier } from '@/lib/siteTier';
 import type { SubscriptionStatus } from '@/lib/types/customer';
+import {
+  maybeSendBillingHealthAlert,
+  type BillingHealthAlertKind,
+} from '@/lib/billing/billingHealthAlerts.server';
 import {
   claimStripeEvent,
   findUidByStripeCustomerId,
@@ -293,6 +305,26 @@ function isEntitled(status: SubscriptionStatus): boolean {
   return status === 'active' || status === 'past_due';
 }
 
+/**
+ * Which subscription-health alert (if any) a subscription event raises
+ * (wave 4.3).
+ *
+ * A deletion is unconditional — a cancellation is always news. `past_due` is
+ * edge-triggered instead: Stripe re-sends `customer.subscription.updated`
+ * carrying `status: past_due` throughout dunning, so alerting on the value
+ * would mail the customer on every retry. Only the first one is a state
+ * change worth telling anybody about.
+ */
+function healthAlertKind(
+  deleted: boolean,
+  status: SubscriptionStatus,
+  priorStatus: SubscriptionStatus | null,
+): BillingHealthAlertKind | null {
+  if (deleted) return 'subscription_canceled';
+  if (status === 'past_due' && priorStatus !== 'past_due') return 'past_due';
+  return null;
+}
+
 /** Customer-doc patch derived from a subscription object. */
 function subscriptionPatch(
   subscription: Stripe.Subscription,
@@ -341,8 +373,28 @@ async function handleSubscriptionEvent(
     ? 'canceled'
     : normalizeSubscriptionStatus(subscription.status, ctx);
 
+  // 4.3 — the stored status is only needed to tell a *transition* into
+  // past_due from an update that merely carries it, so the extra read is
+  // taken on that arm alone. It has to happen before the write below, which
+  // would otherwise make stored and incoming identical.
+  const priorStatus = status === 'past_due' ? await readSubscriptionStatus(db, uid) : null;
+
   const { patch, tier } = subscriptionPatch(subscription, status, ctx);
   const billingState = await writeCustomerBilling(db, uid, patch, now);
+
+  // 4.3 — subscription health alert, raised before the early return below so
+  // the cancel path is covered. `maybeSendBillingHealthAlert` swallows its own
+  // failures, so a mail outage can never turn this event into a 500.
+  const alertKind = healthAlertKind(deleted, status, priorStatus);
+  if (alertKind) {
+    await maybeSendBillingHealthAlert(alertKind, uid, {
+      db,
+      now,
+      eventId: ctx.eventId,
+      eventType: ctx.type,
+      objectId: subscription.id,
+    });
+  }
 
   if (deleted || !isEntitled(status)) {
     info(ctx, `status=${status} billingState=${billingState} (site tiers untouched)`);
@@ -435,6 +487,19 @@ async function handleInvoiceEvent(
     info(ctx, `invoice ${mirror.id} mirrored (status=${mirror.status ?? 'none'})`);
     return;
   }
+
+  // 4.3 — a declined charge on a subscription invoice is news whatever the
+  // stored status says. Raised here rather than after the promotion below so
+  // the first-invoice failure on an `incomplete` subscription — the branch
+  // that deliberately does NOT promote to past_due — still reaches both
+  // audiences. Never throws; see `maybeSendBillingHealthAlert`.
+  await maybeSendBillingHealthAlert('payment_failed', uid, {
+    db,
+    now,
+    eventId: ctx.eventId,
+    eventType: ctx.type,
+    objectId: mirror.id,
+  });
 
   const current = await readSubscriptionStatus(db, uid);
   if (current !== 'active') {

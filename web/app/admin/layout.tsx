@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import RequireSuperadmin from '@/components/RequireSuperadmin';
-import { Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, Clock, Bell, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, Clock, Bell, CreditCard, Wallet, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -54,6 +54,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       href: '/admin/tokens',
       icon: KeyRound,
       description: 'view and revoke agent tokens',
+    },
+    {
+      name: 'billing',
+      href: '/admin/billing',
+      icon: CreditCard,
+      description: 'revenue, conversion, and storage pressure',
+    },
+    {
+      name: 'customers',
+      href: '/admin/customers',
+      icon: Wallet,
+      description: 'extend trials, comp tiers, force expiry',
     },
     {
       name: 'schedules',

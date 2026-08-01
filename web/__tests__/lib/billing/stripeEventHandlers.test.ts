@@ -21,6 +21,24 @@ jest.mock('firebase-admin/firestore', () => ({
   FieldValue: { serverTimestamp: () => '__SERVER_TS__' },
 }));
 
+/**
+ * Mail transport for the wave-4.3 health alerts. `getResend()` is consulted
+ * on every send, so flipping `mockResendConfigured` mid-suite exercises the
+ * unconfigured-deployment path without re-mocking the module. Both names are
+ * `mock`-prefixed because jest hoists `jest.mock` factories above every other
+ * statement and only permits out-of-scope references following that
+ * convention.
+ */
+const mockResendSend = jest.fn();
+let mockResendConfigured = true;
+
+jest.mock('@/lib/resendClient.server', () => ({
+  getResend: () => (mockResendConfigured ? { emails: { send: mockResendSend } } : null),
+  FROM_EMAIL: 'owlette <noreply@mail.owlette.app>',
+  ENV_LABEL: 'TEST',
+  isProduction: false,
+}));
+
 import {
   HANDLED_EVENT_TYPES,
   handleStripeEvent,
@@ -89,6 +107,27 @@ interface FakeSnapshot {
   data: () => Doc | undefined;
 }
 
+/** True for a plain `{}` map — the only shape Firestore merges recursively. */
+function isPlainMap(value: unknown): value is Doc {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    !(value instanceof Date) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+/** Recursive merge with Firestore's semantics: maps merge, everything else replaces. */
+function deepMerge(prev: Doc, next: Doc): Doc {
+  const out: Doc = { ...prev };
+  for (const [key, value] of Object.entries(next)) {
+    const existing = out[key];
+    out[key] = isPlainMap(value) && isPlainMap(existing) ? deepMerge(existing, value) : value;
+  }
+  return out;
+}
+
 class FakeDocRef {
   constructor(readonly db: FakeDb, readonly path: string) {}
 
@@ -101,9 +140,15 @@ class FakeDocRef {
     return { exists: data !== undefined, id: this.id, data: () => (data ? { ...data } : undefined) };
   }
 
+  /**
+   * Firestore's `set(..., { merge: true })` merges *recursively* into nested
+   * maps — that is what lets one health-alert kind be stamped without
+   * clobbering its siblings, exactly as `trialEmails` markers rely on. A flat
+   * spread would silently pass a test the real database would fail.
+   */
   async set(data: Doc, opts?: { merge?: boolean }): Promise<void> {
     const prev = opts?.merge ? this.db.store.get(this.path) ?? {} : {};
-    this.db.store.set(this.path, { ...prev, ...data });
+    this.db.store.set(this.path, opts?.merge ? deepMerge(prev, data) : { ...data });
   }
 
   async update(data: Doc): Promise<void> {
@@ -178,6 +223,10 @@ const NOW = new Date('2026-08-01T12:00:00.000Z');
 const PERIOD_END = 1_788_000_000; // epoch seconds
 const UID = 'owner-1';
 const STRIPE_CUSTOMER = 'cus_test123';
+
+/** Health-alert audiences: the account owner and the ops address. */
+const OWNER_EMAIL = 'owner@example.com';
+const OPS_EMAIL = 'ops@owlette.test';
 
 const PRICE_CORE = 'price_core_machine_test';
 const PRICE_PRO = 'price_pro_machine_test';
@@ -375,6 +424,18 @@ function run(db: FakeDb, event: Stripe.Event) {
   return handleStripeEvent(event, { db: db.asFirestore(), now: NOW });
 }
 
+/** Messages the mocked Resend client was handed, oldest first. */
+function sentMessages(): Array<{ to: string[]; subject: string; html: string }> {
+  return mockResendSend.mock.calls.map(
+    ([message]) => message as { to: string[]; subject: string; html: string },
+  );
+}
+
+/** Flat list of every address mailed this test. */
+function sentTo(): string[] {
+  return sentMessages().flatMap((m) => m.to);
+}
+
 /* ─── tests ────────────────────────────────────────────────────────────── */
 
 describe('stripe event handlers', () => {
@@ -386,6 +447,11 @@ describe('stripe event handlers', () => {
     process.env.STRIPE_PRICE_CORE_MACHINE = PRICE_CORE;
     process.env.STRIPE_PRICE_PRO_MACHINE = PRICE_PRO;
     process.env.STRIPE_PRICE_PRO_STORAGE_OVERAGE = PRICE_OVERAGE;
+    // Health alerts (4.3): a configured transport and ops address by default,
+    // so every event that raises an alert exercises the real send path.
+    process.env.ADMIN_EMAIL_DEV = OPS_EMAIL;
+    mockResendConfigured = true;
+    mockResendSend.mockResolvedValue({ data: { id: 'email_test' }, error: null });
     warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   });
@@ -770,6 +836,203 @@ describe('stripe event handlers', () => {
       await run(db, customerUpdatedEvent());
 
       expect(db.read(`customers/${UID}`)?.taxId).toBe('VAT-123');
+    });
+  });
+
+  /* --- subscription health alerts (wave 4.3) ----------------------------- */
+
+  describe('subscription health alerts', () => {
+    /** A converted account with a deliverable owner address. */
+    function subscribed(overrides: Doc = {}): FakeDb {
+      const db = scenario({ sites: { 'site-a': 'pro' } });
+      db.seed(`users/${UID}`, { email: OWNER_EMAIL });
+      db.seed(`customers/${UID}`, {
+        ...db.read(`customers/${UID}`),
+        subscriptionId: 'sub_test123',
+        subscriptionStatus: 'active',
+        subscriptionTier: 'pro',
+        billingState: 'active',
+        ...overrides,
+      });
+      return db;
+    }
+
+    it('mails both audiences when a subscription is deleted', async () => {
+      const db = subscribed();
+      const event = subscriptionEvent('customer.subscription.deleted');
+
+      const result = await run(db, event);
+
+      expect(result.outcome).toBe('processed');
+      expect(sentTo()).toEqual([OWNER_EMAIL, OPS_EMAIL]);
+
+      const [owner, ops] = sentMessages();
+      expect(owner.subject).toBe('your owlette subscription was canceled');
+      expect(owner.html).toContain('billing=choose-plan');
+      // Customer copy stays lowercase and never leaks internal identifiers.
+      expect(owner.html).not.toContain(UID);
+      expect(owner.html).not.toContain(event.id);
+
+      expect(ops.subject).toBe(`[TEST] billing: subscription canceled — ${UID}`);
+      expect(ops.html).toContain(UID);
+      expect(ops.html).toContain(event.id);
+      expect(ops.html).toContain('customer.subscription.deleted');
+      // State at the moment of the alert — the cancel write has already landed.
+      expect(ops.html).toContain('canceled');
+
+      expect(db.read(`customers/${UID}`)?.healthAlerts).toEqual({
+        subscription_canceled: NOW,
+      });
+    });
+
+    it('mails both audiences when a subscription invoice payment fails', async () => {
+      const db = subscribed();
+
+      await run(db, invoiceEvent('invoice.payment_failed'));
+
+      expect(sentTo()).toEqual([OWNER_EMAIL, OPS_EMAIL]);
+      const [owner, ops] = sentMessages();
+      expect(owner.subject).toBe("we couldn't process your owlette payment");
+      expect(ops.subject).toContain('billing: payment failed');
+      expect(ops.html).toContain('in_test123');
+
+      expect(db.read(`customers/${UID}`)?.healthAlerts).toEqual({ payment_failed: NOW });
+    });
+
+    it('mails both audiences on the transition into past_due', async () => {
+      const db = subscribed();
+
+      await run(db, subscriptionEvent('customer.subscription.updated', { status: 'past_due' }));
+
+      expect(sentTo()).toEqual([OWNER_EMAIL, OPS_EMAIL]);
+      const [owner, ops] = sentMessages();
+      expect(owner.subject).toBe('your owlette account is past due');
+      expect(ops.subject).toContain('billing: account past due');
+
+      expect(db.read(`customers/${UID}`)?.healthAlerts).toEqual({ past_due: NOW });
+    });
+
+    it('stays silent for an update that merely carries past_due', async () => {
+      // Stripe re-sends the same status throughout dunning; only the edge is news.
+      const db = subscribed({ subscriptionStatus: 'past_due' });
+
+      await run(db, subscriptionEvent('customer.subscription.updated', { status: 'past_due' }));
+
+      expect(mockResendSend).not.toHaveBeenCalled();
+      expect(db.read(`customers/${UID}`)?.healthAlerts).toBeUndefined();
+    });
+
+    it('treats a first-ever past_due as a transition', async () => {
+      const db = subscribed({ subscriptionStatus: null, billingState: 'trialing' });
+
+      await run(db, subscriptionEvent('customer.subscription.updated', { status: 'past_due' }));
+
+      expect(sentTo()).toEqual([OWNER_EMAIL, OPS_EMAIL]);
+    });
+
+    it('suppresses a repeat of the same kind inside the 24h cooldown', async () => {
+      const db = subscribed({
+        healthAlerts: { subscription_canceled: new Date(NOW.getTime() - 23 * 60 * 60 * 1000) },
+      });
+
+      await run(db, subscriptionEvent('customer.subscription.deleted'));
+
+      expect(mockResendSend).not.toHaveBeenCalled();
+      // The marker is left at its original instant — a suppressed alert must
+      // not extend its own cooldown.
+      expect(db.read(`customers/${UID}`)?.healthAlerts).toEqual({
+        subscription_canceled: new Date(NOW.getTime() - 23 * 60 * 60 * 1000),
+      });
+    });
+
+    it('sends again once the cooldown has elapsed', async () => {
+      const db = subscribed({
+        healthAlerts: { subscription_canceled: new Date(NOW.getTime() - 25 * 60 * 60 * 1000) },
+      });
+
+      await run(db, subscriptionEvent('customer.subscription.deleted'));
+
+      expect(sentTo()).toEqual([OWNER_EMAIL, OPS_EMAIL]);
+      expect(db.read(`customers/${UID}`)?.healthAlerts).toEqual({
+        subscription_canceled: NOW,
+      });
+    });
+
+    it('stamps one kind without clobbering another kind’s marker', async () => {
+      const previous = new Date(NOW.getTime() - 48 * 60 * 60 * 1000);
+      const db = subscribed({ healthAlerts: { payment_failed: previous } });
+
+      await run(db, subscriptionEvent('customer.subscription.deleted'));
+
+      expect(db.read(`customers/${UID}`)?.healthAlerts).toEqual({
+        payment_failed: previous,
+        subscription_canceled: NOW,
+      });
+    });
+
+    it('processes the event normally when every send throws', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      mockResendSend.mockRejectedValue(new Error('resend is down'));
+      const db = subscribed();
+
+      const result = await run(db, subscriptionEvent('customer.subscription.deleted'));
+
+      // The webhook still succeeds, and the mirror write still landed.
+      expect(result.outcome).toBe('processed');
+      expect(db.read(`customers/${UID}`)).toMatchObject({
+        subscriptionStatus: 'canceled',
+        billingState: 'canceled',
+      });
+      // Nothing was stamped, so the next event retries rather than burning it.
+      expect(db.read(`customers/${UID}`)?.healthAlerts).toBeUndefined();
+      errorSpy.mockRestore();
+    });
+
+    it('still mails ops when the account has no deliverable owner address', async () => {
+      const db = subscribed();
+      db.seed(`users/${UID}`, { email: OWNER_EMAIL, deletedAt: 1_785_000_000 });
+
+      await run(db, subscriptionEvent('customer.subscription.deleted'));
+
+      expect(sentTo()).toEqual([OPS_EMAIL]);
+      expect(db.read(`customers/${UID}`)?.healthAlerts).toEqual({
+        subscription_canceled: NOW,
+      });
+    });
+
+    it('skips silently when resend is unconfigured', async () => {
+      const debugSpy = jest.spyOn(console, 'debug').mockImplementation(() => {});
+      mockResendConfigured = false;
+      const db = subscribed();
+
+      const result = await run(db, subscriptionEvent('customer.subscription.deleted'));
+
+      expect(result.outcome).toBe('processed');
+      expect(mockResendSend).not.toHaveBeenCalled();
+      expect(db.read(`customers/${UID}`)?.healthAlerts).toBeUndefined();
+      expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining('resend not configured'),
+      );
+      debugSpy.mockRestore();
+    });
+
+    it('raises nothing for a one-off invoice with no subscription', async () => {
+      const db = subscribed();
+
+      await run(db, invoiceEvent('invoice.payment_failed', { subscriptionId: null }));
+
+      expect(mockResendSend).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      'customer.subscription.created',
+      'customer.subscription.updated',
+    ] as const)('raises nothing for a healthy %s', async (type) => {
+      const db = subscribed();
+
+      await run(db, subscriptionEvent(type, { status: 'active' }));
+
+      expect(mockResendSend).not.toHaveBeenCalled();
     });
   });
 

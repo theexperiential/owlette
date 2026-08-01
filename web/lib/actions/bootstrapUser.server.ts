@@ -31,7 +31,8 @@ import { emitMutation } from '@/lib/auditLogClient';
 import { isValidTimezone } from '@/lib/timeUtils';
 import { sanitizeDisplayName } from '@/lib/sanitize';
 import logger from '@/lib/logger';
-import { newCustomerDoc } from '@/lib/types/customer';
+import { newCustomerDoc, type BillingTimestamp } from '@/lib/types/customer';
+import { billingTimestampToMillis } from '@/lib/billing/billingState';
 import { linkStripeCustomer } from '@/lib/billing/stripeCustomer.server';
 
 export interface BootstrapUserInput {
@@ -92,7 +93,29 @@ type MintCustomerResult =
  * short-circuit on the `already_exists` path without ever repairing the
  * customer doc. The backfill script is the repair path for exactly this
  * gap, and the logged error reaches Sentry in production.
+ *
+ * Clock start is gated on go-live (added 2026-08-01 — 4.4's docs audit):
+ * until `config/billing.goLiveAt` exists AND has passed, new accounts mint
+ * the `trialEndsAt: null` sentinel like every other pre-go-live account.
+ * Without this, a signup 15 days before billing goes live would resolve
+ * `expired` — locked out with no way to pay (checkout 503s while Stripe is
+ * unconfigured). Task 5.3's stamp then starts everyone's clock together;
+ * signups after go-live self-start. An unreadable config doc counts as
+ * "not live yet" — the failure mode of that choice is a too-long trial,
+ * never a premature lockout.
  */
+async function trialClockStarted(db: Firestore, now: Date): Promise<boolean> {
+  try {
+    const snap = await db.collection('config').doc('billing').get();
+    if (!snap.exists) return false;
+    const raw = (snap.data() as { goLiveAt?: unknown } | undefined)?.goLiveAt;
+    const ms = billingTimestampToMillis(raw as BillingTimestamp);
+    return ms !== null && ms <= now.getTime();
+  } catch {
+    return false;
+  }
+}
+
 async function mintCustomerDoc(
   db: Firestore,
   uid: string,
@@ -108,7 +131,10 @@ async function mintCustomerDoc(
         stripeCustomerId: typeof stored === 'string' && stored.length > 0 ? stored : null,
       };
     }
-    await customerRef.set(newCustomerDoc(now));
+    const doc = (await trialClockStarted(db, now))
+      ? newCustomerDoc(now)
+      : { ...newCustomerDoc(now), trialEndsAt: null };
+    await customerRef.set(doc);
     return { ok: true, stripeCustomerId: null };
   } catch (err) {
     logger.error('failed to mint customers doc at bootstrap', {
