@@ -15,6 +15,7 @@ jest.mock('@/lib/userDeleteCascade.server', () => ({
 jest.mock('@/lib/logger', () => ({
   __esModule: true,
   default: {
+    debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
     info: jest.fn(),

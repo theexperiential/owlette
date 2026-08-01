@@ -13,10 +13,9 @@ import {
   problemForbidden,
   problemNotFound,
   problemScopeInsufficient,
-  problemTierInsufficient,
   problemTokenExpired,
-  problemTrialExpired,
 } from '@/lib/apiErrors';
+import { billingErrorToProblem } from '@/lib/billingGate.server';
 import {
   ApiAuthError,
   applyAuthDeprecations,
@@ -341,9 +340,9 @@ function isMutationPermission(permission: ApiKeyPermission): boolean {
  * api-key surface, per the plan's lockout matrix (public API / CLI / SDK
  * blocked on expiry; dashboard stays readable).
  *
- * Exported so wave 0.6 can re-run it per route with `{ requirePro: true }`
- * on pro-only endpoints, rather than each route re-deriving the mapping
- * from `ApiAuthError` to problem+json.
+ * Wave 0.6 reaches it through the `options` argument the scope resolvers
+ * below now accept: a pro-only route passes `{ requirePro: true }` at its
+ * resolver call rather than re-running the gate for itself.
  */
 export async function requireBillingOrProblem(
   auth: ResolvedAuth,
@@ -354,24 +353,8 @@ export async function requireBillingOrProblem(
     await requireApiKeyBilling(auth, siteId, options);
     return null;
   } catch (err) {
-    if (err instanceof ApiAuthError) {
-      if (err.code === 'trial_expired') {
-        const state = typeof err.details?.billingState === 'string'
-          ? err.details.billingState
-          : undefined;
-        return problemTrialExpired(err.message, state);
-      }
-      if (err.code === 'tier_insufficient') {
-        const d = err.details as
-          | { siteId?: string; tier?: string; siteTier?: string }
-          | undefined;
-        return problemTierInsufficient(err.message, {
-          siteId: d?.siteId ?? siteId,
-          tier: d?.tier ?? 'pro',
-          siteTier: d?.siteTier ?? 'unknown',
-        });
-      }
-    }
+    const billingProblem = billingErrorToProblem(err, siteId);
+    if (billingProblem) return billingProblem;
     throw err;
   }
 }
@@ -394,10 +377,16 @@ async function assertSiteAccessOrProblem(
   }
 }
 
+/**
+ * `billing` opts into the pro-tier half of the gate for a route that is
+ * pro-only (`{ requirePro: true }`). Left off, the resolver still runs the
+ * lockout check every public-API route gets — see `requireBillingOrProblem`.
+ */
 export async function requireSiteAuthAndScope(
   req: NextRequest,
   siteId: string,
   permission: ApiKeyPermission,
+  billing: ApiKeyBillingOptions = {},
 ): Promise<ScopedAuthResult> {
   if (!SITE_ID_RE.test(siteId)) {
     return {
@@ -420,7 +409,7 @@ export async function requireSiteAuthAndScope(
   const scopeResult = runScopeCheck(authResult.auth, 'site', siteId, permission);
   if (!scopeResult.ok) return scopeResult;
 
-  const billingError = await requireBillingOrProblem(authResult.auth, siteId);
+  const billingError = await requireBillingOrProblem(authResult.auth, siteId, billing);
   if (billingError) return { ok: false, response: billingError };
 
   auditApiKeyUse(authResult.auth, siteId, req);
@@ -521,11 +510,13 @@ export async function requireMachineAuthAndScope(
   };
 }
 
+/** `billing` behaves exactly as in {@link requireSiteAuthAndScope}. */
 export async function requireRoostAuthAndScope(
   req: NextRequest,
   siteId: string,
   roostId: string,
   permission: ApiKeyPermission,
+  billing: ApiKeyBillingOptions = {},
 ): Promise<ScopedAuthResult> {
   if (!SITE_ID_RE.test(siteId)) {
     return {
@@ -562,7 +553,7 @@ export async function requireRoostAuthAndScope(
   const scopeResult = runScopeCheck(authResult.auth, 'roost', roostId, permission);
   if (!scopeResult.ok) return scopeResult;
 
-  const billingError = await requireBillingOrProblem(authResult.auth, siteId);
+  const billingError = await requireBillingOrProblem(authResult.auth, siteId, billing);
   if (billingError) return { ok: false, response: billingError };
 
   auditApiKeyUse(authResult.auth, siteId, req);

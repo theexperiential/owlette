@@ -21,7 +21,8 @@
  *
  * billing-system wave 0.1 adds the paired `customers/{uid}` doc — this is
  * the one server-mediated point where an account comes into existence, so
- * it's where the free-trial clock starts.
+ * it's where the free-trial clock starts. Wave 1.2 adds the Stripe customer
+ * that doc points at.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -31,6 +32,7 @@ import { isValidTimezone } from '@/lib/timeUtils';
 import { sanitizeDisplayName } from '@/lib/sanitize';
 import logger from '@/lib/logger';
 import { newCustomerDoc } from '@/lib/types/customer';
+import { linkStripeCustomer } from '@/lib/billing/stripeCustomer.server';
 
 export interface BootstrapUserInput {
   uid: string;
@@ -65,6 +67,16 @@ export type BootstrapUserResult =
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
 
 /**
+ * Outcome of {@link mintCustomerDoc}. `stripeCustomerId` is what the doc
+ * carries once this returns — `null` on a freshly minted doc, and whatever a
+ * pre-existing doc already held. `ok: false` means the doc is in an unknown
+ * state and nothing downstream may write to it.
+ */
+type MintCustomerResult =
+  | { ok: true; stripeCustomerId: string | null }
+  | { ok: false };
+
+/**
  * Mint the paired `customers/{uid}` billing doc with a fresh 14-day trial
  * clock (billing-system wave 0.1).
  *
@@ -85,17 +97,25 @@ async function mintCustomerDoc(
   db: Firestore,
   uid: string,
   now: Date,
-): Promise<void> {
+): Promise<MintCustomerResult> {
   try {
     const customerRef = db.collection('customers').doc(uid);
     const existing = await customerRef.get();
-    if (existing.exists) return;
+    if (existing.exists) {
+      const stored = existing.data()?.stripeCustomerId;
+      return {
+        ok: true,
+        stripeCustomerId: typeof stored === 'string' && stored.length > 0 ? stored : null,
+      };
+    }
     await customerRef.set(newCustomerDoc(now));
+    return { ok: true, stripeCustomerId: null };
   } catch (err) {
     logger.error('failed to mint customers doc at bootstrap', {
       context: 'bootstrapUser',
       data: { uid, error: err instanceof Error ? err.message : String(err) },
     });
+    return { ok: false };
   }
 }
 
@@ -162,7 +182,27 @@ export async function bootstrapUser(
     },
   });
 
-  await mintCustomerDoc(db, input.uid, nowDate);
+  // Billing bookkeeping. Both steps are best-effort by design and neither
+  // can fail the signup; `scripts/backfill-customers.mjs` and
+  // `scripts/backfill-stripe-customers.mjs` are the repair paths.
+  //
+  // Signup latency is protected on three fronts: this only ever runs on the
+  // genuine first-signup path (a returning caller short-circuits at
+  // `already_exists` above), it makes zero network calls while Stripe is
+  // unconfigured, and the Stripe calls it does make are capped by the
+  // signup-path timeout in `stripeCustomer.server.ts`. It is awaited rather
+  // than floated because a floating promise is killed when the response ends
+  // on a serverless origin (the Vercel failover), losing the write-back with
+  // no error to surface.
+  const minted = await mintCustomerDoc(db, input.uid, nowDate);
+  if (minted.ok && minted.stripeCustomerId === null) {
+    await linkStripeCustomer({
+      db,
+      uid: input.uid,
+      email: input.email,
+      signupPath: true,
+    });
+  }
 
   emitMutation({
     kind: 'user_mutated',

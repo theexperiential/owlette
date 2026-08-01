@@ -461,7 +461,7 @@ describe('owlette.quotas', () => {
           committedBytes: 125,
           limitBytes: 1000,
           fractionUsed: 0.125,
-          unlimited: false,
+          roostAvailable: true,
           lastAlarmLevel: 0,
           lastAlarmAt: null,
           lastReconciledAt: null,
@@ -472,6 +472,8 @@ describe('owlette.quotas', () => {
     const result = await owlette.quotas.current('site-1');
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/quota');
     expect(result.committedBytes).toBe(125);
+    expect(result.tier).toBe('pro');
+    expect(result.roostAvailable).toBe(true);
   });
 
   it('history -> GET /api/sites/{siteId}/quota/history?period=...', async () => {

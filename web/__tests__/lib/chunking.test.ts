@@ -203,6 +203,11 @@ describe('buildVersionEntries', () => {
     expect(summary.totalChunks).toBeGreaterThanOrEqual(1_000);
   }, 30_000);
 
+  // Generous budget on purpose: this is a scaling sanity check (does 10k
+  // files complete and produce 10k entries), not a latency assertion. Under
+  // full-suite worker contention the same work that takes ~2-4s standalone
+  // has been observed past 60s, which made this the suite's one flake —
+  // failing --bail pre-commit runs on green code.
   it('scales to 10 000 files (sanity smoke test)', async () => {
     const files: NamedBlob[] = [];
     for (let i = 0; i < 10_000; i++) {
@@ -210,7 +215,7 @@ describe('buildVersionEntries', () => {
     }
     const entries = await buildVersionEntries(files);
     expect(entries.length).toBe(10_000);
-  }, 60_000);
+  }, 180_000);
 });
 
 /* --------------------------------------------------------------------- */

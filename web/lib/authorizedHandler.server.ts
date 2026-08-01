@@ -22,11 +22,18 @@
  *      action retains a trail even when the kill switch is active.
  *   6. rate-limit check — runs unless `rate_limit_enforcement === false`.
  *      Bypass is logged the same way.
- *   7. allow audit — written *blocking*. If the audit row cannot be
+ *   7. billing lockout (site wrapper only) — the control-plane half of the
+ *      billing gate (billing-system wave 0.6). Runs on **mutations whose
+ *      capability is in `BILLING_LOCKED_CAPABILITIES`** and nothing else, so
+ *      an expired account keeps full read access to its fleet. Placed after
+ *      rate limiting (a locked-out client hammering the API is still an
+ *      abuse case, and rate limiting is the cheaper guard) and before the
+ *      allow audit, so a 402 never leaves an "allow" row behind.
+ *   8. allow audit — written *blocking*. If the audit row cannot be
  *      committed we return 503 and DO NOT call the handler. (Deny and
  *      error audits remain best-effort: those don't grant access.)
- *   8. handler invocation with `{ actor, siteId, correlationId }`
- *   9. handler error -> error audit (best-effort) + re-throw
+ *   9. handler invocation with `{ actor, siteId, correlationId }`
+ *  10. handler error -> error audit (best-effort) + re-throw
  *
  * `siteIdParam: 'body'` is intentionally NOT supported — the path/query
  * union is a typescript literal-union so attempts to pass `'body'` or any
@@ -50,12 +57,15 @@ import {
   problemNotFound,
   problemRateLimited,
   problemScopeInsufficient,
-  problemTierInsufficient,
   problemTokenExpired,
-  problemTrialExpired,
   problemUnauthorized,
   ProblemType,
 } from '@/lib/apiErrors';
+import {
+  billingErrorToProblem,
+  isBillingLockedCapability,
+  requireActiveBilling,
+} from '@/lib/billingGate.server';
 import {
   type Actor,
   type Capability,
@@ -219,22 +229,8 @@ function authErrorToResponse(err: ApiAuthError): NextResponse {
       permission: d?.permission ?? 'unknown',
     });
   }
-  if (err.code === 'trial_expired') {
-    const state = typeof err.details?.billingState === 'string'
-      ? err.details.billingState
-      : undefined;
-    return problemTrialExpired(err.message, state);
-  }
-  if (err.code === 'tier_insufficient') {
-    const d = err.details as
-      | { siteId?: string; tier?: string; siteTier?: string }
-      | undefined;
-    return problemTierInsufficient(err.message, {
-      siteId: d?.siteId ?? 'unknown',
-      tier: d?.tier ?? 'pro',
-      siteTier: d?.siteTier ?? 'unknown',
-    });
-  }
+  const billingProblem = billingErrorToProblem(err);
+  if (billingProblem) return billingProblem;
   if (err.status === 401) return problemUnauthorized(err.message);
   if (err.status === 403) return problemForbidden(err.message);
   if (err.status === 404) return problemNotFound(err.message);
@@ -381,6 +377,21 @@ function auditActorRoleLabel(actor: AuditEntryInput['actor']): string {
 
 function headersForRateLimit(result: RateLimitResult): Record<string, string> {
   return typeof rateLimitHeaders === 'function' ? rateLimitHeaders(result) : {};
+}
+
+/**
+ * Methods that only read. Everything else counts as a mutation for the
+ * control-plane billing gate.
+ *
+ * The method is the mutation signal because capability alone can't be: the
+ * deployment and project-distribution list/detail routes are `GET`s that
+ * carry `DEPLOYMENT_MANAGE` / `DISTRIBUTION_MANAGE`, and gating those would
+ * take away exactly the read access plan.md's lockout matrix preserves.
+ */
+const READ_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+function isMutation(request: NextRequest): boolean {
+  return !READ_METHODS.has(request.method.toUpperCase());
 }
 
 /* -------------------------------------------------------------------------- */
@@ -612,7 +623,33 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         rateLimitBypassed = true;
       }
 
-      // 9. Allow audit — BLOCKING. Failure -> 503, handler not called.
+      // 9. Billing lockout — control-plane mutations only. Reads pass
+      //    untouched so an expired account keeps its dashboard.
+      if (isMutation(request) && isBillingLockedCapability(options.capability)) {
+        try {
+          await requireActiveBilling(siteId);
+        } catch (err) {
+          if (err instanceof ApiAuthError) {
+            denyAudit(siteId, {
+              correlationId,
+              actor,
+              capability: options.capability,
+              target: { kind: targetKind, id: targetId } as AuditTarget,
+              outcome: 'deny',
+              denyReason: 'billing_locked',
+              metadata: {
+                route: request.nextUrl.pathname,
+                method: request.method,
+                billingState: err.details?.billingState,
+              },
+            });
+            return authErrorToResponse(err);
+          }
+          throw err;
+        }
+      }
+
+      // 10. Allow audit — BLOCKING. Failure -> 503, handler not called.
       const bypassMeta: Record<string, unknown> = { route: request.nextUrl.pathname, method: request.method };
       if (enforcementBypassed) bypassMeta.enforcement_bypassed = enforcementBypassed;
       else if (rateLimitBypassed) bypassMeta.enforcement_bypassed = 'rate_limit';
@@ -639,7 +676,7 @@ export function authorizedSiteHandler<TParams extends Record<string, string | un
         return serviceUnavailable('audit log unavailable; refusing privileged action');
       }
 
-      // 10. Invoke handler.
+      // 11. Invoke handler.
       try {
         const ctx: SiteHandlerContext = { actor, siteId, correlationId, auth, scopeCheck };
         const response = await handler(request, ctx, { params: routeParamsPromise as Promise<TParams> });

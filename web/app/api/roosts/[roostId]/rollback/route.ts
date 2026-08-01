@@ -204,11 +204,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // Scope `rollback` per `web/lib/apiKeyTypes.ts` — the operator preset
     // grants this alongside read/write/deploy. A read-only key gets a
     // 403 scope_insufficient.
+    // Pro-only: roost deploy surface.
     const auth = await requireRoostAuthAndScope(
       request,
       site.siteId,
       roostId,
       'rollback',
+      { requirePro: true },
     );
     if (!auth.ok) return auth.response;
 

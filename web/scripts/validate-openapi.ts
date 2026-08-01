@@ -44,6 +44,11 @@ const INTERNAL_ROUTES = new Set([
   '/api/agent/screenshot',
   '/api/agent/generate-installer',
   '/api/alerts/trigger',
+  // billing internals: Stripe-facing webhook (signature-authed) + the
+  // session-only portal redirect — deliberately not in the public spec,
+  // same posture as /api/webhooks/user-created and the cron routes.
+  '/api/billing/stripe-webhook',
+  '/api/billing/portal',
   '/api/bug-report',
   '/api/cortex',
   '/api/cortex/autonomous',

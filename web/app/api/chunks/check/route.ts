@@ -34,7 +34,11 @@ export async function POST(request: NextRequest) {
     const site = validateSiteIdBody(body.siteId);
     if (!site.ok) return site.response;
 
-    const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
+    // Pro-only: this is the first step of an upload negotiation, so a core
+    // site fails here rather than after hashing a whole project.
+    const auth = await requireSiteAuthAndScope(request, site.siteId, 'write', {
+      requirePro: true,
+    });
     if (!auth.ok) return auth.response;
 
     const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);

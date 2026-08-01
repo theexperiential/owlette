@@ -21,6 +21,7 @@ import {
   mockDbFactory,
   docSnapshot,
   querySnapshot,
+  seedBilling,
 } from './helpers/firestore-mock';
 
 jest.mock('@sentry/nextjs', () => ({
@@ -137,6 +138,7 @@ beforeEach(() => {
   mockResolveAuth.mockResolvedValue(authedSession());
   mockAssertSite.mockResolvedValue({ siteId: SITE, siteData: {} });
   mocks.siteDocs.clear();
+  mocks.customerDocs.clear();
   mocks.siteDocs.set(SITE, { owner: 'user-1' });
   mocks.set.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue(undefined);
@@ -1152,5 +1154,118 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/screenshots/upload-url',
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.code).toBe('scope_insufficient');
+  });
+});
+
+/* ========================================================================== */
+/*  control-plane billing lockout (billing-system wave 0.6)                   */
+/* ========================================================================== */
+
+/**
+ * End-to-end coverage of the gate `authorizedSiteHandler` runs centrally.
+ * This suite uses the real wrapper (it does not stub
+ * `@/lib/authorizedHandler.server`), so these assertions exercise the actual
+ * pipeline ordering, not a test double's.
+ */
+describe('machine commands — billing lockout', () => {
+  const USER_DOC = { role: 'superadmin', sites: [SITE] };
+
+  /** Actor load + idempotency miss + machine doc, in pipeline order. */
+  function queueReads(machineOnline = true): void {
+    mocks.get.mockReset();
+    mocks.get.mockResolvedValueOnce(docSnapshot('user-1', USER_DOC));
+    mocks.get.mockResolvedValueOnce(docSnapshot('idem', null));
+    mocks.get.mockResolvedValueOnce(docSnapshot(MACHINE, { online: machineOnline }));
+    mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('any', null)));
+  }
+
+  function command(type: string, key: string) {
+    return commandsPOST(
+      createMockRequest(
+        `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands`,
+        {
+          method: 'POST',
+          headers: { 'Idempotency-Key': key },
+          body: { type, params: {} },
+        },
+      ),
+      { params: Promise.resolve({ siteId: SITE, machineId: MACHINE }) },
+    );
+  }
+
+  it('402 trial_expired on a control command, and nothing is queued', async () => {
+    seedBilling({ siteId: SITE, state: 'expired' });
+    queueReads();
+
+    const res = await command('reboot_machine', 'idem-billing-1');
+    expect(res.status).toBe(402);
+    expect(res.headers.get('Content-Type')).toBe('application/problem+json; charset=utf-8');
+    expect(await res.json()).toMatchObject({
+      code: 'trial_expired',
+      billingState: 'expired',
+      detail: 'this free trial has ended; choose a plan to restore access',
+    });
+    expect(mocks.set).not.toHaveBeenCalled();
+    expect(mockedEmit).not.toHaveBeenCalled();
+  });
+
+  it('402 with the canceled wording for a canceled subscription', async () => {
+    seedBilling({ siteId: SITE, state: 'canceled' });
+    queueReads();
+
+    const res = await command('reboot_machine', 'idem-billing-2');
+    expect(res.status).toBe(402);
+    expect(await res.json()).toMatchObject({
+      billingState: 'canceled',
+      detail: 'this subscription was canceled; choose a plan to restore access',
+    });
+  });
+
+  it('still allows a screenshot capture while expired — viewing is not blocked', async () => {
+    seedBilling({ siteId: SITE, state: 'expired' });
+    queueReads();
+
+    const res = await command('capture_screenshot', 'idem-billing-3');
+    expect(res.status).toBe(202);
+  });
+
+  it('still allows the command status GET while expired', async () => {
+    seedBilling({ siteId: SITE, state: 'expired' });
+    mocks.get.mockReset();
+    mocks.get
+      .mockResolvedValueOnce(
+        docSnapshot('pending', {
+          cmd_x: { type: 'reboot_machine', status: 'pending', timestamp: 1_700_000_000_000 },
+        }),
+      )
+      .mockResolvedValueOnce(docSnapshot('completed', null));
+
+    const res = await commandStatusGET(
+      createMockRequest(
+        `http://localhost/api/sites/${SITE}/machines/${MACHINE}/commands/cmd_x`,
+      ),
+      { params: Promise.resolve({ siteId: SITE, machineId: MACHINE, commandId: 'cmd_x' }) },
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.status).toBe('pending');
+  });
+
+  it.each([
+    ['trialing'],
+    ['active'],
+  ] as const)('dispatches a control command for a %s account', async (state) => {
+    seedBilling({ siteId: SITE, state });
+    queueReads();
+
+    expect((await command('reboot_machine', `idem-billing-${state}`)).status).toBe(202);
+  });
+
+  it('gates a core-tier site the same as a pro one — tier does not apply here', async () => {
+    // plan.md: the control-plane lockout keys off billing state only. A core
+    // customer in good standing keeps full control of their fleet.
+    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
+    queueReads();
+
+    expect((await command('reboot_machine', 'idem-billing-core')).status).toBe(202);
   });
 });

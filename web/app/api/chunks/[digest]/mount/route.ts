@@ -105,7 +105,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       });
     }
 
-    const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
+    // Pro-only: roost upload surface.
+    const auth = await requireSiteAuthAndScope(request, site.siteId, 'write', {
+      requirePro: true,
+    });
     if (!auth.ok) return auth.response;
 
     const capabilityError = await requireDistributionManageCapability(auth.auth, site.siteId);

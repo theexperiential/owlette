@@ -2,8 +2,10 @@
 
 import { createMockRequest } from './helpers/utils';
 import {
+  apiKeyAuth,
   mocks,
   docSnapshot,
+  seedBilling,
 } from './helpers/firestore-mock';
 
 const mockEmitMutation = jest.fn();
@@ -42,6 +44,13 @@ function mockBuildDoc(
           return Promise.resolve(docSnapshot(parts[1], mocks.siteDocs.get(parts[1]) ?? null));
         }
         return Promise.resolve(docSnapshot(parts[1], {}));
+      }
+      // Mirrors the shared factory: the billing gate's customers/{uid} read
+      // must not consume a queued `mocks.get.mockResolvedValueOnce(...)`.
+      if (parts.length === 2 && parts[0] === 'customers') {
+        return Promise.resolve(
+          docSnapshot(parts[1], mocks.customerDocs.get(parts[1]) ?? null),
+        );
       }
       return mocks.get();
     },
@@ -200,6 +209,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   authed();
   mocks.siteDocs.clear();
+  mocks.customerDocs.clear();
   mocks.siteDocs.set(SITE, { owner: 'user-1' });
   mocks.get.mockResolvedValue(docSnapshot('user-1', {
     role: 'admin',
@@ -736,5 +746,79 @@ describe('PATCH /versions/{ref} — description edit', () => {
     const res = await patch({ siteId: SITE, manifestId: 'old_name' });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('version_content_immutable');
+  });
+});
+
+/* ========================================================================== */
+/*  billing gate — publishing is pro-only (wave 0.6)                          */
+/* ========================================================================== */
+
+describe('/versions — billing gate', () => {
+  beforeEach(() => {
+    mockResolveAuth.mockResolvedValue(apiKeyAuth());
+  });
+
+  function publish() {
+    return createPOST(
+      createMockRequest(`http://localhost/api/roosts/${ROOST}/versions`, {
+        method: 'POST',
+        body: { siteId: SITE, version: buildVersionEnvelope() },
+      }),
+      { params: Promise.resolve({ roostId: ROOST }) },
+    );
+  }
+
+  function patchVersionDescription() {
+    return patchVersion(
+      createMockRequest(
+        `http://localhost/api/roosts/${ROOST}/versions/vrs_target_001`,
+        { method: 'PATCH', body: { siteId: SITE, description: 'edited' } },
+      ),
+      { params: Promise.resolve({ roostId: ROOST, versionRef: 'vrs_target_001' }) },
+    );
+  }
+
+  it('402 trial_expired on publish when the trial has ended', async () => {
+    seedBilling({ siteId: SITE, state: 'expired', tier: 'pro' });
+
+    const res = await publish();
+    expect(res.status).toBe(402);
+    expect(await res.json()).toMatchObject({
+      code: 'trial_expired',
+      billingState: 'expired',
+    });
+    expect(txState.versionWrites).toHaveLength(0);
+  });
+
+  it('403 tier_insufficient on publish for an active core site', async () => {
+    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
+
+    const res = await publish();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({
+      code: 'tier_insufficient',
+      required: { siteId: SITE, tier: 'pro', siteTier: 'core' },
+    });
+    expect(txState.versionWrites).toHaveLength(0);
+  });
+
+  it('201 on publish for a trialing account even on a core site', async () => {
+    seedBilling({ siteId: SITE, state: 'trialing', tier: 'core' });
+
+    expect((await publish()).status).toBe(201);
+  });
+
+  it('201 on publish for an active pro site', async () => {
+    seedBilling({ siteId: SITE, state: 'active', tier: 'pro' });
+
+    expect((await publish()).status).toBe(201);
+  });
+
+  it('403 tier_insufficient on the version PATCH for an active core site', async () => {
+    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
+
+    const res = await patchVersionDescription();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ code: 'tier_insufficient' });
   });
 });

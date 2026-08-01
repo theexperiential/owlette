@@ -69,17 +69,24 @@ function mockDb() {
   };
 }
 
-function collectionRef(parts: string[]) {
+function collectionRef(parts: string[], filters: Array<[string, unknown]> = []) {
   const path = collectionPath(parts);
   const ref = {
     doc: (id: string) => docRef([...parts, id]),
     collection: (name: string) => collectionRef([...parts, name]),
     orderBy: () => ref,
+    // Equality-only `where`, enough for the account billing gate's
+    // `sites where owner == uid` lookup. Filters accumulate so chaining works.
+    where: (field: string, _op: string, value: unknown) =>
+      collectionRef(parts, [...filters, [field, value]]),
     get: async () => {
       if (collectionGetError) throw collectionGetError;
       return {
         docs: Array.from(store.entries())
           .filter(([docPath, data]) => data && docPath.startsWith(`${path}/`))
+          .filter(([, data]) =>
+            filters.every(([field, value]) => (data as Record<string, unknown>)[field] === value),
+          )
           .map(([docPath, data]) => ({
             id: docPath.slice(path.length + 1).split('/')[0],
             data: () => data,
@@ -291,6 +298,137 @@ describe('/api/account/api-keys', () => {
       }),
     );
     expect(JSON.stringify(mockEmitMutation.mock.calls)).not.toContain(json.key);
+  });
+});
+
+/*
+ * billing gate (billing-system wave 0.6). Account-scoped, not site-scoped:
+ * a key spans every resource the account owns, so the gate reads
+ * `customers/{uid}` for the lockout and `sites where owner == uid` for the
+ * effective tier.
+ */
+describe('/api/account/api-keys POST — billing gate', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  function createKey() {
+    return POST(new NextRequest('http://localhost/api/account/api-keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Deploy' }),
+    }));
+  }
+
+  it('402 trial_expired when the account trial has ended', async () => {
+    store.set('customers/test-admin', {
+      subscriptionStatus: null,
+      trialEndsAt: Date.now() - DAY_MS,
+    });
+    store.set('sites/site-1', { owner: 'test-admin', tier: 'pro' });
+
+    const res = await createKey();
+    const body = await res.json();
+
+    expect(res.status).toBe(402);
+    expect(res.headers.get('Content-Type')).toBe('application/problem+json; charset=utf-8');
+    expect(body).toMatchObject({
+      type: ProblemType.TrialExpired,
+      status: 402,
+      code: 'trial_expired',
+      billingState: 'expired',
+      detail: 'this free trial has ended; choose a plan to restore access',
+    });
+    expect(store.size).toBe(2); // nothing minted
+  });
+
+  it('402 trial_expired when the subscription was canceled', async () => {
+    store.set('customers/test-admin', { subscriptionStatus: 'canceled' });
+    store.set('sites/site-1', { owner: 'test-admin', tier: 'pro' });
+
+    const res = await createKey();
+    const body = await res.json();
+
+    expect(res.status).toBe(402);
+    expect(body).toMatchObject({
+      code: 'trial_expired',
+      billingState: 'canceled',
+      detail: 'this subscription was canceled; choose a plan to restore access',
+    });
+  });
+
+  it('403 tier_insufficient for an active account whose sites are all core', async () => {
+    store.set('customers/test-admin', { subscriptionStatus: 'active' });
+    store.set('sites/site-1', { owner: 'test-admin', tier: 'core' });
+    store.set('sites/site-2', { owner: 'test-admin', tier: 'core' });
+
+    const res = await createKey();
+    const body = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get('Content-Type')).toBe('application/problem+json; charset=utf-8');
+    expect(body).toMatchObject({
+      type: ProblemType.TierInsufficient,
+      status: 403,
+      code: 'tier_insufficient',
+      detail: 'this feature requires the pro tier; upgrade the site to pro to continue',
+    });
+    // Account-scoped failure names no site — there isn't one to point at.
+    expect(body.required).toBeUndefined();
+    expect(store.size).toBe(3); // nothing minted
+  });
+
+  it('ignores sites owned by other accounts when resolving the tier', async () => {
+    store.set('customers/test-admin', { subscriptionStatus: 'active' });
+    store.set('sites/site-1', { owner: 'test-admin', tier: 'core' });
+    store.set('sites/site-other', { owner: 'someone-else', tier: 'pro' });
+
+    const res = await createKey();
+
+    expect(res.status).toBe(403);
+  });
+
+  it('allows an active account holding at least one pro site', async () => {
+    store.set('customers/test-admin', { subscriptionStatus: 'active' });
+    store.set('sites/site-1', { owner: 'test-admin', tier: 'core' });
+    store.set('sites/site-2', { owner: 'test-admin', tier: 'pro' });
+
+    const res = await createKey();
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).key).toMatch(/^owk_live_/);
+  });
+
+  it('allows a trialing account regardless of site tier', async () => {
+    store.set('customers/test-admin', {
+      subscriptionStatus: null,
+      trialEndsAt: Date.now() + 7 * DAY_MS,
+    });
+    store.set('sites/site-1', { owner: 'test-admin', tier: 'core' });
+
+    const res = await createKey();
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).key).toMatch(/^owk_live_/);
+  });
+
+  it('does not gate GET — an expired account can still audit its keys', async () => {
+    store.set('customers/test-admin', {
+      subscriptionStatus: null,
+      trialEndsAt: Date.now() - DAY_MS,
+    });
+    store.set('users/test-admin/api_keys/key-a', {
+      name: 'CI',
+      keyPrefix: 'owk_live_abc123',
+      environment: 'live',
+      scopes: null,
+      expiresAt: 456,
+      createdAt: 123,
+      lastUsedAt: null,
+    });
+
+    const res = await GET(new NextRequest('http://localhost/api/account/api-keys'));
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).keys).toHaveLength(1);
   });
 });
 

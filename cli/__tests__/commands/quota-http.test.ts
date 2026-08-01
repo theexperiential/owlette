@@ -66,7 +66,7 @@ const SNAPSHOT = {
   committedBytes: 1024,
   limitBytes: 5 * 1024 * 1024 * 1024,
   fractionUsed: 0.0001,
-  unlimited: false,
+  roostAvailable: true,
   lastAlarmLevel: 0,
   lastAlarmAt: null,
   lastReconciledAt: '2026-04-26T00:00:00Z',
@@ -116,6 +116,29 @@ describe('owlette quota show', () => {
     expect(out).toContain('storage:');
     expect(out).toMatch(/\(\d+%\)/);
     expect(out).toMatch(/\[#+\.+\]/);
+  });
+
+  it('reports the pro gate instead of a bar on a core-tier site', async () => {
+    installFetchStub({
+      ...SNAPSHOT,
+      tier: 'core',
+      limitBytes: 0,
+      fractionUsed: null,
+      roostAvailable: false,
+    });
+    const writes: string[] = [];
+    (process.stdout.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
+      writes.push(chunk);
+      return true;
+    });
+    const program = buildProgram();
+
+    await program.parseAsync(['quota', 'show', '--site', 'site-1'], { from: 'user' });
+
+    const out = writes.join('');
+    expect(out).toContain('tier       core');
+    expect(out).toContain('storage: not included on this tier — roost requires pro');
+    expect(out).not.toMatch(/\[[#.]+\]/);
   });
 });
 

@@ -171,3 +171,81 @@ export function querySnapshot(
     })),
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/*  billing gate helpers (billing-system wave 0.6)                            */
+/* -------------------------------------------------------------------------- */
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const ALL_PERMISSIONS = ['read', 'write', 'deploy', 'rollback', 'admin'] as const;
+
+/** Default owner uid used by `seedBilling` / `apiKeyAuth`. */
+export const BILLING_OWNER = 'user-1';
+
+export type BillingScenario = 'trialing' | 'active' | 'expired' | 'canceled';
+
+function customerFor(state: BillingScenario): Record<string, unknown> {
+  switch (state) {
+    case 'active':
+      return { subscriptionStatus: 'active' };
+    case 'canceled':
+      return { subscriptionStatus: 'canceled' };
+    case 'expired':
+      return { subscriptionStatus: null, trialEndsAt: Date.now() - DAY_MS };
+    case 'trialing':
+    default:
+      return { subscriptionStatus: null, trialEndsAt: Date.now() + 7 * DAY_MS };
+  }
+}
+
+/**
+ * Seed the two docs the billing gate reads for a site: `sites/{siteId}`
+ * (for `owner` + `tier`) and `customers/{owner}` (for the trial clock).
+ *
+ * Clears both maps first so a scenario can't inherit the previous test's.
+ * A `tier` is only written when given — omitted reads as `'pro'` via
+ * `BETA_DEFAULT_TIER`, which is what most non-billing tests want.
+ */
+export function seedBilling(options: {
+  siteId: string;
+  state: BillingScenario;
+  tier?: 'core' | 'pro';
+  owner?: string;
+}): void {
+  const owner = options.owner ?? BILLING_OWNER;
+  mocks.siteDocs.clear();
+  mocks.customerDocs.clear();
+  mocks.siteDocs.set(options.siteId, {
+    owner,
+    ...(options.tier ? { tier: options.tier } : {}),
+  });
+  mocks.customerDocs.set(owner, customerFor(options.state));
+}
+
+/**
+ * A `ResolvedAuth` carrying an api key with wildcard scopes.
+ *
+ * Required for any billing assertion: `requireApiKeyBilling` returns
+ * immediately when `keyContext` is null, so a session-auth test can never
+ * observe a 402/403 from the public-API gate. Wildcard scopes keep the
+ * scope check from being what answers the request.
+ */
+export function apiKeyAuth(userId = BILLING_OWNER): {
+  userId: string;
+  keyContext: Record<string, unknown>;
+} {
+  return {
+    userId,
+    keyContext: {
+      keyId: 'key-billing-test',
+      environment: 'live',
+      expiresAt: Date.now() + 60_000,
+      isLegacy: false,
+      scopes: ['site', 'roost', 'machine', 'chat'].map((resource) => ({
+        resource,
+        id: '*',
+        permissions: [...ALL_PERMISSIONS],
+      })),
+    },
+  };
+}

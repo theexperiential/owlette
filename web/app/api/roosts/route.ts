@@ -155,7 +155,10 @@ export async function POST(request: NextRequest) {
     const site = validateSiteIdBody(body.siteId);
     if (!site.ok) return site.response;
 
-    const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
+    // Pro-only: roost is a pro-tier feature, so creating one is gated.
+    const auth = await requireSiteAuthAndScope(request, site.siteId, 'write', {
+      requirePro: true,
+    });
     if (!auth.ok) return auth.response;
 
     const capabilityError = await requireDistributionManageCapability(auth.auth, site.siteId);

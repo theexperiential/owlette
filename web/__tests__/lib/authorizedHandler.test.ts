@@ -30,6 +30,13 @@ let siteDoc: { exists: boolean; data: () => unknown } = {
   exists: true,
   data: () => ({ owner: 'uid_alice' }),
 };
+// `customers/{uid}` for the control-plane billing gate. Absent by default,
+// which `resolveBillingState()` reads as `'trialing'` — the posture every
+// pre-existing test in this file assumes.
+let customerDoc: { exists: boolean; data: () => unknown } = {
+  exists: false,
+  data: () => undefined,
+};
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
@@ -53,6 +60,9 @@ function buildDoc(path: string): unknown {
       }
       if (path.startsWith('sites/')) {
         return Promise.resolve(siteDoc);
+      }
+      if (path.startsWith('customers/')) {
+        return Promise.resolve(customerDoc);
       }
       return Promise.resolve({ exists: false, data: () => undefined });
     },
@@ -205,6 +215,7 @@ beforeEach(() => {
   };
   userDoc = { exists: true, data: () => ({ role: 'admin', sites: ['site-a'] }) };
   siteDoc = { exists: true, data: () => ({ owner: 'uid_alice' }) };
+  customerDoc = { exists: false, data: () => undefined };
   requireScopeMock.mockReturnValue({ isLegacy: false });
   assertUserHasSiteAccessMock.mockResolvedValue({ siteId: 'site-a', siteData: {} });
 });
@@ -484,6 +495,153 @@ describe('authorizedSiteHandler — handler error path', () => {
     await new Promise((r) => setImmediate(r));
     const errorEntry = setCalls.find((c) => (c.payload as { outcome?: string }).outcome === 'error');
     expect(errorEntry).toBeDefined();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/*  control-plane billing lockout (billing-system wave 0.6)                   */
+/* -------------------------------------------------------------------------- */
+
+describe('authorizedSiteHandler — billing lockout', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  /** Trial ran out, no subscription ever created. */
+  function expireAccount(): void {
+    customerDoc = {
+      exists: true,
+      data: () => ({ subscriptionStatus: null, trialEndsAt: Date.now() - DAY_MS }),
+    };
+  }
+
+  function run(
+    capability: Parameters<typeof authorizedSiteHandler>[0]['capability'],
+    method: string,
+  ) {
+    const handler = makeSiteHandler(async () => NextResponse.json({ ok: true }));
+    const wrapped = authorizedSiteHandler({ capability, siteIdParam: 'path' })(handler);
+    return {
+      handler,
+      res: wrapped(
+        makeRequest('http://localhost/api/sites/site-a/test', method),
+        pathParamsFor('site-a'),
+      ),
+    };
+  }
+
+  it('blocks a control-plane mutation with 402 trial_expired', async () => {
+    expireAccount();
+    const { handler, res: pending } = run('MACHINE_EXEC_COMMAND', 'POST');
+    const res = await pending;
+
+    expect(res.status).toBe(402);
+    expect(res.headers.get('Content-Type')).toBe('application/problem+json; charset=utf-8');
+    const body = await res.json();
+    expect(body).toMatchObject({
+      status: 402,
+      code: 'trial_expired',
+      billingState: 'expired',
+      detail: 'this free trial has ended; choose a plan to restore access',
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('writes a billing_locked deny audit and no allow audit', async () => {
+    expireAccount();
+    await run('MACHINE_EXEC_COMMAND', 'POST').res;
+    await new Promise((r) => setImmediate(r));
+
+    const deny = setCalls.find((c) => (c.payload as { outcome?: string }).outcome === 'deny');
+    expect(deny).toBeDefined();
+    expect((deny!.payload as { denyReason?: string }).denyReason).toBe('billing_locked');
+    expect((deny!.payload as { metadata?: { billingState?: string } }).metadata?.billingState)
+      .toBe('expired');
+    expect(setCalls.find((c) => (c.payload as { outcome?: string }).outcome === 'allow'))
+      .toBeUndefined();
+  });
+
+  it('uses the canceled wording for a canceled subscription', async () => {
+    customerDoc = { exists: true, data: () => ({ subscriptionStatus: 'canceled' }) };
+    const res = await run('DEPLOYMENT_MANAGE', 'POST').res;
+
+    expect(res.status).toBe(402);
+    expect(await res.json()).toMatchObject({
+      billingState: 'canceled',
+      detail: 'this subscription was canceled; choose a plan to restore access',
+    });
+  });
+
+  it.each([
+    ['MACHINE_EXEC_COMMAND', 'POST'],
+    ['MACHINE_CONFIG_WRITE', 'PUT'],
+    ['MACHINE_CONFIG_WRITE', 'DELETE'],
+    ['DEPLOYMENT_MANAGE', 'POST'],
+    ['DISTRIBUTION_MANAGE', 'DELETE'],
+  ] as const)('blocks %s on %s', async (capability, method) => {
+    expireAccount();
+    const { res } = run(capability, method);
+
+    expect((await res).status).toBe(402);
+  });
+
+  it.each([
+    // Reads are never gated — the matrix keeps the dashboard readable.
+    ['DEPLOYMENT_MANAGE', 'GET'],
+    ['DISTRIBUTION_MANAGE', 'GET'],
+    ['MACHINE_CONFIG_WRITE', 'GET'],
+    // Viewing commands (screenshot / live view) POST under MACHINE_VIEW.
+    ['MACHINE_VIEW', 'POST'],
+    // Decommissioning is the customer's way to reduce their bill.
+    ['MACHINE_REMOVE', 'DELETE'],
+    ['UNINSTALL_TRIGGER', 'POST'],
+    // Security + stored-config surfaces.
+    ['SITE_MEMBER_MANAGE', 'DELETE'],
+    ['GLOBAL_SETTINGS_WRITE', 'POST'],
+    ['PRESET_MANAGE', 'POST'],
+    ['SITE_LOGS_MANAGE', 'DELETE'],
+  ] as const)('allows %s on %s even when expired', async (capability, method) => {
+    // Superadmin so the capability check is never what answers here — the
+    // row for GLOBAL_SETTINGS_WRITE is superadmin-only, and the assertion is
+    // about the billing decision, not the role matrix.
+    userDoc = { exists: true, data: () => ({ role: 'superadmin', sites: [] }) };
+    expireAccount();
+    const { handler, res } = run(capability, method);
+
+    expect((await res).status).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['trialing', { subscriptionStatus: null, trialEndsAt: Date.now() + 7 * DAY_MS }],
+    ['active', { subscriptionStatus: 'active' }],
+    ['past_due', { subscriptionStatus: 'past_due' }],
+    ['no customers doc yet', null],
+  ])('allows a control-plane mutation for a %s account', async (_label, customer) => {
+    customerDoc = customer
+      ? { exists: true, data: () => customer }
+      : { exists: false, data: () => undefined };
+    const { handler, res } = run('MACHINE_EXEC_COMMAND', 'POST');
+
+    expect((await res).status).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs after the capability check, so a missing capability still reads 403', async () => {
+    expireAccount();
+    userDoc = { exists: true, data: () => ({ role: 'member', sites: ['site-a'] }) };
+    const { res } = run('MACHINE_EXEC_COMMAND', 'POST');
+
+    expect((await res).status).toBe(403);
+  });
+
+  it('skips the billing read entirely for an ownerless site', async () => {
+    expireAccount();
+    siteDoc = { exists: true, data: () => ({}) };
+    const { handler, res } = run('MACHINE_EXEC_COMMAND', 'POST');
+
+    // No owner means no customer to resolve; the gate fails open rather than
+    // locking every member of a half-written site out of their fleet.
+    expect((await res).status).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });
 

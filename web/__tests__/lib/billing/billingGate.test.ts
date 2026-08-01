@@ -22,12 +22,19 @@ jest.mock('@/lib/auditLogClient', () => ({
 
 import type { Firestore } from 'firebase-admin/firestore';
 import { ApiAuthError } from '@/lib/apiAuth.server';
+import { Capability } from '@/lib/capabilities';
 import { TRIAL_LENGTH_DAYS } from '@/lib/types/customer';
 import {
+  BILLING_LOCKED_CAPABILITIES,
+  billingErrorToProblem,
+  getAccountBillingSnapshot,
   getBillingSnapshot,
+  isBillingLockedCapability,
+  requireActiveAccountBilling,
   requireActiveBilling,
   requireBillingSnapshot,
   requirePro,
+  requireProAccount,
   siteTierOrThrow,
 } from '@/lib/billingGate.server';
 
@@ -37,7 +44,27 @@ class FakeDb {
   readonly docs = new Map<string, Record<string, unknown>>();
 
   collection(path: string) {
+    const matchIn = (prefix: string) =>
+      Array.from(this.docs.entries())
+        .filter(([docPath]) => docPath.startsWith(`${prefix}/`))
+        .filter(([docPath]) => !docPath.slice(prefix.length + 1).includes('/'));
+
+    const query = (filters: Array<[string, unknown]>) => ({
+      // Equality-only; enough for `sites where owner == uid`.
+      where: (field: string, _op: string, value: unknown) =>
+        query([...filters, [field, value]]),
+      get: async () => ({
+        docs: matchIn(path)
+          .filter(([, data]) => filters.every(([field, value]) => data[field] === value))
+          .map(([docPath, data]) => ({
+            id: docPath.slice(path.length + 1),
+            data: () => ({ ...data }),
+          })),
+      }),
+    });
+
     return {
+      ...query([]),
       doc: (id: string) => ({
         get: async () => {
           const data = this.docs.get(`${path}/${id}`);
@@ -382,5 +409,251 @@ describe('trial length', () => {
     await expect(requirePro('site-1', opts(db))).resolves.toMatchObject({
       billingState: 'trialing',
     });
+  });
+});
+
+/* ─── account-scoped gates (wave 0.6) ──────────────────────────────────── */
+
+/**
+ * An account's customers doc plus the sites it owns. `sites` is a list of
+ * `[siteId, tier, owner?]` so a test can plant a decoy owned by someone else.
+ */
+function accountScenario(
+  customer: Record<string, unknown> | null,
+  sites: Array<[string, 'core' | 'pro' | undefined, string?]> = [],
+): FakeDb {
+  const db = new FakeDb();
+  if (customer) db.seed('customers/owner-1', customer);
+  for (const [siteId, tier, owner] of sites) {
+    db.seed(`sites/${siteId}`, {
+      owner: owner ?? 'owner-1',
+      ...(tier ? { tier } : {}),
+    });
+  }
+  return db;
+}
+
+describe('getAccountBillingSnapshot', () => {
+  it('resolves pro when any owned site is pro', async () => {
+    const db = accountScenario(ACTIVE, [['site-1', 'core'], ['site-2', 'pro']]);
+
+    await expect(getAccountBillingSnapshot('owner-1', opts(db))).resolves.toEqual({
+      uid: 'owner-1',
+      billingState: 'active',
+      accountTier: 'pro',
+    });
+  });
+
+  it('resolves core when every owned site is core', async () => {
+    const db = accountScenario(ACTIVE, [['site-1', 'core'], ['site-2', 'core']]);
+
+    await expect(getAccountBillingSnapshot('owner-1', opts(db))).resolves.toMatchObject({
+      accountTier: 'core',
+    });
+  });
+
+  it('ignores sites owned by other accounts', async () => {
+    const db = accountScenario(ACTIVE, [
+      ['site-1', 'core'],
+      ['site-other', 'pro', 'owner-2'],
+    ]);
+
+    await expect(getAccountBillingSnapshot('owner-1', opts(db))).resolves.toMatchObject({
+      accountTier: 'core',
+    });
+  });
+
+  it('resolves core for an account that owns no sites', async () => {
+    const db = accountScenario(ACTIVE);
+
+    await expect(getAccountBillingSnapshot('owner-1', opts(db))).resolves.toMatchObject({
+      accountTier: 'core',
+    });
+  });
+
+  it('reads a site with no explicit tier as pro (legacy beta doc)', async () => {
+    const db = accountScenario(ACTIVE, [['site-1', undefined]]);
+
+    await expect(getAccountBillingSnapshot('owner-1', opts(db))).resolves.toMatchObject({
+      accountTier: 'pro',
+    });
+  });
+
+  it('treats a missing customers doc as trialing', async () => {
+    const db = accountScenario(null, [['site-1', 'core']]);
+
+    await expect(getAccountBillingSnapshot('owner-1', opts(db))).resolves.toMatchObject({
+      billingState: 'trialing',
+    });
+  });
+});
+
+describe('requireActiveAccountBilling', () => {
+  it.each([
+    ['trialing', TRIALING],
+    ['active', ACTIVE],
+  ])('passes for %s', async (_label, customer) => {
+    const db = accountScenario(customer, [['site-1', 'core']]);
+
+    await expect(
+      requireActiveAccountBilling('owner-1', opts(db)),
+    ).resolves.toMatchObject({ uid: 'owner-1' });
+  });
+
+  it('throws 402 trial_expired with no siteId in the details', async () => {
+    const db = accountScenario(EXPIRED, [['site-1', 'pro']]);
+
+    const err = await expectApiAuthError(requireActiveAccountBilling('owner-1', opts(db)));
+    expect(err.status).toBe(402);
+    expect(err.code).toBe('trial_expired');
+    expect(err.message).toBe('this free trial has ended; choose a plan to restore access');
+    expect(err.details).toEqual({ billingState: 'expired' });
+  });
+
+  it('throws 402 for a canceled subscription with the canceled wording', async () => {
+    const db = accountScenario(CANCELED, [['site-1', 'pro']]);
+
+    const err = await expectApiAuthError(requireActiveAccountBilling('owner-1', opts(db)));
+    expect(err.status).toBe(402);
+    expect(err.details).toEqual({ billingState: 'canceled' });
+    expect(err.message).toBe(
+      'this subscription was canceled; choose a plan to restore access',
+    );
+  });
+});
+
+describe('requireProAccount', () => {
+  it('passes a trialing account whose sites are all core', async () => {
+    const db = accountScenario(TRIALING, [['site-1', 'core']]);
+
+    await expect(requireProAccount('owner-1', opts(db))).resolves.toMatchObject({
+      billingState: 'trialing',
+      accountTier: 'core',
+    });
+  });
+
+  it('passes an active account holding at least one pro site', async () => {
+    const db = accountScenario(ACTIVE, [['site-1', 'core'], ['site-2', 'pro']]);
+
+    await expect(requireProAccount('owner-1', opts(db))).resolves.toMatchObject({
+      accountTier: 'pro',
+    });
+  });
+
+  it('throws 403 tier_insufficient for an active all-core account', async () => {
+    const db = accountScenario(ACTIVE, [['site-1', 'core']]);
+
+    const err = await expectApiAuthError(requireProAccount('owner-1', opts(db)));
+    expect(err.status).toBe(403);
+    expect(err.code).toBe('tier_insufficient');
+    expect(err.details).toEqual({ tier: 'pro', accountTier: 'core' });
+  });
+
+  it('reports the lockout before the tier when both would fail', async () => {
+    const db = accountScenario(EXPIRED, [['site-1', 'core']]);
+
+    const err = await expectApiAuthError(requireProAccount('owner-1', opts(db)));
+    expect(err.status).toBe(402);
+    expect(err.code).toBe('trial_expired');
+  });
+});
+
+/* ─── error rendering ──────────────────────────────────────────────────── */
+
+describe('billingErrorToProblem', () => {
+  async function bodyOf(res: Response): Promise<Record<string, unknown>> {
+    return (await res.json()) as Record<string, unknown>;
+  }
+
+  it('returns null for a non-billing ApiAuthError', () => {
+    expect(billingErrorToProblem(new ApiAuthError(403, 'nope'))).toBeNull();
+  });
+
+  it('returns null for a plain Error', () => {
+    expect(billingErrorToProblem(new Error('boom'))).toBeNull();
+  });
+
+  it('renders 402 trial_expired with the billing state', async () => {
+    const db = scenario({ tier: 'pro', customer: EXPIRED });
+    const err = await expectApiAuthError(requireActiveBilling('site-1', opts(db)));
+
+    const res = billingErrorToProblem(err)!;
+    expect(res.status).toBe(402);
+    expect(res.headers.get('Content-Type')).toBe('application/problem+json; charset=utf-8');
+    expect(await bodyOf(res)).toMatchObject({
+      status: 402,
+      code: 'trial_expired',
+      billingState: 'expired',
+    });
+  });
+
+  it('renders 403 tier_insufficient with the required block from the details', async () => {
+    const db = scenario({ tier: 'core', customer: ACTIVE });
+    const err = await expectApiAuthError(requirePro('site-1', opts(db)));
+
+    const res = billingErrorToProblem(err)!;
+    expect(res.status).toBe(403);
+    expect(await bodyOf(res)).toMatchObject({
+      code: 'tier_insufficient',
+      required: { siteId: 'site-1', tier: 'pro', siteTier: 'core' },
+    });
+  });
+
+  it('omits the required block for an account-scoped tier failure', async () => {
+    const db = accountScenario(ACTIVE, [['site-1', 'core']]);
+    const err = await expectApiAuthError(requireProAccount('owner-1', opts(db)));
+
+    const res = billingErrorToProblem(err)!;
+    expect(res.status).toBe(403);
+    expect((await bodyOf(res)).required).toBeUndefined();
+  });
+
+  it('falls back to the caller-supplied siteId when the details carry none', async () => {
+    const err = new ApiAuthError(403, 'nope', {
+      code: 'tier_insufficient',
+      details: {},
+    });
+
+    const res = billingErrorToProblem(err, 'site-fallback')!;
+    expect(await bodyOf(res)).toMatchObject({
+      required: { siteId: 'site-fallback', tier: 'pro', siteTier: 'unknown' },
+    });
+  });
+});
+
+/* ─── control-plane lockout policy ─────────────────────────────────────── */
+
+describe('BILLING_LOCKED_CAPABILITIES', () => {
+  it.each([
+    Capability.MACHINE_EXEC_COMMAND,
+    Capability.MACHINE_CONFIG_WRITE,
+    Capability.DEPLOYMENT_MANAGE,
+    Capability.DISTRIBUTION_MANAGE,
+  ])('locks %s', (capability) => {
+    expect(isBillingLockedCapability(capability)).toBe(true);
+  });
+
+  it.each([
+    // Viewing stays open — the matrix keeps metrics/status/screenshots readable.
+    Capability.MACHINE_VIEW,
+    // Decommissioning is how a customer reduces their bill.
+    Capability.MACHINE_REMOVE,
+    Capability.UNINSTALL_TRIGGER,
+    // Security + stored-config surfaces; none of them reach a machine.
+    Capability.SITE_MEMBER_MANAGE,
+    Capability.GLOBAL_SETTINGS_WRITE,
+    Capability.PRESET_MANAGE,
+    Capability.SITE_LOGS_MANAGE,
+  ])('does not lock %s', (capability) => {
+    expect(isBillingLockedCapability(capability)).toBe(false);
+  });
+
+  it('is exactly the four control-plane capabilities', () => {
+    expect([...BILLING_LOCKED_CAPABILITIES].sort()).toEqual([
+      'DEPLOYMENT_MANAGE',
+      'DISTRIBUTION_MANAGE',
+      'MACHINE_CONFIG_WRITE',
+      'MACHINE_EXEC_COMMAND',
+    ]);
   });
 });

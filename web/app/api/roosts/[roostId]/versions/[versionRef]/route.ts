@@ -177,7 +177,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const site = validateSiteIdBody(body.siteId);
     if (!site.ok) return site.response;
 
-    const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'write');
+    // Pro-only: roost mutation surface.
+    const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'write', {
+      requirePro: true,
+    });
     if (!auth.ok) return auth.response;
 
     const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);

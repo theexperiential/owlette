@@ -6,6 +6,7 @@ import { emitMutation } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { apiError } from '@/lib/apiErrorResponse';
 import { authorizedPlatformHandler } from '@/lib/authorizedHandler.server';
+import { billingErrorToProblem, requireProAccount } from '@/lib/billingGate.server';
 import {
   ALL_RESOURCES,
   DEFAULT_TTL_DAYS,
@@ -95,13 +96,28 @@ export const GET = withRateLimit(
  *
  * Generate a new API key for the authenticated superadmin user.
  * Returns the raw key once -- only the SHA-256 hash is stored.
+ *
+ * Pro-only (billing-system wave 0.6): the public API, CLI, and SDK ship
+ * with the pro tier, and a key is the thing that unlocks them. The gate is
+ * account-scoped rather than site-scoped -- the key this route mints spans
+ * every resource the account owns, so there is no single site to key off.
+ * `trialing` passes; the trial runs at the pro feature level.
  */
 export const POST = withRateLimit(
   authorizedPlatformHandler({
     capability: 'GLOBAL_SETTINGS_WRITE',
   })(async (request: NextRequest, ctx) => {
+    const userId = ctx.actor.userId;
+
     try {
-      const userId = ctx.actor.userId;
+      await requireProAccount(userId);
+    } catch (error: unknown) {
+      const billingProblem = billingErrorToProblem(error);
+      if (billingProblem) return billingProblem;
+      return apiError(error, 'account/api-keys:create');
+    }
+
+    try {
       const body = await request.json().catch(() => ({}));
       const name = body.name || 'API Key';
       const environment: ApiKeyEnvironment = 'live';

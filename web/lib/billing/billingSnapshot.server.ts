@@ -54,6 +54,34 @@ export interface BillingSnapshot {
   siteTier: SiteTier;
 }
 
+/**
+ * Account-level counterpart to {@link BillingSnapshot}, for gates that have
+ * no single site to key off — api-key creation is the whole of it today.
+ */
+export interface AccountBillingSnapshot {
+  /** The billing customer's uid (`customers/{uid}`). */
+  uid: string;
+  /** Effective account state, resolved via `resolveBillingState()`. */
+  billingState: BillingState;
+  /**
+   * Effective account tier: `'pro'` when **any** site the account owns
+   * resolves pro, else `'core'`.
+   *
+   * "Any" rather than "all" because the tier flag lives on the site doc and
+   * an account may hold a mixed portfolio. Owning one pro site is what
+   * entitles the account to the pro feature set, so the strictest reading
+   * ("every site must be pro") would take the API away from exactly the
+   * customers paying for it.
+   *
+   * An account that owns **no** sites resolves `'core'` — there is no pro
+   * entitlement to point at. That is not a fail-closed edge case in
+   * practice: `'trialing'` short-circuits ahead of the tier check, and an
+   * account with a paid subscription and zero sites has nothing an api key
+   * could address anyway.
+   */
+  accountTier: SiteTier;
+}
+
 export interface BillingSnapshotOptions {
   /** Inject a Firestore instance; tests pass a fake, production omits. */
   db?: Firestore;
@@ -123,5 +151,41 @@ export async function getBillingSnapshot(
     ownerUid,
     billingState: resolveBillingState(customer, options.now),
     siteTier,
+  };
+}
+
+/**
+ * Resolve an account's billing snapshot directly from its uid.
+ *
+ * Unlike {@link getBillingSnapshot} there is no `null` return: an account
+ * with no `customers/{uid}` doc is the documented pre-go-live posture, not a
+ * missing resource, and `resolveBillingState()` maps it to `'trialing'`.
+ *
+ * Costs one doc read plus one `sites where owner == uid` query. Only call it
+ * from account-scoped gates — a site-scoped caller already knows its site and
+ * should use {@link getBillingSnapshot}, which is strictly cheaper.
+ */
+export async function getAccountBillingSnapshot(
+  uid: string,
+  options: BillingSnapshotOptions = {},
+): Promise<AccountBillingSnapshot> {
+  const db = options.db ?? getAdminDb();
+
+  const customerSnap = await db.collection('customers').doc(uid).get();
+  const customer = customerSnap.exists
+    ? (customerSnap.data() as BillingStateSource | undefined) ?? null
+    : null;
+
+  const ownedSites = await db.collection('sites').where('owner', '==', uid).get();
+  const accountTier: SiteTier = ownedSites.docs.some(
+    (doc) => getSiteTier(doc.data()) === 'pro',
+  )
+    ? 'pro'
+    : 'core';
+
+  return {
+    uid,
+    billingState: resolveBillingState(customer, options.now),
+    accountTier,
   };
 }
