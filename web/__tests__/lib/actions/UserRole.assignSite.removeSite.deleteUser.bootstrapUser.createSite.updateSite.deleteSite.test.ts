@@ -364,6 +364,7 @@ describe('bootstrapUser', () => {
       stripeCustomerId: null,
       subscriptionId: null,
       subscriptionStatus: null,
+      subscriptionTier: null,
       trialEndsAt: new Date(now.getTime() + TRIAL_LENGTH_DAYS * 24 * 60 * 60 * 1000),
       billingState: 'trialing',
       currentPeriodEnd: null,
@@ -446,19 +447,25 @@ describe('bootstrapUser', () => {
 });
 
 describe('site CRUD actions', () => {
-  it('createSite writes only the top-level site document', async () => {
-    const db = new FakeDb();
-    db.seed('users/owner-1', { sites: [] });
-    const now = new Date('2026-02-03T04:05:06.000Z');
+  const CREATE_NOW = new Date('2026-02-03T04:05:06.000Z');
 
-    const result = await createSite(ctx, {
-      siteId: 'site-a',
+  /** Run createSite against `db` with the fixed clock and stable inputs. */
+  function runCreateSite(db: FakeDb, siteId = 'site-a') {
+    return createSite(ctx, {
+      siteId,
       name: '  Main Gallery  ',
       ownerUid: 'owner-1',
       timezone: 'Not/AZone',
       db: db.asFirestore(),
-      now: () => now,
+      now: () => CREATE_NOW,
     });
+  }
+
+  it('createSite writes only the top-level site document', async () => {
+    const db = new FakeDb();
+    db.seed('users/owner-1', { sites: [] });
+
+    const result = await runCreateSite(db);
 
     expect(result).toMatchObject({
       kind: 'created',
@@ -466,17 +473,93 @@ describe('site CRUD actions', () => {
       name: 'Main Gallery',
       owner: 'owner-1',
       timezone: 'Not/AZone',
-      // wave 3.2: new sites bootstrap with the beta default tier so the
-      // roost gate doesn't lock new users out during the public beta.
-      tier: 'pro',
     });
     expect(db.docs.get('sites/site-a')).toMatchObject({
       name: 'Main Gallery',
       owner: 'owner-1',
       timezone: 'Not/AZone',
-      tier: 'pro',
+      // Never upgraded into its tier — it was minted at it (wave 0.3).
+      tierUpgradedAt: null,
     });
     expect(db.docs.get('users/owner-1')?.sites).toEqual([]);
+  });
+
+  // billing-system wave 0.3: the site tier is derived from the owner's
+  // billing state, not from a flat beta constant.
+  describe('createSite tier derivation', () => {
+    it('mints pro for a trialing owner (the trial runs at pro level)', async () => {
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+      db.seed('customers/owner-1', {
+        subscriptionStatus: null,
+        subscriptionTier: null,
+        trialEndsAt: new Date(CREATE_NOW.getTime() + 5 * 24 * 60 * 60 * 1000),
+      });
+
+      const result = await runCreateSite(db);
+
+      expect(result).toMatchObject({ kind: 'created', tier: 'pro' });
+      expect(db.docs.get('sites/site-a')).toMatchObject({ tier: 'pro' });
+    });
+
+    it('mints core for an owner subscribed on the core tier', async () => {
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+      db.seed('customers/owner-1', {
+        subscriptionStatus: 'active',
+        subscriptionTier: 'core',
+        trialEndsAt: new Date(CREATE_NOW.getTime() - 30 * 24 * 60 * 60 * 1000),
+      });
+
+      const result = await runCreateSite(db);
+
+      expect(result).toMatchObject({ kind: 'created', tier: 'core' });
+      expect(db.docs.get('sites/site-a')).toMatchObject({ tier: 'core' });
+    });
+
+    it('falls back to pro for a subscriber with no subscriptionTier yet', async () => {
+      // Pre-go-live posture: a subscription exists but wave 2.1's webhook
+      // hasn't stamped the paid tier. Don't degrade a paying account.
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+      db.seed('customers/owner-1', {
+        subscriptionStatus: 'active',
+        trialEndsAt: null,
+      });
+
+      const result = await runCreateSite(db);
+
+      expect(result).toMatchObject({ kind: 'created', tier: 'pro' });
+    });
+
+    it('mints pro when the owner has no customers doc (pre-T0 account)', async () => {
+      // The backfill hasn't reached this account; resolveBillingState reads
+      // an absent doc as `trialing`.
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+
+      const result = await runCreateSite(db);
+
+      expect(result).toMatchObject({ kind: 'created', tier: 'pro' });
+      expect(db.docs.get('sites/site-a')).toMatchObject({ tier: 'pro' });
+    });
+
+    it('still mints pro for an expired account — creation is gated elsewhere', async () => {
+      // Deliberate until tasks 0.5/0.6 add the `requireActiveBilling` route
+      // gate and 2.1 stamps paid tiers. If this flips to 'core', that change
+      // must be intentional — see `deriveSiteTier`.
+      const db = new FakeDb();
+      db.seed('users/owner-1', { sites: [] });
+      db.seed('customers/owner-1', {
+        subscriptionStatus: null,
+        subscriptionTier: null,
+        trialEndsAt: new Date(CREATE_NOW.getTime() - 1),
+      });
+
+      const result = await runCreateSite(db);
+
+      expect(result).toMatchObject({ kind: 'created', tier: 'pro' });
+    });
   });
 
   it('updateSite writes whitelisted fields and allows arbitrary timezone strings', async () => {

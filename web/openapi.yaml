@@ -6505,12 +6505,25 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
     Problem402:
-      description: Quota exceeded.
+      description: |
+        Payment required. Either a quota would be exceeded
+        (`code: quota_exceeded`), or the account owning the site has no
+        active subscription — its free trial ended, or a previous
+        subscription was canceled (`code: trial_expired`, with
+        `billingState` naming which). A `trial_expired` response pauses
+        API, CLI, and SDK access until a plan is chosen; no data is
+        deleted and agents keep reporting.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
     Problem403:
-      description: Forbidden (e.g. cross-site access).
+      description: |
+        Forbidden — cross-site access, a missing capability, an api key
+        without the required scope (`code: scope_insufficient`), or a
+        pro-only operation attempted on a core-tier site
+        (`code: tier_insufficient`, with a `required` block naming the
+        site and tier). Accounts on a free trial run at the pro feature
+        level and never receive `tier_insufficient`.
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -7952,6 +7965,14 @@ components:
             `null` on legacy site docs created before the field was
             introduced — clients should treat absent/null as the beta
             default (`pro`) until a billing flow flips this.
+        tierUpgradedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Set when a billing event changes the site's `tier`. `null` on a
+            site still on the tier it was created at, and on site docs that
+            predate the field.
         timezone:
           type: string
           nullable: true
@@ -8067,17 +8088,25 @@ components:
     # quotas
     Quota:
       type: object
-      required: [siteId, tier, usedBytes, pendingBytes, committedBytes, limitBytes, fractionUsed, unlimited, lastAlarmLevel, alarms]
+      required: [siteId, tier, usedBytes, pendingBytes, committedBytes, limitBytes, fractionUsed, roostAvailable, lastAlarmLevel, alarms]
       properties:
         siteId: { type: string }
         tier:
           type: string
-          enum: [free, starter, pro, enterprise]
+          enum: [core, pro]
+          description: |
+            Pricing tier of the site. Determines the included roost storage:
+            `core` has none (roost is a pro-tier feature), `pro` includes
+            1 TiB per site.
         limitBytes:
           type: integer
           format: int64
           minimum: 0
           nullable: true
+          description: |
+            Included storage for the tier, in bytes — `0` on `core`. A
+            per-site grant recorded on the quota doc takes precedence over
+            the tier default.
         usedBytes:
           type: integer
           format: int64
@@ -8097,8 +8126,14 @@ components:
           nullable: true
           minimum: 0
           maximum: 1
-        unlimited:
+          description: |
+            `committedBytes / limitBytes`, capped at 1. `null` when the tier
+            carries no included storage — there is no ratio to take.
+        roostAvailable:
           type: boolean
+          description: |
+            Whether roost is part of this site's tier. `false` on `core`,
+            where uploads are rejected with `403 tier_insufficient`.
         lastAlarmLevel:
           type: number
         lastAlarmAt:
@@ -8562,7 +8597,7 @@ components:
               type: string
             tier:
               type: string
-              enum: [free, starter, pro, enterprise]
+              enum: [core, pro]
             usedBytes:
               type: integer
               format: int64

@@ -19,6 +19,7 @@
  * `resolveBillingState()` from `@/lib/billing/billingState`, never by
  * reading `billingState` alone.
  */
+import type { SiteTier } from '@/lib/siteTier';
 
 /** Free-trial length, in days. The single source of the 14-day number. */
 export const TRIAL_LENGTH_DAYS = 14;
@@ -69,6 +70,17 @@ export interface Customer {
   /** Mirrored Stripe subscription status; `null` when no subscription exists. */
   subscriptionStatus: SubscriptionStatus | null;
   /**
+   * Tier the account actually pays for, mirrored from the Stripe price the
+   * customer checked out with. Written by the webhook handler at conversion
+   * (wave 2.1); `null` until then — a trialing account has not chosen a tier
+   * yet, and the trial runs at the pro feature level regardless.
+   *
+   * This is the account-level source of truth that `createSite` stamps onto
+   * new `sites/{siteId}.tier` docs, so a core subscriber's second site is
+   * minted as core rather than silently inheriting pro.
+   */
+  subscriptionTier: SiteTier | null;
+  /**
    * End of the app-managed free trial.
    *
    * `null` is a meaningful sentinel: **"pre-go-live beta account — the
@@ -112,6 +124,7 @@ export function newCustomerDoc(now: Date): Customer {
     stripeCustomerId: null,
     subscriptionId: null,
     subscriptionStatus: null,
+    subscriptionTier: null,
     trialEndsAt: trialEndsAtFrom(now),
     billingState: 'trialing',
     currentPeriodEnd: null,

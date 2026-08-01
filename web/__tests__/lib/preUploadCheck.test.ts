@@ -234,14 +234,20 @@ describe('checkQuota', () => {
     expect(checkQuota(1 * GB, undefined)).toBeNull();
   });
 
-  it('returns null for unlimited (Infinity) plans', () => {
-    expect(
-      checkQuota(1 * GB, {
-        planLimitBytes: Infinity,
-        usedBytes: 1 * GB,
-        pendingBytes: 0,
-      }),
-    ).toBeNull();
+  it('blocks with the tier gate when roost is not part of the tier', () => {
+    // core site: 0 included storage, server answers 403 tier_insufficient.
+    // The copy must say "upgrade", not "delete older content".
+    const c = checkQuota(1 * GB, {
+      planLimitBytes: 0,
+      usedBytes: 0,
+      pendingBytes: 0,
+      roostAvailable: false,
+    });
+    expect(c).not.toBeNull();
+    expect(c!.severity).toBe('error');
+    expect(c!.blocking).toBe(true);
+    expect(c!.message).toMatch(/pro-tier/i);
+    expect(c!.message).not.toMatch(/exceed/i);
   });
 
   it('returns null when well under threshold', () => {
@@ -251,6 +257,7 @@ describe('checkQuota', () => {
         planLimitBytes: 5 * GB,
         usedBytes: 1 * GB,
         pendingBytes: 0,
+        roostAvailable: true,
       }),
     ).toBeNull();
   });
@@ -261,6 +268,7 @@ describe('checkQuota', () => {
       planLimitBytes: 5 * GB,
       usedBytes: 3.5 * GB,
       pendingBytes: 0,
+      roostAvailable: true,
     });
     expect(c).not.toBeNull();
     expect(c!.severity).toBe('warning');
@@ -273,6 +281,7 @@ describe('checkQuota', () => {
       planLimitBytes: 5 * GB,
       usedBytes: 4 * GB,
       pendingBytes: 0,
+      roostAvailable: true,
     });
     expect(c).not.toBeNull();
     expect(c!.severity).toBe('error');
@@ -286,6 +295,7 @@ describe('checkQuota', () => {
       planLimitBytes: 5 * GB,
       usedBytes: 4 * GB,
       pendingBytes: 1 * GB,
+      roostAvailable: true,
     });
     expect(c?.severity).toBe('error');
   });

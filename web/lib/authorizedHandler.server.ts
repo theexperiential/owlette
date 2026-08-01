@@ -50,7 +50,9 @@ import {
   problemNotFound,
   problemRateLimited,
   problemScopeInsufficient,
+  problemTierInsufficient,
   problemTokenExpired,
+  problemTrialExpired,
   problemUnauthorized,
   ProblemType,
 } from '@/lib/apiErrors';
@@ -215,6 +217,22 @@ function authErrorToResponse(err: ApiAuthError): NextResponse {
       resource: d?.resource ?? 'unknown',
       id: d?.id ?? 'unknown',
       permission: d?.permission ?? 'unknown',
+    });
+  }
+  if (err.code === 'trial_expired') {
+    const state = typeof err.details?.billingState === 'string'
+      ? err.details.billingState
+      : undefined;
+    return problemTrialExpired(err.message, state);
+  }
+  if (err.code === 'tier_insufficient') {
+    const d = err.details as
+      | { siteId?: string; tier?: string; siteTier?: string }
+      | undefined;
+    return problemTierInsufficient(err.message, {
+      siteId: d?.siteId ?? 'unknown',
+      tier: d?.tier ?? 'pro',
+      siteTier: d?.siteTier ?? 'unknown',
     });
   }
   if (err.status === 401) return problemUnauthorized(err.message);

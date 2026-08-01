@@ -52,6 +52,7 @@ import {
   requireSessionOrIdToken,
   requireAdmin,
   requireAdminOrIdToken,
+  requireApiKeyBilling,
   requireScope,
   requireSessionUser,
   resolveAuth,
@@ -1082,6 +1083,151 @@ describe('requireScope', () => {
       'write',
     );
     expect(result.isLegacy).toBe(false);
+  });
+});
+
+// ─── requireApiKeyBilling ──────────────────────────────────────────────────
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Wire the shared doc-get mock to a `{ 'collection/id': data }` map. */
+function seedBillingDocs(docs: Record<string, Record<string, unknown>>) {
+  mockDocGet.mockImplementation((col: string, id: string) => {
+    const data = docs[`${col}/${id}`];
+    return Promise.resolve({
+      exists: data !== undefined,
+      data: () => data,
+    });
+  });
+}
+
+const apiKeyAuth: ResolvedAuth = {
+  userId: 'owner-1',
+  keyContext: keyContext({ isLegacy: false, scopes: [] }),
+};
+const sessionAuth: ResolvedAuth = { userId: 'owner-1', keyContext: null };
+
+describe('requireApiKeyBilling', () => {
+  it('no-ops for session auth even when the account is expired', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': { subscriptionStatus: null, trialEndsAt: Date.now() - DAY_MS },
+    });
+
+    // The dashboard stays readable on expiry — only the api-key surface is
+    // blocked. Session callers must not even read the customers doc.
+    await expect(requireApiKeyBilling(sessionAuth, 'site-1')).resolves.toBeUndefined();
+    expect(mockDocGet).not.toHaveBeenCalled();
+  });
+
+  it('passes an api-key request while trialing', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': { subscriptionStatus: null, trialEndsAt: Date.now() + 7 * DAY_MS },
+    });
+
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeUndefined();
+  });
+
+  it('passes an api-key request with an active subscription', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': { subscriptionStatus: 'active', trialEndsAt: Date.now() - 30 * DAY_MS },
+    });
+
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeUndefined();
+  });
+
+  it('throws 402 trial_expired when the trial has ended', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': { subscriptionStatus: null, trialEndsAt: Date.now() - DAY_MS },
+    });
+
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).rejects.toThrow(
+      expect.objectContaining({
+        status: 402,
+        code: 'trial_expired',
+        message: 'this free trial has ended; choose a plan to restore access',
+      }),
+    );
+  });
+
+  it('throws 402 trial_expired when the subscription was canceled', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': { subscriptionStatus: 'canceled', trialEndsAt: Date.now() - DAY_MS },
+    });
+
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).rejects.toThrow(
+      expect.objectContaining({
+        status: 402,
+        code: 'trial_expired',
+        message: 'this subscription was canceled; choose a plan to restore access',
+      }),
+    );
+  });
+
+  it('treats a missing customers doc as trialing', async () => {
+    seedBillingDocs({ 'sites/site-1': { owner: 'owner-1', tier: 'pro' } });
+
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeUndefined();
+  });
+
+  it('no-ops for a site that does not exist — 404 is the access check to make', async () => {
+    seedBillingDocs({});
+
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeUndefined();
+  });
+
+  it('does NOT block a core site by default', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'core' },
+      'customers/owner-1': { subscriptionStatus: 'active', trialEndsAt: Date.now() - 30 * DAY_MS },
+    });
+
+    // Wave 0.5 must not lock core sites out of the whole API — tier is a
+    // per-endpoint question that wave 0.6 opts into.
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeUndefined();
+  });
+
+  it('throws 403 tier_insufficient for a core site when requirePro is set', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'core' },
+      'customers/owner-1': { subscriptionStatus: 'active', trialEndsAt: Date.now() - 30 * DAY_MS },
+    });
+
+    await expect(
+      requireApiKeyBilling(apiKeyAuth, 'site-1', { requirePro: true }),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        status: 403,
+        code: 'tier_insufficient',
+        message: 'this feature requires the pro tier; upgrade the site to pro to continue',
+      }),
+    );
+  });
+
+  it('passes requirePro on a core site while trialing', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'core' },
+      'customers/owner-1': { subscriptionStatus: null, trialEndsAt: Date.now() + 7 * DAY_MS },
+    });
+
+    await expect(
+      requireApiKeyBilling(apiKeyAuth, 'site-1', { requirePro: true }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('prefers 402 over 403 for an expired account on a core site', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'core' },
+      'customers/owner-1': { subscriptionStatus: null, trialEndsAt: Date.now() - DAY_MS },
+    });
+
+    await expect(
+      requireApiKeyBilling(apiKeyAuth, 'site-1', { requirePro: true }),
+    ).rejects.toThrow(expect.objectContaining({ status: 402, code: 'trial_expired' }));
   });
 });
 

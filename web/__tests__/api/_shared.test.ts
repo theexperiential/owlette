@@ -17,15 +17,24 @@ jest.mock('@/lib/apiAuth.server', () => {
   // not `statusCode`.
   class ApiAuthError extends Error {
     status: number;
-    constructor(status: number, message: string) {
+    code?: string;
+    details?: Record<string, unknown>;
+    constructor(
+      status: number,
+      message: string,
+      opts?: { code?: string; details?: Record<string, unknown> },
+    ) {
       super(message);
       this.status = status;
+      this.code = opts?.code;
+      this.details = opts?.details;
     }
   }
   return {
     ApiAuthError,
     requireAdminOrIdToken: jest.fn(),
     assertUserHasSiteAccess: jest.fn(),
+    requireApiKeyBilling: jest.fn(),
   };
 });
 
@@ -38,6 +47,8 @@ import {
   ApiAuthError,
   requireAdminOrIdToken,
   assertUserHasSiteAccess,
+  requireApiKeyBilling,
+  type ResolvedAuth,
 } from '@/lib/apiAuth.server';
 import {
   parseJsonBody,
@@ -45,12 +56,14 @@ import {
   validateResourceId,
   validateSiteIdBody,
   requireAuthOrProblem,
+  requireBillingOrProblem,
   requireSiteScope,
   MAX_HASHES_PER_REQUEST,
 } from '@/app/api/_shared';
 
 const mockedRequireAuth = requireAdminOrIdToken as jest.MockedFunction<typeof requireAdminOrIdToken>;
 const mockedAssertSite = assertUserHasSiteAccess as jest.MockedFunction<typeof assertUserHasSiteAccess>;
+const mockedRequireBilling = requireApiKeyBilling as jest.MockedFunction<typeof requireApiKeyBilling>;
 
 function makeRequest(opts: {
   url?: string;
@@ -186,6 +199,71 @@ describe('_shared.ts (v2 route helpers)', () => {
     it('rethrows non-ApiAuthError', async () => {
       mockedAssertSite.mockRejectedValueOnce(new Error('unrelated'));
       await expect(requireSiteScope('user-1', 'site_abc')).rejects.toThrow('unrelated');
+    });
+  });
+
+  // ─── requireBillingOrProblem ──────────────────────────────────────
+
+  describe('requireBillingOrProblem', () => {
+    const auth: ResolvedAuth = { userId: 'user-1', keyContext: null };
+
+    it('returns null when the billing gate passes', async () => {
+      mockedRequireBilling.mockResolvedValueOnce(undefined);
+      await expect(requireBillingOrProblem(auth, 'site_abc')).resolves.toBeNull();
+    });
+
+    it('forwards the requirePro option to the gate', async () => {
+      mockedRequireBilling.mockResolvedValueOnce(undefined);
+      await requireBillingOrProblem(auth, 'site_abc', { requirePro: true });
+      expect(mockedRequireBilling).toHaveBeenCalledWith(auth, 'site_abc', {
+        requirePro: true,
+      });
+    });
+
+    it('maps trial_expired to a 402 problem+json', async () => {
+      mockedRequireBilling.mockRejectedValueOnce(
+        new ApiAuthError(402, 'this free trial has ended; choose a plan to restore access', {
+          code: 'trial_expired',
+          details: { siteId: 'site_abc', billingState: 'expired' },
+        }),
+      );
+
+      const result = await requireBillingOrProblem(auth, 'site_abc');
+      expect(result).not.toBeNull();
+      expect(result!.status).toBe(402);
+      expect(result!.headers.get('Content-Type')).toBe(
+        'application/problem+json; charset=utf-8',
+      );
+      const body = await result!.json();
+      expect(body.code).toBe('trial_expired');
+      expect(body.billingState).toBe('expired');
+      expect(body.docsUrl).toBe('https://owlette.app/docs/api/errors#trial_expired');
+    });
+
+    it('maps tier_insufficient to a 403 problem+json with the required block', async () => {
+      mockedRequireBilling.mockRejectedValueOnce(
+        new ApiAuthError(403, 'pro only', {
+          code: 'tier_insufficient',
+          details: { siteId: 'site_abc', tier: 'pro', siteTier: 'core' },
+        }),
+      );
+
+      const result = await requireBillingOrProblem(auth, 'site_abc', { requirePro: true });
+      expect(result).not.toBeNull();
+      expect(result!.status).toBe(403);
+      const body = await result!.json();
+      expect(body.code).toBe('tier_insufficient');
+      expect(body.required).toEqual({ siteId: 'site_abc', tier: 'pro', siteTier: 'core' });
+    });
+
+    it('rethrows an ApiAuthError that is not a billing code', async () => {
+      mockedRequireBilling.mockRejectedValueOnce(new ApiAuthError(403, 'nope'));
+      await expect(requireBillingOrProblem(auth, 'site_abc')).rejects.toThrow('nope');
+    });
+
+    it('rethrows non-ApiAuthError', async () => {
+      mockedRequireBilling.mockRejectedValueOnce(new Error('unrelated'));
+      await expect(requireBillingOrProblem(auth, 'site_abc')).rejects.toThrow('unrelated');
     });
   });
 

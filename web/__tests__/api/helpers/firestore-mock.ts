@@ -61,6 +61,15 @@ export const mocks = {
   collectionGet: jest.fn(),
   /** explicit data for top-level sites/{siteId} document reads */
   siteDocs: new Map<string, Record<string, unknown> | null>(),
+  /**
+   * explicit data for top-level customers/{uid} document reads (the billing
+   * gate — see `@/lib/billing/billingSnapshot.server`). Routed like
+   * `siteDocs` so the gate's read never consumes a route's queued
+   * `mocks.get.mockResolvedValueOnce(...)`. Unseeded reads resolve as a
+   * missing doc, which the resolver treats as `'trialing'` — the right
+   * default for every test that isn't about billing.
+   */
+  customerDocs: new Map<string, Record<string, unknown> | null>(),
   /** requireAdminOrIdToken */
   requireAdmin: jest.fn().mockResolvedValue({ userId: 'test-admin' }),
 };
@@ -89,6 +98,11 @@ function buildDoc(path: string): Record<string, unknown> {
           return Promise.resolve(docSnapshot(parts[1], mocks.siteDocs.get(parts[1]) ?? null));
         }
         return Promise.resolve(docSnapshot(parts[1], {}));
+      }
+      if (parts.length === 2 && parts[0] === 'customers') {
+        return Promise.resolve(
+          docSnapshot(parts[1], mocks.customerDocs.get(parts[1]) ?? null),
+        );
       }
       return mocks.get();
     },

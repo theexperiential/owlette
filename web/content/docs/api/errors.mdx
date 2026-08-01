@@ -3,7 +3,7 @@ title: "errors"
 description: "Public API errors use application/problem+json. Clients should branch on the stable code field, not on human-readable detail text."
 ---
 
-**Last updated**: 2026-05-01
+**Last updated**: 2026-08-01
 
 ---
 
@@ -48,6 +48,7 @@ Unknown fields are forward-compatible extensions. Ignore fields you do not recog
 | `token_expired` | 401 | API key expired or rotated value is past its grace window. | Rotate or create a new key. |
 | `forbidden` | 403 | Authenticated caller lacks role, site membership, or platform capability. | Use a different caller or change access in the dashboard. |
 | `scope_insufficient` | 403 | API key lacks the exact resource/id/permission required. | Create or use a key with the required scope. |
+| `tier_insufficient` | 403 | The site is on the core tier and the operation is pro-only. | Upgrade the site to pro. |
 | `not_found` | 404 | Resource is absent or hidden from this caller. | Check the id and caller scope. |
 | `version_not_found` | 404 | A version id, version ref, or version alias did not resolve in the roost history. | Check the roost id, site id, and version ref before retrying. |
 | `validation_failed` | 400 | Body, query, path, or header validation failed. | Fix the request using `detail` and `errors`. |
@@ -64,6 +65,7 @@ Unknown fields are forward-compatible extensions. Ignore fields you do not recog
 | `version_stale` | 412 | `expectedCurrentVersionId` did not match the roost current pointer during publish. | Re-read the roost and retry if the publish is still intended. |
 | `payload_too_large` | 413 | Request exceeded an endpoint size limit. | Split the request or reduce payload size. |
 | `quota_exceeded` | 402 | Site or account quota would be exceeded. | Free usage, wait for reset, or upgrade. |
+| `trial_expired` | 402 | The account's free trial ended, or its subscription was canceled. API, CLI, and SDK access is paused. | Choose a plan to restore access. |
 | `rate_limited` | 429 | Request or concurrency bucket exhausted. | Honor `Retry-After`; reduce concurrency. |
 | `machine_offline` | 409 | Machine command cannot be queued or completed because the target is offline. | Wait for the machine to reconnect or target another machine. |
 | `cortex_unavailable` | 400/423/503 | Cortex could not stream because the target was missing, disabled, or offline. | Fix the target/enablement issue or retry after the machine reconnects. |
@@ -89,6 +91,10 @@ The caller is authenticated but lacks the required role, site membership, owners
 ### scope_insufficient
 
 The API key is valid but lacks the exact resource, id, and permission required by the operation.
+
+### tier_insufficient
+
+The operation is available only on the pro tier, and the target site is on core. The body carries a `required` block naming the site and the tier it needs. Accounts on a free trial run at the pro feature level and never see this code.
 
 ### not_found
 
@@ -154,6 +160,10 @@ The request body exceeded an endpoint size limit. Split or reduce the payload.
 
 The request would exceed a site, account, storage, bandwidth, or lifecycle quota.
 
+### trial_expired
+
+The account that owns the site has no active subscription: its free trial ended, or a previous subscription was canceled. API, CLI, and SDK access is paused until a plan is chosen — no data is deleted, agents keep reporting, and the dashboard stays readable. The body carries `billingState` (`expired` or `canceled`) so clients can word their own prompt.
+
 ### rate_limited
 
 The caller exceeded an active request or concurrency bucket. Honor `Retry-After`.
@@ -192,7 +202,9 @@ Do not blindly retry:
 - auth failures (`401`, `403`)
 - missing resources (`404`)
 - validation/idempotency mismatch failures (`400`, `422`)
-- quota failures (`402`) unless usage or plan state changed
+- quota failures (`402 quota_exceeded`) unless usage or plan state changed
+- billing lockouts (`402 trial_expired`) until a plan is chosen
+- tier failures (`403 tier_insufficient`) until the site is upgraded
 - precondition failures (`409`, `412`) until you have refreshed state
 
 For mutating retries, reuse the same `Idempotency-Key` only when the request method, path, query, and body are identical. See [idempotency.md](/docs/api/idempotency).

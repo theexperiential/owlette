@@ -13,15 +13,80 @@
  * Capability: `SITE_MEMBER_MANAGE` via the platform route wrapper. Site
  * creation has no existing site id to authorize against, so the route is
  * treated as a platform-level mutation.
+ *
+ * billing-system wave 0.3: the site's `tier` is derived from the owner's
+ * billing state (`customers/{ownerUid}`) rather than a flat beta constant —
+ * see `deriveSiteTier` below.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import { validateSiteId } from '@/lib/validators';
-import { BETA_DEFAULT_TIER, type SiteTier } from '@/lib/siteTier';
+import { type SiteTier } from '@/lib/siteTier';
+import {
+  resolveBillingState,
+  type BillingStateSource,
+} from '@/lib/billing/billingState';
 
 const NAME_MAX_LENGTH = 200;
+
+/**
+ * The fields of a `customers/{uid}` doc this action reads. Firestore data is
+ * untyped, so `subscriptionTier` arrives as `unknown` and is narrowed below
+ * rather than trusted.
+ */
+type CustomerDocLike = BillingStateSource & { subscriptionTier?: unknown };
+
+/**
+ * Tier a new site is minted at when the account has no explicit entitlement
+ * to read — a trialing account (the trial runs at the pro feature level), or
+ * a subscribed account whose `subscriptionTier` hasn't been written yet.
+ *
+ * Deliberately a local constant rather than `siteTier.BETA_DEFAULT_TIER`:
+ * that one is the *read-path* fallback for unstamped site docs and gets
+ * deleted at go-live (task 5.3). This one encodes the write-path billing
+ * posture and outlives it, so the two must not share a symbol — otherwise
+ * 5.3's cleanup would silently change what new sites are minted as.
+ */
+const UNENTITLED_DEFAULT_TIER: SiteTier = 'pro';
+
+/** Narrow the untyped `subscriptionTier` field off a customers doc. */
+function parseSubscriptionTier(raw: unknown): SiteTier | null {
+  return raw === 'core' || raw === 'pro' ? raw : null;
+}
+
+/**
+ * Derive the tier a new site should be created at from its owner's billing
+ * state (billing-system wave 0.3). Replaces the flat `BETA_DEFAULT_TIER`
+ * write so a core subscriber's sites are minted as core the moment billing
+ * goes live, without a second migration pass.
+ *
+ * | billing state          | tier                                |
+ * |------------------------|-------------------------------------|
+ * | `trialing`             | `pro` — the trial runs at pro level |
+ * | `active`               | `subscriptionTier ?? 'pro'`         |
+ * | `expired` / `canceled` | `pro` — see the note below          |
+ *
+ * A missing `customers/{uid}` doc resolves as `trialing`: that's a pre-T0
+ * account the backfill (`scripts/backfill-customers.mjs`) hasn't reached, and
+ * `resolveBillingState(undefined)` already reads it that way.
+ *
+ * **`expired` / `canceled` deliberately still mint `pro`.** Gating site
+ * creation on billing state is *not* this task — the lockout lands with the
+ * `requireActiveBilling` gate (task 0.5) wired into the create-site route
+ * (task 0.6), and the paid-tier stamp lands with the Stripe webhook (task
+ * 2.1). Until then an expired account is blocked at the route, not silently
+ * handed a degraded site here; minting `core` now would strand roost data on
+ * sites created during the window and read as an enforcement gate that
+ * nothing else in the codebase agrees with yet.
+ */
+function deriveSiteTier(customer: CustomerDocLike | undefined, now: Date): SiteTier {
+  if (resolveBillingState(customer, now) === 'active') {
+    return parseSubscriptionTier(customer?.subscriptionTier) ?? UNENTITLED_DEFAULT_TIER;
+  }
+  return UNENTITLED_DEFAULT_TIER;
+}
 
 export interface CreateSiteInput {
   siteId: string;
@@ -90,11 +155,18 @@ export async function createSite(
   }
 
   const nowDate = (input.now ?? (() => new Date()))();
-  // New sites bootstrap with the beta default tier so the roost gate (and
-  // any future pro-only feature) doesn't lock new users out during the
-  // beta. Flipping `BETA_DEFAULT_TIER` to `'core'` is the single switch
-  // that ends free pro access for sites created from that point forward.
-  const tier: SiteTier = BETA_DEFAULT_TIER;
+
+  // Tier is derived from the owner's billing state, not a global constant —
+  // see `deriveSiteTier` for the decision table. A read failure here is left
+  // to propagate: the `siteRef.get()` above already proves the db is
+  // reachable, so a failure at this point is a real fault, and guessing an
+  // entitlement is worse than a retryable error on a rare, user-initiated
+  // action.
+  const customerSnap = await db.collection('customers').doc(input.ownerUid).get();
+  const tier = deriveSiteTier(
+    customerSnap.exists ? customerSnap.data() : undefined,
+    nowDate,
+  );
 
   await siteRef.set({
     name: trimmedName,
@@ -102,6 +174,10 @@ export async function createSite(
     owner: input.ownerUid,
     timezone,
     tier,
+    // Stamped by the billing events that move a site between tiers (wave
+    // 2.1). `null` at creation: the site was minted at this tier, never
+    // upgraded into it.
+    tierUpgradedAt: null,
   });
 
   emitMutation({

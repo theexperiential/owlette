@@ -11,6 +11,14 @@ import {
   scopeMatches,
 } from '@/lib/apiKeyTypes';
 import { emitApiKeyUsed, scopeFingerprint } from '@/lib/auditLogClient';
+import {
+  billingLockoutDetail,
+  getBillingSnapshot,
+  isLockedOut,
+  tierInsufficientDetail,
+  TIER_INSUFFICIENT_CODE,
+  TRIAL_EXPIRED_CODE,
+} from '@/lib/billing/billingSnapshot.server';
 
 export class ApiAuthError extends Error {
   status: number;
@@ -344,6 +352,70 @@ export function requireScope(
       details: { resource, id, permission },
     }
   );
+}
+
+export interface ApiKeyBillingOptions {
+  /**
+   * Also require the pro tier. Off by default: wave 0.5 blocks expired
+   * accounts from the whole public API, but tier is a per-endpoint question
+   * — most endpoints are available on `core`. Pro-only routes opt in during
+   * wave 0.6.
+   */
+  requirePro?: boolean;
+}
+
+/**
+ * Billing gate for the public API (billing-system wave 0.5).
+ *
+ * Call once an api-key request has resolved its site scope. Per the plan's
+ * lockout matrix, an `expired` / `canceled` account is blocked from the
+ * public API, CLI, and SDK — while the dashboard stays readable — so this
+ * deliberately **no-ops for session / id-token auth**. Dashboard and
+ * server-action gating goes through `requireActiveBilling()` /
+ * `requirePro()` in `@/lib/billingGate.server`, which wave 0.6 wires per
+ * route according to the same matrix.
+ *
+ * Throws:
+ *   - `402` `trial_expired` when the owning account is locked out.
+ *   - `403` `tier_insufficient` when `requirePro` is set and the site is
+ *     `core`. `trialing` never reaches this — the trial runs at the pro
+ *     feature level.
+ *
+ * A site that doesn't exist is a silent pass: existence is
+ * `assertUserHasSiteAccess()`'s call to make, and it runs first in every
+ * caller. Answering 402 for an unknown site would mask that 404.
+ *
+ * Reads the billing snapshot through `@/lib/billing/billingSnapshot.server`
+ * rather than importing `billingGate.server` — that module imports
+ * `ApiAuthError` from this one, and the leaf keeps the graph acyclic.
+ */
+export async function requireApiKeyBilling(
+  auth: ResolvedAuth,
+  siteId: string,
+  options: ApiKeyBillingOptions = {},
+): Promise<void> {
+  if (!auth.keyContext) return;
+
+  const snapshot = await getBillingSnapshot(siteId);
+  if (!snapshot) return;
+
+  if (isLockedOut(snapshot.billingState)) {
+    throw new ApiAuthError(402, billingLockoutDetail(snapshot.billingState), {
+      code: TRIAL_EXPIRED_CODE,
+      details: { siteId, billingState: snapshot.billingState },
+    });
+  }
+
+  if (
+    options.requirePro &&
+    snapshot.billingState !== 'trialing' &&
+    snapshot.siteTier === 'core'
+  ) {
+    throw new ApiAuthError(403, tierInsufficientDetail(), {
+      code: TIER_INSUFFICIENT_CODE,
+      details: { siteId, tier: 'pro', siteTier: snapshot.siteTier },
+    });
+  }
 }
 
 /**

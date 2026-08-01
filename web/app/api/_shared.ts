@@ -13,16 +13,20 @@ import {
   problemForbidden,
   problemNotFound,
   problemScopeInsufficient,
+  problemTierInsufficient,
   problemTokenExpired,
+  problemTrialExpired,
 } from '@/lib/apiErrors';
 import {
   ApiAuthError,
   applyAuthDeprecations,
   auditApiKeyUse,
   requireAdminOrIdToken,
+  requireApiKeyBilling,
   requireScope,
   resolveAuth,
   assertUserHasSiteAccess,
+  type ApiKeyBillingOptions,
   type ResolvedAuth,
   type ScopeCheckResult,
 } from '@/lib/apiAuth.server';
@@ -328,6 +332,50 @@ function isMutationPermission(permission: ApiKeyPermission): boolean {
   return permission !== 'read';
 }
 
+/**
+ * Billing gate for the public API (billing-system wave 0.5).
+ *
+ * Runs after auth + site access + scope, so a caller who can't reach the
+ * site never learns anything about its billing state. No-ops for
+ * session / id-token callers — `requireApiKeyBilling` only gates the
+ * api-key surface, per the plan's lockout matrix (public API / CLI / SDK
+ * blocked on expiry; dashboard stays readable).
+ *
+ * Exported so wave 0.6 can re-run it per route with `{ requirePro: true }`
+ * on pro-only endpoints, rather than each route re-deriving the mapping
+ * from `ApiAuthError` to problem+json.
+ */
+export async function requireBillingOrProblem(
+  auth: ResolvedAuth,
+  siteId: string,
+  options: ApiKeyBillingOptions = {},
+): Promise<NextResponse | null> {
+  try {
+    await requireApiKeyBilling(auth, siteId, options);
+    return null;
+  } catch (err) {
+    if (err instanceof ApiAuthError) {
+      if (err.code === 'trial_expired') {
+        const state = typeof err.details?.billingState === 'string'
+          ? err.details.billingState
+          : undefined;
+        return problemTrialExpired(err.message, state);
+      }
+      if (err.code === 'tier_insufficient') {
+        const d = err.details as
+          | { siteId?: string; tier?: string; siteTier?: string }
+          | undefined;
+        return problemTierInsufficient(err.message, {
+          siteId: d?.siteId ?? siteId,
+          tier: d?.tier ?? 'pro',
+          siteTier: d?.siteTier ?? 'unknown',
+        });
+      }
+    }
+    throw err;
+  }
+}
+
 async function assertSiteAccessOrProblem(
   userId: string,
   siteId: string,
@@ -371,6 +419,9 @@ export async function requireSiteAuthAndScope(
 
   const scopeResult = runScopeCheck(authResult.auth, 'site', siteId, permission);
   if (!scopeResult.ok) return scopeResult;
+
+  const billingError = await requireBillingOrProblem(authResult.auth, siteId);
+  if (billingError) return { ok: false, response: billingError };
 
   auditApiKeyUse(authResult.auth, siteId, req);
 
@@ -457,6 +508,9 @@ export async function requireMachineAuthAndScope(
   const scopeResult = runScopeCheck(authResult.auth, 'machine', machineId, permission);
   if (!scopeResult.ok) return scopeResult;
 
+  const billingError = await requireBillingOrProblem(authResult.auth, siteId);
+  if (billingError) return { ok: false, response: billingError };
+
   auditApiKeyUse(authResult.auth, siteId, req);
 
   return {
@@ -507,6 +561,9 @@ export async function requireRoostAuthAndScope(
 
   const scopeResult = runScopeCheck(authResult.auth, 'roost', roostId, permission);
   if (!scopeResult.ok) return scopeResult;
+
+  const billingError = await requireBillingOrProblem(authResult.auth, siteId);
+  if (billingError) return { ok: false, response: billingError };
 
   auditApiKeyUse(authResult.auth, siteId, req);
 
@@ -604,6 +661,9 @@ export async function requireChatAuthAndScope(
 
   const scopeResult = runScopeCheck(authResult.auth, 'chat', siteId, permission);
   if (!scopeResult.ok) return scopeResult;
+
+  const billingError = await requireBillingOrProblem(authResult.auth, siteId);
+  if (billingError) return { ok: false, response: billingError };
 
   auditApiKeyUse(authResult.auth, siteId, req);
 

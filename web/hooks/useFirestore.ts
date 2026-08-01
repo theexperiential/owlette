@@ -411,6 +411,12 @@ export interface Site {
    * undefined → BETA_DEFAULT_TIER fallback stays in one place.
    */
   tier?: SiteTier;
+  /**
+   * When a billing event last moved this site to its current `tier`
+   * (billing-system wave 0.3). `null` on a site minted at its tier and never
+   * upgraded into it; absent on site docs that predate the field.
+   */
+  tierUpgradedAt?: FirestoreTs;
 }
 
 /**
@@ -684,6 +690,7 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
                 timezone: data.timezone,
                 owner: data.owner,
                 tier: parseSiteTier(data.tier),
+                tierUpgradedAt: data.tierUpgradedAt ?? null,
               });
             });
             siteData.sort((a, b) => a.name.localeCompare(b.name));
@@ -734,6 +741,7 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
                 timezone: data.timezone,
                 owner: data.owner,
                 tier: parseSiteTier(data.tier),
+                tierUpgradedAt: data.tierUpgradedAt ?? null,
               });
             } else {
               siteDataMap.delete(siteId);

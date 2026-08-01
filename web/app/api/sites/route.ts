@@ -265,6 +265,7 @@ function summariseSite(d: FirebaseFirestore.QueryDocumentSnapshot): {
   name: string;
   plan: string | null;
   tier: 'core' | 'pro' | null;
+  tierUpgradedAt: string | null;
   timezone: string | null;
   owner: string | null;
   createdAt: string | null;
@@ -278,6 +279,7 @@ function summariseSite(d: FirebaseFirestore.QueryDocumentSnapshot): {
     name: typeof data.name === 'string' ? data.name : d.id,
     plan: typeof data.plan === 'string' ? data.plan : null,
     tier,
+    tierUpgradedAt: timestampToIso(data.tierUpgradedAt),
     timezone: typeof data.timezone === 'string' ? data.timezone : null,
     owner: typeof data.owner === 'string' ? data.owner : null,
     createdAt: timestampToIso(data.createdAt),

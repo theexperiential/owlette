@@ -33,9 +33,16 @@ export interface PreUploadTarget {
 }
 
 export interface QuotaSnapshot {
+  /** Included storage for the site's tier, in bytes. `0` on core. */
   planLimitBytes: number;
   usedBytes: number;
   pendingBytes: number;
+  /**
+   * Whether roost is part of the site's tier — the `roostAvailable` field
+   * from `GET /api/sites/{siteId}/quota`. `false` on core, where the server
+   * rejects uploads with `403 tier_insufficient` rather than a quota error.
+   */
+  roostAvailable: boolean;
 }
 
 export interface PreUploadCheck {
@@ -202,16 +209,29 @@ export function checkTargetDisks(
 
 /**
  * Given the current quota snapshot + the upload size (post-dedup), is
- * there room? Returns an `error`-severity blocking check if the upload
- * would exceed the plan cap, a `warning` advisory if it would cross
- * 80 % of the cap, otherwise nothing.
+ * there room? Returns an `error`-severity blocking check if roost isn't
+ * part of the site's tier at all or the upload would exceed the plan cap,
+ * a `warning` advisory if it would cross 80 % of the cap, otherwise nothing.
  */
 export function checkQuota(
   uploadBytes: number,
   quota: QuotaSnapshot | undefined,
 ): PreUploadCheck | null {
   if (!quota) return null;
-  if (!isFinite(quota.planLimitBytes)) return null; // unlimited plan
+
+  // Tier gate, not a quota: a core site has no storage entitlement to spend,
+  // and the server answers `403 tier_insufficient` rather than a 402. Report
+  // it as its own blocker so the copy says "upgrade" instead of the
+  // nonsensical "delete older content to free up 0 bytes".
+  if (!quota.roostAvailable) {
+    return {
+      blocking: true,
+      severity: 'error',
+      message:
+        'roost is a pro-tier feature — upgrade this site to pro to store ' +
+        'project versions',
+    };
+  }
 
   const afterBytes = quota.usedBytes + quota.pendingBytes + uploadBytes;
   if (afterBytes > quota.planLimitBytes) {

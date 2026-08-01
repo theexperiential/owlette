@@ -144,6 +144,7 @@ function backfillCustomerDoc() {
     stripeCustomerId: null,
     subscriptionId: null,
     subscriptionStatus: null,
+    subscriptionTier: null,
     trialEndsAt: null,
     billingState: 'trialing',
     currentPeriodEnd: null,

@@ -42,6 +42,8 @@ export const ProblemType = {
   PayloadTooLarge: 'https://owlette.app/problems/payload-too-large',
   RateLimited: 'https://owlette.app/problems/rate-limited',
   QuotaExceeded: 'https://owlette.app/problems/quota-exceeded',
+  TrialExpired: 'https://owlette.app/problems/trial-expired',
+  TierInsufficient: 'https://owlette.app/problems/tier-insufficient',
   Internal: 'https://owlette.app/problems/internal-error',
   ServiceUnavailable: 'https://owlette.app/problems/service-unavailable',
 } as const;
@@ -60,6 +62,8 @@ const PROBLEM_CODES: Record<ProblemTypeUri, string> = {
   [ProblemType.PayloadTooLarge]: 'payload_too_large',
   [ProblemType.RateLimited]: 'rate_limited',
   [ProblemType.QuotaExceeded]: 'quota_exceeded',
+  [ProblemType.TrialExpired]: 'trial_expired',
+  [ProblemType.TierInsufficient]: 'tier_insufficient',
   [ProblemType.Internal]: 'internal_error',
   [ProblemType.ServiceUnavailable]: 'service_unavailable',
 };
@@ -262,5 +266,46 @@ export function problemTokenExpired(expiredAt?: number, detail?: string): NextRe
     detail: detail ?? 'the api key has expired; rotate or create a new key',
     code: 'token_expired',
     ...(typeof expiredAt === 'number' ? { expiredAt } : {}),
+  });
+}
+
+/**
+ * Billing lockout (billing-system wave 0.5). Emitted when an account's free
+ * trial has ended, or its subscription was canceled, and a gated capability
+ * is hit. `billingState` distinguishes the two causes for clients that want
+ * to word their own prompt.
+ *
+ * `detail` is required rather than defaulted so the wording stays owned by
+ * `billingLockoutDetail()` in `@/lib/billing/billingSnapshot.server` — one
+ * source of copy, no drift between the throw site and this constructor.
+ */
+export function problemTrialExpired(detail: string, billingState?: string): NextResponse {
+  return problem({
+    type: ProblemType.TrialExpired,
+    title: 'payment required',
+    status: 402,
+    detail,
+    code: 'trial_expired',
+    ...(billingState ? { billingState } : {}),
+  });
+}
+
+/**
+ * Pro-only feature hit on a `core` site (billing-system wave 0.5). Shares
+ * the `tier_insufficient` code with the roost upload admission check in
+ * `functions/src/lib/quotaLogic.ts` — one code for one meaning across both
+ * runtimes.
+ */
+export function problemTierInsufficient(
+  detail: string,
+  required?: { siteId: string; tier: string; siteTier: string },
+): NextResponse {
+  return problem({
+    type: ProblemType.TierInsufficient,
+    title: 'insufficient tier',
+    status: 403,
+    detail,
+    code: 'tier_insufficient',
+    ...(required ? { required } : {}),
   });
 }
