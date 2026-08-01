@@ -18,6 +18,7 @@ function jsonResponse(payload: unknown, status = 200): Response {
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: new Headers(),
     json: async () => payload,
     text: async () => JSON.stringify(payload),
   } as Response;

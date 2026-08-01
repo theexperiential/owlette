@@ -10,6 +10,7 @@ import { useSchedulePresets } from '@/hooks/useSchedulePresets';
 import { useDeployments } from '@/hooks/useDeployments';
 import { useMachineOperations } from '@/hooks/useMachineOperations';
 import { useInstallerVersion } from '@/hooks/useInstallerVersion';
+import { useBillingSnapshot } from '@/hooks/useBillingSnapshot';
 import { useAgentAlertToasts, type ExeMissingToastAlert } from '@/hooks/useAgentAlertToasts';
 import { Button } from '@/components/ui/button';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -42,6 +43,7 @@ import { useSlidePanel } from '@/hooks/useSlidePanel';
 import { unionIds } from '@/lib/deviceResolvers';
 import { nextDuplicateName } from '@/lib/processNaming';
 import { AddMachineButton } from './components/AddMachineButton';
+import { ReadOnlyNotice, TrialBanner } from './components/TrialBanner';
 import { useDeviceCodeAuthorize } from '@/hooks/useDeviceCodeAuthorize';
 import { LoadingWord } from '@/components/LoadingWord';
 import type { Process } from '@/hooks/useFirestore';
@@ -75,6 +77,10 @@ export default function DashboardPage() {
   const { user, loading, isSuperadmin, isSiteAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences, updateUserPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
   const { version, downloadUrl } = useInstallerVersion();
+  // Trial / lockout state for the banner + read-only signage below. One fetch
+  // per dashboard mount (the hook never polls), gated on auth resolving so it
+  // doesn't fire a request the session cookie can only 401.
+  const { snapshot: billingSnapshot } = useBillingSnapshot(!loading && !!user);
   const [currentSiteId, setCurrentSiteId] = useState<string>('');
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
@@ -877,6 +883,11 @@ export default function DashboardPage() {
 
       {/* Main content */}
       <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
+        {/* Site-wide billing banner. Renders nothing (not an empty container)
+            when there's nothing to announce, so it can't push the machines
+            list down the page. */}
+        <TrialBanner snapshot={billingSnapshot} />
+
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex-1">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-1">
@@ -987,6 +998,10 @@ export default function DashboardPage() {
             unmounts), so normal interaction is unaffected. */}
         {machines.length > 0 ? (
           <div className="space-y-6" data-slide-pausing={slideAnimating ? 'true' : undefined}>
+            {/* Paywall signage — the controls stay mounted and the server keeps
+                enforcing; this just explains the 402s. */}
+            <ReadOnlyNotice snapshot={billingSnapshot} currentSiteId={currentSiteId} />
+
             <div className="flex items-center justify-between">
               <h3 className="text-lg md:text-xl font-bold text-foreground">machines</h3>
 

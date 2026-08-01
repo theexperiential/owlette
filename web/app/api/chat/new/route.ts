@@ -22,7 +22,11 @@ import {
 } from '@/lib/apiErrors';
 import { withIdempotency } from '@/lib/idempotency';
 import { emitMutation } from '@/lib/auditLogClient';
-import { requireChatAuthAndScope, readAndParseJsonBody } from '@/app/api/_shared';
+import {
+  applyAuthDeprecations,
+  requireChatAuthAndScope,
+  readAndParseJsonBody,
+} from '@/app/api/_shared';
 import {
   createConversation,
   serializeConversation,
@@ -120,9 +124,12 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        return NextResponse.json(
-          { ok: true, data: serializeConversation(conversation) },
-          { status: 201 },
+        return applyAuthDeprecations(
+          NextResponse.json(
+            { ok: true, data: serializeConversation(conversation) },
+            { status: 201 },
+          ),
+          auth.scopeCheck,
         );
       },
       { requireKey: true },

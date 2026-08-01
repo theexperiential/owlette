@@ -37,6 +37,11 @@ const mockRequireMachineAuthAndScope = jest.fn().mockResolvedValue({
 });
 jest.mock('@/app/api/_shared', () => ({
   requireMachineAuthAndScope: (...args: unknown[]) => mockRequireMachineAuthAndScope(...args),
+  // Advisory-header sink (legacy-key / version-missing / billing warning).
+  // The real one mutates and returns the same response; mirror that so the
+  // routes' `return applyAuthDeprecations(NextResponse.json(...), ...)` shape
+  // survives the mock.
+  applyAuthDeprecations: (response: unknown) => response,
 }));
 
 const mockResolveAuth = jest.fn().mockResolvedValue({

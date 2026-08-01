@@ -164,6 +164,40 @@ The request would exceed a site, account, storage, bandwidth, or lifecycle quota
 
 The account that owns the site has no active subscription: its free trial ended, or a previous subscription was canceled. API, CLI, and SDK access is paused until a plan is chosen — no data is deleted, agents keep reporting, and the dashboard stays readable. The body carries `billingState` (`expired` or `canceled`) so clients can word their own prompt.
 
+You get advance notice — see [the trial warning header](#trial-warning-header) below.
+
+---
+
+## trial warning header
+
+While the owning account is still on its free trial, successful API-key responses carry an advisory header:
+
+```http
+X-Owlette-Billing-Warning: trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API access
+```
+
+The value is `trial ends <ISO-8601 UTC instant>; choose a plan to keep API access`. It is informational only — nothing is blocked while it is present. Once the trial ends, requests answer [`402 trial_expired`](#trial_expired) instead.
+
+**When it appears**
+
+| condition | header |
+|---|---|
+| API-key request, account trialing with a trial end date | present |
+| account on an active (or past-due) subscription | absent |
+| account trialing but the trial clock has not started yet | absent |
+| trial ended or subscription canceled | absent — the request answers `402 trial_expired` |
+| session / Firebase ID-token request (dashboard) | absent — the dashboard shows a trial banner instead |
+
+**Where it appears.** On responses to the site-, machine-, roost-, and chat-scoped endpoints, once the request has cleared authentication, site access, and scope. It rides the same path as `X-Roost-Deprecation` and `X-Roost-Version-Missing`.
+
+It is deliberately **not** attached to `401`, `403`, `404`, or `402` responses produced by those checks: a caller who cannot reach a site must learn nothing about that site's billing state, and the `402` already carries the remedy in its body. Treat the header as an advisory you may see on any successful response, not as a guaranteed field on every response — poll a successful endpoint if you need the trial deadline on demand.
+
+**Client support**
+
+- **CLI** (`@owlette/cli`) prints it to stderr once per command invocation. `--json` output on stdout is unaffected.
+- **Node SDK** (`@owlette/sdk`) surfaces it through the optional `onBillingWarning` client option. Nothing is printed by default.
+- **Python SDK** (`owlette-sdk`) surfaces it through the optional `on_billing_warning` client argument. Nothing is printed by default.
+
 ### rate_limited
 
 The caller exceeded an active request or concurrency bucket. Honor `Retry-After`.

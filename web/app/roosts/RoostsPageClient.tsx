@@ -11,7 +11,7 @@ import { useSiteTier } from '@/hooks/useSiteTier';
 import { RoostStatusPill } from '@/components/RoostTargetRow';
 import { EmptyStateUpload } from '@/components/EmptyStateUpload';
 import { Button } from '@/components/ui/button';
-import { Plus, Loader2, FolderSync, Archive, MoreVertical, Trash2, RefreshCw, Copy, Sparkles } from 'lucide-react';
+import { Plus, Loader2, FolderSync, Archive, MoreVertical, Trash2, RefreshCw, Copy } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,7 +30,7 @@ import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
-import { ChoosePlanDialog } from '@/components/billing/ChoosePlanDialog';
+import { ProTierGate } from '@/components/billing/ProTierGate';
 import DownloadButton from '@/components/DownloadButton';
 import { LoadingWord } from '@/components/LoadingWord';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
@@ -76,9 +76,6 @@ export default function RoostsPageClient() {
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
-  // Conversion entry point for the pro gate below. Only reachable from the
-  // core-tier empty state — a site already on pro has nothing to buy here.
-  const [choosePlanOpen, setChoosePlanOpen] = useState(false);
   // Pending row-level actions. `null` = no prompt open. Each object carries
   // the roost + whatever the action handler needs to fire off after confirm.
   const [pendingDelete, setPendingDelete] = useState<{ roostId: string; name: string } | null>(null);
@@ -301,11 +298,15 @@ export default function RoostsPageClient() {
     return null;
   }
 
-  // Pro-tier gate: core sites get the "pro feature" empty state instead of
-  // the roost UI. Tier is authoritative at the site level — an owner of a
-  // core-tier site still sees this gate. Render only when the tier has
-  // resolved to `'core'`; `undefined` (still loading) keeps the normal
-  // page so we don't briefly flash the gate during initial load.
+  // Pro-tier gate: core sites get the shared `ProTierGate` empty state
+  // instead of the roost UI. Tier is authoritative at the site level — an
+  // owner of a core-tier site still sees this gate. The branch keys on
+  // `'core'` rather than delegating the whole page to the gate because the
+  // page chrome below (header, site dialogs, account settings) has to keep
+  // rendering — a gated user still needs to switch sites out of this one.
+  // `undefined` (still loading) falls through to the normal page so we don't
+  // briefly flash the gate during initial load; `ProTierGate` makes the same
+  // call on the same prop, so the two can't disagree.
   if (siteTier === 'core') {
     return (
       <div className="relative min-h-screen pb-8">
@@ -349,36 +350,12 @@ export default function RoostsPageClient() {
           onOpenChange={setAccountSettingsOpen}
         />
 
-        <ChoosePlanDialog
-          open={choosePlanOpen}
-          onOpenChange={setChoosePlanOpen}
-          defaultTier="pro"
-        />
-
         <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
-          <div className="mt-12 md:mt-16 flex justify-center">
-            <div className="max-w-md rounded-lg border border-border bg-card p-8 text-center">
-              <div className="mx-auto mb-4 inline-flex rounded-md bg-accent-cyan/10 p-2.5 text-accent-cyan">
-                <Sparkles className="h-5 w-5" aria-hidden="true" />
-              </div>
-              <h2 className="text-lg font-semibold text-foreground">
-                roost is a pro feature.
-              </h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                roost is included in the pro tier — content-addressed project
-                distribution with atomic deploy and 30-day rollback history.
-                upgrade your site to enable.
-              </p>
-              <div className="mt-6">
-                <Button
-                  onClick={() => setChoosePlanOpen(true)}
-                  className="text-gray-900 cursor-pointer"
-                >
-                  upgrade to pro →
-                </Button>
-              </div>
-            </div>
-          </div>
+          <ProTierGate
+            tier={siteTier}
+            feature="roost"
+            blurb="roost is included in the pro tier — content-addressed project distribution with atomic deploy and 30-day rollback history. upgrade your site to enable."
+          />
         </main>
       </div>
     );

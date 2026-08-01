@@ -17,7 +17,7 @@ import {
   ProcessConfigError,
   PublicProcessConfig,
 } from '@/lib/processConfig.server';
-import { requireMachineAuthAndScope } from '@/app/api/_shared';
+import { applyAuthDeprecations, requireMachineAuthAndScope } from '@/app/api/_shared';
 import { ActionInputError } from '@/lib/actions/createProcess.server';
 import { updateProcess } from '@/lib/actions/updateProcess.server';
 import { deleteProcess } from '@/lib/actions/deleteProcess.server';
@@ -60,10 +60,13 @@ export const GET = withRateLimit(
       >;
       const live = lookupLiveProcessStatus(proc, liveProcesses);
 
-      return NextResponse.json({
-        ok: true,
-        data: shapeProcessForResponse(proc, live),
-      });
+      return applyAuthDeprecations(
+        NextResponse.json({
+          ok: true,
+          data: shapeProcessForResponse(proc, live),
+        }),
+        auth.scopeCheck,
+      );
     } catch (error: unknown) {
       return errorResponse(error, 'sites/machines/processes/[id] GET');
     }

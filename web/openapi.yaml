@@ -33,6 +33,18 @@ info:
     existing advisory `Roost-Version: YYYY-MM-DD` header; missing headers can
     emit `X-Roost-Version-Missing: true`.
 
+    ## Billing advisories
+
+    While the account owning the target site is on its free trial, successful
+    API-key responses carry
+    `X-Owlette-Billing-Warning: trial ends <ISO-8601 UTC instant>; choose a plan to keep API access`.
+    It is informational — nothing is blocked while it is present. Subscribed
+    accounts, accounts whose trial clock has not started, and session /
+    ID-token callers never receive it, and it is not attached to the `401` /
+    `403` / `404` / `402` responses of the auth and billing checks themselves.
+    Once the trial ends, requests answer `402` with code `trial_expired`.
+    See `/docs/api/errors#trial-warning-header`.
+
     ## Rate Limiting
 
     Responses may include `RateLimit-Limit`, `RateLimit-Remaining`,

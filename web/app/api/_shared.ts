@@ -331,6 +331,18 @@ function isMutationPermission(permission: ApiKeyPermission): boolean {
   return permission !== 'read';
 }
 
+export type BillingCheckResult =
+  | {
+      ok: true;
+      /**
+       * `X-Owlette-Billing-Warning` value for this response, or `null`. The
+       * resolvers below fold it into their `scopeCheck` so
+       * `applyAuthDeprecations()` emits it without any route-level wiring.
+       */
+      billingWarning: string | null;
+    }
+  | { ok: false; response: NextResponse };
+
 /**
  * Billing gate for the public API (billing-system wave 0.5).
  *
@@ -343,20 +355,42 @@ function isMutationPermission(permission: ApiKeyPermission): boolean {
  * Wave 0.6 reaches it through the `options` argument the scope resolvers
  * below now accept: a pro-only route passes `{ requirePro: true }` at its
  * resolver call rather than re-running the gate for itself.
+ *
+ * Wave 3.3 makes this the choke point for the trial-countdown advisory as
+ * well — the gate already holds the billing snapshot, so the warning costs
+ * no extra read. It rides the success branch only: a caller who fails the
+ * gate gets the 402 `trial_expired` body, and a caller who fails auth, site
+ * access, or scope must learn nothing about the site's billing state.
  */
 export async function requireBillingOrProblem(
   auth: ResolvedAuth,
   siteId: string,
   options: ApiKeyBillingOptions = {},
-): Promise<NextResponse | null> {
+): Promise<BillingCheckResult> {
   try {
-    await requireApiKeyBilling(auth, siteId, options);
-    return null;
+    const billingWarning = await requireApiKeyBilling(auth, siteId, options);
+    return { ok: true, billingWarning };
   } catch (err) {
     const billingProblem = billingErrorToProblem(err, siteId);
-    if (billingProblem) return billingProblem;
+    if (billingProblem) return { ok: false, response: billingProblem };
     throw err;
   }
+}
+
+/**
+ * Fold a passed billing check into a scope-check result so
+ * `applyAuthDeprecations()` can emit the advisory header. Omits the key
+ * entirely when there is no warning, keeping `ScopeCheckResult` objects
+ * byte-identical to their pre-3.3 shape for the overwhelming majority of
+ * requests (subscribed accounts, session callers, pre-go-live accounts).
+ */
+function withBillingWarning(
+  scopeCheck: ScopeCheckResult,
+  billing: Extract<BillingCheckResult, { ok: true }>,
+): ScopeCheckResult {
+  return billing.billingWarning
+    ? { ...scopeCheck, billingWarning: billing.billingWarning }
+    : scopeCheck;
 }
 
 async function assertSiteAccessOrProblem(
@@ -409,8 +443,8 @@ export async function requireSiteAuthAndScope(
   const scopeResult = runScopeCheck(authResult.auth, 'site', siteId, permission);
   if (!scopeResult.ok) return scopeResult;
 
-  const billingError = await requireBillingOrProblem(authResult.auth, siteId, billing);
-  if (billingError) return { ok: false, response: billingError };
+  const billingCheck = await requireBillingOrProblem(authResult.auth, siteId, billing);
+  if (!billingCheck.ok) return { ok: false, response: billingCheck.response };
 
   auditApiKeyUse(authResult.auth, siteId, req);
 
@@ -418,7 +452,10 @@ export async function requireSiteAuthAndScope(
     ok: true,
     userId: authResult.auth.userId,
     auth: authResult.auth,
-    scopeCheck: { ...scopeResult.scopeCheck, missingVersion: versionCheck.missing },
+    scopeCheck: withBillingWarning(
+      { ...scopeResult.scopeCheck, missingVersion: versionCheck.missing },
+      billingCheck,
+    ),
   };
 }
 
@@ -497,8 +534,8 @@ export async function requireMachineAuthAndScope(
   const scopeResult = runScopeCheck(authResult.auth, 'machine', machineId, permission);
   if (!scopeResult.ok) return scopeResult;
 
-  const billingError = await requireBillingOrProblem(authResult.auth, siteId);
-  if (billingError) return { ok: false, response: billingError };
+  const billingCheck = await requireBillingOrProblem(authResult.auth, siteId);
+  if (!billingCheck.ok) return { ok: false, response: billingCheck.response };
 
   auditApiKeyUse(authResult.auth, siteId, req);
 
@@ -506,7 +543,7 @@ export async function requireMachineAuthAndScope(
     ok: true,
     userId: authResult.auth.userId,
     auth: authResult.auth,
-    scopeCheck: scopeResult.scopeCheck,
+    scopeCheck: withBillingWarning(scopeResult.scopeCheck, billingCheck),
   };
 }
 
@@ -553,8 +590,8 @@ export async function requireRoostAuthAndScope(
   const scopeResult = runScopeCheck(authResult.auth, 'roost', roostId, permission);
   if (!scopeResult.ok) return scopeResult;
 
-  const billingError = await requireBillingOrProblem(authResult.auth, siteId, billing);
-  if (billingError) return { ok: false, response: billingError };
+  const billingCheck = await requireBillingOrProblem(authResult.auth, siteId, billing);
+  if (!billingCheck.ok) return { ok: false, response: billingCheck.response };
 
   auditApiKeyUse(authResult.auth, siteId, req);
 
@@ -562,7 +599,10 @@ export async function requireRoostAuthAndScope(
     ok: true,
     userId: authResult.auth.userId,
     auth: authResult.auth,
-    scopeCheck: { ...scopeResult.scopeCheck, missingVersion: versionCheck.missing },
+    scopeCheck: withBillingWarning(
+      { ...scopeResult.scopeCheck, missingVersion: versionCheck.missing },
+      billingCheck,
+    ),
   };
 }
 
@@ -653,8 +693,8 @@ export async function requireChatAuthAndScope(
   const scopeResult = runScopeCheck(authResult.auth, 'chat', siteId, permission);
   if (!scopeResult.ok) return scopeResult;
 
-  const billingError = await requireBillingOrProblem(authResult.auth, siteId);
-  if (billingError) return { ok: false, response: billingError };
+  const billingCheck = await requireBillingOrProblem(authResult.auth, siteId);
+  if (!billingCheck.ok) return { ok: false, response: billingCheck.response };
 
   auditApiKeyUse(authResult.auth, siteId, req);
 
@@ -662,7 +702,7 @@ export async function requireChatAuthAndScope(
     ok: true,
     userId: authResult.auth.userId,
     auth: authResult.auth,
-    scopeCheck: scopeResult.scopeCheck,
+    scopeCheck: withBillingWarning(scopeResult.scopeCheck, billingCheck),
   };
 }
 

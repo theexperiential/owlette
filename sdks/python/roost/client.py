@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import random
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
 
 DEFAULT_API_URL = "https://owlette.app"
 DEFAULT_ROOST_VERSION = "2026-04-22"
+
+#: Advisory header the api sets while the account's free trial is running.
+BILLING_WARNING_HEADER = "x-owlette-billing-warning"
 
 Environment = Literal["live", "test"]
 HttpMethod = Literal["GET", "POST", "PATCH", "PUT", "DELETE"]
@@ -94,7 +98,24 @@ class RoostClient:
         retry: RetryPolicy | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 30.0,
+        on_billing_warning: Callable[[str], None] | None = None,
     ) -> None:
+        """Build a client.
+
+        `on_billing_warning` is invoked when a response carries the api's
+        trial-countdown advisory (``X-Owlette-Billing-Warning``) — e.g.
+        ``"trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API
+        access"``. Unset by default, and the SDK prints nothing on its own: a
+        library has no business writing to its host application's stderr. Wire
+        it up to surface the notice however your app already does::
+
+            RoostClient(token=..., on_billing_warning=logger.warning)
+
+        Fires once per response bearing the header — including retried
+        attempts — so deduplicate on your side if you want at-most-once
+        behaviour. Exceptions raised by the callback are swallowed; it can
+        never fail a request. Mirrors `onBillingWarning` in the node SDK.
+        """
         if not token or not isinstance(token, str):
             msg = "RoostClient: `token` is required"
             raise ValueError(msg)
@@ -103,6 +124,7 @@ class RoostClient:
         self.roost_version = roost_version
         self.environment: Environment | None = environment
         self.retry = retry or RetryPolicy()
+        self._on_billing_warning = on_billing_warning
         client_args: dict[str, Any] = {
             "base_url": self.api_url,
             "timeout": timeout,
@@ -131,6 +153,25 @@ class RoostClient:
     async def close(self) -> None:
         """Release the underlying httpx.AsyncClient. Idempotent."""
         await self._http.aclose()
+
+    def _emit_billing_warning(self, headers: httpx.Headers) -> None:
+        """Hand the trial-countdown advisory to the consumer's callback, if any.
+
+        A raising callback must never surface as a request failure — the
+        advisory is informational and the caller is waiting on their data — so
+        the exception is swallowed here rather than propagated.
+        """
+        if self._on_billing_warning is None:
+            return
+        warning = headers.get(BILLING_WARNING_HEADER)
+        if not warning:
+            return
+        try:
+            self._on_billing_warning(warning)
+        except Exception:
+            # Advisory must never fail a request — swallow whatever the
+            # consumer's callback raised.
+            pass
 
     async def request(
         self,
@@ -162,6 +203,9 @@ class RoostClient:
             if body is not None:
                 kwargs["json"] = body
             response = await self._http.request(method, path, **kwargs)
+            # Before the status check: a response carrying the advisory is
+            # worth surfacing whether or not it also carries an error.
+            self._emit_billing_warning(response.headers)
             parsed: Any = None
             if response.content:
                 content_type = response.headers.get("content-type", "")
@@ -207,6 +251,7 @@ def _coerce_query(value: Any) -> str:
 
 
 __all__ = [
+    "BILLING_WARNING_HEADER",
     "DEFAULT_API_URL",
     "DEFAULT_ROOST_VERSION",
     "SDK_VERSION",

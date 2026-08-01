@@ -33,6 +33,7 @@
 import { Command } from 'commander';
 import { createHmac } from 'crypto';
 import { loadConfig } from '../config';
+import { noteBillingWarning } from '../lib/http';
 
 const KEEPALIVE_EVENT = 'keepalive';
 const CONNECTED_EVENT = 'connected';
@@ -133,6 +134,12 @@ export function registerListenCommand(program: Command): void {
         process.exitCode = 1;
         return;
       }
+
+      // Bare `fetch` on purpose — fetchWithTimeout's 30s signal would sever a
+      // long-lived stream — so the trial advisory is surfaced by hand. Outside
+      // the try: a fault here is not a connection failure and must not be
+      // reported as one.
+      noteBillingWarning(res);
 
       if (!res.ok || !res.body) {
         process.stderr.write(

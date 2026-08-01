@@ -26,7 +26,7 @@
 import { Command } from 'commander';
 import { randomUUID } from 'crypto';
 import { loadConfig } from '../config';
-import { fetchWithTimeout } from '../lib/http';
+import { fetchWithTimeout, noteBillingWarning } from '../lib/http';
 import {
   isJson,
   renderTable,
@@ -275,6 +275,12 @@ export function registerChatCommands(program: Command): void {
         process.exitCode = 1;
         return;
       }
+
+      // Bare `fetch` on purpose — fetchWithTimeout's 30s signal would sever the
+      // streamed reply — so the trial advisory is surfaced by hand. Outside the
+      // try: a fault here is not an unconfirmed mutation and must not be
+      // reported as one.
+      noteBillingWarning(res);
 
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as {

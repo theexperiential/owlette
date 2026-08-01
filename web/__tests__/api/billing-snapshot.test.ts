@@ -47,11 +47,16 @@ const store: {
   sitesByOwner: Record<string, FakeSite[]>;
   usage: Record<string, { id: string; data: Record<string, unknown> }[]>;
   usageThrows: boolean;
+  /** The deployment-wide `config/billing` doc; `null` = not created yet. */
+  billingConfig: Record<string, unknown> | null;
+  billingConfigThrows: boolean;
 } = {
   customers: {},
   sitesByOwner: {},
   usage: {},
   usageThrows: false,
+  billingConfig: null,
+  billingConfigThrows: false,
 };
 
 const mockSitesQuery = jest.fn();
@@ -92,6 +97,17 @@ jest.mock('@/lib/firebase-admin', () => ({
               }),
             };
           },
+        };
+      }
+      if (name === 'config') {
+        return {
+          doc: (docId: string) => ({
+            get: async () => {
+              if (docId !== 'billing') throw new Error(`unexpected config doc ${docId}`);
+              if (store.billingConfigThrows) throw new Error('unavailable');
+              return snap(store.billingConfig);
+            },
+          }),
         };
       }
       if (name === 'billing') {
@@ -158,6 +174,8 @@ describe('GET /api/billing/snapshot', () => {
     store.sitesByOwner = {};
     store.usage = {};
     store.usageThrows = false;
+    store.billingConfig = null;
+    store.billingConfigThrows = false;
     mockRequireSessionOrIdToken.mockResolvedValue('uid-owner');
     mockAssertActiveUser.mockResolvedValue({ role: 'member', sites: [] });
     delete process.env.STRIPE_SECRET_KEY;
@@ -220,6 +238,7 @@ describe('GET /api/billing/snapshot', () => {
       // No customers doc is the documented pre-go-live posture, not an error.
       billingState: 'trialing',
       trialEndsAt: null,
+      goLiveAt: null,
       daysLeft: null,
       subscriptionTier: null,
       currentPeriodEnd: null,
@@ -297,6 +316,50 @@ describe('GET /api/billing/snapshot', () => {
     const { body } = await parseResponse(await GET(snapshotReq()));
 
     expect(body.stripeConfigured).toBe(true);
+  });
+
+  /* --------------------------- go-live date ------------------------ */
+
+  it('reports goLiveAt null while config/billing has not been created', async () => {
+    // Task 5.1 writes that doc when the date is set. Until then the dashboard
+    // announcement banner must stay hidden — there is nothing to announce.
+    const { body } = await parseResponse(await GET(snapshotReq()));
+
+    expect(body.goLiveAt).toBeNull();
+  });
+
+  it('surfaces the configured go-live date', async () => {
+    const t0 = Date.UTC(2026, 8, 1);
+    store.billingConfig = { goLiveAt: { toMillis: () => t0 } };
+
+    const { body } = await parseResponse(await GET(snapshotReq()));
+
+    expect(body.goLiveAt).toBe(t0);
+  });
+
+  it('reports goLiveAt null when the doc exists without a date', async () => {
+    // The go-live doc may be created (or cleared) before a date is chosen;
+    // `{ goLiveAt: null }` must not become an announcement for the epoch.
+    store.billingConfig = { goLiveAt: null };
+
+    const { body } = await parseResponse(await GET(snapshotReq()));
+
+    expect(body.goLiveAt).toBeNull();
+  });
+
+  it('still serves the snapshot when the go-live config read fails', async () => {
+    // The announcement banner is cosmetic; losing it must never cost the
+    // customer the rest of their billing position.
+    store.billingConfigThrows = true;
+    store.sitesByOwner['uid-owner'] = [
+      { id: 'site-a', data: { name: 'atrium', tier: 'core' }, machines: [machine(1)] },
+    ];
+
+    const { status, body } = await parseResponse(await GET(snapshotReq()));
+
+    expect(status).toBe(200);
+    expect(body.goLiveAt).toBeNull();
+    expect((body.projectedBill as { totalUsd: number }).totalUsd).toBe(10);
   });
 
   /* -------------------------- machine count ------------------------ */

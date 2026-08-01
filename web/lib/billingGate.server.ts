@@ -38,10 +38,12 @@ import { ApiAuthError } from '@/lib/apiAuth.server';
 import { problemTierInsufficient, problemTrialExpired } from '@/lib/apiErrors';
 import {
   billingLockoutDetail,
+  billingWarningFor,
   getAccountBillingSnapshot,
   getBillingSnapshot,
   isLockedOut,
   tierInsufficientDetail,
+  BILLING_WARNING_HEADER,
   TIER_INSUFFICIENT_CODE,
   TRIAL_EXPIRED_CODE,
   type AccountBillingSnapshot,
@@ -53,8 +55,10 @@ import { Capability } from '@/lib/capabilities';
 import type { SiteTier } from '@/lib/siteTier';
 
 export {
+  billingWarningFor,
   getAccountBillingSnapshot,
   getBillingSnapshot,
+  BILLING_WARNING_HEADER,
   TIER_INSUFFICIENT_CODE,
   TRIAL_EXPIRED_CODE,
   type AccountBillingSnapshot,

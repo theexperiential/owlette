@@ -207,13 +207,25 @@ describe('_shared.ts (v2 route helpers)', () => {
   describe('requireBillingOrProblem', () => {
     const auth: ResolvedAuth = { userId: 'user-1', keyContext: null };
 
-    it('returns null when the billing gate passes', async () => {
-      mockedRequireBilling.mockResolvedValueOnce(undefined);
-      await expect(requireBillingOrProblem(auth, 'site_abc')).resolves.toBeNull();
+    it('passes with no warning when the gate returns null', async () => {
+      mockedRequireBilling.mockResolvedValueOnce(null);
+      await expect(requireBillingOrProblem(auth, 'site_abc')).resolves.toEqual({
+        ok: true,
+        billingWarning: null,
+      });
+    });
+
+    it('carries the trial warning through on the success branch', async () => {
+      const warning = 'trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API access';
+      mockedRequireBilling.mockResolvedValueOnce(warning);
+      await expect(requireBillingOrProblem(auth, 'site_abc')).resolves.toEqual({
+        ok: true,
+        billingWarning: warning,
+      });
     });
 
     it('forwards the requirePro option to the gate', async () => {
-      mockedRequireBilling.mockResolvedValueOnce(undefined);
+      mockedRequireBilling.mockResolvedValueOnce(null);
       await requireBillingOrProblem(auth, 'site_abc', { requirePro: true });
       expect(mockedRequireBilling).toHaveBeenCalledWith(auth, 'site_abc', {
         requirePro: true,
@@ -229,12 +241,15 @@ describe('_shared.ts (v2 route helpers)', () => {
       );
 
       const result = await requireBillingOrProblem(auth, 'site_abc');
-      expect(result).not.toBeNull();
-      expect(result!.status).toBe(402);
-      expect(result!.headers.get('Content-Type')).toBe(
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected a problem response');
+      expect(result.response.status).toBe(402);
+      expect(result.response.headers.get('Content-Type')).toBe(
         'application/problem+json; charset=utf-8',
       );
-      const body = await result!.json();
+      // The lockout body carries the remedy; no advisory header rides along.
+      expect(result.response.headers.get('X-Owlette-Billing-Warning')).toBeNull();
+      const body = await result.response.json();
       expect(body.code).toBe('trial_expired');
       expect(body.billingState).toBe('expired');
       expect(body.docsUrl).toBe('https://owlette.app/docs/api/errors#trial_expired');
@@ -249,9 +264,10 @@ describe('_shared.ts (v2 route helpers)', () => {
       );
 
       const result = await requireBillingOrProblem(auth, 'site_abc', { requirePro: true });
-      expect(result).not.toBeNull();
-      expect(result!.status).toBe(403);
-      const body = await result!.json();
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected a problem response');
+      expect(result.response.status).toBe(403);
+      const body = await result.response.json();
       expect(body.code).toBe('tier_insufficient');
       expect(body.required).toEqual({ siteId: 'site_abc', tier: 'pro', siteTier: 'core' });
     });

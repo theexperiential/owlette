@@ -32,6 +32,7 @@ function installFetchStub(payload: unknown, status = 200): FetchCall[] {
       return {
         ok: status >= 200 && status < 300,
         status,
+        headers: new Headers(),
         json: async () => payload,
         text: async () => JSON.stringify(payload),
       } as Response;
@@ -59,6 +60,7 @@ function installStreamingFetchStub(frames: string[]): FetchCall[] {
       return {
         ok: true,
         status: 200,
+        headers: new Headers(),
         body,
         json: async () => ({}),
         text: async () => '',

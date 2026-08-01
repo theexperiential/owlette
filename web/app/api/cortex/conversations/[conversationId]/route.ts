@@ -25,7 +25,11 @@ import {
 } from '@/lib/apiErrors';
 import { withIdempotency } from '@/lib/idempotency';
 import { emitMutation } from '@/lib/auditLogClient';
-import { requireChatAuthAndScope, readAndParseJsonBody } from '@/app/api/_shared';
+import {
+  applyAuthDeprecations,
+  requireChatAuthAndScope,
+  readAndParseJsonBody,
+} from '@/app/api/_shared';
 import {
   appendMessage,
   ChatStorageError,
@@ -217,7 +221,10 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         // and we rely on the user-message append being naturally
         // idempotent at the transport layer (same key, same content =
         // same write).
-        return streamResult.response as unknown as NextResponse;
+        return applyAuthDeprecations(
+          streamResult.response as unknown as NextResponse,
+          auth.scopeCheck,
+        );
       },
       { requireKey: true },
     );
@@ -318,13 +325,16 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           },
         });
 
-        return NextResponse.json({
-          ok: true,
-          data: {
-            conversationId,
-            title: renamed.title,
-          },
-        });
+        return applyAuthDeprecations(
+          NextResponse.json({
+            ok: true,
+            data: {
+              conversationId,
+              title: renamed.title,
+            },
+          }),
+          auth.scopeCheck,
+        );
       },
     );
   } catch (err) {
@@ -400,13 +410,16 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
           },
         });
 
-        return NextResponse.json({
-          ok: true,
-          data: {
-            conversationId,
-            alreadyDeleted: result.alreadyDeleted,
-          },
-        });
+        return applyAuthDeprecations(
+          NextResponse.json({
+            ok: true,
+            data: {
+              conversationId,
+              alreadyDeleted: result.alreadyDeleted,
+            },
+          }),
+          auth.scopeCheck,
+        );
       },
     );
   } catch (err) {

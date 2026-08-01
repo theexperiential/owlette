@@ -21,7 +21,7 @@ import {
   ProcessConfigError,
   PublicProcessConfig,
 } from '@/lib/processConfig.server';
-import { requireMachineAuthAndScope } from '@/app/api/_shared';
+import { applyAuthDeprecations, requireMachineAuthAndScope } from '@/app/api/_shared';
 import {
   createProcess,
   ActionInputError,
@@ -52,10 +52,13 @@ export const GET = withRateLimit(
 
       if (configProcesses === null) {
         // Config doc doesn't exist yet — treat as empty list, not 404.
-        return NextResponse.json({
-          ok: true,
-          data: { processes: [], nextPageToken: null },
-        });
+        return applyAuthDeprecations(
+          NextResponse.json({
+            ok: true,
+            data: { processes: [], nextPageToken: null },
+          }),
+          auth.scopeCheck,
+        );
       }
 
       const statusData = statusSnap.exists ? statusSnap.data() : null;
@@ -69,10 +72,13 @@ export const GET = withRateLimit(
         return shapeProcessForResponse(p, live);
       });
 
-      return NextResponse.json({
-        ok: true,
-        data: { processes: merged, nextPageToken: null },
-      });
+      return applyAuthDeprecations(
+        NextResponse.json({
+          ok: true,
+          data: { processes: merged, nextPageToken: null },
+        }),
+        auth.scopeCheck,
+      );
     } catch (error: unknown) {
       return errorResponse(error, 'sites/machines/processes GET');
     }

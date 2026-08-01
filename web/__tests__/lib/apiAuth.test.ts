@@ -1116,7 +1116,7 @@ describe('requireApiKeyBilling', () => {
 
     // The dashboard stays readable on expiry — only the api-key surface is
     // blocked. Session callers must not even read the customers doc.
-    await expect(requireApiKeyBilling(sessionAuth, 'site-1')).resolves.toBeUndefined();
+    await expect(requireApiKeyBilling(sessionAuth, 'site-1')).resolves.toBeNull();
     expect(mockDocGet).not.toHaveBeenCalled();
   });
 
@@ -1126,7 +1126,9 @@ describe('requireApiKeyBilling', () => {
       'customers/owner-1': { subscriptionStatus: null, trialEndsAt: Date.now() + 7 * DAY_MS },
     });
 
-    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeUndefined();
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toEqual(
+      expect.stringContaining('trial ends '),
+    );
   });
 
   it('passes an api-key request with an active subscription', async () => {
@@ -1135,7 +1137,7 @@ describe('requireApiKeyBilling', () => {
       'customers/owner-1': { subscriptionStatus: 'active', trialEndsAt: Date.now() - 30 * DAY_MS },
     });
 
-    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeUndefined();
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeNull();
   });
 
   it('throws 402 trial_expired when the trial has ended', async () => {
@@ -1171,13 +1173,15 @@ describe('requireApiKeyBilling', () => {
   it('treats a missing customers doc as trialing', async () => {
     seedBillingDocs({ 'sites/site-1': { owner: 'owner-1', tier: 'pro' } });
 
-    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeUndefined();
+    // Trialing, but with no clock to advertise — see the null-trialEndsAt
+    // reasoning in `billingWarningFor()`.
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeNull();
   });
 
   it('no-ops for a site that does not exist — 404 is the access check to make', async () => {
     seedBillingDocs({});
 
-    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeUndefined();
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeNull();
   });
 
   it('does NOT block a core site by default', async () => {
@@ -1188,7 +1192,7 @@ describe('requireApiKeyBilling', () => {
 
     // Wave 0.5 must not lock core sites out of the whole API — tier is a
     // per-endpoint question that wave 0.6 opts into.
-    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeUndefined();
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeNull();
   });
 
   it('throws 403 tier_insufficient for a core site when requirePro is set', async () => {
@@ -1216,7 +1220,7 @@ describe('requireApiKeyBilling', () => {
 
     await expect(
       requireApiKeyBilling(apiKeyAuth, 'site-1', { requirePro: true }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual(expect.stringContaining('trial ends '));
   });
 
   it('prefers 402 over 403 for an expired account on a core site', async () => {
@@ -1231,6 +1235,112 @@ describe('requireApiKeyBilling', () => {
   });
 });
 
+// ─── billing warning (wave 3.3) ────────────────────────────────────────────
+
+describe('requireApiKeyBilling — X-Owlette-Billing-Warning value', () => {
+  it('pins the exact warning string for a trialing account', async () => {
+    // Real clock, fixed deadline: the value must be the ISO-8601 instant of
+    // trialEndsAt, verbatim. CLI + both SDKs print this string as-is.
+    const trialEndsAt = Date.now() + 3 * DAY_MS;
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': { subscriptionStatus: null, trialEndsAt },
+    });
+
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBe(
+      `trial ends ${new Date(trialEndsAt).toISOString()}; choose a plan to keep API access`,
+    );
+  });
+
+  it('reads a Firestore Timestamp-shaped trialEndsAt', async () => {
+    const endsAt = Date.now() + 5 * DAY_MS;
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': {
+        subscriptionStatus: null,
+        trialEndsAt: { toMillis: () => endsAt },
+      },
+    });
+
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBe(
+      `trial ends ${new Date(endsAt).toISOString()}; choose a plan to keep API access`,
+    );
+  });
+
+  it('stays silent pre-go-live (trialEndsAt null) — the clock has not started', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': { subscriptionStatus: null, trialEndsAt: null },
+    });
+
+    // The account resolves 'trialing', but announcing a deadline we have not
+    // set would leak the trial machinery to beta accounts before billing
+    // exists. Task 5.3 stamps the real date at T0.
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeNull();
+  });
+
+  it('stays silent for an unparseable trialEndsAt', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': { subscriptionStatus: null, trialEndsAt: 'not-a-date' },
+    });
+
+    // resolveBillingState() fails open to 'trialing' here; there is still no
+    // deadline we can honestly quote.
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeNull();
+  });
+
+  it('stays silent for a subscribed account whose trial date is in the past', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': {
+        subscriptionStatus: 'active',
+        trialEndsAt: Date.now() - 30 * DAY_MS,
+      },
+    });
+
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeNull();
+  });
+
+  it('stays silent for a subscribed account whose trial date is still in the future', async () => {
+    // Early conversion: the clock is live but the subscription outranks it,
+    // so there is nothing to warn about.
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': {
+        subscriptionStatus: 'active',
+        trialEndsAt: Date.now() + 7 * DAY_MS,
+      },
+    });
+
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBeNull();
+  });
+
+  it('warns on an incomplete subscription — checkout started, nothing paid', async () => {
+    const trialEndsAt = Date.now() + 2 * DAY_MS;
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': { subscriptionStatus: 'incomplete', trialEndsAt },
+    });
+
+    await expect(requireApiKeyBilling(apiKeyAuth, 'site-1')).resolves.toBe(
+      `trial ends ${new Date(trialEndsAt).toISOString()}; choose a plan to keep API access`,
+    );
+  });
+
+  it('never warns for session auth, even mid-trial', async () => {
+    seedBillingDocs({
+      'sites/site-1': { owner: 'owner-1', tier: 'pro' },
+      'customers/owner-1': { subscriptionStatus: null, trialEndsAt: Date.now() + DAY_MS },
+    });
+
+    // The dashboard has the trial banner (task 3.1); the header is the
+    // api-key surface's channel and must not cost session callers a read.
+    await expect(requireApiKeyBilling(sessionAuth, 'site-1')).resolves.toBeNull();
+    expect(mockDocGet).not.toHaveBeenCalled();
+  });
+});
+
 // ─── applyAuthDeprecations ─────────────────────────────────────────────────
 
 describe('applyAuthDeprecations', () => {
@@ -1240,6 +1350,48 @@ describe('applyAuthDeprecations', () => {
     expect(out).toBe(res);
     expect(res.headers.get('X-Roost-Deprecation')).toBeNull();
     expect(res.headers.get('X-Roost-Version-Missing')).toBeNull();
+    expect(res.headers.get('X-Owlette-Billing-Warning')).toBeNull();
+  });
+
+  it('sets X-Owlette-Billing-Warning when the scopeCheck carries one', () => {
+    const res = NextResponse.json({ ok: true });
+    const warning = 'trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API access';
+    applyAuthDeprecations(res, { isLegacy: false, billingWarning: warning });
+    expect(res.headers.get('X-Owlette-Billing-Warning')).toBe(warning);
+  });
+
+  it('sets the billing warning on a non-2xx response too', () => {
+    // A route that answers 404 through the helper still carries the advisory
+    // — the caller already passed the billing gate to get that far.
+    const res = NextResponse.json({ title: 'not found' }, { status: 404 });
+    applyAuthDeprecations(res, {
+      isLegacy: false,
+      billingWarning: 'trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API access',
+    });
+    expect(res.status).toBe(404);
+    expect(res.headers.get('X-Owlette-Billing-Warning')).toContain('trial ends');
+  });
+
+  it('replaces rather than appends a pre-existing billing warning', () => {
+    // Single-valued by contract: the CLI/SDKs print the value verbatim, so a
+    // comma-joined pair would be unreadable.
+    const res = new NextResponse(null, {
+      headers: { 'X-Owlette-Billing-Warning': 'stale value' },
+    });
+    applyAuthDeprecations(res, { isLegacy: false, billingWarning: 'fresh value' });
+    expect(res.headers.get('X-Owlette-Billing-Warning')).toBe('fresh value');
+  });
+
+  it('emits all three advisories together', () => {
+    const res = NextResponse.json({ ok: true });
+    applyAuthDeprecations(res, {
+      isLegacy: true,
+      missingVersion: true,
+      billingWarning: 'trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API access',
+    });
+    expect(res.headers.get('X-Roost-Deprecation')).toBe('legacy-key-scope-missing');
+    expect(res.headers.get('X-Roost-Version-Missing')).toBe('true');
+    expect(res.headers.get('X-Owlette-Billing-Warning')).toContain('trial ends');
   });
 
   it('appends X-Roost-Deprecation for legacy keys', () => {

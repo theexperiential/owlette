@@ -13,9 +13,11 @@ import {
 import { emitApiKeyUsed, scopeFingerprint } from '@/lib/auditLogClient';
 import {
   billingLockoutDetail,
+  billingWarningFor,
   getBillingSnapshot,
   isLockedOut,
   tierInsufficientDetail,
+  BILLING_WARNING_HEADER,
   TIER_INSUFFICIENT_CODE,
   TRIAL_EXPIRED_CODE,
 } from '@/lib/billing/billingSnapshot.server';
@@ -59,6 +61,15 @@ export interface ScopeCheckResult {
   isLegacy: boolean;
   /** True when the request omitted Roost-Version. Caller should set X-Roost-Version-Missing. */
   missingVersion?: boolean;
+  /**
+   * Trial-countdown advisory for an api-key caller whose account is still
+   * `trialing`. Set by the scope resolvers in `@/app/api/_shared` from the
+   * billing snapshot they already read, emitted as
+   * `X-Owlette-Billing-Warning` by {@link applyAuthDeprecations}. Absent for
+   * session callers, subscribed accounts, and pre-go-live accounts with no
+   * trial clock — see `billingWarningFor()`.
+   */
+  billingWarning?: string;
 }
 
 // Module-level memos to log each deprecated key path only once per process.
@@ -381,6 +392,12 @@ export interface ApiKeyBillingOptions {
  *     `core`. `trialing` never reaches this — the trial runs at the pro
  *     feature level.
  *
+ * Returns the `X-Owlette-Billing-Warning` value the response should carry
+ * (wave 3.3), or `null` for the common case. Computed here rather than by a
+ * second snapshot read at response time: the gate has already paid for the
+ * snapshot, and a caller that never passes the gate never gets a response to
+ * attach it to.
+ *
  * A site that doesn't exist is a silent pass: existence is
  * `assertUserHasSiteAccess()`'s call to make, and it runs first in every
  * caller. Answering 402 for an unknown site would mask that 404.
@@ -393,11 +410,11 @@ export async function requireApiKeyBilling(
   auth: ResolvedAuth,
   siteId: string,
   options: ApiKeyBillingOptions = {},
-): Promise<void> {
-  if (!auth.keyContext) return;
+): Promise<string | null> {
+  if (!auth.keyContext) return null;
 
   const snapshot = await getBillingSnapshot(siteId);
-  if (!snapshot) return;
+  if (!snapshot) return null;
 
   if (isLockedOut(snapshot.billingState)) {
     throw new ApiAuthError(402, billingLockoutDetail(snapshot.billingState), {
@@ -416,11 +433,22 @@ export async function requireApiKeyBilling(
       details: { siteId, tier: 'pro', siteTier: snapshot.siteTier },
     });
   }
+
+  return billingWarningFor(snapshot);
 }
 
 /**
- * Attach the legacy-key deprecation header + version-missing advisory
- * header to a response based on the scope-check result.
+ * Attach the advisory headers a scope-check result asks for: the legacy-key
+ * deprecation notice, the version-missing notice, and the trial-countdown
+ * billing warning (wave 3.3).
+ *
+ * This is the single sink for every advisory header on the public API —
+ * routes call it on the responses they return, so a new advisory is wired
+ * once here rather than at each route.
+ *
+ * `set` rather than `append` for the billing warning: there is exactly one
+ * trial deadline per response, and a comma-joined duplicate would be
+ * unparseable to the CLI/SDK consumers that print it verbatim.
  */
 export function applyAuthDeprecations(
   response: NextResponse,
@@ -431,6 +459,9 @@ export function applyAuthDeprecations(
   }
   if (check.missingVersion) {
     response.headers.set('X-Roost-Version-Missing', 'true');
+  }
+  if (check.billingWarning) {
+    response.headers.set(BILLING_WARNING_HEADER, check.billingWarning);
   }
   return response;
 }

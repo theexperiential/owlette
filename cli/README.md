@@ -39,6 +39,18 @@ owlette roost push ./my-project --to rst_my_project_id --site site-1
 - `whoami` - print the active user, scopes, environment, profile, and api host.
 - `version` - print cli and server version compatibility details.
 
+## free-trial notice
+
+While your account is on its free trial, the cli prints a one-line reminder to
+stderr, at most once per command:
+
+```
+owlette: trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API access
+```
+
+stdout is untouched, so `--json` output stays pipeable into `jq`. Once the
+trial ends, commands fail with `402 trial_expired` until a plan is chosen.
+
 full docs at [docs/cli/overview.md](https://github.com/owlette-app/owlette/tree/main/docs/cli/overview.md) (or owlette.app/docs/cli once published).
 
 ## license

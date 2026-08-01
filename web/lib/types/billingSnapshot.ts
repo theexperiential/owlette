@@ -56,6 +56,21 @@ export interface BillingSnapshotResponse {
   /** End of the app-managed trial, epoch ms; `null` = clock not started. */
   trialEndsAt: number | null;
   /**
+   * The announced billing go-live date (T0), epoch ms; `null` when no date has
+   * been configured yet.
+   *
+   * Deployment-level, not account-level: it mirrors `config/billing.goLiveAt`,
+   * a single admin-owned document that **task 5.1 writes** when the go-live
+   * date is set. Until then the field is `null` on every response and the
+   * dashboard's announcement banner stays hidden — which is the correct
+   * behaviour, since there is no date to announce.
+   *
+   * Paired with `trialEndsAt === null` (the pre-go-live sentinel) it is what
+   * distinguishes "billing starts on the 14th" from "your trial is running".
+   * See `TrialBanner`'s announcement state.
+   */
+  goLiveAt: number | null;
+  /**
    * Whole days until `trialEndsAt`, rounded up; `null` when there is no clock
    * to count (pre-go-live sentinel) or the account is not trialing.
    */

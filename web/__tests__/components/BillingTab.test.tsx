@@ -54,6 +54,7 @@ function snapshotBody(
   return {
     billingState: 'trialing',
     trialEndsAt: null,
+    goLiveAt: null,
     daysLeft: null,
     subscriptionTier: null,
     currentPeriodEnd: null,

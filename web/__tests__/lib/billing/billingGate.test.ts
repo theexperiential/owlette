@@ -27,6 +27,7 @@ import { TRIAL_LENGTH_DAYS } from '@/lib/types/customer';
 import {
   BILLING_LOCKED_CAPABILITIES,
   billingErrorToProblem,
+  billingWarningFor,
   getAccountBillingSnapshot,
   getBillingSnapshot,
   isBillingLockedCapability,
@@ -149,6 +150,7 @@ describe('getBillingSnapshot', () => {
       ownerUid: 'owner-1',
       billingState: 'active',
       siteTier: 'pro',
+      trialEndsAt: (ACTIVE.trialEndsAt as Date).getTime(),
     });
   });
 
@@ -167,6 +169,7 @@ describe('getBillingSnapshot', () => {
       ownerUid: 'owner-1',
       billingState: 'trialing',
       siteTier: 'pro',
+      trialEndsAt: null,
     });
   });
 
@@ -196,20 +199,61 @@ describe('getBillingSnapshot', () => {
       ownerUid: null,
       billingState: 'trialing',
       siteTier: 'core',
+      trialEndsAt: null,
     });
   });
 
   it('reads a Firestore-style {seconds} trialEndsAt', async () => {
+    const endsAt = daysFromNow(3);
     const db = scenario({
       customer: {
         subscriptionStatus: null,
-        trialEndsAt: { seconds: Math.floor(daysFromNow(3).getTime() / 1000) },
+        trialEndsAt: { seconds: Math.floor(endsAt.getTime() / 1000) },
       },
     });
 
     const snapshot = await getBillingSnapshot('site-1', opts(db));
     expect(snapshot?.billingState).toBe('trialing');
+    expect(snapshot?.trialEndsAt).toBe(Math.floor(endsAt.getTime() / 1000) * 1000);
   });
+
+  it('surfaces an unparseable trialEndsAt as null (fails open to trialing)', async () => {
+    const db = scenario({
+      customer: { subscriptionStatus: null, trialEndsAt: 'not-a-date' },
+    });
+
+    const snapshot = await getBillingSnapshot('site-1', opts(db));
+    expect(snapshot?.billingState).toBe('trialing');
+    expect(snapshot?.trialEndsAt).toBeNull();
+  });
+});
+
+/* ─── billingWarningFor (wave 3.3) ─────────────────────────────────────── */
+
+describe('billingWarningFor', () => {
+  const base = { siteId: 'site-1', ownerUid: 'owner-1', siteTier: 'pro' } as const;
+
+  it('formats the trial deadline as an ISO-8601 instant', () => {
+    const endsAt = Date.UTC(2026, 7, 15, 9, 30, 0);
+    expect(
+      billingWarningFor({ ...base, billingState: 'trialing', trialEndsAt: endsAt }),
+    ).toBe('trial ends 2026-08-15T09:30:00.000Z; choose a plan to keep API access');
+  });
+
+  it('returns null while trialing with no clock (pre-go-live sentinel)', () => {
+    expect(
+      billingWarningFor({ ...base, billingState: 'trialing', trialEndsAt: null }),
+    ).toBeNull();
+  });
+
+  it.each(['active', 'expired', 'canceled'] as const)(
+    'returns null for billingState %s',
+    (billingState) => {
+      expect(
+        billingWarningFor({ ...base, billingState, trialEndsAt: daysFromNow(7).getTime() }),
+      ).toBeNull();
+    },
+  );
 });
 
 /* ─── requireBillingSnapshot ───────────────────────────────────────────── */

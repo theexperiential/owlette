@@ -44,6 +44,16 @@
  * A missing `customers/{uid}` doc resolves to `'trialing'` via
  * `resolveBillingState()` — the documented pre-go-live posture for accounts
  * that predate customer minting. Nothing here 404s on absent billing data.
+ *
+ * ## Where `goLiveAt` comes from
+ *
+ * `config/billing` — one deployment-wide admin document, `{ goLiveAt }`,
+ * written by the go-live task (5.1). It is read here rather than by the client
+ * for the same reason as everything else on this route: `firestore.rules` has
+ * no `match` for `config/{docId}` itself (only for its site-scoped
+ * subcollections), so the document is unreadable from the browser by default
+ * and must stay that way. Surfacing it through this session-authenticated
+ * route needs no rules change.
  */
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
@@ -191,11 +201,12 @@ export const GET = withRateLimit(
       const now = new Date();
       const db = getAdminDb();
 
-      // The customer doc, the owned sites, and the latest usage mirror are
-      // independent reads — issue them together rather than serially.
-      // `billing/{uid}/usage` is ordered by document id because the ids are
-      // `YYYY-MM-DD` period keys, which sort lexicographically as dates.
-      const [customerSnap, sitesSnap, usageSnap] = await Promise.all([
+      // The customer doc, the owned sites, the latest usage mirror, and the
+      // deployment's go-live date are independent reads — issue them together
+      // rather than serially. `billing/{uid}/usage` is ordered by document id
+      // because the ids are `YYYY-MM-DD` period keys, which sort
+      // lexicographically as dates.
+      const [customerSnap, sitesSnap, usageSnap, billingConfigSnap] = await Promise.all([
         db.collection('customers').doc(userId).get(),
         db.collection('sites').where('owner', '==', userId).get(),
         db
@@ -208,6 +219,11 @@ export const GET = withRateLimit(
           // The cron that writes this hasn't shipped yet, and a missing
           // subcollection or index must not fail the whole tab.
           .catch(() => null),
+        // `config/billing` does not exist until task 5.1 sets the go-live date;
+        // an absent doc simply reads as "no date announced". The catch covers
+        // a transient read failure — the announcement banner is cosmetic, and
+        // losing it must never cost the customer the rest of their bill.
+        db.collection('config').doc('billing').get().catch(() => null),
       ]);
 
       const customer = customerSnap.exists
@@ -220,6 +236,10 @@ export const GET = withRateLimit(
       const subscriptionTier: SiteTier | null =
         rawTier === 'core' || rawTier === 'pro' ? rawTier : null;
       const stripeCustomerId = customer?.stripeCustomerId;
+
+      const goLiveAt = toMillis(
+        billingConfigSnap?.exists ? (billingConfigSnap.data() ?? {}).goLiveAt : null,
+      );
 
       const usageDoc = usageSnap && !usageSnap.empty ? usageSnap.docs[0] : null;
       const usage = usageDoc ? normaliseUsage(usageDoc.id, usageDoc.data() ?? {}) : null;
@@ -269,6 +289,7 @@ export const GET = withRateLimit(
       const body: BillingSnapshotResponse = {
         billingState,
         trialEndsAt,
+        goLiveAt,
         daysLeft: billingState === 'trialing' ? daysUntil(trialEndsAt, now) : null,
         subscriptionTier,
         currentPeriodEnd: toMillis(customer?.currentPeriodEnd),

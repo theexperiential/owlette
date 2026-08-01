@@ -23,6 +23,7 @@ function installFetchStub(payload: unknown, status = 200): FetchCall[] {
       return {
         ok: status >= 200 && status < 300,
         status,
+        headers: new Headers(),
         json: async () => payload,
         text: async () => JSON.stringify(payload),
       } as Response;

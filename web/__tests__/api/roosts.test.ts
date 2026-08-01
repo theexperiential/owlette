@@ -488,6 +488,36 @@ describe('/api/roosts — billing gate', () => {
     expect((await create()).status).toBe(201);
   });
 
+  /* ---- X-Owlette-Billing-Warning (wave 3.3) ---------------------------- */
+
+  it('attaches the trial warning to a successful response while trialing', async () => {
+    seedBilling({ siteId: SITE, state: 'trialing', tier: 'pro' });
+
+    const res = await create();
+    expect(res.status).toBe(201);
+    // Format is public contract — the CLI and both SDKs print it verbatim.
+    expect(res.headers.get('X-Owlette-Billing-Warning')).toMatch(
+      /^trial ends \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z; choose a plan to keep API access$/,
+    );
+  });
+
+  it('omits the trial warning for a subscribed account', async () => {
+    seedBilling({ siteId: SITE, state: 'active', tier: 'pro' });
+
+    const res = await create();
+    expect(res.status).toBe(201);
+    expect(res.headers.get('X-Owlette-Billing-Warning')).toBeNull();
+  });
+
+  it('omits the trial warning from the 402 lockout response', async () => {
+    seedBilling({ siteId: SITE, state: 'expired', tier: 'pro' });
+
+    const res = await create();
+    expect(res.status).toBe(402);
+    // The body already carries the remedy; the advisory would be noise.
+    expect(res.headers.get('X-Owlette-Billing-Warning')).toBeNull();
+  });
+
   it('403 tier_insufficient on PATCH for an active core site', async () => {
     seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
 
