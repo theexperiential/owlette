@@ -29,6 +29,7 @@ jest.mock('firebase-admin/firestore', () => ({
 }));
 
 import type { Firestore } from 'firebase-admin/firestore';
+import { TRIAL_LENGTH_DAYS } from '@/lib/types/customer';
 import { setUserRole } from '@/lib/actions/setUserRole.server';
 import { assignSiteToUser } from '@/lib/actions/assignSiteToUser.server';
 import { removeSiteFromUser } from '@/lib/actions/removeSiteFromUser.server';
@@ -65,6 +66,19 @@ class FakeDb {
 
   asFirestore(): Firestore {
     return this as unknown as Firestore;
+  }
+}
+
+/**
+ * FakeDb whose `customers` collection is unreachable — stands in for a
+ * Firestore outage on the billing write path (billing-system wave 0.1).
+ */
+class CustomersFailingDb extends FakeDb {
+  collection(path: string): FakeCollection {
+    if (path === 'customers') {
+      throw new Error('simulated firestore outage on customers');
+    }
+    return super.collection(path);
   }
 }
 
@@ -330,6 +344,85 @@ describe('bootstrapUser', () => {
     });
 
     expect(result).toEqual({ kind: 'already_exists', createdAt: 456 });
+  });
+
+  // billing-system wave 0.1: bootstrap is the one server-mediated point
+  // where an account comes into existence, so it starts the trial clock.
+  it('mints the paired customers doc with a 14-day trial clock', async () => {
+    const db = new FakeDb();
+    const now = new Date('2026-01-02T03:04:05.000Z');
+
+    await bootstrapUser(ctx, {
+      uid: 'uid-1',
+      email: 'user@example.com',
+      db: db.asFirestore(),
+      now: () => now,
+    });
+
+    const customer = db.docs.get('customers/uid-1') as Record<string, unknown>;
+    expect(customer).toEqual({
+      stripeCustomerId: null,
+      subscriptionId: null,
+      subscriptionStatus: null,
+      trialEndsAt: new Date(now.getTime() + TRIAL_LENGTH_DAYS * 24 * 60 * 60 * 1000),
+      billingState: 'trialing',
+      currentPeriodEnd: null,
+      defaultPaymentMethod: null,
+      taxId: null,
+    });
+  });
+
+  it('never overwrites an existing customers doc', async () => {
+    // A backfilled doc carries `trialEndsAt: null` ("pre-go-live account,
+    // clock starts at T0"). Clobbering it with now+14d would silently
+    // hand an existing account a second trial.
+    const db = new FakeDb();
+    db.seed('customers/uid-1', { trialEndsAt: null, billingState: 'trialing' });
+
+    await bootstrapUser(ctx, {
+      uid: 'uid-1',
+      email: 'user@example.com',
+      db: db.asFirestore(),
+      now: () => new Date('2026-01-02T03:04:05.000Z'),
+    });
+
+    expect(db.docs.get('customers/uid-1')).toEqual({
+      trialEndsAt: null,
+      billingState: 'trialing',
+    });
+  });
+
+  it('does not touch the customers doc when the user already exists', async () => {
+    const db = new FakeDb();
+    db.seed('users/uid-1', { createdAt: 456, role: 'member' });
+
+    await bootstrapUser(ctx, {
+      uid: 'uid-1',
+      email: 'user@example.com',
+      db: db.asFirestore(),
+    });
+
+    expect(db.docs.has('customers/uid-1')).toBe(false);
+  });
+
+  it('still creates the user when the customers write fails', async () => {
+    // Billing bookkeeping must never fail a signup — the retry would
+    // short-circuit on `already_exists` and never repair the doc anyway.
+    // `scripts/backfill-customers.mjs` is the repair path.
+    const db = new CustomersFailingDb();
+    const now = new Date('2026-01-02T03:04:05.000Z');
+
+    const result = await bootstrapUser(ctx, {
+      uid: 'uid-1',
+      email: 'user@example.com',
+      db: db.asFirestore(),
+      now: () => now,
+    });
+
+    expect(result.kind).toBe('created');
+    expect(db.docs.get('users/uid-1')).toMatchObject({ email: 'user@example.com' });
+    expect(db.docs.has('customers/uid-1')).toBe(false);
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
   });
 
   it('sanitises a spam display name before persisting', async () => {

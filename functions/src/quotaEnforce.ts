@@ -6,7 +6,8 @@
  *   preUploadCheck   — HTTPS callable. The tusd pre-create hook (wave 2b.1)
  *                      calls this before issuing a signed upload URL. On
  *                      admission the pending-bytes reservation is written
- *                      atomically; on denial a 402 with an upgrade CTA
+ *                      atomically; on denial a 403 (roost isn't sold on
+ *                      core) or 402 (pro site out of included storage)
  *                      returns to tusd which propagates to the client.
  *
  *   reconcileQuota   — scheduled daily. Rebuilds `usedBytes` from the
@@ -28,11 +29,12 @@ import {
   admitUpload,
   ALARM_LEVELS,
   newAlarmCrossings,
-  PLAN_LIMITS_BYTES,
   reportQuota,
+  resolveSiteTier,
+  TIER_STORAGE_BYTES,
   type AlarmLevel,
-  type PlanTier,
   type QuotaState,
+  type SiteTier,
 } from './lib/quotaLogic';
 
 /** Pending reservations older than this are presumed abandoned. */
@@ -78,8 +80,11 @@ export interface StorageMetrics {
 
 export interface SiteDirectory {
   listSiteIds(): Promise<string[]>;
-  /** Read the plan tier from billing. Defaults to 'free' if missing. */
-  readTier(siteId: string): Promise<PlanTier>;
+  /**
+   * Read the tier off the site doc. Falls back to the documented beta
+   * default (`quotaLogic.BETA_DEFAULT_TIER`) when the field is missing.
+   */
+  readTier(siteId: string): Promise<SiteTier>;
 }
 
 /* --------------------------------------------------------------------- */
@@ -100,8 +105,8 @@ export interface PreUploadResponse {
     remainingBytes?: number;
     planLimitBytes?: number;
     upgrade?: {
-      currentTier: PlanTier;
-      suggestedTier: PlanTier;
+      currentTier: SiteTier;
+      suggestedTier?: SiteTier;
       message: string;
     };
   };
@@ -159,12 +164,8 @@ export async function runPreUploadCheck(
       body: {
         allowed: false,
         reason: decision.reason,
-        remainingBytes: decision.report.unlimited
-          ? undefined
-          : decision.report.remainingBytes,
-        planLimitBytes: decision.report.unlimited
-          ? undefined
-          : decision.report.planLimitBytes,
+        remainingBytes: decision.report.remainingBytes,
+        planLimitBytes: decision.report.planLimitBytes,
         upgrade: decision.upgradeCta,
       },
     };
@@ -184,12 +185,8 @@ export async function runPreUploadCheck(
     status: 200,
     body: {
       allowed: true,
-      remainingBytes: decision.report.unlimited
-        ? undefined
-        : decision.report.remainingBytes - req.requestedBytes,
-      planLimitBytes: decision.report.unlimited
-        ? undefined
-        : decision.report.planLimitBytes,
+      remainingBytes: decision.report.remainingBytes - req.requestedBytes,
+      planLimitBytes: decision.report.planLimitBytes,
     },
   };
 }
@@ -333,16 +330,10 @@ function getDefaultDirectory(): SiteDirectory {
     },
     async readTier(siteId: string) {
       const snap = await db.collection('sites').doc(siteId).get();
-      const raw = snap.exists ? (snap.data() as { plan?: string }).plan : undefined;
-      if (
-        raw === 'free' ||
-        raw === 'starter' ||
-        raw === 'pro' ||
-        raw === 'enterprise'
-      ) {
-        return raw;
-      }
-      return 'free';
+      // same field web/lib/siteTier.ts reads, same fallback.
+      return resolveSiteTier(
+        snap.exists ? (snap.data() as { tier?: unknown }).tier : undefined,
+      );
     },
   };
 }
@@ -367,11 +358,11 @@ function getDefaultQuotaStore(): QuotaStore {
       ]);
       if (!doc.exists) return null;
       const data = doc.data() as {
-        tier?: PlanTier;
+        tier?: unknown;
         usedBytes?: number;
         lastAlarmLevel?: AlarmLevel;
       };
-      const tier = data.tier ?? 'free';
+      const tier = resolveSiteTier(data.tier);
       const usedBytes = data.usedBytes ?? 0;
       const pendingBytes = pendingSnap.docs.reduce(
         (n, d) => n + ((d.data() as { bytes?: number }).bytes ?? 0),
@@ -404,7 +395,7 @@ function getDefaultQuotaStore(): QuotaStore {
         {
           tier: state.tier,
           usedBytes: state.usedBytes,
-          planLimitBytes: PLAN_LIMITS_BYTES[state.tier],
+          planLimitBytes: TIER_STORAGE_BYTES[state.tier],
           lastReconciledAt: FieldValue.serverTimestamp(),
         },
         { merge: true },

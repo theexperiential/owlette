@@ -18,6 +18,10 @@
  *   - `sites: []`
  *   - `mfaEnrolled: false`, `requiresMfaSetup: true`
  *   - `preferences: { temperatureUnit: 'C', timezone: <input or 'UTC'> }`
+ *
+ * billing-system wave 0.1 adds the paired `customers/{uid}` doc — this is
+ * the one server-mediated point where an account comes into existence, so
+ * it's where the free-trial clock starts.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -25,6 +29,8 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import { isValidTimezone } from '@/lib/timeUtils';
 import { sanitizeDisplayName } from '@/lib/sanitize';
+import logger from '@/lib/logger';
+import { newCustomerDoc } from '@/lib/types/customer';
 
 export interface BootstrapUserInput {
   uid: string;
@@ -57,6 +63,41 @@ export type BootstrapUserResult =
     };
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
+
+/**
+ * Mint the paired `customers/{uid}` billing doc with a fresh 14-day trial
+ * clock (billing-system wave 0.1).
+ *
+ * Idempotent: an existing doc is never overwritten. The only writer that
+ * could have got there first is `scripts/backfill-customers.mjs`, whose
+ * `trialEndsAt: null` sentinel means "pre-go-live account, clock starts at
+ * T0" — clobbering it with `now + 14d` would silently hand an account that
+ * already has a trial a second one.
+ *
+ * Never throws. A billing bookkeeping write must not be able to fail a
+ * signup: the caller is a brand-new user, a thrown error here would leave
+ * them with a `users/{uid}` doc and an error toast, and the retry would
+ * short-circuit on the `already_exists` path without ever repairing the
+ * customer doc. The backfill script is the repair path for exactly this
+ * gap, and the logged error reaches Sentry in production.
+ */
+async function mintCustomerDoc(
+  db: Firestore,
+  uid: string,
+  now: Date,
+): Promise<void> {
+  try {
+    const customerRef = db.collection('customers').doc(uid);
+    const existing = await customerRef.get();
+    if (existing.exists) return;
+    await customerRef.set(newCustomerDoc(now));
+  } catch (err) {
+    logger.error('failed to mint customers doc at bootstrap', {
+      context: 'bootstrapUser',
+      data: { uid, error: err instanceof Error ? err.message : String(err) },
+    });
+  }
+}
 
 export async function bootstrapUser(
   ctx: BootstrapUserContext,
@@ -120,6 +161,8 @@ export async function bootstrapUser(
       timezone,
     },
   });
+
+  await mintCustomerDoc(db, input.uid, nowDate);
 
   emitMutation({
     kind: 'user_mutated',
