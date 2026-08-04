@@ -49,7 +49,7 @@ A multi-quarter rewrite of project distribution into a content-addressed sync pl
 ## Tech Stack
 
 - **Web** (`web/`): Next.js 16 (App Router, React 19), TypeScript, Tailwind CSS 4, shadcn/ui, Firebase Auth + Firestore
-- **Agent** (`agent/`): Python 3.9+ Windows Service via NSSM, Firestore REST API (not Admin SDK), psutil, pywin32, Inno Setup installer
+- **Agent** (`agent/`): Python 3.10+ Windows Service via NSSM, Firestore REST API (not Admin SDK), psutil, pywin32, Inno Setup installer. The installer bundles Python 3.11.8 (pinned in `build_installer_full.bat`) — that, not the system python, is the runtime the agent ships on. `requests`, `google-auth`, `google-auth-oauthlib`, `tzlocal`, and `setuptools` are now pinned to versions requiring ≥3.10, so a 3.9 interpreter can no longer install `requirements.txt`.
 - **Database**: Cloud Firestore (real-time NoSQL), Firebase Auth (Email/Password, Google OAuth, Passkey/WebAuthn)
 - **Package Managers**: Web: npm (not pnpm/yarn) | Agent: pip
 

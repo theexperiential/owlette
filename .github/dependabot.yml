@@ -1,11 +1,22 @@
 version: 2
 
+# `target-branch: dev` on every ecosystem keeps routine dependency bumps inside
+# the two-branch model (dev -> PR -> main) instead of landing them on prod first.
+#
+# Caveat, by design: `target-branch` only moves *version* updates. Dependabot
+# *security* updates are always raised against the default branch (main), and
+# a non-default `target-branch` means the settings below (groups, cooldown,
+# commit-message prefix) no longer apply to them. That split is intentional —
+# routine bumps soak on dev.owlette.app, a live CVE keeps a direct path to prod.
+# https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference
+
 updates:
   # GitHub Actions across all workflows (.github/workflows/*), grouped into one
   # weekly PR. Dependabot bumps version tags today; once actions are pinned to
   # SHAs it bumps the SHA and its trailing "# vX" comment together.
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
     cooldown:
@@ -27,6 +38,7 @@ updates:
       - /functions
       - /sdks/node
       - /web
+    target-branch: dev
     schedule:
       interval: weekly
     cooldown:
@@ -48,6 +60,7 @@ updates:
       - /sdks/python
       - /test/integration
       - /test/infra/agent-runner
+    target-branch: dev
     schedule:
       interval: weekly
     cooldown:
