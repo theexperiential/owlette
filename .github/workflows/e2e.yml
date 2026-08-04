@@ -54,13 +54,17 @@ jobs:
       # Cache the Playwright browser binaries keyed on the @playwright/test
       # version pinned in web/package-lock.json. Cache miss on a Playwright
       # upgrade is the right behavior — forces a fresh `playwright install`.
-      # Read from package.json (no node_modules required) so this step can
-      # safely run before npm ci.
+      # Read the *resolved* version from the lockfile, not the range in
+      # package.json: a lockfile-only bump (1.59.1 -> 1.62.1 under "^1.59.1")
+      # leaves the range untouched, so keying on package.json produced a stale
+      # cache hit, skipped the `cache-hit`-guarded install step, and failed the
+      # run on a missing chromium_headless_shell build. The lockfile is present
+      # before `npm ci`, so this still needs no node_modules.
       - name: resolve playwright version
         id: pw
         working-directory: web
         run: |
-          version=$(node -p "require('./package.json').devDependencies['@playwright/test']" | tr -d '^~')
+          version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: cache playwright browsers
