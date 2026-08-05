@@ -266,6 +266,7 @@ export async function seedSystemPreset(
     installer_url: 'https://example.test/e2e-template.exe',
     silent_flags: '/S',
     verify_path: 'C:\\Program Files\\E2E\\template.exe',
+    sha256_checksum: 'ab'.repeat(32),
     timeout_seconds: 600,
     order: 10,
     is_owlette_agent: false,

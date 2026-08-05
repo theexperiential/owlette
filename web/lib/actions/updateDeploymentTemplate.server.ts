@@ -41,7 +41,8 @@ function hasDeploymentTemplateUpdate(updates: UpdateDeploymentTemplateInput): bo
     updates.silent_flags !== undefined ||
     updates.verify_path !== undefined ||
     updates.close_processes !== undefined ||
-    updates.parallel_install !== undefined
+    updates.parallel_install !== undefined ||
+    updates.sha256_checksum !== undefined
   );
 }
 
@@ -76,6 +77,9 @@ export async function updateDeploymentTemplate(
   if (updates.verify_path !== undefined) payload.verify_path = updates.verify_path;
   if (updates.close_processes !== undefined) payload.close_processes = updates.close_processes;
   if (updates.parallel_install !== undefined) payload.parallel_install = updates.parallel_install;
+  if (typeof updates.sha256_checksum === 'string') {
+    payload.sha256_checksum = updates.sha256_checksum.toLowerCase();
+  }
 
   await templateRef.set(payload, { merge: true });
 

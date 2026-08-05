@@ -33,6 +33,10 @@ test('superadmin can list, filter, create, edit, and delete system presets', asy
   await page.locator('#installerName').fill('e2e-created.exe');
   await page.locator('#installerUrl').fill('https://example.test/e2e-created.exe');
   await page.locator('#silentFlags').fill('/S');
+  // Agents require a sha256 checksum; auto-compute can't reach example.test,
+  // so use the manual-entry fallback (link renders in computing/error states).
+  await page.getByRole('button', { name: /^enter manually$/i }).click();
+  await page.locator('#manual-checksum').fill('ef'.repeat(32));
   await page.getByRole('button', { name: /create template/i }).click();
   await expect(page.getByText('E2E Created Template').first()).toBeVisible();
 
