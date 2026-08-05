@@ -2967,6 +2967,11 @@ paths:
                   type: string
                   pattern: '^[a-f0-9]{64}$'
                   nullable: true
+                  description: |
+                    SHA-256 hex digest of the installer binary. Strongly
+                    recommended — agents 2.11.1+ refuse `install_software`
+                    commands that omit it, so deployments created without a
+                    checksum will fail on every up-to-date machine.
                 parallel_install: { type: boolean }
                 close_processes:
                   type: array

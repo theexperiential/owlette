@@ -20,7 +20,10 @@ export interface CreateDeploymentTemplateInput {
   verify_path?: string;
   close_processes?: string[];
   parallel_install?: boolean;
+  sha256_checksum?: string;
 }
+
+const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 
 export interface CreateDeploymentTemplateResult {
   templateId: string;
@@ -91,6 +94,14 @@ export function validateDeploymentTemplateInput(
   if (input.parallel_install !== undefined && typeof input.parallel_install !== 'boolean') {
     throw new DeploymentTemplateValidationError('parallel_install', 'parallel_install must be a boolean');
   }
+  if (input.sha256_checksum !== undefined && input.sha256_checksum !== null) {
+    if (typeof input.sha256_checksum !== 'string' || !SHA256_HEX_RE.test(input.sha256_checksum)) {
+      throw new DeploymentTemplateValidationError(
+        'sha256_checksum',
+        'sha256_checksum must be a 64-character hex SHA-256 hash',
+      );
+    }
+  }
 }
 
 /**
@@ -126,6 +137,9 @@ export async function createDeploymentTemplate(
   }
   if (input.close_processes !== undefined) payload.close_processes = input.close_processes;
   if (input.parallel_install !== undefined) payload.parallel_install = input.parallel_install;
+  if (input.sha256_checksum !== undefined && input.sha256_checksum !== null) {
+    payload.sha256_checksum = input.sha256_checksum.toLowerCase();
+  }
 
   await templateRef.set(payload);
 

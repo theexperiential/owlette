@@ -68,6 +68,7 @@ interface PatchBody {
   verify_path?: unknown;
   close_processes?: unknown;
   parallel_install?: unknown;
+  sha256_checksum?: unknown;
   is_owlette_agent?: unknown;
   timeout_seconds?: unknown;
   order?: unknown;
@@ -109,6 +110,8 @@ export const PATCH = authorizedPlatformHandler<RouteParams>({
             : undefined,
           parallel_install:
             typeof body.parallel_install === 'boolean' ? body.parallel_install : undefined,
+          sha256_checksum:
+            typeof body.sha256_checksum === 'string' ? body.sha256_checksum : undefined,
           is_owlette_agent:
             typeof body.is_owlette_agent === 'boolean' ? body.is_owlette_agent : undefined,
           timeout_seconds:
@@ -168,6 +171,7 @@ interface SerializedPreset {
   verify_path: string | null;
   close_processes: string[];
   parallel_install: boolean;
+  sha256_checksum: string | null;
   is_owlette_agent: boolean;
   timeout_seconds: number | null;
   order: number;
@@ -192,6 +196,7 @@ function serializePreset(id: string, data: Record<string, unknown>): SerializedP
       ? (data.close_processes as unknown[]).filter((p): p is string => typeof p === 'string')
       : [],
     parallel_install: data.parallel_install === true,
+    sha256_checksum: typeof data.sha256_checksum === 'string' ? data.sha256_checksum : null,
     is_owlette_agent: data.is_owlette_agent === true,
     timeout_seconds: typeof data.timeout_seconds === 'number' ? data.timeout_seconds : null,
     order: typeof data.order === 'number' ? data.order : 0,

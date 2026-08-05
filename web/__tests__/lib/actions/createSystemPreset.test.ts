@@ -87,6 +87,11 @@ describe('createSystemPreset — validation', () => {
       { ...validInput, timeout_seconds: Infinity },
       'timeout_seconds',
     ],
+    [
+      'sha256_checksum malformed',
+      { ...validInput, sha256_checksum: 'not-a-hash' },
+      'sha256_checksum',
+    ],
   ])('throws on %s', async (_label, input, field) => {
     await expect(createSystemPreset({ actor }, input)).rejects.toMatchObject({
       name: 'SystemPresetValidationError',
@@ -171,6 +176,13 @@ describe('createSystemPreset — firestore write', () => {
       parallel_install: true,
       timeout_seconds: 900,
     });
+  });
+
+  it('stores a normalized (lowercased) sha256_checksum', async () => {
+    const digest = 'A'.repeat(32) + 'b'.repeat(32);
+    await createSystemPreset({ actor }, { ...validInput, sha256_checksum: digest });
+    const written = mockSet.mock.calls[0][0];
+    expect(written.sha256_checksum).toBe(digest.toLowerCase());
   });
 
   it('trims whitespace from required string fields', async () => {

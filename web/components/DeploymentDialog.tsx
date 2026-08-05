@@ -7,12 +7,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { AlertTriangle, ChevronDown, ChevronRight, Download, Loader2, Pencil, Save, Trash2 } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, Download, Loader2, Pencil, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useMachines, Process } from '@/hooks/useFirestore';
 import { DeploymentTemplate, Deployment } from '@/hooks/useDeployments';
 import { Badge } from '@/components/ui/badge';
 import { useSystemPresets } from '@/hooks/useSystemPresets';
+import { useInstallerChecksum, SHA256_HEX_RE } from '@/hooks/useInstallerChecksum';
+import InstallerChecksumStatus from '@/components/InstallerChecksumStatus';
 import { SelectGroup, SelectLabel } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -59,6 +61,16 @@ export default function DeploymentDialog({
   const [parallelInstall, setParallelInstall] = useState(false);
   const [editingName, setEditingName] = useState(false);
 
+  // sha256 checksum — required by agents before they run any installer.
+  // Auto-computed server-side from the installer URL; manual entry covers
+  // URLs the web server cannot reach (e.g. LAN-only hosts).
+  const checksum = useInstallerChecksum({
+    endpoint: `/api/sites/${encodeURIComponent(siteId)}/deployments/checksum`,
+    installerUrl,
+    enabled: open,
+  });
+  const { sha256Checksum, checksumStatus, resetChecksum, adoptChecksum } = checksum;
+
   const allMachinesSelected = selectedMachines.size === machines.length && machines.length > 0;
   const onlineMachines = machines.filter(m => m.online);
 
@@ -101,8 +113,25 @@ export default function DeploymentDialog({
       setSelectedProjectIds(new Set());
       setAdditionalProcesses('');
       setParallelInstall(false);
+      setEditingName(false);
+      resetChecksum();
     }
-  }, [open]);
+  }, [open, resetChecksum]);
+
+  const handleNewTemplate = () => {
+    setSelectedItem('');
+    setDeploymentName('');
+    setInstallerName('');
+    setInstallerUrl('');
+    setSilentFlags('');
+    setVerifyPath('');
+    setParallelInstall(false);
+    setSelectedProjectIds(new Set());
+    setAdditionalProcesses('');
+    setShowCloseProcesses(false);
+    setEditingName(true);
+    resetChecksum();
+  };
 
   const handleItemSelect = (value: string) => {
     if (value === 'none') {
@@ -122,6 +151,7 @@ export default function DeploymentDialog({
         setSilentFlags(preset.silent_flags);
         setVerifyPath(preset.verify_path || '');
         setParallelInstall(preset.parallel_install || false);
+        adoptChecksum(preset.sha256_checksum, preset.installer_url);
         if (preset.close_processes?.length) {
           setAdditionalProcesses(preset.close_processes.join(', '));
           setShowCloseProcesses(true);
@@ -139,6 +169,7 @@ export default function DeploymentDialog({
         setSilentFlags(template.silent_flags);
         setVerifyPath(template.verify_path || '');
         setParallelInstall(template.parallel_install || false);
+        adoptChecksum(template.sha256_checksum, template.installer_url);
         if (template.close_processes?.length) {
           setAdditionalProcesses(template.close_processes.join(', '));
           setShowCloseProcesses(true);
@@ -154,6 +185,17 @@ export default function DeploymentDialog({
       // Switch to edit mode so user can type a name
       setEditingName(true);
       toast.error('Enter a name first');
+      return;
+    }
+
+    if (checksumStatus === 'computing') {
+      toast.error('Still computing checksum — one moment');
+      return;
+    }
+    if (!SHA256_HEX_RE.test(sha256Checksum)) {
+      toast.error('Checksum required', {
+        description: 'agents refuse installs without a sha256 checksum. wait for auto-compute or enter one manually.',
+      });
       return;
     }
 
@@ -180,6 +222,7 @@ export default function DeploymentDialog({
       installer_url: installerUrl,
       silent_flags: silentFlags,
       parallel_install: parallelInstall,
+      sha256_checksum: sha256Checksum,
       ...(verifyPath?.trim() ? { verify_path: verifyPath.trim() } : {}),
       ...(templateCloseProcesses.length > 0 ? { close_processes: templateCloseProcesses } : {}),
     };
@@ -220,6 +263,7 @@ export default function DeploymentDialog({
       setSilentFlags('');
       setVerifyPath('');
       setShowDeleteConfirm(false);
+      resetChecksum();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       toast.error(message || 'Failed to delete template');
@@ -275,6 +319,17 @@ export default function DeploymentDialog({
       return;
     }
 
+    if (checksumStatus === 'computing') {
+      toast.error('Still computing checksum — one moment');
+      return;
+    }
+    if (!SHA256_HEX_RE.test(sha256Checksum)) {
+      toast.error('Checksum required', {
+        description: 'agents refuse installs without a sha256 checksum. wait for auto-compute or enter one manually.',
+      });
+      return;
+    }
+
     setDeploying(true);
 
     try {
@@ -308,6 +363,7 @@ export default function DeploymentDialog({
         installer_url: installerUrl,
         silent_flags: silentFlags,
         parallel_install: parallelInstall,
+        sha256_checksum: sha256Checksum,
         targets: [],
         ...(verifyPath?.trim() ? { verify_path: verifyPath.trim() } : {}),
         ...(closeProcesses.length > 0 ? { close_processes: closeProcesses } : {}),
@@ -333,6 +389,7 @@ export default function DeploymentDialog({
       setSelectedProjectIds(new Set());
       setAdditionalProcesses('');
       setShowCloseProcesses(false);
+      resetChecksum();
 
       onOpenChange(false);
     } catch (error: unknown) {
@@ -427,6 +484,23 @@ export default function DeploymentDialog({
                   </SelectContent>
                 </Select>
               )}
+              {/* New template: clear form and start fresh — always available */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={handleNewTemplate}
+                    className="border-border bg-background text-white hover:bg-muted hover:text-white cursor-pointer shrink-0"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>new template</p>
+                </TooltipContent>
+              </Tooltip>
               {/* Action buttons — hidden for system presets */}
               {!isPresetSelected && (
                 <>
@@ -500,6 +574,8 @@ export default function DeploymentDialog({
             {installerName && (
               <p className="text-xs text-muted-foreground">filename: {installerName}</p>
             )}
+            {/* sha256 checksum — auto-computed server-side, manual fallback */}
+            <InstallerChecksumStatus checksum={checksum} installerUrl={installerUrl} />
           </div>
 
           {/* Silent Flags */}
@@ -739,7 +815,7 @@ export default function DeploymentDialog({
           <Button
             onClick={handleDeploy}
             className="text-gray-900 cursor-pointer"
-            disabled={deploying}
+            disabled={deploying || checksumStatus === 'computing'}
           >
             {deploying ? (
               <>

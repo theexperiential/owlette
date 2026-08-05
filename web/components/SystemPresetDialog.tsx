@@ -11,6 +11,8 @@ import { Loader2, Sparkles } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { useSystemPresets, type SystemPreset } from '@/hooks/useSystemPresets';
 import { useAuth } from '@/contexts/AuthContext';
+import { useInstallerChecksum } from '@/hooks/useInstallerChecksum';
+import InstallerChecksumStatus from '@/components/InstallerChecksumStatus';
 
 /**
  * SystemPresetDialog Component
@@ -55,6 +57,14 @@ export default function SystemPresetDialog({
 
   const isEditMode = preset !== null;
 
+  // sha256 checksum — required by agents before they run any installer.
+  const checksum = useInstallerChecksum({
+    endpoint: '/api/platform/installer-checksum',
+    installerUrl,
+    enabled: open,
+  });
+  const { adoptChecksum, resetChecksum } = checksum;
+
   // Load preset data when editing
   useEffect(() => {
     if (preset) {
@@ -69,6 +79,7 @@ export default function SystemPresetDialog({
       setVerifyPath(preset.verify_path || '');
       setTimeoutSeconds(preset.timeout_seconds || 600);
       setOrder(preset.order);
+      adoptChecksum(preset.sha256_checksum, preset.installer_url);
     } else {
       // Reset form for new preset
       setName('');
@@ -82,8 +93,9 @@ export default function SystemPresetDialog({
       setVerifyPath('');
       setTimeoutSeconds(600);
       setOrder(100);
+      resetChecksum();
     }
-  }, [preset, open]);
+  }, [preset, open, adoptChecksum, resetChecksum]);
 
   const handleAutoFillTd = async () => {
     setFetchingTd(true);
@@ -149,6 +161,16 @@ export default function SystemPresetDialog({
       });
       return;
     }
+    if (checksum.checksumStatus === 'computing') {
+      toast.error('Still computing checksum — one moment');
+      return;
+    }
+    if (!checksum.checksumReady) {
+      toast.error('Checksum required', {
+        description: 'agents refuse installs without a sha256 checksum. wait for auto-compute or enter one manually.',
+      });
+      return;
+    }
 
     setSaving(true);
 
@@ -162,6 +184,7 @@ export default function SystemPresetDialog({
         installer_name: installerName,
         installer_url: installerUrl,
         silent_flags: silentFlags,
+        sha256_checksum: checksum.sha256Checksum,
         is_owlette_agent: false,
         timeout_seconds: timeoutSeconds,
         order,
@@ -359,6 +382,8 @@ export default function SystemPresetDialog({
             <p className="text-xs text-muted-foreground">
               direct download link for the installer
             </p>
+            {/* sha256 checksum — auto-computed server-side, manual fallback */}
+            <InstallerChecksumStatus checksum={checksum} installerUrl={installerUrl} />
           </div>
 
           {/* Silent Flags */}
@@ -441,7 +466,7 @@ export default function SystemPresetDialog({
           </Button>
           <Button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || checksum.checksumStatus === 'computing'}
             className="text-gray-900 cursor-pointer"
           >
             {saving ? (

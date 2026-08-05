@@ -58,6 +58,7 @@ describe('updateSystemPreset — validation', () => {
       { parallel_install: 1 as unknown as boolean },
     ],
     ['timeout_seconds non-finite', { timeout_seconds: Infinity }],
+    ['sha256_checksum malformed', { sha256_checksum: 'zz'.repeat(32) }],
   ])('rejects when %s', async (_label, partial) => {
     await expect(
       updateSystemPreset({ actor, presetId: 'preset-x' }, partial),
@@ -79,6 +80,16 @@ describe('updateSystemPreset — firestore write', () => {
       order: 3,
       updatedAt: '__server_timestamp__',
     });
+  });
+
+  it('stores a normalized (lowercased) sha256_checksum', async () => {
+    const digest = 'A'.repeat(32) + 'b'.repeat(32);
+    await updateSystemPreset(
+      { actor, presetId: 'preset-td' },
+      { sha256_checksum: digest },
+    );
+    const written = mockUpdate.mock.calls[0][0];
+    expect(written.sha256_checksum).toBe(digest.toLowerCase());
   });
 
   it('translates firebase NOT_FOUND into SystemPresetNotFoundError', async () => {

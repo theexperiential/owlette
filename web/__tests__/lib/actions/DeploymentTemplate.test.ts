@@ -116,6 +116,30 @@ describe('createDeploymentTemplate', () => {
     ).rejects.toBeInstanceOf(DeploymentTemplateValidationError);
   });
 
+  it('stores a normalized (lowercased) sha256_checksum', async () => {
+    const digest = 'A'.repeat(32) + 'b'.repeat(32);
+    await createDeploymentTemplate(ctx, {
+      name: 'TD',
+      installer_name: 'td.exe',
+      installer_url: 'https://example.com/td.exe',
+      silent_flags: '/S',
+      sha256_checksum: digest,
+    });
+    expect(setCalls[0].payload.sha256_checksum).toBe(digest.toLowerCase());
+  });
+
+  it('rejects malformed sha256_checksum', async () => {
+    await expect(
+      createDeploymentTemplate(ctx, {
+        name: 'x',
+        installer_name: 'x.exe',
+        installer_url: 'https://example.com/x.exe',
+        silent_flags: '/S',
+        sha256_checksum: 'not-a-hash',
+      }),
+    ).rejects.toBeInstanceOf(DeploymentTemplateValidationError);
+  });
+
   it('rejects bad close_processes', async () => {
     await expect(
       createDeploymentTemplate(ctx, {
@@ -144,6 +168,16 @@ describe('updateDeploymentTemplate', () => {
     expect(setCalls[0].merge).toBe(true);
     expect(setCalls[0].payload.name).toBe('new name');
     expect(setCalls[0].payload.updatedAt).toBe('__SERVER_TS__');
+  });
+
+  it('accepts a checksum-only update', async () => {
+    docState.set('sites/site-a/installer_templates/template-1', {
+      exists: true,
+      data: () => ({ name: 'old' }),
+    });
+    const digest = 'c'.repeat(64);
+    await updateDeploymentTemplate(ctx, 'template-1', { sha256_checksum: digest });
+    expect(setCalls[0].payload.sha256_checksum).toBe(digest);
   });
 
   it('throws DeploymentTemplateNotFoundError when missing', async () => {

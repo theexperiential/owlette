@@ -28,6 +28,7 @@ export interface SystemPreset {
   verify_path?: string;            // Optional verification path
   close_processes?: string[];      // Process exe names to close before install
   parallel_install?: boolean;      // Install alongside existing versions (hides registry keys)
+  sha256_checksum?: string;        // 64-char hex SHA-256 of the installer (agents refuse installs without one)
   is_owlette_agent: boolean;       // Special flag: fetches latest from installer_metadata
   timeout_seconds?: number;        // Optional custom timeout (default 600)
   order: number;                   // Display order in UI

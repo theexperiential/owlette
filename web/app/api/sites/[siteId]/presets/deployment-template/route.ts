@@ -67,6 +67,7 @@ export const POST = authorizedSiteHandler({
       verify_path: body.verify_path,
       close_processes: body.close_processes,
       parallel_install: body.parallel_install,
+      sha256_checksum: body.sha256_checksum,
     };
 
     const result = await createDeploymentTemplate(ctx, input);
@@ -92,6 +93,7 @@ function serializeTemplate(id: string, data: Record<string, unknown>) {
     verify_path: typeof data.verify_path === 'string' ? data.verify_path : null,
     close_processes: Array.isArray(data.close_processes) ? data.close_processes : null,
     parallel_install: data.parallel_install === true,
+    sha256_checksum: typeof data.sha256_checksum === 'string' ? data.sha256_checksum : null,
     createdAt: timestampToIso(data.createdAt),
     updatedAt: timestampToIso(data.updatedAt),
   };

@@ -14,6 +14,7 @@ export interface DeploymentTemplate {
   verify_path?: string;
   close_processes?: string[];
   parallel_install?: boolean;
+  sha256_checksum?: string;
   createdAt: FirestoreTs;
 }
 
@@ -37,6 +38,7 @@ export interface Deployment {
   close_processes?: string[];
   suppress_projects?: string[];
   parallel_install?: boolean;
+  sha256_checksum?: string;
   targets: DeploymentTarget[];
   createdAt: FirestoreTs;
   completedAt?: FirestoreTs;
@@ -77,6 +79,7 @@ export function useDeploymentTemplates(siteId: string) {
             verify_path: data.verify_path,
             close_processes: data.close_processes,
             parallel_install: data.parallel_install,
+            sha256_checksum: data.sha256_checksum,
             createdAt: data.createdAt || Date.now(),
           });
         });
@@ -171,6 +174,7 @@ export function useDeployments(siteId: string) {
             close_processes: data.close_processes,
             suppress_projects: data.suppress_projects,
             parallel_install: data.parallel_install,
+            sha256_checksum: data.sha256_checksum,
             targets: data.targets || [],
             createdAt: data.createdAt || Date.now(),
             completedAt: data.completedAt,
@@ -214,6 +218,7 @@ export function useDeployments(siteId: string) {
       ...(deployment.close_processes?.length ? { close_processes: deployment.close_processes } : {}),
       ...(deployment.suppress_projects?.length ? { suppress_projects: deployment.suppress_projects } : {}),
       ...(deployment.parallel_install ? { parallel_install: true } : {}),
+      ...(deployment.sha256_checksum ? { sha256_checksum: deployment.sha256_checksum } : {}),
     };
 
     const response = await fetch(deploymentsUrl(siteId), {
