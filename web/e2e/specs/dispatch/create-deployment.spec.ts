@@ -68,6 +68,13 @@ test('admin creates a deployment — deployment doc + per-target install command
   const installerUrl = `https://example.com/test-installer-${Date.now()}.exe`;
   await dialog.locator('#installer-url').fill(installerUrl);
 
+  // Agents require a sha256 checksum; the dialog auto-computes one from the
+  // URL (unreachable from the test env), so switch to manual entry. The
+  // "enter manually" link renders in both the computing and error states.
+  const sha256 = 'cd'.repeat(32);
+  await dialog.getByRole('button', { name: /^enter manually$/i }).click();
+  await dialog.locator('#manual-checksum').fill(sha256);
+
   // Check the seeded machine in the target list. Each row is a clickable div
   // with the machineId as its visible text + a checkbox; clicking the row
   // toggles the checkbox via toggleMachine.
@@ -94,6 +101,7 @@ test('admin creates a deployment — deployment doc + per-target install command
   expect(deploymentId).toMatch(/^deploy-\d+$/);
   expect(deployment.installer_url).toBe(installerUrl);
   expect(deployment.installer_name).toMatch(/^test-installer-\d+\.exe$/);
+  expect(deployment.sha256_checksum).toBe(sha256);
   // Status: 'in_progress' once the per-machine commands have all landed.
   expect(['pending', 'in_progress']).toContain(deployment.status);
   expect(Array.isArray(deployment.targets)).toBe(true);
@@ -118,5 +126,6 @@ test('admin creates a deployment — deployment doc + per-target install command
   expect(cmd.type).toBe('install_software');
   expect(cmd.deployment_id).toBe(deploymentId);
   expect(cmd.installer_url).toBe(installerUrl);
+  expect(cmd.sha256_checksum).toBe(sha256);
   expect(cmd.status).toBe('pending');
 });

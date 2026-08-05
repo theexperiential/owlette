@@ -30,10 +30,13 @@ export interface CreateSystemPresetInput {
   verify_path?: string;
   close_processes?: string[];
   parallel_install?: boolean;
+  sha256_checksum?: string;
   is_owlette_agent: boolean;
   timeout_seconds?: number;
   order: number;
 }
+
+const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 
 export interface CreateSystemPresetContext {
   actor: UserActor;
@@ -149,6 +152,14 @@ export async function createSystemPreset(
       'timeout_seconds must be a finite number',
     );
   }
+  if (input.sha256_checksum !== undefined) {
+    if (typeof input.sha256_checksum !== 'string' || !SHA256_HEX_RE.test(input.sha256_checksum)) {
+      throw new SystemPresetValidationError(
+        'sha256_checksum',
+        'sha256_checksum must be a 64-character hex SHA-256 hash',
+      );
+    }
+  }
 
   const slug = slugify(input.software_name);
   if (!slug) {
@@ -176,6 +187,7 @@ export async function createSystemPreset(
     verify_path: input.verify_path,
     close_processes: input.close_processes,
     parallel_install: input.parallel_install,
+    sha256_checksum: input.sha256_checksum?.toLowerCase(),
     is_owlette_agent: input.is_owlette_agent,
     timeout_seconds: input.timeout_seconds,
     order: input.order,
