@@ -8,6 +8,7 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged,
   GoogleAuthProvider,
+  getAdditionalUserInfo,
   signInWithPopup,
   updateProfile,
   updatePassword as firebaseUpdatePassword,
@@ -203,6 +204,23 @@ export interface UserPreferences {
   graphTimeRange?: '1h' | '1d' | '1w' | '1m' | '1y' | 'all';
 }
 
+/**
+ * Outcome of a Google sign-in.
+ *
+ * Google OAuth does not distinguish signing up from signing in — the same
+ * popup does both — so a user who already has an account and lands on
+ * /register is simply signed in. Without this flag the page cannot tell, and
+ * /register told everyone "account created with Google!" whether or not one
+ * was. `isNewUser` comes from Firebase's own `getAdditionalUserInfo`.
+ *
+ * Deliberately a small domain object rather than the raw `UserCredential`:
+ * pages need one bit, and leaking the Firebase type into them would make it
+ * that much harder to move off the client SDK later.
+ */
+export interface GoogleSignInResult {
+  isNewUser: boolean;
+}
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
@@ -220,7 +238,7 @@ interface AuthContextType {
   userPreferences: UserPreferences; // User preferences (temperature unit, etc.)
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, firstName?: string, lastName?: string, turnstileToken?: string) => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
+  signInWithGoogle: () => Promise<GoogleSignInResult>;
   signOut: () => Promise<void>;
   updateUserProfile: (firstName: string, lastName: string) => Promise<void>;
   updateUserPhoto: (photoBlob: Blob | null) => Promise<void>;
@@ -247,7 +265,7 @@ const AuthContext = createContext<AuthContextType>({
   userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
   signIn: async () => {},
   signUp: async () => {},
-  signInWithGoogle: async () => {},
+  signInWithGoogle: async () => ({ isNewUser: false }),
   signOut: async () => {},
   updateUserProfile: async () => {},
   updateUserPhoto: async () => {},
@@ -577,6 +595,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         description: 'Your account has been created successfully. You can now sign in.',
       });
     } catch (error: unknown) {
+      // /register renders inline remediation for this one — the sentence plus
+      // routes to sign in or reset the password — so a toast here would only
+      // repeat it in a different voice and then expire. Same precedent as the
+      // popup-unavailable branch in signInWithGoogle below: when the page owns
+      // the presentation, the context stays quiet but still reports, because
+      // this is how we learned real users hit it (OWLETTE-WEB-46).
+      if ((error as { code?: unknown } | null)?.code === 'auth/email-already-in-use') {
+        logError(error, 'signup-email-already-in-use');
+        throw error;
+      }
+
       const friendlyMessage = handleError(error);
       toast.error('Sign Up Failed', {
         description: friendlyMessage,
@@ -596,7 +625,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      const credential = await signInWithPopup(auth, provider);
+      // `additionalUserInfo` is absent on some replayed/edge credentials; a
+      // missing flag means we cannot claim an account was created, so treat it
+      // as a returning user. The wrong guess here costs a slightly generic
+      // greeting, whereas the opposite claims a signup that did not happen.
+      return { isNewUser: getAdditionalUserInfo(credential)?.isNewUser ?? false };
     } catch (error: unknown) {
       const code = (error as { code?: string } | null)?.code;
       // The user dismissed the popup themselves. Not a failure — no toast, and

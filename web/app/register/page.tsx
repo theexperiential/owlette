@@ -13,10 +13,12 @@ import { toast } from '@/lib/toast';
 import { validatePassword, validateEmail } from '@/lib/validators';
 import { sanitizeError } from '@/lib/errorHandler';
 import { isPopupUnavailableError } from '@/lib/inAppBrowser';
+import { resolvePostSignInPath } from '@/lib/postSignIn';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
 import { FormError } from '@/components/ui/form-error';
 import { InAppBrowserNotice } from '@/components/InAppBrowserNotice';
+import { InlineNotice } from '@/components/ui/inline-notice';
 import { useFieldError } from '@/hooks/useFieldError';
 import { useInAppBrowser } from '@/hooks/useInAppBrowser';
 
@@ -41,6 +43,11 @@ export default function RegisterPage() {
    * popup blocker — so the remediation appears even when detection said no.
    */
   const [popupBlocked, setPopupBlocked] = useState(false);
+  /**
+   * Set when signup fails because the email already has an account. Rendered
+   * inline with a route to /login — see the catch in handleRegister.
+   */
+  const [existingAccount, setExistingAccount] = useState(false);
   /** Field-targeted validation — see hooks/useFieldError.ts. Marks the
    *  offending input invalid (red outline) and focuses it, as well as showing
    *  the message; a message alone does not say WHERE to fix it. */
@@ -64,6 +71,7 @@ export default function RegisterPage() {
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
+    setExistingAccount(false);
 
     // Empty-field checks are ours now: the form is noValidate, so the browser's
     // native bubble no longer fires (and never could be styled to match).
@@ -97,10 +105,24 @@ export default function RegisterPage() {
     try {
       await signUp(email, password, firstName, lastName, turnstileToken);
       toast.success('account created successfully!');
-      // Redirect to 2FA setup (mandatory for new users)
-      router.push('/setup-2fa');
+      // 2FA setup is mandatory for new users. /setup-2fa is proxy-protected, so
+      // this races the session cookie exactly like the Google path did — less
+      // often, because signUp awaits a profile update and the bootstrap POST
+      // first, and it self-heals (a fresh session has no MFA, so the proxy
+      // sends them straight back). Resolving narrows the window rather than
+      // closing it: if the cookie still is not there after the retry budget,
+      // the helper returns the fallback and the bounce happens anyway.
+      router.push(await resolvePostSignInPath('/setup-2fa'));
     } catch (error) {
-      toast.error(sanitizeError(error));
+      // Already have an account? That is not a validation failure to scold the
+      // user for — it is a wrong turn with an obvious next step. Render it
+      // inline with a route to sign in rather than a toast that expires and
+      // leaves them on a form that will never succeed.
+      if ((error as { code?: unknown } | null)?.code === 'auth/email-already-in-use') {
+        setExistingAccount(true);
+      } else {
+        toast.error(sanitizeError(error));
+      }
       // Turnstile tokens are single-use. The page stays mounted after a failed
       // submit, so the consumed token has to be cleared before a retry.
       turnstileRef.current?.reset();
@@ -119,10 +141,23 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      await signInWithGoogle();
-      toast.success('account created with Google!');
-      // Note: AuthContext will redirect to /setup-2fa for new users
-      router.push('/dashboard');
+      const result = await signInWithGoogle();
+
+      // Google OAuth signs in and signs up through the same popup, so landing
+      // here does NOT mean an account was created — a user who already had one
+      // has simply been logged in, which is what they wanted anyway. Claiming
+      // "account created" at them was the misleading part.
+      toast.success(
+        result?.isNewUser
+          ? 'account created with Google!'
+          : 'welcome back — signing you in',
+      );
+
+      // Must resolve the landing rather than pushing /dashboard blind: the
+      // session cookie is minted asynchronously, and racing it is what sent
+      // users to /login?redirect=%2Fdashboard looking like a failed sign-in.
+      // New users are routed onward to /setup-2fa by the dashboard itself.
+      router.push(await resolvePostSignInPath('/dashboard'));
     } catch (error) {
       // A refused popup is not a transient failure to be re-tried — it is an
       // environment that cannot do federated sign-in at all. Swap in the
@@ -374,6 +409,21 @@ export default function RegisterPage() {
                   onToken={setTurnstileToken}
                   ref={turnstileRef}
                 />
+                {existingAccount && (
+                  <InlineNotice data-testid="register-existing-account">
+                    <p className="text-sm leading-snug text-muted-foreground">
+                      an account with this email already exists.{' '}
+                      <Link href="/login" className="font-medium hl-link text-accent-cyan">
+                        sign in instead
+                      </Link>
+                      , or{' '}
+                      <Link href="/forgot-password" className="font-medium hl-link text-accent-cyan">
+                        reset your password
+                      </Link>
+                      .
+                    </p>
+                  </InlineNotice>
+                )}
                 <FormError message={formError?.message} id="register-form-error" />
                 <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || (TURNSTILE_ENABLED && !turnstileToken)}>
                   {loading ? 'creating account...' : 'create account'}

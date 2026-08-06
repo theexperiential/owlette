@@ -11,6 +11,7 @@ import { Fingerprint } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { sanitizeError } from '@/lib/errorHandler';
 import { isPopupUnavailableError } from '@/lib/inAppBrowser';
+import { resolvePostSignInPath } from '@/lib/postSignIn';
 import { signInWithCustomToken } from 'firebase/auth';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { auth as firebaseAuth } from '@/lib/firebase';
@@ -90,43 +91,12 @@ function LoginForm() {
     }
   }, [searchParams]);
 
-  // Decide where to send the user after a successful Firebase sign-in.
-  //
-  // The authoritative MFA gate is server-side (the proxy enforces it), so
-  // this function is purely a UX hint — it queries the freshly-minted
-  // session via GET /api/auth/session and, if the server reports MFA is
-  // required and not yet satisfied, pushes to /verify-2fa with the
-  // original destination preserved in the `redirect` param.
-  //
-  // We poll briefly: the createSessionCookie call in AuthContext fires
-  // off the POST as soon as onAuthStateChanged sees the user, but it is
-  // not awaited here. A short retry loop avoids the race without making
-  // the user wait the full retry budget in the common case.
-  const checkMfaAndRedirect = async (): Promise<string> => {
-    const maxAttempts = 5;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      try {
-        const res = await fetch('/api/auth/session', { credentials: 'include' });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.authenticated === true) {
-            if (data.mfaRequired === true && data.mfaVerified !== true) {
-              return `/verify-2fa?redirect=${encodeURIComponent(redirectUrl)}`;
-            }
-            return redirectUrl;
-          }
-        }
-      } catch (err) {
-        // Network blip — fall through to the retry.
-        console.warn('[Login] session probe failed (will retry):', err);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    }
-    // If we never saw an authenticated session after all retries, just
-    // attempt the original target. The proxy will redirect to /login or
-    // /verify-2fa as appropriate — it is the authoritative gate.
-    return redirectUrl;
-  };
+  // Where to land after sign-in now lives in lib/postSignIn, shared with
+  // /register. It used to be a local helper here, which is precisely why
+  // /register never got it and raced the session cookie on every Google
+  // signup — see the module comment.
+  const checkMfaAndRedirect = (settleMs?: number) =>
+    resolvePostSignInPath(redirectUrl, settleMs);
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -146,10 +116,7 @@ function LoginForm() {
     try {
       await signIn(email, password);
 
-      // Wait a moment for Firebase Auth state to update
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Check MFA status and get redirect path
+      // Settles for the session cookie, then polls — see lib/postSignIn.
       const redirectPath = await checkMfaAndRedirect();
 
       if (redirectPath.includes('/verify-2fa')) {
@@ -173,10 +140,7 @@ function LoginForm() {
     try {
       await signInWithGoogle();
 
-      // Wait a moment for Firebase Auth state to update
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Check MFA status and get redirect path
+      // Settles for the session cookie, then polls — see lib/postSignIn.
       const redirectPath = await checkMfaAndRedirect();
 
       if (redirectPath.includes('/verify-2fa')) {
@@ -251,7 +215,9 @@ function LoginForm() {
       // /verify-2fa. This is fail-safe behaviour pending a Wave 3 change
       // that marks passkey sign-in as MFA-satisfying server-side.
       toast.success('signed in with passkey!');
-      const redirectPath = await checkMfaAndRedirect();
+      // No settle: the verify route above already minted the session cookie
+      // before returning, so waiting would be dead latency.
+      const redirectPath = await checkMfaAndRedirect(0);
       router.push(redirectPath);
     } catch (error) {
       if (error instanceof Error && error.name === 'NotAllowedError') {

@@ -1,10 +1,10 @@
 'use client';
 
-import { CircleAlertIcon, CopyIcon, ExternalLinkIcon } from 'lucide-react';
+import { CopyIcon, ExternalLinkIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { InlineNotice } from '@/components/ui/inline-notice';
 import { toast } from '@/lib/toast';
-import { cn } from '@/lib/utils';
 import {
   copyToClipboard,
   escapeToSystemBrowser,
@@ -84,19 +84,8 @@ export function InAppBrowserNotice({
   };
 
   return (
-    <div
-      role="alert"
-      data-testid="inapp-browser-notice"
-      className={cn(
-        'flex items-start gap-2 rounded-md border border-border bg-secondary/60 p-3',
-        className,
-      )}
-    >
-      <CircleAlertIcon
-        className="mt-0.5 size-4 shrink-0 text-accent-cyan"
-        aria-hidden="true"
-      />
-      <div className="min-w-0 space-y-3">
+    <InlineNotice data-testid="inapp-browser-notice" className={className}>
+      <>
         <div className="space-y-1">
           <p className="text-sm font-medium leading-snug text-foreground">
             {headline}
@@ -154,7 +143,7 @@ export function InAppBrowserNotice({
             try google anyway
           </button>
         )}
-      </div>
-    </div>
+      </>
+    </InlineNotice>
   );
 }
