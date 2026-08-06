@@ -17,7 +17,8 @@ import {
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { auth, db, storage } from '@/lib/firebase';
-import { handleError } from '@/lib/errorHandler';
+import { handleError, logError } from '@/lib/errorHandler';
+import { inAppDiagnostics, isPopupUnavailableError } from '@/lib/inAppBrowser';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { toast } from '@/lib/toast';
 import * as Sentry from '@sentry/nextjs';
@@ -598,8 +599,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await signInWithPopup(auth, provider);
     } catch (error: unknown) {
       const code = (error as { code?: string } | null)?.code;
-      // Don't show toast for popup closed by user
+      // The user dismissed the popup themselves. Not a failure — no toast, and
+      // nothing worth reporting.
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        throw error;
+      }
+
+      // The environment cannot open a sign-in popup at all — overwhelmingly an
+      // in-app browser, where no Firebase configuration or redirect fallback
+      // can rescue the flow (see lib/inAppBrowser for why).
+      //
+      // No toast: /login and /register catch this and render inline
+      // remediation that actually tells the user what to do next, so a toast
+      // here would stack a second, contentless message on top of it.
+      //
+      // It must still reach Sentry, and with the raw user-agent attached: this
+      // is the only signal for how often the signup funnel dies this way, and
+      // Sentry's parsed browser family collapses every unrecognised iOS
+      // webview to one label that doesn't name the host app.
+      if (isPopupUnavailableError(error)) {
+        logError(error, 'google-signin-popup-blocked', inAppDiagnostics());
         throw error;
       }
 

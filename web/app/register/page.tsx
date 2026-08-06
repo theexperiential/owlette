@@ -12,10 +12,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { toast } from '@/lib/toast';
 import { validatePassword, validateEmail } from '@/lib/validators';
 import { sanitizeError } from '@/lib/errorHandler';
+import { isPopupUnavailableError } from '@/lib/inAppBrowser';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
 import { FormError } from '@/components/ui/form-error';
+import { InAppBrowserNotice } from '@/components/InAppBrowserNotice';
 import { useFieldError } from '@/hooks/useFieldError';
+import { useInAppBrowser } from '@/hooks/useInAppBrowser';
 
 export default function RegisterPage() {
   const [firstName, setFirstName] = useState('');
@@ -32,13 +35,31 @@ export default function RegisterPage() {
    * never closes, so a partly-filled form can't collapse mid-entry.
    */
   const [emailFormOpen, setEmailFormOpen] = useState(false);
+  /**
+   * Set when Google sign-in fails because the browser refused the popup. Covers
+   * the webviews the user-agent doesn't identify, plus ordinary browsers with a
+   * popup blocker — so the remediation appears even when detection said no.
+   */
+  const [popupBlocked, setPopupBlocked] = useState(false);
   /** Field-targeted validation — see hooks/useFieldError.ts. Marks the
    *  offending input invalid (red outline) and focuses it, as well as showing
    *  the message; a message alone does not say WHERE to fix it. */
   const { error: formError, fail, clear: clearError, fieldProps } = useFieldError('register-form-error');
   const turnstileRef = useRef<TurnstileHandle>(null);
   const { signUp, signInWithGoogle } = useAuth();
+  const inApp = useInAppBrowser();
   const router = useRouter();
+
+  /**
+   * Google is unavailable — either we recognised the host app before the user
+   * spent a tap on it, or the popup was refused when they did.
+   */
+  const googleUnavailable = inApp.isInApp || popupBlocked;
+  /**
+   * Force the email path open when Google is out, rather than leaving the
+   * fallback we're pointing at collapsed behind a focus interaction.
+   */
+  const emailExpanded = emailFormOpen || googleUnavailable;
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,6 +115,7 @@ export default function RegisterPage() {
     // given by the notice rendered directly beneath the Google button
     // ("by continuing you agree to..."), which is the standard pattern for
     // federated sign-up. Both paths still surface the same two links.
+    const alreadyBlocked = googleUnavailable;
     setLoading(true);
 
     try {
@@ -102,7 +124,19 @@ export default function RegisterPage() {
       // Note: AuthContext will redirect to /setup-2fa for new users
       router.push('/dashboard');
     } catch (error) {
-      toast.error(sanitizeError(error));
+      // A refused popup is not a transient failure to be re-tried — it is an
+      // environment that cannot do federated sign-in at all. Swap in the
+      // inline remediation instead of a toast that expires with no next step.
+      if (isPopupUnavailableError(error)) {
+        setPopupBlocked(true);
+        // If the notice was already on screen, the user got here via "try
+        // google anyway" — nothing visible would change, so say so explicitly.
+        if (alreadyBlocked) {
+          toast.error('google sign-in is still blocked in this browser');
+        }
+      } else {
+        toast.error(sanitizeError(error));
+      }
     } finally {
       setLoading(false);
     }
@@ -146,8 +180,21 @@ export default function RegisterPage() {
               skips the Turnstile challenge entirely (the server only gates
               password-provider signups). Showing the full email form up front
               buried it below six inputs. */}
-          {/* Button + its consent notice are one group, so they stay tight to
-              each other while space-y-6 pushes the next section away. */}
+          {/* Google is swapped out entirely when the browser can't run it —
+              an in-app webview, or a popup that was refused when tried. The
+              notice carries its own "try google anyway" escape, so nothing is
+              actually removed; detection only reorders and explains. */}
+          {googleUnavailable ? (
+            <InAppBrowserNotice
+              isInApp={inApp.isInApp}
+              appName={inApp.appName}
+              escapeAttempted={inApp.escapeAttempted}
+              onTryAnyway={handleGoogleSignup}
+              tryAnywayDisabled={loading}
+            />
+          ) : (
+          /* Button + its consent notice are one group, so they stay tight to
+              each other while space-y-6 pushes the next section away. */
           <div className="space-y-2">
           <Button
             type="button"
@@ -195,20 +242,25 @@ export default function RegisterPage() {
             </Link>
           </p>
           </div>
+          )}
 
-          {/* -mx-8 cancels CardContent's p-8 so the rule runs edge to edge of
-              the column instead of floating inset. Card is overflow-hidden, so
-              the bleed can't create a horizontal scrollbar. */}
-          <div className="relative -mx-8">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-border" />
+          {/* "or" only makes sense when there are two live options. With Google
+              out, the email form is the path, not an alternative to one. */}
+          {!googleUnavailable && (
+            /* -mx-8 cancels CardContent's p-8 so the rule runs edge to edge of
+                the column instead of floating inset. Card is overflow-hidden, so
+                the bleed can't create a horizontal scrollbar. */
+            <div className="relative -mx-8">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">
+                  or
+                </span>
+              </div>
             </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">
-                or
-              </span>
-            </div>
-          </div>
+          )}
 
           <form onSubmit={handleRegister} className="space-y-5" noValidate>
             <div className="space-y-2">
@@ -230,7 +282,7 @@ export default function RegisterPage() {
               />
             </div>
 
-            {emailFormOpen && (
+            {emailExpanded && (
               <div className="form-reveal">
                 <div className="space-y-5">
                 <div className="grid grid-cols-2 gap-4">

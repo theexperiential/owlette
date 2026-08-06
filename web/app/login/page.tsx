@@ -10,13 +10,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Fingerprint } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { sanitizeError } from '@/lib/errorHandler';
+import { isPopupUnavailableError } from '@/lib/inAppBrowser';
 import { signInWithCustomToken } from 'firebase/auth';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { auth as firebaseAuth } from '@/lib/firebase';
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
 import { LoadingWord } from '@/components/LoadingWord';
 import { FormError } from '@/components/ui/form-error';
+import { InAppBrowserNotice } from '@/components/InAppBrowserNotice';
 import { useFieldError } from '@/hooks/useFieldError';
+import { useInAppBrowser } from '@/hooks/useInAppBrowser';
 
 function LoginForm() {
   const [email, setEmail] = useState('');
@@ -41,9 +44,39 @@ function LoginForm() {
   // first client render matches the server (no button), then reveal it after
   // hydration.
   const [canUsePasskey, setCanUsePasskey] = useState(false);
+  /**
+   * Set when Google sign-in fails because the browser refused the popup. Covers
+   * the webviews the user-agent doesn't identify, plus ordinary browsers with a
+   * popup blocker — so the remediation appears even when detection said no.
+   */
+  const [popupBlocked, setPopupBlocked] = useState(false);
   const { signIn, signInWithGoogle } = useAuth();
+  const inApp = useInAppBrowser();
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  /**
+   * Google is unavailable — either we recognised the host app before the user
+   * spent a tap on it, or the popup was refused when they did.
+   */
+  const googleUnavailable = inApp.isInApp || popupBlocked;
+  /**
+   * Passkeys are gated on the host app, NOT on `googleUnavailable`. A blocked
+   * popup in ordinary Safari says nothing about WebAuthn — but inside an
+   * embedded webview the ceremony can only use passkeys for the HOST app's
+   * associated domain, and LinkedIn will never declare owlette.app as one. So
+   * `browserSupportsWebAuthn()` returns true there while the ceremony is
+   * guaranteed to fail. https://passkeys.dev/docs/reference/ios/
+   */
+  const showPasskey = canUsePasskey && !inApp.isInApp;
+  /** "or" only earns its place while a non-email option is still on screen. */
+  const showDivider = !googleUnavailable || showPasskey;
+  /**
+   * Force the email path open once Google is out, rather than leaving the
+   * fallback we're pointing at collapsed behind a focus gesture. Applies even
+   * when passkey survives — it may simply not be enrolled on this account.
+   */
+  const emailExpanded = emailFormOpen || googleUnavailable;
 
   useEffect(() => {
     setCanUsePasskey(browserSupportsWebAuthn());
@@ -134,6 +167,7 @@ function LoginForm() {
   };
 
   const handleGoogleLogin = async () => {
+    const alreadyBlocked = googleUnavailable;
     setLoading(true);
 
     try {
@@ -153,7 +187,19 @@ function LoginForm() {
 
       router.push(redirectPath);
     } catch (error) {
-      toast.error(sanitizeError(error));
+      // A refused popup is not a transient failure to be re-tried — it is an
+      // environment that cannot do federated sign-in at all. Swap in the
+      // inline remediation instead of a toast that expires with no next step.
+      if (isPopupUnavailableError(error)) {
+        setPopupBlocked(true);
+        // If the notice was already on screen, the user got here via "try
+        // google anyway" — nothing visible would change, so say so explicitly.
+        if (alreadyBlocked) {
+          toast.error('google sign-in is still blocked in this browser');
+        }
+      } else {
+        toast.error(sanitizeError(error));
+      }
     } finally {
       setLoading(false);
     }
@@ -249,6 +295,18 @@ function LoginForm() {
                 alternatives, so they sit tight together while space-y-6
                 separates them from the email form. */}
             <div className="space-y-2">
+              {googleUnavailable ? (
+                /* Google swapped out where the browser can't run it. The notice
+                   carries its own "try google anyway", so nothing is removed —
+                   detection only reorders and explains. */
+                <InAppBrowserNotice
+                  isInApp={inApp.isInApp}
+                  appName={inApp.appName}
+                  escapeAttempted={inApp.escapeAttempted}
+                  onTryAnyway={handleGoogleLogin}
+                  tryAnywayDisabled={loading}
+                />
+              ) : (
               <Button
                 type="button"
                 variant="outline"
@@ -276,8 +334,9 @@ function LoginForm() {
                 </svg>
                 continue with Google
               </Button>
+              )}
 
-              {canUsePasskey && (
+              {showPasskey && (
                 <Button
                   type="button"
                   variant="outline"
@@ -291,19 +350,24 @@ function LoginForm() {
               )}
             </div>
 
-            {/* -mx-8 cancels CardContent's p-8 so the rule runs edge to edge of
-                the column instead of floating inset. Card is overflow-hidden,
-                so the bleed can't create a horizontal scrollbar. */}
-            <div className="relative -mx-8">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-border" />
+            {/* "or" only earns its place while a non-email option is still on
+                screen — with Google and passkey both out, the email form is
+                the path, not an alternative to one. */}
+            {showDivider && (
+              /* -mx-8 cancels CardContent's p-8 so the rule runs edge to edge of
+                  the column instead of floating inset. Card is overflow-hidden,
+                  so the bleed can't create a horizontal scrollbar. */
+              <div className="relative -mx-8">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-border" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card px-2 text-muted-foreground">
+                    or
+                  </span>
+                </div>
               </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">
-                  or
-                </span>
-              </div>
-            </div>
+            )}
 
             <form onSubmit={handleEmailLogin} className="space-y-5" noValidate>
               <div className="space-y-2">
@@ -325,7 +389,7 @@ function LoginForm() {
                 />
               </div>
 
-              {emailFormOpen && (
+              {emailExpanded && (
                 <div className="form-reveal">
                   <div className="space-y-5">
                   <div className="space-y-2">

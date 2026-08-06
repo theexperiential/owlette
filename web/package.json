@@ -64,6 +64,7 @@
     "fumadocs-core": "^16.8.12",
     "fumadocs-mdx": "^15.0.7",
     "fumadocs-ui": "^16.8.12",
+    "inapp-spy": "^5.0.10",
     "iron-session": "^8.0.4",
     "js-yaml": "^4.1.1",
     "lucide-react": "^0.548.0",
