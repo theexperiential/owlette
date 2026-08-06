@@ -71,6 +71,19 @@ jest.mock('@/lib/authorizedHandler.server', () => ({
 
 const mockResolveAuth = jest.fn();
 const mockAssertSite = jest.fn();
+const mockComputeChecksum = jest.fn();
+
+// The retry route self-heals legacy deployments (no stored checksum) by
+// streaming + hashing the installer. Mock the compute core so tests never
+// perform a network fetch; requireActual keeps InstallerChecksumError's
+// class identity for the route's instanceof mapping.
+jest.mock('@/lib/actions/computeInstallerChecksum.server', () => {
+  const actual = jest.requireActual('@/lib/actions/computeInstallerChecksum.server');
+  return {
+    ...actual,
+    computeInstallerChecksum: (...a: unknown[]) => mockComputeChecksum(...a),
+  };
+});
 
 jest.mock('@/lib/apiAuth.server', () => {
   const actual = jest.requireActual('@/lib/apiAuth.server');
@@ -126,6 +139,10 @@ beforeEach(() => {
   mocks.del.mockResolvedValue(undefined);
   mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('any', null)));
   mocks.collectionGet.mockResolvedValue(querySnapshot([]));
+  mockComputeChecksum.mockResolvedValue({
+    sha256_checksum: 'f0'.repeat(32),
+    size_bytes: 1024,
+  });
 });
 
 const validCreateBody = {
@@ -681,6 +698,140 @@ describe('POST /api/sites/{siteId}/deployments/{deploymentId}/retry', () => {
         attributes: expect.objectContaining({ verb: 'retry', retried_count: 2 }),
       }),
     );
+
+    // Doc had no checksum — self-heal computed one, pinned it on the doc,
+    // and stamped it into every re-issued command.
+    expect(mockComputeChecksum).toHaveBeenCalledWith(
+      'https://example.com/vlc.exe',
+      expect.anything(),
+    );
+    expect(updatePayload.sha256_checksum).toBe('f0'.repeat(32));
+    for (const call of mergeCalls) {
+      const cmd = call[0][Object.keys(call[0])[0]];
+      expect(cmd.sha256_checksum).toBe('f0'.repeat(32));
+    }
+  });
+
+  it('skips checksum compute when the deployment already has one', async () => {
+    queueIdempotencyMiss();
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot(DEPLOYMENT, {
+        installer_name: 'vlc.exe',
+        installer_url: 'https://example.com/vlc.exe',
+        silent_flags: '/S',
+        sha256_checksum: 'ab'.repeat(32),
+        targets: [{ machineId: 'm1', status: 'failed' }],
+        status: 'failed',
+      }),
+    );
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/retry`,
+      { method: 'POST', headers: idempotencyHeaders('idem-retry-has-sum'), body: {} },
+    );
+    const res = await retryPOST(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(200);
+    expect(mockComputeChecksum).not.toHaveBeenCalled();
+
+    const mergeCalls = mocks.set.mock.calls.filter(
+      (c: unknown[]) => (c[1] as { merge?: boolean })?.merge === true,
+    );
+    const cmd = mergeCalls[0][0][Object.keys(mergeCalls[0][0])[0]];
+    expect(cmd.sha256_checksum).toBe('ab'.repeat(32));
+    // No re-pin: doc already had the checksum.
+    expect(mocks.update.mock.calls[0][0].sha256_checksum).toBeUndefined();
+  });
+
+  it('retries only the machines in the body filter', async () => {
+    queueIdempotencyMiss();
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot(DEPLOYMENT, {
+        installer_name: 'vlc.exe',
+        installer_url: 'https://example.com/vlc.exe',
+        silent_flags: '/S',
+        sha256_checksum: 'ab'.repeat(32),
+        targets: [
+          { machineId: 'm1', status: 'failed', error: 'a' },
+          { machineId: 'm2', status: 'failed', error: 'b' },
+        ],
+        status: 'failed',
+      }),
+    );
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/retry`,
+      {
+        method: 'POST',
+        headers: idempotencyHeaders('idem-retry-filter'),
+        body: { machines: ['m2'] },
+      },
+    );
+    const res = await retryPOST(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.retried).toBe(1);
+    expect(body.machine_ids).toEqual(['m2']);
+
+    // Only one command queued; m1 stays failed with its error intact.
+    const mergeCalls = mocks.set.mock.calls.filter(
+      (c: unknown[]) => (c[1] as { merge?: boolean })?.merge === true,
+    );
+    expect(mergeCalls).toHaveLength(1);
+    const updatePayload = mocks.update.mock.calls[0][0];
+    const m1 = updatePayload.targets.find((t: { machineId: string }) => t.machineId === 'm1');
+    expect(m1.status).toBe('failed');
+    expect(m1.error).toBe('a');
+    const m2 = updatePayload.targets.find((t: { machineId: string }) => t.machineId === 'm2');
+    expect(m2.status).toBe('pending');
+  });
+
+  it('400 when machines filter is malformed', async () => {
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/retry`,
+      {
+        method: 'POST',
+        headers: idempotencyHeaders('idem-retry-badfilter'),
+        body: { machines: [] },
+      },
+    );
+    const res = await retryPOST(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('surfaces a checksum compute failure without queuing commands', async () => {
+    queueIdempotencyMiss();
+    const { InstallerChecksumError } = jest.requireActual(
+      '@/lib/actions/computeInstallerChecksum.server',
+    );
+    mockComputeChecksum.mockRejectedValueOnce(
+      new InstallerChecksumError('fetch_failed', 'download failed with http 404'),
+    );
+    mocks.get.mockResolvedValueOnce(
+      docSnapshot(DEPLOYMENT, {
+        installer_name: 'vlc.exe',
+        installer_url: 'https://example.com/vlc.exe',
+        silent_flags: '/S',
+        targets: [{ machineId: 'm1', status: 'failed' }],
+        status: 'failed',
+      }),
+    );
+    const req = createMockRequest(
+      `http://localhost/api/sites/${SITE}/deployments/${DEPLOYMENT}/retry`,
+      { method: 'POST', headers: idempotencyHeaders('idem-retry-heal-fail'), body: {} },
+    );
+    const res = await retryPOST(req, {
+      params: Promise.resolve({ siteId: SITE, deploymentId: DEPLOYMENT }),
+    });
+    expect(res.status).toBe(422);
+    const mergeCalls = mocks.set.mock.calls.filter(
+      (c: unknown[]) => (c[1] as { merge?: boolean })?.merge === true,
+    );
+    expect(mergeCalls).toHaveLength(0);
+    expect(mocks.update).not.toHaveBeenCalled();
   });
 
   it('404 when deployment not found', async () => {

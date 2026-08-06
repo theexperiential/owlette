@@ -235,6 +235,31 @@ export function useDeployments(siteId: string) {
     return result.deploymentId as string;
   };
 
+  /**
+   * Re-queue install commands for failed targets on an existing deployment.
+   * `machineIds` narrows the retry to specific machines (per-row retry);
+   * omitted → all failed targets. The server self-heals a missing
+   * sha256_checksum by computing it from the installer URL, so legacy
+   * deployments retry cleanly (the call may take a while for large
+   * installers while the server streams + hashes).
+   */
+  const retryDeployment = async (deploymentId: string, machineIds?: string[]) => {
+    if (!db || !siteId) throw new Error('Firebase not configured');
+
+    const response = await fetch(`${deploymentsUrl(siteId)}/${encodeURIComponent(deploymentId)}/retry`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'Idempotency-Key': makeIdempotencyKey(`deployment-retry-${deploymentId}`),
+      },
+      body: JSON.stringify(machineIds?.length ? { machines: machineIds } : {}),
+    });
+    if (!response.ok) throw new Error(await readApiError(response, 'Failed to retry deployment'));
+
+    const result = await response.json();
+    return result.retried as number;
+  };
+
   const cancelDeployment = async (deploymentId: string, machineId: string, installer_name: string) => {
     if (!db || !siteId) throw new Error('Firebase not configured');
     void machineId;
@@ -289,6 +314,7 @@ export function useDeployments(siteId: string) {
     loading,
     error,
     createDeployment,
+    retryDeployment,
     cancelDeployment,
     deleteDeployment,
     checkMachineHasActiveDeployment
@@ -312,6 +338,7 @@ export function useDeploymentManager(siteId: string) {
     deploymentsLoading: deployments.loading,
     deploymentsError: deployments.error,
     createDeployment: deployments.createDeployment,
+    retryDeployment: deployments.retryDeployment,
     cancelDeployment: deployments.cancelDeployment,
     deleteDeployment: deployments.deleteDeployment,
     checkMachineHasActiveDeployment: deployments.checkMachineHasActiveDeployment,

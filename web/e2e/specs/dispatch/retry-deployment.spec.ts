@@ -1,17 +1,19 @@
 /**
  * Dispatch — retry failed deployment (D4.4)
  *
- * "Retry failed" doesn't mutate the original deployment — per
- * `app/deployments/page.tsx::handleRetryDeployment`, it filters the
- * deployment's targets to those with status='failed', then calls
- * `createDeployment` with name `${original.name} (Retry)` targeting
- * just those machines. End-state:
- *   - Original deployment unchanged (still has the failed target).
- *   - A NEW deployment doc exists with the retry name + the failed
- *     target as its sole target (status: 'pending').
- *   - One install_software command for that machine in commands/pending.
+ * "Retry failed" retries IN PLACE via POST
+ * /api/sites/{siteId}/deployments/{deploymentId}/retry (it no longer clones
+ * a "(Retry)" deployment). End-state:
+ *   - The SAME deployment doc flips to 'in_progress'; the failed target
+ *     resets to 'pending' with its error dropped and `retriedAt` stamped.
+ *   - One new install_software command (retry_attempt: true) in
+ *     commands/pending, carrying the deployment's sha256_checksum.
  *
- * Closes wave D4 (deployment dispatch).
+ * Two entry points share the flow: the row dropdown ("retry failed" — all
+ * failed targets) and the per-target retry icon (single machine, body
+ * `machines` filter). The seed carries a sha256_checksum so the server's
+ * legacy self-heal (which would fetch the installer URL) stays out of the
+ * loop — deterministic in the emulator env.
  */
 
 import { test, expect } from '@playwright/test';
@@ -29,6 +31,7 @@ const DEPLOYMENT_ID = `deploy-${Date.now()}`;
 const DEPLOYMENT_NAME = 'E2E Retry Deployment';
 const INSTALLER_NAME = 'retry-test.exe';
 const INSTALLER_URL = `https://example.com/${INSTALLER_NAME}`;
+const SHA256 = 'ab'.repeat(32);
 
 async function clearDeploymentsAndCommands() {
   const db = getAdminDb();
@@ -49,6 +52,7 @@ async function seedFailedDeployment() {
     installer_name: INSTALLER_NAME,
     installer_url: INSTALLER_URL,
     silent_flags: '/SILENT',
+    sha256_checksum: SHA256,
     status: 'failed',
     createdAt: Timestamp.now(),
     targets: [
@@ -57,57 +61,24 @@ async function seedFailedDeployment() {
   });
 }
 
-test.beforeEach(async () => {
-  await seedMachine(SITE_ID, MACHINE_ID);
-  await clearDeploymentsAndCommands();
-  await seedFailedDeployment();
-});
-
-test('admin retries a failed deployment — original untouched + new "(Retry)" deployment + new install command', async ({ page }) => {
-  await page.goto('/deployments');
-  await expect(page.getByRole('heading', { name: 'deployments', exact: true })).toBeVisible({ timeout: 10_000 });
-
-  // Open the deployment's actions dropdown — aria-label was added
-  // alongside this spec for a11y (icon-only MoreVertical button).
-  await page.getByRole('button', { name: `deployment actions for ${DEPLOYMENT_NAME}` }).click();
-
-  // The "retry failed" item is gated to deployments with at least one
-  // failed target — our seed satisfies that.
-  await page.getByRole('menuitem', { name: /retry failed/i }).click();
-
-  // Toast — the singular form for one machine.
-  await expect(page.getByText('retrying deployment for 1 failed machine(s)', { exact: true }))
-    .toBeVisible({ timeout: 10_000 });
-
-  // Admin SDK: a NEW deployment exists with the (Retry) suffix.
+async function assertInPlaceRetry() {
   const db = getAdminDb();
-  let retryDeploys: FirebaseFirestore.QueryDocumentSnapshot[] = [];
+
+  // Same doc mutated — no "(Retry)" clone is ever created.
+  let targets: Array<{ status: string; error?: string; retriedAt?: unknown }> = [];
   await expect.poll(async () => {
-    const snap = await db.collection('sites').doc(SITE_ID).collection('deployments').get();
-    retryDeploys = snap.docs.filter((d) => d.data().name === `${DEPLOYMENT_NAME} (Retry)`);
-    return retryDeploys.length;
-  }, { timeout: 5_000 }).toBe(1);
+    const snap = await db.collection('sites').doc(SITE_ID).collection('deployments').doc(DEPLOYMENT_ID).get();
+    targets = (snap.data()!.targets ?? []) as typeof targets;
+    return `${snap.data()!.status}:${targets[0]?.status}`;
+  }, { timeout: 10_000 }).toBe('in_progress:pending');
 
-  const retryDoc = retryDeploys[0];
-  const retryData = retryDoc.data();
-  expect(retryDoc.id).toMatch(/^deploy-\d+$/);
-  expect(retryDoc.id).not.toBe(DEPLOYMENT_ID);
-  expect(retryData.installer_url).toBe(INSTALLER_URL);
-  expect(retryData.installer_name).toBe(INSTALLER_NAME);
-  expect(retryData.targets).toHaveLength(1);
-  expect(retryData.targets[0].machineId).toBe(MACHINE_ID);
-  expect(retryData.targets[0].status).toBe('pending');
-  // No 'error' field carries over — fresh start for the retry.
-  expect(retryData.targets[0].error).toBeUndefined();
+  expect(targets[0].error).toBeUndefined();
+  expect(targets[0].retriedAt).toBeDefined();
 
-  // Original deployment is unchanged.
-  const originalSnap = await db.collection('sites').doc(SITE_ID).collection('deployments').doc(DEPLOYMENT_ID).get();
-  const originalTargets = originalSnap.data()!.targets as Array<{ status: string; error?: string }>;
-  expect(originalTargets[0].status).toBe('failed');
-  expect(originalTargets[0].error).toBe('install exited with code 1603');
+  const allDeploys = await db.collection('sites').doc(SITE_ID).collection('deployments').get();
+  expect(allDeploys.docs).toHaveLength(1);
 
-  // A new install_software command landed in pending tied to the new
-  // retry deployment id.
+  // New install command tied to the ORIGINAL deployment id, checksum intact.
   const pendingIds = await getPendingCommandIds(SITE_ID, MACHINE_ID);
   const installKeys = pendingIds.filter((id) => id.startsWith('install_'));
   expect(installKeys).toHaveLength(1);
@@ -118,6 +89,41 @@ test('admin retries a failed deployment — original untouched + new "(Retry)" d
     .collection('commands').doc('pending').get();
   const cmd = pendingSnap.data()![installKeys[0]];
   expect(cmd.type).toBe('install_software');
-  expect(cmd.deployment_id).toBe(retryDoc.id);
+  expect(cmd.deployment_id).toBe(DEPLOYMENT_ID);
   expect(cmd.installer_url).toBe(INSTALLER_URL);
+  expect(cmd.sha256_checksum).toBe(SHA256);
+  expect(cmd.retry_attempt).toBe(true);
+}
+
+test.beforeEach(async () => {
+  await seedMachine(SITE_ID, MACHINE_ID);
+  await clearDeploymentsAndCommands();
+  await seedFailedDeployment();
+});
+
+test('admin retries a failed deployment in place via the row dropdown', async ({ page }) => {
+  await page.goto('/deployments');
+  await expect(page.getByRole('heading', { name: 'deployments', exact: true })).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole('button', { name: `deployment actions for ${DEPLOYMENT_NAME}` }).click();
+  await page.getByRole('menuitem', { name: /retry failed/i }).click();
+
+  await expect(page.getByText('retrying deployment for 1 machine(s)', { exact: true }))
+    .toBeVisible({ timeout: 10_000 });
+
+  await assertInPlaceRetry();
+});
+
+test('admin retries a single failed target via the per-row retry icon', async ({ page }) => {
+  await page.goto('/deployments');
+  await expect(page.getByRole('heading', { name: 'deployments', exact: true })).toBeVisible({ timeout: 10_000 });
+
+  // Expand the deployment row to reveal per-target rows.
+  await page.getByText(DEPLOYMENT_NAME, { exact: true }).click();
+  await page.getByRole('button', { name: `retry deployment to ${MACHINE_ID}` }).click();
+
+  await expect(page.getByText('retrying deployment for 1 machine(s)', { exact: true }))
+    .toBeVisible({ timeout: 10_000 });
+
+  await assertInPlaceRetry();
 });

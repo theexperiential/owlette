@@ -391,11 +391,14 @@ export default function SystemPresetDialog({
             <Label htmlFor="silentFlags" className="text-white">
               silent install flags *
             </Label>
-            <Input
+            <Textarea
               id="silentFlags"
               placeholder="/VERYSILENT /NORESTART /SUPPRESSMSGBOXES"
               value={silentFlags}
-              onChange={(e) => setSilentFlags(e.target.value)}
+              // Flags are a single command line — wrap for readability, but
+              // collapse typed/pasted newlines so the agent's installer
+              // invocation never receives a broken multi-line string.
+              onChange={(e) => setSilentFlags(e.target.value.replace(/\s*[\r\n]+\s*/g, ' '))}
               className="border-border bg-background text-white font-mono text-sm"
             />
             <p className="text-xs text-muted-foreground">
