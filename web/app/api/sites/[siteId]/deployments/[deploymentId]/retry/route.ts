@@ -15,7 +15,7 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { problem, problemFromError, ProblemType } from '@/lib/apiErrors';
+import { problem, problemFromError, problemValidation, ProblemType } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
   applyAuthDeprecations,
@@ -25,9 +25,19 @@ import {
 import { withIdempotency } from '@/lib/idempotency';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import { emitMutation } from '@/lib/auditLogClient';
+import { installerChecksumErrorToResponse } from '@/lib/installerChecksumResponse.server';
+import {
+  computeInstallerChecksum,
+  InstallerChecksumError,
+} from '@/lib/actions/computeInstallerChecksum.server';
 import type { DeploymentTarget } from '@/hooks/useDeployments';
 
 type RouteParams = { siteId: string; deploymentId: string };
+
+export const runtime = 'nodejs';
+// Self-healing legacy deployments streams the installer to pin a checksum —
+// large binaries need headroom on the Vercel failover origin.
+export const maxDuration = 300;
 
 export const POST = authorizedSiteHandler<RouteParams>({
   capability: 'DEPLOYMENT_MANAGE',
@@ -39,6 +49,23 @@ export const POST = authorizedSiteHandler<RouteParams>({
 
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
+    const body = (parsed.body ?? {}) as { machines?: unknown };
+
+    // Optional machine filter — retry only the listed failed targets
+    // (per-row retry in the dashboard). Omitted → retry every failed target.
+    let machineFilter: Set<string> | null = null;
+    if (body.machines !== undefined) {
+      if (
+        !Array.isArray(body.machines) ||
+        body.machines.length === 0 ||
+        body.machines.some((m) => typeof m !== 'string' || m.length === 0)
+      ) {
+        return problemValidation('machines must be a non-empty string array when provided', {
+          'body.machines': ['must be a non-empty string array when provided'],
+        });
+      }
+      machineFilter = new Set(body.machines as string[]);
+    }
 
     const auth = await requireSiteAuthAndScope(request, siteId, 'write');
     if (!auth.ok) return auth.response;
@@ -73,14 +100,18 @@ export const POST = authorizedSiteHandler<RouteParams>({
         const targets: DeploymentTarget[] = Array.isArray(data.targets)
           ? (data.targets as DeploymentTarget[])
           : [];
-        const failed = targets.filter((t) => t.status === 'failed');
+        const failed = targets.filter(
+          (t) => t.status === 'failed' && (!machineFilter || machineFilter.has(t.machineId)),
+        );
 
         if (failed.length === 0) {
           return problem({
             type: ProblemType.Conflict,
             title: 'no failed targets',
             status: 409,
-            detail: 'no targets in `failed` state to retry',
+            detail: machineFilter
+              ? 'no targets in `failed` state matching the machines filter'
+              : 'no targets in `failed` state to retry',
             instance: `/api/sites/${siteId}/deployments/${deploymentId}/retry`,
             code: 'no_failed_targets',
           });
@@ -89,7 +120,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
         const installerUrl = typeof data.installer_url === 'string' ? data.installer_url : '';
         const installerName = typeof data.installer_name === 'string' ? data.installer_name : '';
         const silentFlags = typeof data.silent_flags === 'string' ? data.silent_flags : '';
-        const sha256 =
+        let sha256 =
           typeof data.sha256_checksum === 'string' ? data.sha256_checksum : undefined;
         const verifyPath =
           typeof data.verify_path === 'string' ? data.verify_path : undefined;
@@ -103,6 +134,27 @@ export const POST = authorizedSiteHandler<RouteParams>({
             detail: 'deployment record is missing installer_url or installer_name; cannot retry',
             instance: `/api/sites/${siteId}/deployments/${deploymentId}/retry`,
           });
+        }
+
+        // Legacy deployments (created before checksum automation) carry no
+        // pinned checksum — agents refuse install_software without one, so a
+        // bare retry would fail on every target. Compute + pin it now from
+        // the installer URL; on failure, surface the error instead of
+        // queuing commands every agent will refuse.
+        let healedChecksum = false;
+        if (!sha256) {
+          try {
+            const computed = await computeInstallerChecksum(installerUrl, {
+              signal: request.signal,
+            });
+            sha256 = computed.sha256_checksum;
+            healedChecksum = true;
+          } catch (err) {
+            if (err instanceof InstallerChecksumError) {
+              return installerChecksumErrorToResponse(err);
+            }
+            throw err;
+          }
         }
 
         const retryEpoch = Date.now();
@@ -150,7 +202,9 @@ export const POST = authorizedSiteHandler<RouteParams>({
         // ad-hoc fields (retriedAt, error) that aren't on the strict
         // `DeploymentTarget` union — Firestore writes don't need it.
         const updatedTargets: Array<Record<string, unknown>> = targets.map((target) => {
-          if (target.status !== 'failed') return target as unknown as Record<string, unknown>;
+          if (target.status !== 'failed' || (machineFilter && !machineFilter.has(target.machineId))) {
+            return target as unknown as Record<string, unknown>;
+          }
           const { error: _droppedError, ...rest } = target;
           void _droppedError;
           return {
@@ -166,6 +220,9 @@ export const POST = authorizedSiteHandler<RouteParams>({
           updatedAt: FieldValue.serverTimestamp(),
           // Clear completedAt — the deployment is back in flight.
           completedAt: FieldValue.delete(),
+          // Persist a freshly-computed checksum so future retries skip the
+          // download and the doc matches what the commands were issued with.
+          ...(healedChecksum && sha256 ? { sha256_checksum: sha256 } : {}),
         });
 
         emitMutation({

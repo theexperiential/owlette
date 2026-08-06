@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -581,12 +582,15 @@ export default function DeploymentDialog({
           {/* Silent Flags */}
           <div className="space-y-2">
             <Label htmlFor="silent-flags" className="text-white">silent install flags</Label>
-            <Input
+            <Textarea
               id="silent-flags"
               placeholder='/VERYSILENT /DIR="C:\\Program Files\\App"'
               value={silentFlags}
-              onChange={(e) => setSilentFlags(e.target.value)}
-              className="border-border bg-background text-white"
+              // Flags are a single command line — wrap for readability, but
+              // collapse typed/pasted newlines so the agent's installer
+              // invocation never receives a broken multi-line string.
+              onChange={(e) => setSilentFlags(e.target.value.replace(/\s*[\r\n]+\s*/g, ' '))}
+              className="border-border bg-background text-white font-mono text-sm"
             />
             <p className="text-xs text-muted-foreground">command-line flags for silent installation</p>
           </div>

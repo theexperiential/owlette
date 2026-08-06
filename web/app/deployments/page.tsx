@@ -49,7 +49,7 @@ const statusColors: Record<string, string> = {
   uninstalled: 'bg-purple-600 hover:bg-purple-700',
   failed: 'bg-red-600 hover:bg-red-700',
   cancelled: 'bg-orange-600 hover:bg-orange-700',
-  in_progress: '',
+  in_progress: 'bg-cyan-600 hover:bg-cyan-700',
   partial: 'bg-yellow-600 hover:bg-yellow-700',
   pending: 'bg-muted hover:bg-muted',
   closing_processes: 'bg-amber-600 hover:bg-amber-700',
@@ -85,9 +85,11 @@ const DeploymentRow = React.memo(function DeploymentRow({
   isSelected,
   onToggle,
   onRetry,
+  onRetryTarget,
   onUninstall,
   onDelete,
   onCancel,
+  retrying,
   timeDisplayMode,
   userTz,
   siteTz,
@@ -97,9 +99,12 @@ const DeploymentRow = React.memo(function DeploymentRow({
   isSelected: boolean;
   onToggle: (id: string) => void;
   onRetry: (deployment: Deployment) => void;
+  onRetryTarget: (deployment: Deployment, machineId: string) => void;
   onUninstall: (deployment: Deployment) => void;
   onDelete: (id: string) => void;
   onCancel: (deploymentId: string, machineId: string, installerName: string) => void;
+  /** in-flight retry keys: deployment id (bulk) or `${deploymentId}:${machineId}` (per-row). */
+  retrying: ReadonlySet<string>;
   timeDisplayMode: 'user' | 'machine' | 'site';
   userTz: string | undefined;
   siteTz: string | undefined;
@@ -107,6 +112,7 @@ const DeploymentRow = React.memo(function DeploymentRow({
 }) {
   const failedTargets = deployment.targets.filter((t: DeploymentTarget) => t.status === 'failed' && t.error);
   const errorMessages = failedTargets.map((t: DeploymentTarget) => `${t.machineId}: ${t.error}`).join('\n');
+  const bulkRetrying = retrying.has(deployment.id);
 
   return (
     <Collapsible
@@ -162,13 +168,14 @@ const DeploymentRow = React.memo(function DeploymentRow({
             <DropdownMenuContent align="end" className="border-border bg-secondary">
               {deployment.targets.some((t: DeploymentTarget) => t.status === 'failed') && (
                 <DropdownMenuItem
+                  disabled={bulkRetrying}
                   onClick={(e) => {
                     e.stopPropagation();
                     onRetry(deployment);
                   }}
                   className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer"
                 >
-                  <RefreshCw className="h-4 w-4 mr-2" />
+                  <RefreshCw className={`h-4 w-4 mr-2 ${bulkRetrying ? 'animate-spin' : ''}`} />
                   retry failed
                 </DropdownMenuItem>
               )}
@@ -233,6 +240,28 @@ const DeploymentRow = React.memo(function DeploymentRow({
                         <span className="text-xs text-muted-foreground">{target.progress}%</span>
                       )}
                       {getStatusBadge(target.status, target.error)}
+                      {target.status === 'failed' && (() => {
+                        const rowRetrying = bulkRetrying || retrying.has(`${deployment.id}:${target.machineId}`);
+                        return (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={rowRetrying}
+                                onClick={() => onRetryTarget(deployment, target.machineId)}
+                                aria-label={`retry deployment to ${target.machineId}`}
+                                className="h-7 px-2 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                              >
+                                <RefreshCw className={`h-4 w-4 ${rowRetrying ? 'animate-spin' : ''}`} />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>retry this machine</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        );
+                      })()}
                       {(target.status === 'pending' || target.status === 'closing_processes' || target.status === 'downloading' || target.status === 'installing') && (
                         <Button
                           size="sm"
@@ -284,6 +313,7 @@ export default function DeploymentsPage() {
     createTemplate,
     updateTemplate,
     deleteTemplate,
+    retryDeployment,
     cancelDeployment,
     deleteDeployment,
   } = useDeploymentManager(currentSiteId);
@@ -319,36 +349,47 @@ export default function DeploymentsPage() {
   // directly in useCallback deps recreates handlers on every render and
   // defeats React.memo on DeploymentRow. Keep a latest-ref and depend on
   // nothing, so the handlers keep stable identity for the whole list.
-  const createDeploymentRef = useRef(createDeployment);
-  createDeploymentRef.current = createDeployment;
+  const retryDeploymentRef = useRef(retryDeployment);
+  retryDeploymentRef.current = retryDeployment;
 
-  const handleRetryDeployment = useCallback(async (deployment: Deployment) => {
+  // In-flight retry keys: deployment id (bulk) or `${deploymentId}:${machineId}`
+  // (per-row). Drives disabled state + spinner on retry controls — the retry
+  // endpoint may stream + hash the installer to self-heal a legacy
+  // deployment's missing checksum, which takes a while for large binaries.
+  const [retrying, setRetrying] = useState<ReadonlySet<string>>(new Set());
+
+  const runRetry = useCallback(async (deployment: Deployment, machineIds?: string[]) => {
+    const key = machineIds?.length === 1
+      ? `${deployment.id}:${machineIds[0]}`
+      : deployment.id;
+    setRetrying((prev) => new Set(prev).add(key));
     try {
-      const failedTargets = deployment.targets.filter((t: DeploymentTarget) => t.status === 'failed');
-
-      if (failedTargets.length === 0) {
-        toast.error('no failed targets to retry');
-        return;
-      }
-
-      const machineIds = failedTargets.map((t: DeploymentTarget) => t.machineId);
-
-      await createDeploymentRef.current({
-        name: `${deployment.name} (Retry)`,
-        installer_name: deployment.installer_name,
-        installer_url: deployment.installer_url,
-        silent_flags: deployment.silent_flags,
-        verify_path: deployment.verify_path,
-        targets: [],
-      }, machineIds);
-
-      toast.success(`retrying deployment for ${failedTargets.length} failed machine(s)`);
+      const retried = await retryDeploymentRef.current(deployment.id, machineIds);
+      toast.success(`retrying deployment for ${retried} machine(s)`);
     } catch (error: unknown) {
       console.error('Failed to retry deployment:', error);
       const message = error instanceof Error ? error.message : String(error);
       toast.error(message || 'failed to retry deployment');
+    } finally {
+      setRetrying((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
     }
   }, []);
+
+  const handleRetryDeployment = useCallback(async (deployment: Deployment) => {
+    if (!deployment.targets.some((t: DeploymentTarget) => t.status === 'failed')) {
+      toast.error('no failed targets to retry');
+      return;
+    }
+    await runRetry(deployment);
+  }, [runRetry]);
+
+  const handleRetryTarget = useCallback(async (deployment: Deployment, machineId: string) => {
+    await runRetry(deployment, [machineId]);
+  }, [runRetry]);
 
   // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
   useEffect(() => {
@@ -580,6 +621,8 @@ export default function DeploymentsPage() {
                   isSelected={selectedDeploymentId === deployment.id}
                   onToggle={handleToggleDeployment}
                   onRetry={handleRetryDeployment}
+                  onRetryTarget={handleRetryTarget}
+                  retrying={retrying}
                   onUninstall={handleUninstallFromRow}
                   onDelete={handleDeleteFromRow}
                   onCancel={handleCancelTarget}

@@ -228,6 +228,9 @@ test('POST /api/sites/{s}/deployments/{id}/retry — re-queues failed targets', 
       installer_name: 'retry.exe',
       installer_url: 'https://example.com/retry.exe',
       silent_flags: '/S',
+      // Pinned checksum keeps the server's legacy self-heal (which would
+      // stream the installer URL) out of this test — network-free retry.
+      sha256_checksum: 'ab'.repeat(32),
       targets: [
         { machineId: MACHINE_ID_A, status: 'failed', error: 'boom' },
         { machineId: MACHINE_ID_B, status: 'completed' },
