@@ -13,7 +13,7 @@ import { PasskeyManager } from '@/components/PasskeyManager';
 /* eslint-disable @next/next/no-img-element */
 
 export default function Setup2FAPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, requiresMfaSetup, signOut } = useAuth();
   const router = useRouter();
 
   const [secret, setSecret] = useState('');
@@ -22,10 +22,15 @@ export default function Setup2FAPage() {
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [step, setStep] = useState<'setup' | 'verify' | 'backup'>('setup');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
-      router.push('/login');
+      // replace, not push: pushing leaves /setup-2fa one back-press away, and
+      // going back to a page that immediately redirects again is a trap. It
+      // also collapses the double history entry when handleCancel signs someone
+      // out and lands them here itself.
+      router.replace('/login');
       return;
     }
 
@@ -124,6 +129,49 @@ export default function Setup2FAPage() {
     router.push('/dashboard');
   };
 
+  /**
+   * Bailing out of 2FA setup. This used to be `router.back()`, which for a
+   * brand-new signup means /register — the form they had just submitted. An
+   * authenticated user staring at a blank signup form concludes the signup
+   * never took, fills it in again, and gets auth/email-already-in-use with
+   * nowhere to go: that is OWLETTE-WEB-46, reported by a real user.
+   *
+   * History is not a destination. Where "cancel" leads depends on why they are
+   * on this page at all:
+   *
+   *   - Mandatory. `requiresMfaSetup` is set at bootstrap for every new signup
+   *     (lib/actions/bootstrapUser.server.ts), and dashboard/page.tsx pushes
+   *     straight back here while it holds — so /dashboard is a loop, not an
+   *     exit. Ending the session is the only honest way out, and it leaves
+   *     nothing half-onboarded behind: they sign back in and get nagged again.
+   *   - Voluntary — enrolling a second factor from account settings. The
+   *     dashboard is where they came from and will not bounce them back.
+   */
+  const handleCancel = async () => {
+    if (!requiresMfaSetup) {
+      router.replace('/dashboard');
+      return;
+    }
+
+    setIsCancelling(true);
+    try {
+      await signOut();
+    } catch {
+      // signOut raises its own toast. Stay put rather than sending a user who
+      // is demonstrably still signed in to /login.
+      setIsCancelling(false);
+      return;
+    }
+    router.replace('/login');
+  };
+
+  /**
+   * Say what the button does. When 2FA is mandatory there is nothing to cancel
+   * back to — the action is ending the session, and calling that "cancel"
+   * is how you get a user who did not expect to be signed out.
+   */
+  const cancelLabel = requiresMfaSetup ? 'sign out' : 'cancel';
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     toast.success('Copied to clipboard');
@@ -203,10 +251,11 @@ export default function Setup2FAPage() {
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={() => router.back()}
+                  onClick={handleCancel}
+                  disabled={isCancelling}
                   className="w-full text-sm text-muted-foreground hover:text-foreground"
                 >
-                  cancel
+                  {cancelLabel}
                 </Button>
               </div>
             </div>
@@ -254,11 +303,11 @@ export default function Setup2FAPage() {
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={() => router.back()}
-                  disabled={isSubmitting}
+                  onClick={handleCancel}
+                  disabled={isSubmitting || isCancelling}
                   className="w-full text-sm text-muted-foreground hover:text-foreground"
                 >
-                  cancel
+                  {cancelLabel}
                 </Button>
               </div>
             </form>

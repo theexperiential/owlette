@@ -21,6 +21,7 @@ import { InAppBrowserNotice } from '@/components/InAppBrowserNotice';
 import { InlineNotice } from '@/components/ui/inline-notice';
 import { useFieldError } from '@/hooks/useFieldError';
 import { useInAppBrowser } from '@/hooks/useInAppBrowser';
+import { useRedirectIfAuthenticated } from '@/hooks/useRedirectIfAuthenticated';
 
 export default function RegisterPage() {
   const [firstName, setFirstName] = useState('');
@@ -53,9 +54,20 @@ export default function RegisterPage() {
    *  the message; a message alone does not say WHERE to fix it. */
   const { error: formError, fail, clear: clearError, fieldProps } = useFieldError('register-form-error');
   const turnstileRef = useRef<TurnstileHandle>(null);
+  /**
+   * Latched for the rest of this page's life once a sign-in starts here, so the
+   * guard below cannot pre-empt our own post-signup navigation. A ref, not the
+   * `loading` state above: `loading` is cleared in the handlers' `finally`,
+   * which runs while the push to /setup-2fa is still in flight.
+   */
+  const authInFlight = useRef(false);
   const { signUp, signInWithGoogle } = useAuth();
   const inApp = useInAppBrowser();
   const router = useRouter();
+
+  // A signed-in user has no business on the signup form — see the hook. The
+  // proxy rule this mirrors is bypassed entirely by client-side history pops.
+  useRedirectIfAuthenticated({ skip: authInFlight.current });
 
   /**
    * Google is unavailable — either we recognised the host app before the user
@@ -100,6 +112,7 @@ export default function RegisterPage() {
       return fail('terms', 'agree to the terms of service and privacy policy to continue');
     }
 
+    authInFlight.current = true;
     setLoading(true);
 
     try {
@@ -123,6 +136,9 @@ export default function RegisterPage() {
       } else {
         toast.error(sanitizeError(error));
       }
+      // Nobody was signed in, so re-arm the guard: this page stays mounted, and
+      // the session could still change under it (signing in from another tab).
+      authInFlight.current = false;
       // Turnstile tokens are single-use. The page stays mounted after a failed
       // submit, so the consumed token has to be cleared before a retry.
       turnstileRef.current?.reset();
@@ -138,6 +154,7 @@ export default function RegisterPage() {
     // ("by continuing you agree to..."), which is the standard pattern for
     // federated sign-up. Both paths still surface the same two links.
     const alreadyBlocked = googleUnavailable;
+    authInFlight.current = true;
     setLoading(true);
 
     try {
@@ -159,6 +176,8 @@ export default function RegisterPage() {
       // New users are routed onward to /setup-2fa by the dashboard itself.
       router.push(await resolvePostSignInPath('/dashboard'));
     } catch (error) {
+      // Nobody was signed in — re-arm the guard. See the email path above.
+      authInFlight.current = false;
       // A refused popup is not a transient failure to be re-tried — it is an
       // environment that cannot do federated sign-in at all. Swap in the
       // inline remediation instead of a toast that expires with no next step.

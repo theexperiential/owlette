@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState, useEffect } from 'react';
+import { Suspense, useRef, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,14 @@ import { FormError } from '@/components/ui/form-error';
 import { InAppBrowserNotice } from '@/components/InAppBrowserNotice';
 import { useFieldError } from '@/hooks/useFieldError';
 import { useInAppBrowser } from '@/hooks/useInAppBrowser';
+import { useRedirectIfAuthenticated } from '@/hooks/useRedirectIfAuthenticated';
+
+/**
+ * A `redirect` param is only usable if it is a same-origin relative path —
+ * `//evil.example` is protocol-relative and would leave the site.
+ */
+const safeRedirect = (value: string | null): string | null =>
+  value && value.startsWith('/') && !value.startsWith('//') ? value : null;
 
 function LoginForm() {
   const [email, setEmail] = useState('');
@@ -51,6 +59,13 @@ function LoginForm() {
    * popup blocker — so the remediation appears even when detection said no.
    */
   const [popupBlocked, setPopupBlocked] = useState(false);
+  /**
+   * Latched once a sign-in starts here, so the guard below cannot pre-empt the
+   * navigation these handlers are already resolving. A ref, not `loading`:
+   * `loading` is cleared in their `finally`, which runs while the push is still
+   * in flight — and that push may be to /verify-2fa, not the guard's target.
+   */
+  const authInFlight = useRef(false);
   const { signIn, signInWithGoogle } = useAuth();
   const inApp = useInAppBrowser();
   const router = useRouter();
@@ -85,8 +100,8 @@ function LoginForm() {
 
   // Read redirect parameter from URL (validated: must be a safe relative path)
   useEffect(() => {
-    const redirect = searchParams.get('redirect');
-    if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
+    const redirect = safeRedirect(searchParams.get('redirect'));
+    if (redirect) {
       setRedirectUrl(redirect);
     }
   }, [searchParams]);
@@ -97,6 +112,19 @@ function LoginForm() {
   // signup — see the module comment.
   const checkMfaAndRedirect = (settleMs?: number) =>
     resolvePostSignInPath(redirectUrl, settleMs);
+
+  // Already signed in? Then this form can only waste their time. Mirrors the
+  // proxy rule, which a client-side history pop never reaches.
+  //
+  // Reads the param directly rather than using the `redirectUrl` state above:
+  // effects flush in declaration order within a commit, so the guard would fire
+  // once against the '/dashboard' default before setRedirectUrl had landed, and
+  // a signed-in visitor to /login?redirect=%2Froost would end up on the
+  // dashboard instead of where they asked to go.
+  useRedirectIfAuthenticated({
+    target: safeRedirect(searchParams.get('redirect')) ?? '/dashboard',
+    skip: authInFlight.current,
+  });
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,6 +139,7 @@ function LoginForm() {
       return fail('password', 'enter your password');
     }
 
+    authInFlight.current = true;
     setLoading(true);
 
     try {
@@ -127,6 +156,9 @@ function LoginForm() {
 
       router.push(redirectPath);
     } catch (error) {
+      // Nobody was signed in, so re-arm the guard: this page stays mounted, and
+      // the session could still change under it (signing in from another tab).
+      authInFlight.current = false;
       toast.error(sanitizeError(error));
     } finally {
       setLoading(false);
@@ -135,6 +167,7 @@ function LoginForm() {
 
   const handleGoogleLogin = async () => {
     const alreadyBlocked = googleUnavailable;
+    authInFlight.current = true;
     setLoading(true);
 
     try {
@@ -151,6 +184,8 @@ function LoginForm() {
 
       router.push(redirectPath);
     } catch (error) {
+      // Nobody was signed in — re-arm the guard. See the email path above.
+      authInFlight.current = false;
       // A refused popup is not a transient failure to be re-tried — it is an
       // environment that cannot do federated sign-in at all. Swap in the
       // inline remediation instead of a toast that expires with no next step.
@@ -170,6 +205,7 @@ function LoginForm() {
   };
 
   const handlePasskeyLogin = async () => {
+    authInFlight.current = true;
     setLoading(true);
 
     try {
@@ -220,6 +256,8 @@ function LoginForm() {
       const redirectPath = await checkMfaAndRedirect(0);
       router.push(redirectPath);
     } catch (error) {
+      // Nobody was signed in — re-arm the guard. See the email path above.
+      authInFlight.current = false;
       if (error instanceof Error && error.name === 'NotAllowedError') {
         toast.error('passkey authentication was cancelled');
       } else {
