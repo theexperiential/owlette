@@ -3,7 +3,7 @@ psutil==5.9.5
 pystray==0.19.4
 email-validator==2.0.0
 GPUtil==1.4.0
-cryptography>=50.0.0,<51.0.0
+cryptography==50.0.0
 google-auth==2.22.0
 google-api-python-client==2.98.0
 google-auth-oauthlib==1.0.0
@@ -24,10 +24,14 @@ WinTmp==1.2.0  # CPU and GPU temperature (LibreHardwareMonitor wrapper)
 nvidia-ml-py==12.560.30  # NVIDIA GPU fallback (NVML bindings)
 
 # Cortex AI agent (local LLM-powered investigation + chat)
-claude-agent-sdk>=0.1.0,<2.0.0
+# Held at 0.1.69, well behind latest: 0.2.x needs mcp>=1.23.0, and every mcp
+# from 1.23.0 on requires pywin32>=310, which our pywin32==306 pin forbids.
+# Under the old range pip silently backtracked to this same version; the pin
+# just makes that visible. Raising pywin32 is what unblocks the upgrade.
+claude-agent-sdk==0.1.69
 
 # Error monitoring (optional — only active when DSN configured in config.json)
-sentry-sdk>=2.0.0,<3.0.0
+sentry-sdk==2.66.1
 
 # Firebase integration - now using REST API with OAuth tokens (no Admin SDK needed)
 # firebase-admin==6.4.0  # REMOVED - replaced with REST API client
