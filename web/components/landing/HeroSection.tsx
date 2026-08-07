@@ -4,23 +4,6 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { InteractiveBackground } from './InteractiveBackground';
 import { OwletteEye } from './OwletteEye';
-import { RotatingWord } from './RotatingWord';
-
-const prefixWords = ['monitor', 'deploy software to', 'ask questions to', 'remotely control', 'manage', 'script', 'lay out displays on', 'diagnose'];
-const suffixWords = [
-  'computers',
-  'media servers',
-  'interactive installations',
-  'interactive exhibits',
-  'kiosks',
-  'digital signage',
-  'TouchDesigner PCs',
-  'Unreal Engine nodes',
-  'Node.js servers',
-  'projector walls',
-  'LED arrays',
-  'video walls',
-];
 
 export function HeroSection() {
   return (
@@ -45,18 +28,15 @@ export function HeroSection() {
           />
         </div>
 
-        {/* Headline */}
+        {/* Headline — the <br> only fires on the narrowest phones, where
+            "never miss a beat" would otherwise wrap mid-phrase. */}
         <h1 className="hero-headline text-foreground mb-4 sm:mb-6 hero-enter">
-          attention<br className="sm:hidden" /> is all you need
+          never miss<br className="sm:hidden" /> a beat
         </h1>
 
         {/* Subheadline */}
-        <p className="hero-subheadline max-w-5xl mx-auto mb-8 sm:mb-10 h-[4.5em] sm:h-[3em] flex items-center justify-center overflow-hidden hero-enter-delay-1">
-          <span className="text-center">
-            <RotatingWord words={prefixWords} align="end" direction="up" />{' '}
-            all of your{' '}
-            <RotatingWord words={suffixWords} align="start" direction="down" delay={2000} />
-          </span>
+        <p className="hero-subheadline max-w-5xl mx-auto mb-8 sm:mb-10 hero-enter-delay-1">
+          owlette keeps your installations running 24/7
         </p>
 
         {/* CTA */}

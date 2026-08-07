@@ -5,10 +5,10 @@
 
 export const SITE = "https://owlette.app";
 export const PRODUCT_NAME = "owlette";
-export const TAGLINE = "attention is all you need";
+export const TAGLINE = "keep your installation running";
 
 export const SUMMARY =
-  "owlette gives your machines the attention they need — so you don't have to. Remote monitoring, auto-recovery, and AI-powered fleet management for Windows.";
+  "owlette keeps your installations running 24/7 — remote monitoring, auto-recovery, and AI-powered fleet management for Windows machines.";
 
 /** What owlette actually is, one paragraph (from the README). */
 export const WHAT_IT_IS =

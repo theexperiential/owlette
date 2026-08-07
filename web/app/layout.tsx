@@ -25,16 +25,16 @@ const siteUrl = process.env.RAILWAY_PUBLIC_DOMAIN
   : 'https://owlette.app';
 
 export const metadata: Metadata = {
-  title: "owlette — attention is all you need",
-  description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
+  title: "owlette — keep every windows machine running",
+  description: "owlette keeps your installations running 24/7 — remote monitoring, auto-recovery, and AI-powered fleet management for Windows machines.",
   icons: {
     icon: '/icon.svg',
     shortcut: '/icon.svg',
     apple: '/owlette-icon.png',
   },
   openGraph: {
-    title: "owlette — attention is all you need",
-    description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
+    title: "owlette — keep every windows machine running",
+    description: "owlette keeps your installations running 24/7 — remote monitoring, auto-recovery, and AI-powered fleet management for Windows machines.",
     url: siteUrl,
     siteName: "owlette",
     images: [
@@ -50,8 +50,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: "owlette — attention is all you need",
-    description: "owlette gives your machines the attention they need — so you don't have to. remote monitoring, auto-recovery, and AI-powered fleet management for Windows.",
+    title: "owlette — keep every windows machine running",
+    description: "owlette keeps your installations running 24/7 — remote monitoring, auto-recovery, and AI-powered fleet management for Windows machines.",
     images: ['/og-image.png'],
   },
   metadataBase: new URL(siteUrl),

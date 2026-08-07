@@ -290,7 +290,7 @@ function LoginForm() {
             <div className="space-y-1">
               <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
               <CardDescription className="text-muted-foreground">
-                attention is all you need
+                keep your installation running
               </CardDescription>
             </div>
           </CardHeader>
@@ -461,7 +461,7 @@ export default function LoginPage() {
               <div className="space-y-1">
                 <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
                 <CardDescription className="text-muted-foreground">
-                  attention is all you need
+                  keep your installation running
                 </CardDescription>
               </div>
             </CardHeader>

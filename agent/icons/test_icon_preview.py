@@ -29,7 +29,7 @@ def create_preview():
     # Draw title
     draw = ImageDraw.Draw(preview)
     draw.text((20, 20), "Owlette HAL 9000 Tray Icon - Windows 11 Style", fill=(255, 255, 255))
-    draw.text((20, 40), "attention is all you need", fill=(156, 163, 175))  # Gray-400
+    draw.text((20, 40), "keep your installation running", fill=(156, 163, 175))  # Gray-400
 
     y_offset = 80
 

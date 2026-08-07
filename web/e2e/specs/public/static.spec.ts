@@ -10,9 +10,9 @@ test.describe('public routes', () => {
   test('landing page exposes the primary CTAs', async ({ page }) => {
     await page.goto('/');
     const hero = page.locator('section', {
-      has: page.getByRole('heading', { name: /attention is all you need/i }),
+      has: page.getByRole('heading', { name: /never miss a beat/i }),
     }).first();
-    await expect(hero.getByRole('heading', { name: /attention is all you need/i })).toBeVisible();
+    await expect(hero.getByRole('heading', { name: /never miss a beat/i })).toBeVisible();
     await expect(hero.getByRole('link', { name: 'get started', exact: true })).toHaveAttribute('href', '/register');
     await expect(page.getByRole('banner').getByRole('link', { name: 'sign in', exact: true })).toHaveAttribute('href', '/login');
   });
