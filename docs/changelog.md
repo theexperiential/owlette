@@ -9,7 +9,7 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
-## [2.12.19] - 2026-07-15
+## [2.12.19] - 2026-08-07
 
 ### added
 

@@ -8,6 +8,14 @@ setlocal enabledelayedexpansion
 :: Run this script to build a complete installer from scratch
 :: ============================================================================
 
+:: The embedded interpreter's python311._pth enables `import site` so pip works,
+:: which also exposes THIS machine's user site-packages (%APPDATA%\Python\...)
+:: to every python/pip call below. That leaks the build machine's unrelated
+:: packages into dependency resolution: pip reports conflicts against packages
+:: that are not in the installer, and `pip list`/`pip freeze` describe a tree
+:: that is not the one being shipped. Seal it off for the whole build.
+set PYTHONNOUSERSITE=1
+
 echo.
 echo ========================================
 echo Owlette Embedded Installer Builder
