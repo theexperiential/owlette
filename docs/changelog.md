@@ -9,7 +9,7 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
-## [2.12.19] - 2026-07-15
+## [2.12.19] - 2026-08-07
 
 ### added
 
@@ -29,6 +29,10 @@ All notable changes to owlette are documented here. The format is based on [Keep
 ### changed
 
 - **Offline alert emails are consolidated and accurate.** When several machines at a site go offline around the same time, one email now lists the full picture — machines not responding, machines that reported shutting down, and machines still offline from an earlier alert — with a subject count that matches the list. Previously a staggered site-wide outage produced several emails with partial counts. Alerts wait for the situation to stabilize (about ten minutes) before sending.
+
+### security
+
+- **The bundled cryptography library is updated to 50.0.0.** This clears three published advisories against the previous version (CVE-2026-69247, CVE-2026-69249, CVE-2026-69248). None of them were reachable from owlette — the affected PKCS#7 decryption and X.509 chain-verification routines are not used by the agent, which relies on the library only for token encryption and device-code pairing. The update keeps the bundled dependency clean for operators who run vulnerability scanners against their machines.
 
 ## [2.12.18] - 2026-07-09
 
