@@ -7,7 +7,7 @@ cryptography>=44.0.0,<45.0.0
 google-auth==2.22.0
 google-api-python-client==2.98.0
 google-auth-oauthlib==1.0.0
-customtkinter==5.2.2
+customtkinter==6.0.0
 CTkListbox==0.9
 CTkMessagebox==2.5
 CTkToolTip==0.8
