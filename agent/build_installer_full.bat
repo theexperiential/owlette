@@ -139,16 +139,26 @@ echo Pip installed successfully!
 :: Step 5: Install dependencies
 :: ============================================================================
 echo [5/9] Installing dependencies (this may take a few minutes)...
-:: Install only from PyPI (no custom indexes) and verify TLS
-"%~dp0build\python\python.exe" -m pip install --no-warn-script-location --ignore-installed --only-binary=:all: -r "%~dp0requirements.txt"
+:: Wheels only, so no package runs arbitrary setup.py code at build time. GPUtil
+:: is the sole exception - it has never published a wheel - and is named here
+:: explicitly. It used to be handled by a blanket "retry with source builds"
+:: fallback, which meant the --only-binary pass failed on EVERY build and the
+:: real install was the unconstrained retry, permitting source builds for all
+:: 77 packages. Naming the exception keeps the guarantee for the other 76: a
+:: missing wheel for anything else now fails the build instead of widening it.
+::
+:: Deliberately NOT --ignore-installed. get-pip (step 4) bootstraps its own
+:: setuptools/packaging/wheel, and --ignore-installed skips pip's uninstall
+:: step, so the pinned versions were written over the bootstrap's files while
+:: its .dist-info survived. Every installer shipped two setuptools and two
+:: packaging metadata dirs; importlib.metadata then resolved by directory scan
+:: order, so a scanner on a fleet machine read the newer (patched) version
+:: while the older (vulnerable) code was what actually executed.
+"%~dp0build\python\python.exe" -m pip install --no-warn-script-location --only-binary=:all: --no-binary=GPUtil -r "%~dp0requirements.txt"
 if errorlevel 1 (
-    echo WARNING: Some packages may not have binary wheels, retrying with source builds...
-    "%~dp0build\python\python.exe" -m pip install --no-warn-script-location --ignore-installed -r "%~dp0requirements.txt"
-    if errorlevel 1 (
-        echo ERROR: Failed to install dependencies
-        pause
-        exit /b 1
-    )
+    echo ERROR: Failed to install dependencies
+    pause
+    exit /b 1
 )
 :: Verify installed packages have no dependency conflicts
 "%~dp0build\python\python.exe" -m pip check
