@@ -5,6 +5,17 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
+## [2.12.20] - 2026-08-08
+
+### security
+
+- **The agent's bundled dependencies are updated and trimmed.** setuptools and requests move to versions clearing several published advisories, and three unused Google API libraries left over from an old Firebase integration are removed entirely — 19 fewer packages in the installer. None of the advisories were reachable from owlette; this is dependency hygiene, so that operators scanning their own machines see a clean bill.
+- **Installer metadata is now accurate.** Previous installers recorded two conflicting versions for a couple of bundled libraries, so a vulnerability scanner reading a machine could report a patched version while older code was the code actually running. Every bundled library now reports exactly one version, and the build fails outright if its dependencies disagree.
+
+### changed
+
+- **The agent's HTTP layer moves off an end-of-life release.** One of the removed Google libraries had been holding the networking stack on a 2024 version that no longer receives fixes. Nothing about how the agent talks to owlette changes — it is simply maintained again.
+
 ## [2.12.19] - 2026-08-07
 
 ### added
