@@ -7,11 +7,9 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { HERO_HEADLINE, HERO_SUBHEADLINE } from '../../helpers/landing';
 
 test.use({ storageState: { cookies: [], origins: [] } });
-
-const HERO_HEADLINE = /never miss a beat/i;
-const HERO_SUBHEADLINE = /owlette keeps your installations running 24\/7/i;
 
 test.describe('landing — hero', () => {
   test('hero renders', async ({ page }) => {
@@ -21,8 +19,7 @@ test.describe('landing — hero', () => {
       has: page.getByRole('heading', { name: HERO_HEADLINE }),
     }).first();
 
-    // Headline. The accessible name flattens the inline <br> so a single
-    // case-insensitive match works on both mobile and desktop layouts.
+    // Headline — whichever phrase this request rolled from HERO_HEADLINES.
     await expect(
       hero.getByRole('heading', { name: HERO_HEADLINE }),
     ).toBeVisible();

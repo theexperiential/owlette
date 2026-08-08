@@ -4,8 +4,14 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { InteractiveBackground } from './InteractiveBackground';
 import { OwletteEye } from './OwletteEye';
+import type { HeroHeadline } from '@/lib/heroHeadlines';
 
-export function HeroSection() {
+interface HeroSectionProps {
+  /** Chosen per request by the server component — see app/page.tsx. */
+  headline: HeroHeadline;
+}
+
+export function HeroSection({ headline }: HeroSectionProps) {
   return (
     <section className="relative sm:h-[100dvh] flex flex-col pt-16 overflow-hidden">
       {/* Interactive mouse-reactive background */}
@@ -28,10 +34,13 @@ export function HeroSection() {
           />
         </div>
 
-        {/* Headline — the <br> only fires on the narrowest phones, where
-            "never miss a beat" would otherwise wrap mid-phrase. */}
-        <h1 className="hero-headline text-foreground mb-4 sm:mb-6 hero-enter">
-          never miss<br className="sm:hidden" /> a beat
+        {/* Headline — text-balance rather than a hardcoded <br>, since the
+            phrase varies per load and a fixed break point would split most of
+            them in the wrong place. Every phrase fits one line at the 72px
+            desktop ceiling; balancing is what keeps the longer ones from
+            leaving an orphan word on phones. */}
+        <h1 className="hero-headline text-foreground mb-4 sm:mb-6 hero-enter text-balance">
+          {headline}
         </h1>
 
         {/* Subheadline */}
