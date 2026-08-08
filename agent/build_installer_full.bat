@@ -160,10 +160,16 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-:: Verify installed packages have no dependency conflicts
+:: Verify installed packages have no dependency conflicts. Fatal: this was a
+:: non-fatal WARNING for as long as the tree had a standing conflict (wheel
+:: wanted packaging>=24.0 against our packaging==23.1), which trained everyone
+:: to ignore it and meant a conflict introduced by a future dependency bump
+:: would have shipped silently. The tree is clean now, so the check can gate.
 "%~dp0build\python\python.exe" -m pip check
 if errorlevel 1 (
-    echo WARNING: Dependency conflicts detected (non-fatal)
+    echo ERROR: Dependency conflicts detected - see above
+    pause
+    exit /b 1
 )
 echo Dependencies installed successfully!
 

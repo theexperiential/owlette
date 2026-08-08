@@ -4,16 +4,13 @@ pystray==0.19.4
 email-validator==2.0.0
 GPUtil==1.4.0
 cryptography==50.0.0
-google-auth==2.22.0
-google-api-python-client==2.98.0
-google-auth-oauthlib==1.0.0
 customtkinter==5.2.2
 CTkListbox==0.9
 CTkMessagebox==2.5
 CTkToolTip==0.8
-packaging==23.1
-setuptools==75.6.0
-requests==2.31.0
+packaging==24.2  # >=24.0 required by the wheel that get-pip bootstraps
+setuptools==83.0.0  # >=78.1.1 fixes PackageIndex.download path traversal (CVE-2025-47273)
+requests==2.34.2  # >=2.32.0/.4/2.33.0 CVE fixes; 2.34.0 also fixes greedy no_proxy matching
 tzlocal==5.2  # Convert Windows registry tz names to IANA (e.g. "Pacific Standard Time" -> "America/Los_Angeles") for dashboard timezone display
 
 # Screenshot capture
@@ -40,3 +37,8 @@ sentry-sdk==2.66.1
 # Firebase integration - now using REST API with OAuth tokens (no Admin SDK needed)
 # firebase-admin==6.4.0  # REMOVED - replaced with REST API client
 # google-cloud-firestore==2.14.0  # REMOVED - replaced with REST API client
+# google-auth==2.22.0  # REMOVED - leftover from the Admin SDK; no agent code imports google.*
+# google-api-python-client==2.98.0  # REMOVED - same
+# google-auth-oauthlib==1.0.0  # REMOVED - same. Dropping the three removed 17
+#   packages and, because google-auth 2.22.0 was the only thing pinning
+#   urllib3<2.0, unpinned the HTTP transport from the EOL 1.26.20 to 2.x.
