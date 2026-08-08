@@ -9,8 +9,9 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ### security
 
-- **The agent's bundled dependencies are updated and trimmed.** setuptools and requests move to versions clearing several published advisories, and three unused Google API libraries left over from an old Firebase integration are removed entirely — 19 fewer packages in the installer. None of the advisories were reachable from owlette; this is dependency hygiene, so that operators scanning their own machines see a clean bill.
-- **Installer metadata is now accurate.** Previous installers recorded two conflicting versions for a couple of bundled libraries, so a vulnerability scanner reading a machine could report a patched version while older code was the code actually running. Every bundled library now reports exactly one version, and the build fails outright if its dependencies disagree.
+- **The agent's bundled dependencies are updated and trimmed.** setuptools and requests move to versions clearing several published advisories, and three unused Google API libraries left over from an old Firebase integration are removed entirely — 17 fewer packages, and a smaller installer. None of the advisories were reachable from owlette; this is dependency hygiene rather than a fix for anything exploitable.
+- **A fresh install now reports its bundled libraries accurately.** Earlier installers could record two conflicting versions of the same library, so a vulnerability scanner reading a machine might report one version while different code was what actually ran. A new install now carries exactly one version of each library, and the build fails outright if its dependencies disagree.
+- **Known limitation — upgrading in place does not clear the old versions.** Installing over an existing agent replaces files but leaves the previous version's records behind, so a machine upgraded several times still reports stale versions to a scanner even though the current code is what runs. Only a fresh install gives an accurate reading today. Uninstalling first preserves your configuration, tokens, and logs.
 
 ### changed
 
