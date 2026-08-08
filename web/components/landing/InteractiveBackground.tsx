@@ -1,25 +1,55 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 interface MousePosition {
   x: number;
   y: number;
 }
 
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
+/** Touch support can't change mid-session, so there is nothing to subscribe to. */
+const subscribeNever = () => () => undefined;
+
+function subscribeReducedMotion(onChange: () => void) {
+  const mql = window.matchMedia(REDUCED_MOTION_QUERY);
+  mql.addEventListener('change', onChange);
+  return () => mql.removeEventListener('change', onChange);
+}
+
+const getTouchSnapshot = () =>
+  'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+const getReducedMotionSnapshot = () =>
+  window.matchMedia(REDUCED_MOTION_QUERY).matches;
+
+/**
+ * Both capabilities report false during SSR *and* during the hydration render,
+ * so the client's first pass matches the server HTML exactly; React then
+ * re-renders with the real values once hydration has committed.
+ *
+ * A lazy `useState` initializer looks equivalent but runs during the hydration
+ * render itself, so it returned the real value where the server had returned
+ * false. On every touch device that swapped the animated branch for the static
+ * one mid-hydration, and React discarded and re-rendered the subtree
+ * (hydration-mismatch error #418).
+ */
+const getServerSnapshot = () => false;
+
 export function InteractiveBackground() {
   const containerRef = useRef<HTMLDivElement>(null);
   const primaryRef = useRef<HTMLDivElement>(null);
   const secondaryRef = useRef<HTMLDivElement>(null);
-  // Detect touch device + reduced-motion preference in lazy useState
-  // initializers. These only run on the client (component is 'use client') and
-  // are SSR-guarded with `typeof window` — no post-mount setState needed,
-  // which avoids react-hooks/set-state-in-effect.
-  const [isTouchDevice] = useState(
-    () => typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0),
+  const isTouchDevice = useSyncExternalStore(
+    subscribeNever,
+    getTouchSnapshot,
+    getServerSnapshot,
   );
-  const [prefersReducedMotion] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  const prefersReducedMotion = useSyncExternalStore(
+    subscribeReducedMotion,
+    getReducedMotionSnapshot,
+    getServerSnapshot,
   );
   const animationRef = useRef<number | null>(null);
   const targetPos = useRef<MousePosition>({ x: 0.5, y: 0.5 });
