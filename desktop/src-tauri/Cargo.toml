@@ -29,6 +29,9 @@ log = "0.4"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-single-instance = "2"
+# Native file/folder pickers for the process detail form — the same Win32 common
+# dialogs the legacy GUI opened through tkinter.
+tauri-plugin-dialog = "2"
 # The host side is Windows-only by design (it drives the SCM, a named mutex and
 # WM_CLOSE), so these are unconditional rather than target-gated.
 notify = "8"

@@ -43,6 +43,8 @@ pub fn run() {
         log::warn!("could not forward the second instance argv: {error}");
       }
     }))
+    // Native file and folder pickers for the process detail form.
+    .plugin(tauri_plugin_dialog::init())
     .invoke_handler(tauri::generate_handler![
       commands::owlette_data_root,
       commands::read_owlette_json,
