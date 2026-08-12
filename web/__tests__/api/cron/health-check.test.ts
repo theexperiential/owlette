@@ -132,7 +132,15 @@ describe('classifyMachineHealth', () => {
   });
 
   it('treats a heartbeat exactly at the threshold as ok (boundary)', () => {
-    expect(classifyMachineHealth(snapshot({ lastHeartbeatMs: NOW - 3 * MIN }), NOW)).toEqual({
+    expect(classifyMachineHealth(snapshot({ lastHeartbeatMs: NOW - 5 * MIN }), NOW)).toEqual({
+      action: 'ok',
+    });
+  });
+
+  it('keeps two consecutive missed idle heartbeats inside the threshold', () => {
+    // Idle cadence is 120s; two missed beats (~4 min of silence) must not mark a
+    // healthy machine stale — that headroom is why the threshold is 5 minutes.
+    expect(classifyMachineHealth(snapshot({ lastHeartbeatMs: NOW - 4 * MIN }), NOW)).toEqual({
       action: 'ok',
     });
   });
@@ -193,7 +201,7 @@ describe('classifyMachineHealth', () => {
   });
 
   it('keeps debouncing until stale is confirmed for long enough', () => {
-    const m = snapshot({ lastHeartbeatMs: NOW - 4 * MIN, staleSinceMs: NOW - 2 * MIN });
+    const m = snapshot({ lastHeartbeatMs: NOW - 6 * MIN, staleSinceMs: NOW - 3 * MIN });
     expect(classifyMachineHealth(m, NOW)).toEqual({ action: 'debounce' });
   });
 
@@ -616,7 +624,7 @@ describe('GET /api/cron/health-check', () => {
       docs: [
         machineDoc('INF-FLEX-3', {
           online: true,
-          lastHeartbeat: ts(now - 5 * MIN),
+          lastHeartbeat: ts(now - 7 * MIN),
           // no health.staleSince yet
         }),
       ],

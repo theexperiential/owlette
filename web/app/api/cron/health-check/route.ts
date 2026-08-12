@@ -30,8 +30,11 @@ import { createWebhookBillingCache } from '@/lib/billing/webhookDelivery.server'
  *   Header:    X-Cron-Secret: <CRON_SECRET value>
  */
 
-// A machine is considered offline if its heartbeat is older than this
-const OFFLINE_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
+// A machine is considered offline if its heartbeat is older than this. Sized well
+// clear of the agent's 120s idle heartbeat cadence (agent/src/firebase_client.py)
+// so two consecutive missed beats still don't trip it — at 3 minutes a single slow
+// tick was enough to mark a healthy machine stale.
+const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
 // Don't re-alert for the same machine within this window
 const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
@@ -49,10 +52,10 @@ const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 // boolean means a stale instant left behind by a cancel won't suppress either.
 const PLANNED_DOWNTIME_GRACE_MS = 15 * 60 * 1000; // 15 minutes, applied symmetrically
 
-// Debounce: the idle heartbeat cadence is 120s, so a single missed beat can push a
-// healthy machine just past OFFLINE_THRESHOLD_MS. Require the machine to still be
+// Debounce: the idle heartbeat cadence is 120s, so a short run of missed beats can
+// push a healthy machine past OFFLINE_THRESHOLD_MS. Require the machine to still be
 // stale on a later scan — at least this long after first observed stale — before
-// emailing, so a one-off blip never pages.
+// emailing, so a transient gap never pages.
 const STALE_CONFIRM_MS = OFFLINE_THRESHOLD_MS; // ~one extra cron interval of confirmed staleness
 
 // Site-level settling window. A machine confirmed not-responding is added to the
@@ -455,8 +458,8 @@ export async function GET(request: NextRequest) {
 
         if (decision.action === 'debounce') {
           // First scan we've seen this machine stale — record when. We only
-          // alert if it's still stale on a later scan (guards against a single
-          // missed 120s idle heartbeat).
+          // alert if it's still stale on a later scan (guards against a
+          // transient gap in the 120s idle heartbeat).
           if (staleSinceMs <= 0) {
             await machineDoc.ref.set(
               { health: { staleSince: FieldValue.serverTimestamp() } },

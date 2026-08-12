@@ -9,7 +9,7 @@ description: "Owlette sends email notifications for machine health, process, thr
 
 | category | trigger | preference gate | delivery path |
 |----------|---------|-----------------|---------------|
-| **Machine offline** | A previously online machine has a heartbeat older than 3 minutes | `healthAlerts` | `GET /api/cron/health-check` sends per-site emails and respects a 1-hour per-machine cooldown |
+| **Machine offline** | A previously online machine has a heartbeat older than 5 minutes | `healthAlerts` | `GET /api/cron/health-check` sends per-site emails and respects a 1-hour per-machine cooldown |
 | **Agent connection failure** | The agent posts a `connection_failure` event | `healthAlerts` | `POST /api/agent/alert` sends immediately, subject to the agent-alert rate limit |
 | **Process crashed** | The agent posts `process_crash` for a monitored process | `processAlerts` | `POST /api/agent/alert` queues the event; `GET /api/cron/process-alerts` sends a digest |
 | **Process failed to start** | The agent posts `process_start_failed` | `processAlerts` | Same process-alert queue and digest path |
