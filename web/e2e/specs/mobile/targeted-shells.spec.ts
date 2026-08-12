@@ -8,11 +8,9 @@ import {
 } from '../../helpers/coverageSeed';
 
 test.describe('mobile authenticated shells', () => {
-  test.use({
-    ...roleState('admin'),
-    viewport: { width: 390, height: 844 },
-    isMobile: true,
-  });
+  // Viewport / isMobile / hasTouch come from the `mobile-chromium` project in
+  // playwright.config.ts, which owns every spec under specs/mobile/**.
+  test.use(roleState('admin'));
 
   test('dashboard list controls render without clipping', async ({ page }) => {
     await seedMachine('site-A', 'e2e-mobile-machine');
@@ -38,11 +36,7 @@ test.describe('mobile authenticated shells', () => {
 });
 
 test.describe('mobile superadmin shells', () => {
-  test.use({
-    ...roleState('superadmin'),
-    viewport: { width: 390, height: 844 },
-    isMobile: true,
-  });
+  test.use(roleState('superadmin'));
 
   test('admin sidebar route and presets mobile cards render', async ({ page }) => {
     await seedSystemPreset('e2e-mobile-system-preset', { name: 'E2E Mobile Template' });
