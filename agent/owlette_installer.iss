@@ -54,8 +54,8 @@
   #define MyAppVersion GetEnv("OWLETTE_VERSION")
   #if MyAppVersion == ""
     ; fallback should match /VERSION - bump on every release
-    #define MyAppVersion "2.12.14"
-    #pragma message "WARNING: Using fallback version 2.12.14 - VERSION file not found or OWLETTE_VERSION not set"
+    #define MyAppVersion "2.12.21"
+    #pragma message "WARNING: Using fallback version 2.12.21 - VERSION file not found or OWLETTE_VERSION not set"
   #endif
 #endif
 

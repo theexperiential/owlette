@@ -5,6 +5,14 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
+## [2.12.21] - 2026-08-12
+
+### fixed
+
+- **Machines come online seconds after power-on, not minutes.** The agent previously waited out a blind two-minute startup delay, and a first connection attempt made before the network was ready could lock it out for several more minutes even after the network came up. The service now checks for real network readiness at startup and, when the network isn't up yet, retries every few seconds instead of backing off — longer waits are reserved for genuine server errors.
+- **Restarting the agent no longer flickers the machine offline.** Owlette-initiated restarts (a tray restart or the agent's own recovery watchdog) return within seconds, but used to mark the machine offline on the way out — producing a visible offline/online flap and sometimes a spurious alert. The dashboard now stays green through these restarts. Stopping the service yourself, or shutting the machine down, still marks it offline immediately.
+- **A single slow heartbeat no longer greys out a healthy machine.** The offline threshold was three minutes against a two-minute idle heartbeat — one delayed beat away from a false alarm. The dashboard and the offline-alert email now both wait five minutes, so a machine has to miss more than two consecutive heartbeats before it is called offline.
+
 ## [2.12.20] - 2026-08-08
 
 ### security
