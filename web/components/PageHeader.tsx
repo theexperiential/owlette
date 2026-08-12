@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { UserAvatar } from '@/components/UserAvatar';
-import { ArrowRight, ChevronDown, Settings, LogOut, Shield, Check, Crown, LayoutDashboard, Brain, Rocket, FolderSync, ScrollText, CircleHelp, Bug, BookOpen } from 'lucide-react';
+import { ArrowRight, ChevronDown, Settings, LogOut, Shield, Check, Crown, LayoutDashboard, Brain, Rocket, FolderSync, ScrollText, CircleHelp, Bug, BookOpen, Menu, X } from 'lucide-react';
 import { getUserShortName } from '@/lib/userUtils';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { ReportBugDialog } from '@/components/ReportBugDialog';
@@ -22,6 +22,48 @@ const FEEDBACK_LABELS = [
   'it\'s not you, it\'s us',
   'we can take it',
 ];
+
+/**
+ * Primary page navigation. Rendered twice — by the desktop page-switcher
+ * dropdown and by the mobile drawer — so the two can never drift apart.
+ */
+const NAV_ITEMS = [
+  {
+    name: 'dashboard',
+    href: '/dashboard',
+    icon: LayoutDashboard,
+    description: 'monitor machines and manage processes',
+  },
+  {
+    name: 'cortex',
+    href: '/cortex',
+    icon: Brain,
+    description: 'ask your machines any question',
+  },
+  {
+    name: 'deploy',
+    href: '/deployments',
+    icon: Rocket,
+    description: 'install software across machines',
+  },
+  {
+    name: 'roost',
+    href: '/roosts',
+    icon: FolderSync,
+    description: 'sync project files to your machines',
+  },
+  {
+    name: 'logs',
+    href: '/logs',
+    icon: ScrollText,
+    description: 'monitor events and system activities',
+  },
+] as const;
+
+/** Icon shown beside the current page name, keyed by the lowercased page label. */
+const PAGE_ICONS: Record<string, React.ElementType> = Object.fromEntries(
+  NAV_ITEMS.map((item) => [item.name, item.icon]),
+);
 
 interface Site {
   id: string;
@@ -56,14 +98,39 @@ export function PageHeader({
   const [feedbackFading, setFeedbackFading] = useState(false);
   const [helpMenuOpen, setHelpMenuOpen] = useState(false);
   const [openMenuCount, setOpenMenuCount] = useState(0);
+  const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const feedbackIndex = useRef(0);
 
   const handleMenuOpenChange = (open: boolean) => {
     setOpenMenuCount((n) => Math.max(0, open ? n + 1 : n - 1));
   };
 
+  // The rotating feedback label runs whenever a surface showing it is open —
+  // the desktop help dropdown or the mobile drawer's help section.
+  const feedbackRotating = helpMenuOpen || navDrawerOpen;
+
+  // Drawer dismissal: Escape, plus crossing up into the `md` breakpoint. The
+  // drawer is `md:hidden`, so without the media listener a drawer left open on
+  // a resized-wide window would silently reappear on the way back down.
   useEffect(() => {
-    if (!helpMenuOpen) return;
+    if (!navDrawerOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNavDrawerOpen(false);
+    };
+    const mq = window.matchMedia('(min-width: 768px)');
+    const onBreakpointChange = (e: MediaQueryListEvent) => {
+      if (e.matches) setNavDrawerOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    mq.addEventListener('change', onBreakpointChange);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      mq.removeEventListener('change', onBreakpointChange);
+    };
+  }, [navDrawerOpen]);
+
+  useEffect(() => {
+    if (!feedbackRotating) return;
     feedbackIndex.current = Math.floor(Math.random() * FEEDBACK_LABELS.length);
     setFeedbackLabel(FEEDBACK_LABELS[feedbackIndex.current]);
 
@@ -77,9 +144,14 @@ export function PageHeader({
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [helpMenuOpen]);
+  }, [feedbackRotating]);
 
   const currentSiteName = sites.find(s => s.id === currentSiteId)?.name ?? 'Select site';
+  // Non-null only when there is actually a site to switch to. Holds the
+  // narrowed callback so the bar and the drawer can both call it directly
+  // instead of re-testing the same three conditions.
+  const selectSite = sites.length > 0 && currentSiteId && onSiteChange ? onSiteChange : null;
+  const PageIcon = PAGE_ICONS[currentPage.toLowerCase()];
 
   return (
     <>
@@ -93,137 +165,103 @@ export function PageHeader({
             <span className="text-base font-semibold text-foreground hidden md:block translate-y-[1px]">owlette</span>
           </div>
 
-          {/* Breadcrumb: Site > Page */}
-          {sites.length > 0 && currentSiteId && onSiteChange && (
-            <>
-              <span className="text-muted-foreground/60 text-lg select-none">/</span>
-              <DropdownMenu onOpenChange={handleMenuOpenChange}>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    data-testid="site-switcher-trigger"
-                    className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer truncate max-w-[200px] md:max-w-[320px]"
-                  >
-                    <span className="truncate">{currentSiteName}</span>
-                    <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className={`${MENU_SURFACE} w-64`}>
-                  {sites.map((site) => (
-                    <DropdownMenuItem
-                      key={site.id}
-                      onClick={() => onSiteChange(site.id)}
-                      className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer flex items-center justify-between"
+          {/* Below `md` the breadcrumb switchers can't fit beside the avatar and
+              action buttons, so they collapse into the drawer this opens. */}
+          {!disableNav && (
+            <button
+              type="button"
+              aria-label="menu"
+              aria-expanded={navDrawerOpen}
+              onClick={() => setNavDrawerOpen(true)}
+              className="md:hidden inline-flex items-center justify-center h-8 w-8 flex-shrink-0 rounded-md hover:bg-secondary transition-colors cursor-pointer"
+            >
+              <Menu className="h-5 w-5 text-muted-foreground" />
+            </button>
+          )}
+
+          {/* Breadcrumb: Site > Page — desktop only (mobile uses the drawer) */}
+          <div className="hidden md:flex items-center gap-1.5 min-w-0">
+            {selectSite && (
+              <>
+                <span className="text-muted-foreground/60 text-lg select-none">/</span>
+                <DropdownMenu onOpenChange={handleMenuOpenChange}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      data-testid="site-switcher-trigger"
+                      className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer truncate max-w-[200px] md:max-w-[320px]"
                     >
-                      <span className="truncate">{site.name}</span>
-                      {site.id === currentSiteId && <Check className="h-4 w-4 text-accent-cyan flex-shrink-0" />}
-                    </DropdownMenuItem>
-                  ))}
-                  {onManageSites && (
-                    <>
-                      <DropdownMenuSeparator className="bg-border" />
+                      <span className="truncate">{currentSiteName}</span>
+                      <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className={`${MENU_SURFACE} w-64`}>
+                    {sites.map((site) => (
                       <DropdownMenuItem
-                        onClick={onManageSites}
-                        className="text-muted-foreground focus:bg-accent focus:text-foreground cursor-pointer"
+                        key={site.id}
+                        onClick={() => selectSite(site.id)}
+                        className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer flex items-center justify-between"
                       >
-                        <Settings className="mr-2 h-4 w-4" />
-                        manage sites
+                        <span className="truncate">{site.name}</span>
+                        {site.id === currentSiteId && <Check className="h-4 w-4 text-accent-cyan flex-shrink-0" />}
                       </DropdownMenuItem>
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </>
-          )}
+                    ))}
+                    {onManageSites && (
+                      <>
+                        <DropdownMenuSeparator className="bg-border" />
+                        <DropdownMenuItem
+                          onClick={onManageSites}
+                          className="text-muted-foreground focus:bg-accent focus:text-foreground cursor-pointer"
+                        >
+                          <Settings className="mr-2 h-4 w-4" />
+                          manage sites
+                        </DropdownMenuItem>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </>
+            )}
 
-          <span className="text-muted-foreground/60 text-lg select-none">/</span>
+            <span className="text-muted-foreground/60 text-lg select-none">/</span>
 
-          {/* Page Selector */}
-          {disableNav ? (
-            <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground px-1.5 py-1">
-              {(() => {
-                const pageIcons: Record<string, React.ElementType> = { dashboard: LayoutDashboard, cortex: Brain, deploy: Rocket, roost: FolderSync, logs: ScrollText };
-                const PageIcon = pageIcons[currentPage.toLowerCase()];
-                return PageIcon ? <PageIcon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground translate-y-[0.5px]" /> : null;
-              })()}
-              <span className="lowercase">{currentPage}</span>
-            </span>
-          ) : (
-          <DropdownMenu onOpenChange={handleMenuOpenChange}>
-            <DropdownMenuTrigger asChild>
-              <button className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer">
-                {(() => {
-                  const pageIcons: Record<string, React.ElementType> = { dashboard: LayoutDashboard, cortex: Brain, deploy: Rocket, roost: FolderSync, logs: ScrollText };
-                  const PageIcon = pageIcons[currentPage.toLowerCase()];
-                  return PageIcon ? <PageIcon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground translate-y-[0.5px]" /> : null;
-                })()}
+            {/* Page Selector */}
+            {disableNav ? (
+              <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground px-1.5 py-1">
+                {PageIcon ? <PageIcon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground translate-y-[0.5px]" /> : null}
                 <span className="lowercase">{currentPage}</span>
-                <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className={`${MENU_SURFACE} w-72`}>
-              <DropdownMenuItem
-                onClick={() => router.push('/dashboard')}
-                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
-              >
-                <LayoutDashboard className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium">dashboard</span>
-                  <span className="text-xs text-muted-foreground font-normal">
-                    monitor machines and manage processes
-                  </span>
-                </div>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => router.push('/cortex')}
-                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
-              >
-                <Brain className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium">cortex</span>
-                  <span className="text-xs text-muted-foreground font-normal">
-                    ask your machines any question
-                  </span>
-                </div>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => router.push('/deployments')}
-                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
-              >
-                <Rocket className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium">deploy</span>
-                  <span className="text-xs text-muted-foreground font-normal">
-                    install software across machines
-                  </span>
-                </div>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => router.push('/roosts')}
-                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
-              >
-                <FolderSync className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium">roost</span>
-                  <span className="text-xs text-muted-foreground font-normal">
-                    sync project files to your machines
-                  </span>
-                </div>
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => router.push('/logs')}
-                className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
-              >
-                <ScrollText className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="font-medium">logs</span>
-                  <span className="text-xs text-muted-foreground font-normal">
-                    monitor events and system activities
-                  </span>
-                </div>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          )}
+              </span>
+            ) : (
+            <DropdownMenu onOpenChange={handleMenuOpenChange}>
+              <DropdownMenuTrigger asChild>
+                <button className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground hover:text-foreground transition-colors px-1.5 py-1 rounded-md hover:bg-secondary cursor-pointer">
+                  {PageIcon ? <PageIcon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground translate-y-[0.5px]" /> : null}
+                  <span className="lowercase">{currentPage}</span>
+                  <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 opacity-60" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className={`${MENU_SURFACE} w-72`}>
+                {NAV_ITEMS.map((item) => {
+                  const ItemIcon = item.icon;
+                  return (
+                    <DropdownMenuItem
+                      key={item.href}
+                      onClick={() => router.push(item.href)}
+                      className="text-foreground focus:bg-accent focus:text-foreground cursor-pointer py-3 px-3 flex items-start gap-3"
+                    >
+                      <ItemIcon className="h-4 w-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-medium">{item.name}</span>
+                        <span className="text-xs text-muted-foreground font-normal">
+                          {item.description}
+                        </span>
+                      </div>
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            )}
+          </div>
         </nav>
 
         {/* Right: Actions + User */}
@@ -236,7 +274,7 @@ export function PageHeader({
               <DropdownMenuTrigger asChild>
                 <button
                   aria-label="help"
-                  className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-secondary transition-colors cursor-pointer"
+                  className="hidden md:inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-secondary transition-colors cursor-pointer"
                 >
                   <CircleHelp className="h-4 w-4 text-muted-foreground" />
                 </button>
@@ -342,6 +380,127 @@ export function PageHeader({
         </div>
       </div>
     </header>
+
+    {/* Mobile nav drawer — carries the site + page switchers (and the help
+        items) that the `md` bar shows inline. Plain fixed positioning rather
+        than a Radix sheet: a portalled surface escapes `md:hidden` and would
+        need JS breakpoint gating to stay off the desktop viewport. Rendered
+        only while open, and force-closed on the way up past `md` (see the
+        effect above), so at >=768px this subtree does not exist. */}
+    {navDrawerOpen && (
+      <div className="fixed inset-0 z-50 md:hidden">
+        <div
+          aria-hidden
+          className="absolute inset-0 bg-black/50"
+          onClick={() => setNavDrawerOpen(false)}
+        />
+        <nav
+          aria-label="site and page navigation"
+          className={`absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r ${MENU_SURFACE} animate-in slide-in-from-left duration-200`}
+        >
+          <div className="flex h-14 flex-shrink-0 items-center justify-between border-b border-border px-4">
+            <div className="flex items-center gap-1.5">
+              <OwletteEyeIcon size={24} className="translate-y-[1px]" />
+              <span className="text-base font-semibold text-foreground translate-y-[1px]">owlette</span>
+            </div>
+            <button
+              type="button"
+              aria-label="close menu"
+              onClick={() => setNavDrawerOpen(false)}
+              className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-colors cursor-pointer"
+            >
+              <X className="h-4 w-4 text-muted-foreground" />
+            </button>
+          </div>
+
+          {selectSite && (
+            <div className="border-b border-border py-2">
+              <p className="px-4 py-1.5 text-xs text-muted-foreground">site</p>
+              {sites.map((site) => (
+                <button
+                  key={site.id}
+                  type="button"
+                  onClick={() => {
+                    selectSite(site.id);
+                    setNavDrawerOpen(false);
+                  }}
+                  className="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left text-sm text-foreground hover:bg-accent transition-colors cursor-pointer"
+                >
+                  <span className="truncate">{site.name}</span>
+                  {site.id === currentSiteId && <Check className="h-4 w-4 flex-shrink-0 text-accent-cyan" />}
+                </button>
+              ))}
+              {onManageSites && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onManageSites();
+                    setNavDrawerOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
+                >
+                  <Settings className="h-4 w-4 flex-shrink-0" />
+                  manage sites
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="py-2">
+            <p className="px-4 py-1.5 text-xs text-muted-foreground">go to</p>
+            {NAV_ITEMS.map((item) => {
+              const ItemIcon = item.icon;
+              const isCurrent = item.name === currentPage.toLowerCase();
+              return (
+                <button
+                  key={item.href}
+                  type="button"
+                  aria-current={isCurrent ? 'page' : undefined}
+                  onClick={() => {
+                    router.push(item.href);
+                    setNavDrawerOpen(false);
+                  }}
+                  className={`flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors cursor-pointer ${
+                    isCurrent ? 'bg-accent-cyan/10 text-accent-cyan' : 'text-foreground hover:bg-accent'
+                  }`}
+                >
+                  <ItemIcon className={`h-4 w-4 mt-0.5 flex-shrink-0 ${isCurrent ? 'text-accent-cyan' : 'text-muted-foreground'}`} />
+                  <span className="flex flex-col gap-0.5">
+                    <span className="text-sm font-medium">{item.name}</span>
+                    <span className="text-xs text-muted-foreground font-normal">{item.description}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-auto border-t border-border py-2">
+            <Link
+              href="/docs"
+              onClick={() => setNavDrawerOpen(false)}
+              className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-foreground hover:bg-accent transition-colors"
+            >
+              <BookOpen className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+              docs
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                setReportBugOpen(true);
+                setNavDrawerOpen(false);
+              }}
+              className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-foreground hover:bg-accent transition-colors cursor-pointer"
+            >
+              <Bug className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+              <span className="transition-opacity duration-300" style={{ opacity: feedbackFading ? 0 : 1 }}>
+                {feedbackLabel}
+              </span>
+            </button>
+          </div>
+        </nav>
+      </div>
+    )}
+
     {/* Subtle top glow for readability over dot grid */}
     <div className="pointer-events-none absolute inset-x-0 top-14 h-48 z-0" style={{ background: 'linear-gradient(to bottom, oklch(0.20 0.03 250 / 0.7), transparent)' }} />
     {/* Scrim: subtle blur + dim of page content when a nav dropdown is open */}
