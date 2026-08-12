@@ -349,16 +349,24 @@ class FirebaseClient:
             return  # Don't send data if not started
 
         try:
-            # Fetch site timezone for schedule evaluation
-            self._fetch_site_timezone()
-
-            # Send immediate heartbeat and metrics
+            # PRESENCE FIRST. The bare presence write needs no hardware data, so
+            # it lands within milliseconds of the socket coming up. Everything
+            # below it is slower — the site-timezone read is another round trip,
+            # and _ensure_profile() runs WMI + nvidia-smi enumeration that can
+            # take tens of seconds against a cold GPU driver. Ordering presence
+            # ahead of both makes time-to-online the connect time rather than
+            # the enumeration time. Same ordering as start().
             self._update_presence(True)
             self.logger.debug("Heartbeat sent after connection")
+
+            # Fetch site timezone for schedule evaluation
+            self._fetch_site_timezone()
 
             # Ensure hardware profile is uploaded once on (re)connect — on a
             # signature change this writes the new profile doc before metrics,
             # so consumers never see metrics referencing a stale profileHash.
+            # INVARIANT: profile upload always precedes the first metrics write
+            # on this path; only presence may move ahead of it.
             self._ensure_profile()
 
             metrics = shared_utils.get_system_metrics()
@@ -492,7 +500,13 @@ class FirebaseClient:
         # Start watchdog for thread supervision
         self.connection_manager.start_watchdog()
 
-        # Send immediate heartbeat and metrics if connected
+        # Send immediate heartbeat and metrics if connected.
+        # ORDER IS LOAD-BEARING: _update_presence writes only online +
+        # lastHeartbeat and needs no hardware data, so it must fire BEFORE the
+        # first _upload_metrics — that call's _ensure_profile() performs the
+        # WMI + nvidia-smi enumeration, which is slow on a cold boot. Presence
+        # first means the dashboard sees the machine as soon as it is reachable
+        # instead of after enumeration completes. Mirrored in _on_connected().
         if self.connected:
             try:
                 self._update_presence(True)
@@ -568,17 +582,33 @@ class FirebaseClient:
         except Exception as e:
             self.logger.warning(f"Could not pre-populate seen commands: {e}")
 
-    def stop(self):
-        """Stop all background threads and set machine offline."""
-        self.logger.info("Stopping Firebase client and setting machine offline...")
+    def stop(self, intentional: bool = False):
+        """Stop all background threads and set machine offline.
+
+        Args:
+            intentional: True when the agent is exiting in order to come
+                straight back — the tray-triggered restart (exit 42) and the
+                self-restart watchdog (exit 43). Those paths are back online in
+                ~15s, so flushing `online: false` on the way out only produces a
+                visible offline/online flap (and can trigger an offline alert)
+                for a machine that never really went away. Heartbeat staleness
+                still covers the case where the restart fails to come back.
+                Genuine operator stops (net stop, shutdown) leave this False so
+                the dashboard reflects the machine going down immediately.
+        """
+        if intentional:
+            self.logger.info("Stopping Firebase client (intentional restart - leaving presence untouched)...")
+        else:
+            self.logger.info("Stopping Firebase client and setting machine offline...")
 
         # Set machine as offline BEFORE stopping threads (critical for clean shutdown)
-        if self.connected and self.db:
+        if not intentional and self.connected and self.db:
+            # Bound outside the try so the failure log below can always read it.
+            max_attempts = 3
             try:
                 presence_ref = self.db.collection('sites').document(self.site_id)\
                     .collection('machines').document(self.machine_id)
 
-                max_attempts = 3
                 for attempt in range(max_attempts):
                     try:
                         presence_ref.set({
@@ -654,7 +684,13 @@ class FirebaseClient:
                         except Exception as e:
                             self.logger.error(f"Token validation/refresh failed: {e}")
                             self.connection_manager.report_error(e, "Token validation")
-                            time.sleep(60)
+                            # Short stall. A 60s wait here consumed the entire
+                            # heartbeat margin on its own (idle beat is 120s and
+                            # the server calls a machine offline at 300s), and a
+                            # transient failure right after boot stalled the very
+                            # first heartbeat. auth_manager already paces the real
+                            # retry cadence; this sleep only paces the loop.
+                            time.sleep(15)
                             continue
 
                         # Upload metrics (this is the heartbeat — it writes

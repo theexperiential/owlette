@@ -14,14 +14,18 @@ Checks performed (in order):
 1. Config file readable and contains 'firebase' section
 2. Secure token store accessible and has a refresh token
 3. Network reachable (TCP connection to api_base host on port 443)
+
+Also exposes wait_for_network() — the bounded network-ready gate the service
+hosts run before constructing AuthManager / FirebaseClient.
 """
 
 import json
+import logging
 import os
 import socket
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 
 
 # Health status codes
@@ -29,6 +33,47 @@ STATUS_OK = 'ok'
 STATUS_CONFIG_ERROR = 'config_error'
 STATUS_AUTH_ERROR = 'auth_error'
 STATUS_NETWORK_ERROR = 'network_error'
+
+# TCP probe settings. Check 3 and wait_for_network() share one connect
+# implementation so both agree on what "reachable" means.
+NETWORK_PROBE_PORT = 443
+NETWORK_PROBE_TIMEOUT = 5.0
+
+# wait_for_network() retry cadence. The first gaps ramp quickly (a NIC that is
+# nearly up is usually up within a few seconds), then settle at a flat 5s so a
+# 90s budget costs a bounded number of probes.
+NETWORK_GATE_MAX_WAIT = 90.0
+_NETWORK_GATE_RAMP_DELAYS = (1.0, 2.0, 5.0)
+_NETWORK_GATE_INTERVAL = 5.0
+
+
+def extract_host(api_base: str) -> Optional[str]:
+    """Extract the host (with port, if present) from a URL like https://owlette.app/api."""
+    try:
+        # Simple extraction without urllib to stay stdlib-light
+        stripped = api_base.replace('https://', '').replace('http://', '')
+        host = stripped.split('/')[0]
+        return host if host else None
+    except Exception:
+        return None
+
+
+def _tcp_connect(host: str,
+                 port: int = NETWORK_PROBE_PORT,
+                 timeout: float = NETWORK_PROBE_TIMEOUT) -> Tuple[bool, Optional[BaseException]]:
+    """
+    Attempt a TCP connection. Does NOT make an HTTP request — just tests that
+    the socket can connect. Never raises.
+
+    Returns:
+        (ok, error) — error is the caught exception when ok is False.
+    """
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.close()
+        return True, None
+    except Exception as e:
+        return False, e
 
 
 @dataclass
@@ -204,31 +249,90 @@ class HealthProbe:
         Returns:
             (ok: bool, message: str)
         """
-        try:
-            host = self._extract_host(self._api_base)
-            if not host:
-                # Can't parse host — skip network check rather than false-fail
-                return True, ""
-
-            sock = socket.create_connection((host, 443), timeout=5)
-            sock.close()
+        host = self._extract_host(self._api_base)
+        if not host:
+            # Can't parse host — skip network check rather than false-fail
             return True, ""
 
-        except (socket.timeout, socket.gaierror, OSError) as e:
-            return False, (
-                f"Network not reachable at startup (host: {self._extract_host(self._api_base)}). "
-                f"Check internet connection. Error: {e}"
-            )
-        except Exception as e:
+        ok, error = _tcp_connect(host, NETWORK_PROBE_PORT, NETWORK_PROBE_TIMEOUT)
+        if ok:
+            return True, ""
+
+        if not isinstance(error, OSError):
             # Unexpected error — don't block startup for a network probe failure
             return True, ""
 
+        return False, (
+            f"Network not reachable at startup (host: {host}). "
+            f"Check internet connection. Error: {error}"
+        )
+
     def _extract_host(self, api_base: str) -> Optional[str]:
         """Extract hostname from a URL like https://owlette.app/api."""
-        try:
-            # Simple extraction without urllib to stay stdlib-light
-            stripped = api_base.replace('https://', '').replace('http://', '')
-            host = stripped.split('/')[0]
-            return host if host else None
-        except Exception:
-            return None
+        return extract_host(api_base)
+
+
+def wait_for_network(api_base: str,
+                     max_wait: float = NETWORK_GATE_MAX_WAIT,
+                     connect_timeout: float = NETWORK_PROBE_TIMEOUT) -> bool:
+    """
+    Block until the API host accepts a TCP connection on port 443, or the budget expires.
+
+    Cold-booted machines routinely reach service start before the NIC has a
+    usable route (DHCP lease, 802.1X, domain logon, Wi-Fi association). Building
+    AuthManager / FirebaseClient in that window burns the first token refresh
+    and arms a retry backoff for no reason, so the hosts spend the wait here —
+    in one cheap TCP probe loop — instead.
+
+    Retries at 1s, 2s, 5s, then every 5s until max_wait is exhausted. Total wall
+    time can exceed max_wait by up to one connect_timeout: the in-flight probe
+    is always allowed to finish.
+
+    Args:
+        api_base: API base URL, e.g. https://owlette.app/api
+        max_wait: Total seconds to spend waiting before giving up
+        connect_timeout: Per-attempt socket timeout
+
+    Returns:
+        True if the host became reachable, or if no host could be parsed (there
+        is nothing to gate on). False if the budget expired. Callers proceed
+        either way — this gate never blocks startup indefinitely.
+    """
+    host = extract_host(api_base)
+    if not host:
+        logging.info(f"[NET-GATE] No host in api_base ({api_base!r}) — skipping network gate")
+        return True
+
+    started = time.monotonic()
+    deadline = started + max(0.0, max_wait)
+    attempt = 0
+
+    while True:
+        attempt += 1
+        ok, error = _tcp_connect(host, NETWORK_PROBE_PORT, connect_timeout)
+        waited = round(time.monotonic() - started, 2)
+
+        if ok:
+            logging.info(
+                f"[NET-GATE] {host}:{NETWORK_PROBE_PORT} reachable after {waited}s "
+                f"({attempt} attempt{'s' if attempt != 1 else ''})"
+            )
+            return True
+
+        if attempt <= len(_NETWORK_GATE_RAMP_DELAYS):
+            delay = _NETWORK_GATE_RAMP_DELAYS[attempt - 1]
+        else:
+            delay = _NETWORK_GATE_INTERVAL
+
+        if time.monotonic() + delay >= deadline:
+            logging.warning(
+                f"[NET-GATE] {host}:{NETWORK_PROBE_PORT} still unreachable after {waited}s "
+                f"({attempt} attempt{'s' if attempt != 1 else ''}) — proceeding anyway. "
+                f"Last error: {error}"
+            )
+            return False
+
+        logging.info(
+            f"[NET-GATE] {host}:{NETWORK_PROBE_PORT} unreachable ({error}) — retrying in {delay}s"
+        )
+        time.sleep(delay)

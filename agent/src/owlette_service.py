@@ -51,7 +51,7 @@ except ImportError as e:
     # Note: logging not initialized yet, so we can't log here
 
 # Health probe (stdlib-only module, safe to import unconditionally)
-from health_probe import HealthProbe, HealthState, STATUS_OK
+from health_probe import HealthProbe, HealthState, STATUS_OK, wait_for_network
 
 # Error monitoring (optional, no-ops if not configured)
 import sentry_utils
@@ -346,6 +346,17 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
 
                     logging.debug(f"Firebase config - site: {site_id}, project: {project_id}")
+
+                    # Network-ready gate. A cold boot reaches service start
+                    # before the NIC has a route; constructing AuthManager /
+                    # FirebaseClient in that window burns the first token
+                    # refresh and arms a backoff for nothing. Bounded (90s)
+                    # and non-fatal — we always proceed. Same helper the NSSM
+                    # host (owlette_runner.MockService) calls.
+                    try:
+                        wait_for_network(api_base)
+                    except Exception as e:
+                        logging.warning(f"Network gate error (proceeding anyway): {e}")
 
                     # Initialize OAuth authentication manager
                     from auth_manager import AuthManager
@@ -858,13 +869,22 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 if getattr(self, '_scm_stop_requested', False):
                     logging.info("[WATCHDOG] Hard-exit aborted — SCM stop in progress, yielding to operator")
                     return
-                # Flush offline presence before dying so dashboards don't show
-                # ~heartbeat-timeout of stale "online" after a watchdog exit.
+                # Stop the client WITHOUT the offline flush: NSSM restarts us
+                # within seconds, so writing online:false here only makes the
+                # dashboard flap. Run it on a worker with a bounded join so a
+                # wedged client can never defeat the hard-exit guarantee.
                 try:
-                    if self.firebase_client and self.firebase_client.connected:
-                        self.firebase_client._update_presence(False)
+                    if self.firebase_client:
+                        stopper = threading.Thread(
+                            target=self.firebase_client.stop,
+                            kwargs={'intentional': True},
+                            name='watchdog-firebase-stop',
+                            daemon=True,
+                        )
+                        stopper.start()
+                        stopper.join(timeout=5.0)
                 except Exception as e:
-                    logging.debug(f"[WATCHDOG] offline presence flush failed: {e}")
+                    logging.debug(f"[WATCHDOG] Firebase client stop failed: {e}")
                 logging.error(f"[WATCHDOG] Hard-exit timer firing with code {exit_code}")
             finally:
                 os._exit(exit_code)
@@ -6277,7 +6297,18 @@ with open(out_path, 'wb') as f:
         self._try_launch_tray()
 
         logging.info("Service initialization complete")
-        shared_utils.log_startup_system_snapshot()
+        # The system snapshot is WMI (Win32_Processor) + GPU-driver backed and
+        # can take seconds on a cold GPU driver. It produces log lines only, so
+        # it runs on a daemon thread — nothing on the startup path (Firebase
+        # connect, first presence write) waits on it.
+        try:
+            threading.Thread(
+                target=shared_utils.log_startup_system_snapshot,
+                name='startup-snapshot',
+                daemon=True,
+            ).start()
+        except Exception as e:
+            logging.warning(f"Could not start system snapshot thread (non-fatal): {e}")
         shared_utils.log_startup_config_summary()
 
         # Check for update marker (indicates a self-update was in progress)
@@ -6802,12 +6833,25 @@ with open(out_path, 'wb') as f:
             else:
                 logging.warning("Firebase client not available")
 
-            # Mark machine offline in Firestore
+            # Stop the Firebase client. An Owlette-initiated restart (tray
+            # restart flag → 42, self-restart watchdog → 43) is back under NSSM
+            # within seconds, so skip the offline flush and leave presence
+            # alone — otherwise every restart flaps the dashboard. A genuine
+            # operator stop or shutdown (exit 0) still marks the machine offline.
+            intentional_restart = bool(getattr(self, '_restart_exit_code', 0))
             if self.firebase_client:
                 try:
-                    logging.info("Calling firebase_client.stop() to mark machine offline...")
-                    self.firebase_client.stop()
-                    logging.info("[OK] Cleanup complete - machine marked offline")
+                    logging.info(
+                        "Stopping Firebase client for restart (presence left online)..."
+                        if intentional_restart
+                        else "Calling firebase_client.stop() to mark machine offline..."
+                    )
+                    self.firebase_client.stop(intentional=intentional_restart)
+                    logging.info(
+                        "[OK] Cleanup complete - restart pending, machine left online"
+                        if intentional_restart
+                        else "[OK] Cleanup complete - machine marked offline"
+                    )
                 except Exception as e:
                     logging.error(f"[ERROR] Error during cleanup: {e}")
 

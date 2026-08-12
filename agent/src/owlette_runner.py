@@ -231,6 +231,17 @@ if __name__ == '__main__':
                         logging.info(f"Firebase config - site_id: {site_id}, project_id: {project_id}")
                         logging.info(f"Firebase API base: {api_base}")
 
+                        # Network-ready gate. A cold boot reaches service start
+                        # before the NIC has a route; constructing AuthManager /
+                        # FirebaseClient in that window burns the first token
+                        # refresh and arms a backoff for nothing. Bounded (90s)
+                        # and non-fatal — we always proceed.
+                        try:
+                            from health_probe import wait_for_network
+                            wait_for_network(api_base or self._api_base)
+                        except Exception as e:
+                            logging.warning(f"Network gate error (proceeding anyway): {e}")
+
                         # Initialize AuthManager
                         auth_manager = AuthManager(api_base=api_base)
 
@@ -308,21 +319,26 @@ if __name__ == '__main__':
         logging.info("Starting main service loop...")
         _service_instance.main()
 
+        # Check if service requested a restart (exit code 42 triggers NSSM auto-restart)
+        exit_code = getattr(_service_instance, '_restart_exit_code', 0)
+
         # Cleanup before exiting
         logging.info("Main loop exited - performing cleanup...")
         if _service_instance.firebase_client:
-            # Only stop if still running (signal handler may have already stopped it)
+            # Only stop if still running (main()'s finally block and the signal
+            # handler both stop it first on their respective paths — this is the
+            # fallback for when one of them failed part-way through).
             if hasattr(_service_instance.firebase_client, 'running') and _service_instance.firebase_client.running:
                 try:
-                    _service_instance.firebase_client.stop()
+                    # Owlette-initiated restart (42/43) comes straight back under
+                    # NSSM — skip the offline flush so presence doesn't flap.
+                    _service_instance.firebase_client.stop(intentional=bool(exit_code))
                     logging.info("Firebase client stopped")
                 except Exception as e:
                     logging.error(f"Error stopping Firebase client: {e}")
             else:
                 logging.info("Firebase client already stopped (by signal handler)")
 
-        # Check if service requested a restart (exit code 42 triggers NSSM auto-restart)
-        exit_code = getattr(_service_instance, '_restart_exit_code', 0)
         if exit_code:
             logging.info(f"Service exiting with code {exit_code} for NSSM restart")
         else:
