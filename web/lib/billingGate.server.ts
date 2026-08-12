@@ -87,6 +87,8 @@ export {
  *     config, cortex settings.
  *   - `DEPLOYMENT_MANAGE` — deploy, retry, cancel, uninstall-by-deployment.
  *   - `DISTRIBUTION_MANAGE` — project distribution create / cancel / delete.
+ *   - `TALON_MANAGE` — talon create / update / enable. Talons reach machines
+ *     on their own schedule, so an expired account must not keep firing them.
  *
  * Deliberately **not** locked, and why — each of these is either the
  * customer's way out of the lockout or a safety valve that must not depend
@@ -107,6 +109,7 @@ export const BILLING_LOCKED_CAPABILITIES: ReadonlySet<Capability> =
     Capability.MACHINE_CONFIG_WRITE,
     Capability.DEPLOYMENT_MANAGE,
     Capability.DISTRIBUTION_MANAGE,
+    Capability.TALON_MANAGE,
   ]);
 
 /** True when this capability is subject to the control-plane lockout. */

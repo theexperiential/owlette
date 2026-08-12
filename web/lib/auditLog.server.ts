@@ -44,7 +44,8 @@ export type Role = 'member' | 'admin' | 'superadmin';
 export type SystemActorName =
   | 'cortex_autonomous'
   | 'cortex_provisioning'
-  | 'scheduled_cleanup';
+  | 'scheduled_cleanup'
+  | 'talon_runner';
 
 export type UserActor = {
   type: 'user';
@@ -72,7 +73,8 @@ export type AuditTargetKind =
   | 'user'
   | 'process'
   | 'preset'
-  | 'installer';
+  | 'installer'
+  | 'talon';
 
 export interface AuditTarget {
   kind: AuditTargetKind;

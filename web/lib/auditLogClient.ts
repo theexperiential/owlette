@@ -120,7 +120,8 @@ export type MutationKind =
   | 'installer_mutated' // installer-api: upload / set-latest / delete
   | 'webhook_mutated' // webhook-api: create / update / delete / rotate-secret / delivery retry
   | 'chat_mutated' // cortex-api: new conversation / rename / soft-delete
-  | 'billing_mutated'; // admin billing override: extend-trial / set-tier / force-expire
+  | 'billing_mutated' // admin billing override: extend-trial / set-tier / force-expire
+  | 'talon_mutated'; // talon lifecycle: create / update / enable / disable / delete
 
 export interface MutationEvent {
   /** Mutation kind — see {@link MutationKind}. */

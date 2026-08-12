@@ -673,6 +673,7 @@ describe('BILLING_LOCKED_CAPABILITIES', () => {
     Capability.MACHINE_CONFIG_WRITE,
     Capability.DEPLOYMENT_MANAGE,
     Capability.DISTRIBUTION_MANAGE,
+    Capability.TALON_MANAGE,
   ])('locks %s', (capability) => {
     expect(isBillingLockedCapability(capability)).toBe(true);
   });
@@ -692,12 +693,13 @@ describe('BILLING_LOCKED_CAPABILITIES', () => {
     expect(isBillingLockedCapability(capability)).toBe(false);
   });
 
-  it('is exactly the four control-plane capabilities', () => {
+  it('is exactly the five control-plane capabilities', () => {
     expect([...BILLING_LOCKED_CAPABILITIES].sort()).toEqual([
       'DEPLOYMENT_MANAGE',
       'DISTRIBUTION_MANAGE',
       'MACHINE_CONFIG_WRITE',
       'MACHINE_EXEC_COMMAND',
+      'TALON_MANAGE',
     ]);
   });
 });

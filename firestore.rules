@@ -1,8 +1,8 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.6.0 - Async Cortex turns: chat stream snapshots + cortex-followups (server-written, client read-only)
-// Last Updated: 2026-07-06
+// Version: 2.7.0 - talons collections: talons + talon_runs (client read-only), talon_secrets (server-only, no client read)
+// Last Updated: 2026-08-11
 //
 // Security Model:
 // - Role-based access control (RBAC): user | admin | agent
@@ -522,6 +522,39 @@ service cloud.firestore {
         // Audit entries are written by server APIs. Site admins can inspect
         // their site's audit trail; superadmins pass through isSiteAdmin().
         allow read: if isSiteAdmin(siteId);
+        allow write: if false;
+      }
+
+      // ----------------------------------------
+      // Talons Subcollections (automation)
+      // ----------------------------------------
+      // Talon definitions, their run history, and the webhook signing
+      // secrets that back webhook outputs. Every write is server-mediated
+      // (admin SDK via /api/sites/{siteId}/talons* and the /api/cron/talons
+      // sweep, both of which bypass these rules) — clients never write
+      // directly, so trigger/output validation, capability checks, and the
+      // transactional nextRunAt claim can't be sidestepped.
+
+      match /talons/{talonId} {
+        // READ: any site member can list/inspect talons for the site.
+        // WRITE: server APIs only (admin SDK bypasses rules).
+        allow read: if canAccessSite(siteId);
+        allow write: if false;
+      }
+
+      match /talon_runs/{runId} {
+        // READ: any site member can review run history.
+        // WRITE: written only by the runner (admin SDK); run records are
+        // an audit surface and must not be client-editable.
+        allow read: if canAccessSite(siteId);
+        allow write: if false;
+      }
+
+      match /talon_secrets/{secretId} {
+        // Webhook signing secrets are server-only by design — do not repeat
+        // the webhooks `signingSecret` client-read leak (see the webhooks
+        // block above, which exposes the secret to any site member).
+        allow read: if false;
         allow write: if false;
       }
     }

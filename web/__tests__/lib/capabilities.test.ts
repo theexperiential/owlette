@@ -28,6 +28,7 @@ const SITE_SCOPED: Capability[] = [
   Capability.SITE_MEMBER_MANAGE,
   Capability.WEBHOOK_MANAGE,
   Capability.SITE_LOGS_MANAGE,
+  Capability.TALON_MANAGE,
 ];
 
 const GLOBAL_CAPABILITIES: Capability[] = ALL_CAPABILITIES.filter(
@@ -68,6 +69,7 @@ describe('Capability enum', () => {
         'SITE_MEMBER_MANAGE',
         'WEBHOOK_MANAGE',
         'SITE_LOGS_MANAGE',
+        'TALON_MANAGE',
         'USER_ROLE_MANAGE',
         'USER_DELETE',
         'SYSTEM_PRESET_MANAGE',
@@ -104,6 +106,7 @@ describe('RoleCapabilityMatrix', () => {
         'WEBHOOK_MANAGE',
         'SITE_LOGS_MANAGE',
         'SITE_MEMBER_MANAGE',
+        'TALON_MANAGE',
       ].sort()
     );
   });
@@ -142,6 +145,12 @@ describe('SystemCapabilityMatrix', () => {
     expect([...SystemCapabilityMatrix.scheduled_cleanup].sort()).toEqual(
       ['DEPLOYMENT_MANAGE', 'MACHINE_REMOVE'].sort()
     );
+  });
+
+  it('talon_runner allowlist is exactly [MACHINE_EXEC_COMMAND]', () => {
+    expect([...SystemCapabilityMatrix.talon_runner]).toEqual([
+      'MACHINE_EXEC_COMMAND',
+    ]);
   });
 });
 
@@ -253,6 +262,7 @@ describe('hasCapability — system actor allowlist', () => {
     'cortex_autonomous',
     'cortex_provisioning',
     'scheduled_cleanup',
+    'talon_runner',
   ];
 
   for (const name of allActors) {

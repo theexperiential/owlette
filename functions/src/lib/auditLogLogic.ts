@@ -43,6 +43,7 @@ export const AUDIT_EVENT_KINDS = [
   'webhook_mutated',
   'chat_mutated',
   'billing_mutated',
+  'talon_mutated',
 ] as const;
 
 export type AuditEventKind = (typeof AUDIT_EVENT_KINDS)[number];

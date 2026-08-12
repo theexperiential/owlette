@@ -194,6 +194,30 @@
         { "fieldPath": "expiresAt", "order": "ASCENDING" },
         { "fieldPath": "expiredMarkedAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "talons",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "enabled", "order": "ASCENDING" },
+        { "fieldPath": "nextRunAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "talon_runs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "talonId", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "talon_runs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
