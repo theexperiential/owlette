@@ -1,0 +1,681 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ── Self-hosted Geist ────────────────────────────────────────────────────
+ * The web app pulls Geist / Geist Mono through `next/font/google`, which
+ * generates the `--font-geist` / `--font-geist-mono` variables and puts them
+ * on <body>. There is no next/font here (and a desktop app must not reach out
+ * to a font CDN at runtime), so the two variable-weight woff2 files are
+ * vendored under src/assets/fonts/ and bound to the SAME variable names —
+ * `@theme inline` below maps them to --font-sans/--font-heading/--font-mono,
+ * and every ported rule that reads `var(--font-geist)` keeps working verbatim.
+ * Variable fonts: one file per family covers the whole 100–900 weight axis.
+ * Source: geist@1.7.2 (SIL Open Font License 1.1 — see assets/fonts/LICENSE.txt).
+ */
+@font-face {
+  font-family: "Geist";
+  src: url("./assets/fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("./assets/fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-geist: "Geist", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-geist-mono: "Geist Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist);
+  --font-heading: var(--font-geist);
+  --font-mono: var(--font-geist-mono);
+  --color-accent-cyan: var(--accent-cyan);
+  --color-accent-cyan-hover: var(--accent-cyan-hover);
+  --color-accent-cyan-muted: var(--accent-cyan-muted);
+  --color-accent-warm: var(--accent-warm);
+  --color-accent-warm-hover: var(--accent-warm-hover);
+  --color-accent-warm-muted: var(--accent-warm-muted);
+  --color-accent-coral: var(--accent-coral);
+  --color-grid-line: var(--grid-line);
+  --color-grid-line-accent: var(--grid-line-accent);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-card-sunken: var(--card-sunken);
+  --color-card-recessed: var(--card-recessed);
+  --color-card-header: var(--card-header);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+/* Enable height/width transitions between `auto` and concrete values.
+   Without this, `transition-[height]` is a no-op when going to/from
+   `height: auto`. Supported in Chrome/Edge 129+ and Safari 18+;
+   Firefox ignores it and falls back to an instant resize. */
+:root {
+  interpolate-size: allow-keywords;
+}
+
+:root {
+  /* Tells the browser to render native controls (date pickers + their calendar
+     icon, selects, scrollbars) in the light palette. Overridden under .dark below.
+     This is what themes the native <input type="date"> popup app-wide. */
+  color-scheme: light;
+  --radius: 0.375rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-sunken: oklch(0.96 0 0);
+  /* Light-mode counterpart to the dark --card-recessed below (vignette edge
+     tone, not a panel fill). The app is currently pinned dark, but the token
+     is defined here so a light theme doesn't inherit an undefined surface. */
+  --card-recessed: oklch(0.97 0.008 250);
+  /* Header surface: a slight step darker than --card-sunken (midway toward
+     --background) so machine headers read as distinct from their content.
+     Derived from themed tokens via color-mix and defined only here — it
+     re-resolves per theme at use time, so no .dark override is needed (and
+     therefore can't fall back to a light value the way a duplicated token can). */
+  --card-header: color-mix(in oklch, var(--card-sunken) 30%, var(--background));
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  /* Dark native controls: makes the <input type="date"> calendar popup dark and
+     renders its calendar-picker icon light (visible on dark fields) — everywhere. */
+  color-scheme: dark;
+  --background: oklch(0.145 0.03 250);
+  --foreground: oklch(0.985 0.01 250);
+  --card: oklch(0.23 0.04 250);
+  --card-sunken: oklch(0.19 0.04 250);
+  /* NOT a flat panel fill. Two large flat fills a hair apart, sharing a hard
+     edge, read as a mistake rather than depth — tried twice on the auth pages,
+     failed twice. This is the EDGE tone of the auth brand panel's radial
+     vignette (transparent center -> this at the corners): the darkening exists
+     but has no boundary line where the eye can compare it against --card.
+     Hue 250 matches the surface family on purpose; hue drift between
+     near-identical darks reads as white-balance error, not depth. */
+  --card-recessed: oklch(0.205 0.045 250);
+  --card-foreground: oklch(0.985 0.01 250);
+  --popover: oklch(0.205 0.04 250);
+  --popover-foreground: oklch(0.985 0.01 250);
+  --primary: oklch(0.75 0.18 195);
+  --primary-foreground: oklch(0.15 0.02 195);
+  --secondary: oklch(0.269 0.05 250);
+  --secondary-foreground: oklch(0.985 0.01 250);
+  --muted: oklch(0.269 0.05 250);
+  --muted-foreground: oklch(0.708 0.05 250);
+  --accent: oklch(0.35 0.08 250);
+  --accent-foreground: oklch(0.985 0.01 250);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(0.35 0.08 250);
+  --input: oklch(0.25 0.06 250);
+  --ring: oklch(0.75 0.18 195);
+
+  /* Cyan accent for CTAs and interactive elements */
+  --accent-cyan: oklch(0.75 0.18 195);
+  --accent-cyan-hover: oklch(0.80 0.20 195);
+  --accent-cyan-muted: oklch(0.45 0.10 195);
+
+  /* Warm accent — Blade Runner amber/coral tones */
+  --accent-warm: oklch(0.72 0.16 55);
+  --accent-warm-hover: oklch(0.78 0.18 55);
+  --accent-warm-muted: oklch(0.45 0.10 45);
+  --accent-coral: oklch(0.70 0.14 30);
+
+  /* Blueprint grid lines */
+  --grid-line: oklch(0.25 0.05 250 / 0.3);
+  --grid-line-accent: oklch(0.45 0.10 195 / 0.4);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0.04 250);
+  --sidebar-foreground: oklch(0.985 0.01 250);
+  --sidebar-primary: oklch(0.65 0.25 250);
+  --sidebar-primary-foreground: oklch(0.985 0.01 250);
+  --sidebar-accent: oklch(0.269 0.05 250);
+  --sidebar-accent-foreground: oklch(0.985 0.01 250);
+  --sidebar-border: oklch(0.35 0.08 250);
+  --sidebar-ring: oklch(0.65 0.25 250);
+}
+
+/* Native temporal inputs (date / datetime-local / time / month / week) read
+   `color-scheme` for BOTH the calendar popup and the picker icon. Set it directly
+   on the element — not only via inheritance from <html class="dark"> — so it also
+   applies when the input is rendered in a portal (Radix dialogs mount at <body>).
+   Unlayered so it outranks Tailwind's base layer. Theme-aware via the .dark scope. */
+input[type="date"],
+input[type="datetime-local"],
+input[type="time"],
+input[type="month"],
+input[type="week"] {
+  color-scheme: light;
+}
+.dark input[type="date"],
+.dark input[type="datetime-local"],
+.dark input[type="time"],
+.dark input[type="month"],
+.dark input[type="week"] {
+  color-scheme: dark;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    /* Modern scrollbar styling (Firefox + Chromium) - Blue theme */
+    scrollbar-color: oklch(0.35 0.08 250) oklch(0.145 0.03 250);
+    scrollbar-width: thin;
+  }
+
+  /* Headings use Space Grotesk for display typography */
+  h1, h2, h3, h4, h5, h6,
+  [data-slot="card-title"],
+  [data-slot="dialog-title"] {
+    font-family: var(--font-geist);
+  }
+
+  /* Tabular figures for aligned numbers in data tables */
+  table, [data-table], .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Subtle focus outline - barely visible but accessible */
+  *:focus-visible {
+    outline: 1px solid oklch(0.5 0.15 250 / 0.3);
+    outline-offset: 2px;
+  }
+
+  /* Webkit scrollbar styling (Chrome, Safari, Edge) - Blue theme */
+  *::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: oklch(0.145 0.03 250);
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: oklch(0.35 0.08 250);
+    border-radius: 6px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.45 0.12 250);
+  }
+
+  html {
+    @apply bg-background text-foreground;
+    scroll-behavior: smooth;
+    /* Keep #-anchor jumps clear of the fixed landing header (h-16 = 4rem) plus a little air. */
+    scroll-padding-top: 5rem;
+  }
+
+  /* Respect the user's OS-level motion preference. Disables both
+     tailwindcss-animate enter/exit classes and Tailwind's animate-*
+     utilities (spin, pulse, bounce, ping) without touching the rare
+     cases where we need animation (progress indicators, etc — those
+     should opt back in explicitly if we add any). */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-delay: 0ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      transition-delay: 0ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+  body {
+    overflow-x: hidden;
+    overflow-y: auto;
+    background-color: var(--background);
+    background-image: radial-gradient(circle, oklch(0.45 0.08 195 / 0.4) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+
+  /* Select dropdown scrollbar - more visible */
+  [data-slot="select-content"]::-webkit-scrollbar {
+    width: 14px;
+  }
+
+  [data-slot="select-content"]::-webkit-scrollbar-track {
+    background: oklch(0.205 0.04 250);
+    border-radius: 8px;
+  }
+
+  [data-slot="select-content"]::-webkit-scrollbar-thumb {
+    background: oklch(0.45 0.12 250);
+    border-radius: 8px;
+    border: 2px solid oklch(0.205 0.04 250);
+  }
+
+  [data-slot="select-content"]::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.65 0.25 250);
+  }
+}
+
+/* Landing page typography and utilities */
+@layer components {
+  /* Utility to apply heading font to any element */
+  .font-heading {
+    font-family: var(--font-geist);
+  }
+
+  /* Hero typography - Mission Control aesthetic with fluid scaling */
+  .hero-headline {
+    font-family: var(--font-geist);
+    /* Fluid: 2.5rem (40px) at 320px → 4.5rem (72px) at 1280px+ */
+    font-size: clamp(2.5rem, 5vw + 1rem, 4.5rem);
+    @apply font-bold tracking-tight leading-[1.1];
+  }
+
+  .hero-subheadline {
+    /* Fluid: 1.125rem (18px) → 1.5rem (24px) */
+    font-size: clamp(1.125rem, 2vw + 0.5rem, 1.5rem);
+    @apply font-light tracking-wide text-muted-foreground;
+  }
+
+  .section-headline {
+    font-family: var(--font-geist);
+    /* Fluid: 1.75rem (28px) → 2.5rem (40px) */
+    font-size: clamp(1.75rem, 3vw + 0.5rem, 2.5rem);
+    @apply font-semibold tracking-tight;
+  }
+
+  .section-subheadline {
+    /* Fluid: 1rem (16px) → 1.25rem (20px) */
+    font-size: clamp(1rem, 1.5vw + 0.5rem, 1.25rem);
+    @apply font-light text-muted-foreground;
+  }
+
+  /* Stats/metrics display text */
+  .stat-value {
+    font-family: var(--font-geist);
+  }
+
+  /* Fluid section padding utility */
+  .section-padding {
+    padding-block: clamp(4rem, 8vw, 8rem);
+    padding-inline: clamp(1rem, 5vw, 1.5rem);
+  }
+
+  /* Fluid container max-width utility */
+  .fluid-container {
+    width: min(100% - 2rem, 80rem);
+    margin-inline: auto;
+  }
+
+  /* Blueprint grid background */
+  .blueprint-grid {
+    background-image:
+      linear-gradient(var(--grid-line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  /* Dot grid pattern */
+  .dot-grid {
+    background-image: radial-gradient(circle, oklch(0.5 0.1 250 / 0.3) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .blueprint-grid-accent {
+    background-image:
+      linear-gradient(var(--grid-line-accent) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-line-accent) 1px, transparent 1px);
+    background-size: 80px 80px;
+  }
+
+  /* Gradient overlays for blueprint sections */
+  .blueprint-fade {
+    background: radial-gradient(ellipse at center, transparent 0%, var(--background) 70%);
+  }
+}
+
+/* Eye ignition — fast fade up, then warm to full brightness */
+@keyframes eye-ignite {
+  0%   { opacity: 0; filter: brightness(0.1); }
+  30%  { opacity: 1; filter: brightness(0.4); }
+  100% { opacity: 1; filter: brightness(1); }
+}
+.animate-eye-ignite {
+  opacity: 0;
+  animation: eye-ignite 1.5s ease-out both;
+}
+
+/* Radix Collapsible slide animations.
+   Radix exposes the content's measured height as `--radix-collapsible-content-height`,
+   so we can animate from 0 to auto without JS measuring. Apply to any
+   <CollapsibleContent> with the matching data-[state] utility classes. */
+@keyframes collapsible-down {
+  from { height: 0; }
+  to   { height: var(--radix-collapsible-content-height); }
+}
+@keyframes collapsible-up {
+  from { height: var(--radix-collapsible-content-height); }
+  to   { height: 0; }
+}
+.animate-collapsible-down { animation: collapsible-down 200ms ease-out; }
+.animate-collapsible-up   { animation: collapsible-up   180ms ease-in; }
+
+@keyframes display-test-result-flash {
+  0% {
+    border-color: rgb(245 158 11 / 0.8);
+    background-color: rgb(245 158 11 / 0.18);
+    box-shadow: inset 0 0 0 1px rgb(245 158 11 / 0.45);
+  }
+  100% {
+    border-color: var(--border);
+    background-color: color-mix(in oklab, var(--muted) 40%, transparent);
+    box-shadow: inset 0 0 0 0 rgb(245 158 11 / 0);
+  }
+}
+.animate-display-test-result-flash {
+  animation: display-test-result-flash 1100ms ease-out 1;
+}
+
+/* Chart loading — a miniature line graph that plots itself on a loop
+   (ChartLoadingIndicator). Requires pathLength=100 on the path so the dash
+   math is geometry-independent: draw the line, hold, fade, repeat. The
+   restart is seamless because opacity returns to 1 only once the dash offset
+   is back at 100 (nothing drawn yet). */
+@keyframes chart-plot-draw {
+  0%   { stroke-dashoffset: 100; opacity: 1; }
+  65%  { stroke-dashoffset: 0;   opacity: 1; }
+  82%  { stroke-dashoffset: 0;   opacity: 1; }
+  100% { stroke-dashoffset: 0;   opacity: 0; }
+}
+.animate-chart-plot-draw {
+  stroke-dasharray: 100;
+  animation: chart-plot-draw 2.4s ease-in-out infinite;
+}
+
+/* ── Link highlight ("highlighter sweep") ─────────────────────────────────
+ * THE global link treatment. Owlette links don't underline on hover — the
+ * text gets a selection-style background fill that sweeps in like a
+ * highlighter: enters left→right and EXITS left→right too (the highlight
+ * runs off the right edge rather than retracting the way it came).
+ *
+ * The same-direction trick: only background-size transitions. While growing,
+ * the gradient is anchored LEFT, so the fill's right edge advances L→R. On
+ * mouse-out the anchor flips to RIGHT — invisible while the fill is at 100%
+ * — so the shrink moves the fill's LEFT edge L→R.
+ *
+ * ONE rule; themed "versions" override two custom properties only:
+ *   --hl-bg  highlight fill      --hl-fg  text color while highlighted
+ * (see .hl-link-muted below — footer palette, same mechanic). Resting color
+ * is deliberately NOT set here: each link keeps its own `text-*` utility.
+ *
+ * Unlayered on purpose (same as the rules above): it must outrank Tailwind's
+ * utilities layer so a stray `hover:text-*` / `hover:underline` left on a
+ * migrated link can't fight the highlight state.
+ *
+ * Applied as a class rather than bare `a { }` on purpose: anchors also render
+ * buttons (shadcn asChild), nav items, and whole-card links, which must not
+ * inherit a text-highlight sweep.
+ */
+.hl-link {
+  --hl-bg: var(--accent-cyan);
+  --hl-fg: var(--background);
+  /* Resting text color. The glyph-accurate version below paints text via
+     background layers, so the rule must own BOTH colors — a `text-*` utility
+     on the link can no longer decide the resting color (it is kept on the
+     markup only as a fallback for the base version). */
+  --hl-rest: var(--accent-cyan);
+  text-decoration: none;
+  border-radius: 0.125rem;
+  /* Slight overhang so the fill reads as selection, not a tight text box.
+     Negative inline margin cancels the padding, so layout never shifts. */
+  padding-inline: 0.15em;
+  margin-inline: -0.15em;
+  padding-block: 0.05em;
+  background-image: linear-gradient(var(--hl-bg), var(--hl-bg));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  background-position: 100% 0; /* anchored right: the exit sweep continues L→R */
+  /* Multi-line links: each wrapped fragment gets its own highlight box,
+     exactly like native text selection. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition:
+    background-size 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.hl-link:hover,
+.hl-link:focus-visible {
+  color: var(--hl-fg);
+  background-position: 0 0; /* anchored left: the enter sweep runs L→R */
+  background-size: 100% 100%;
+}
+/* Glyph-accurate color flip: characters change color one by one as the
+   highlight edge crosses them, instead of the whole text cross-fading.
+   Three stacked layers, top to bottom:
+     1. glyphs in --hl-fg, clipped to text, sweeping in lockstep with the pill
+     2. glyphs in --hl-rest, clipped to text, always full-size (resting paint)
+     3. the pill itself, clipped to the box
+   The element's own color is transparent, so the text you see IS layers 1/2 —
+   wherever the pill has reached, layer 1 covers layer 2, so each glyph flips
+   exactly at the sweep edge. All layers share the padding-box geometry, so
+   the flip edge and the pill edge align pixel-perfect. The rule above stays
+   as the graceful fallback (uniform fade) where background-clip:text is
+   unsupported. */
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .hl-link,
+  .hl-link:hover,
+  .hl-link:focus-visible {
+    color: transparent;
+  }
+  .hl-link {
+    background-image:
+      linear-gradient(var(--hl-fg), var(--hl-fg)),
+      linear-gradient(var(--hl-rest), var(--hl-rest)),
+      linear-gradient(var(--hl-bg), var(--hl-bg));
+    -webkit-background-clip: text, text, border-box;
+    background-clip: text, text, border-box;
+    background-size: 0% 100%, 100% 100%, 0% 100%;
+    background-position: 100% 0, 0 0, 100% 0;
+    transition: background-size 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hl-link:hover,
+  .hl-link:focus-visible {
+    background-position: 0 0, 0 0, 0 0;
+    background-size: 100% 100%, 100% 100%, 100% 100%;
+  }
+  /* Icons inside a link paint via currentColor, which is now transparent —
+     keep them visible with an explicit color that follows the states
+     (uniform fade; the glyph sweep is text-only by nature). */
+  .hl-link svg {
+    color: var(--hl-rest);
+    transition: color 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hl-link:hover svg,
+  .hl-link:focus-visible svg {
+    color: var(--hl-fg);
+  }
+}
+/* ── Button hover sweep ───────────────────────────────────────────────────
+ * The .hl-link mechanic applied to buttons: the hover fill sweeps in L→R and
+ * exits L→R too, via the same background-size + anchor-flip trick (grow
+ * anchored left, shrink anchored right).
+ *
+ * Layering: a button's resting fill is its `background-color` (bg-primary,
+ * bg-input, …). The sweep is a `background-image` gradient, which paints ABOVE
+ * background-color — so the resting fill needs no changes and transparent
+ * variants (ghost) work unmodified.
+ *
+ * --btn-hover is a translucent light SCRIM, not a named colour, and that is
+ * deliberate. ~110 Button call sites across the app carry bespoke
+ * `hover:bg-*` (red-700 destructives, amber, gray, cyan tints) that encode
+ * real semantics. A palette-specific sweep would fight every one of them — a
+ * cyan wash dragging across a red delete button. A scrim instead LIGHTENS
+ * whatever is underneath, so it composes with any resting colour: cyan
+ * brightens, red brightens, ghost picks up a faint wash. Those call sites
+ * keep cross-fading their base colour while the scrim adds the directional
+ * pass on top, so no per-instance edits are needed.
+ *
+ * Built from --foreground (near-white) rather than a literal, per the
+ * no-hardcoded-colours rule. A variant may still override --btn-hover for a
+ * specific target; `link` sets none and opts out entirely (.hl-link instead).
+ *
+ * 200ms — a touch slower than links, because a button is a bigger surface and
+ * the same duration reads as faster across it. Unlayered so it outranks the
+ * base `transition-all`, which would otherwise time the sweep.
+ */
+.btn-sweep {
+  --btn-hover: color-mix(in oklch, var(--foreground) 14%, transparent);
+  background-image: linear-gradient(var(--btn-hover), var(--btn-hover));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  background-position: 100% 0; /* anchored right: the exit sweep continues L→R */
+  transition:
+    background-size 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.btn-sweep:hover:not(:disabled),
+.btn-sweep:focus-visible:not(:disabled) {
+  background-position: 0 0; /* anchored left: the enter sweep runs L→R */
+  background-size: 100% 100%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-sweep {
+    transition: none;
+  }
+}
+
+/* ── Progressive form reveal ──────────────────────────────────────────────
+ * Slides the progressively-disclosed part of a form open when it mounts
+ * (login / register expand the email path on first focus).
+ *
+ * grid-template-rows 0fr -> 1fr, not max-height: this animates to the
+ * content's NATURAL height, so it works regardless of how tall the revealed
+ * fields are. A max-height guess either clips tall content or eases against
+ * dead space and reads sluggish.
+ *
+ * Runs as an animation rather than a transition because the element animates
+ * ON MOUNT — there is no previous state to transition from. That keeps the
+ * conditional render intact, which matters: the Turnstile widget must not
+ * mount (and hit Cloudflare) until the email path is actually chosen.
+ *
+ * Expand only, deliberately. `emailFormOpen` latches — it is set true on first
+ * focus and never false — so a partly-filled form can't collapse out from
+ * under the user, and a collapse animation would be unreachable code. If a
+ * form ever needs to close, swap the animation for a transition on a
+ * data-attribute and keep the children mounted.
+ *
+ * `min-height: 0` on the child is required or the grid row refuses to
+ * collapse below the content's intrinsic height and nothing animates.
+ */
+.form-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: form-reveal 260ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.form-reveal > * {
+  /* min-height:0 or the grid row refuses to shrink below the content's
+     intrinsic height. overflow:hidden or the content simply spills out of the
+     collapsed row and stays fully visible — the row animates, the reveal does
+     not. Both are required; neither is optional. */
+  min-height: 0;
+  overflow: hidden;
+}
+@keyframes form-reveal {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+  to {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .form-reveal {
+    animation: none;
+  }
+}
+
+/* Quiet variant — footer and other muted contexts. Same mechanic. */
+.hl-link-muted {
+  --hl-bg: var(--secondary);
+  --hl-fg: var(--foreground);
+  --hl-rest: var(--muted-foreground);
+}
+/* Neutral-rest variant — links whose resting color is body text, not cyan. */
+.hl-link-plain {
+  --hl-rest: var(--foreground);
+}
+@media (prefers-reduced-motion: reduce) {
+  .hl-link {
+    transition: none;
+  }
+}

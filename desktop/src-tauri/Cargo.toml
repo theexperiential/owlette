@@ -1,0 +1,36 @@
+[package]
+name = "owlette-desktop"
+version = "0.1.0"
+description = "owlette desktop app"
+authors = ["The Experiential Company"]
+license = "FSL-1.1-Apache-2.0"
+repository = "https://github.com/theexperiential/owlette"
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# main.rs calls into this crate; renaming the package does not rename the lib,
+# so keep the two in sync if either changes.
+name = "owlette_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+# `preserve_order` is load-bearing: without it serde_json sorts object keys and
+# every desktop write would reshuffle the operator's config.json — including the
+# firebase block the service owns.
+serde_json = { version = "1.0", features = ["preserve_order"] }
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-single-instance = "2"
+# The host side is Windows-only by design (it drives the SCM, a named mutex and
+# WM_CLOSE), so these are unconditional rather than target-gated.
+notify = "8"
+windows-service = "0.8"
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Security"] }
