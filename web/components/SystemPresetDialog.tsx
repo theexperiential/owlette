@@ -233,7 +233,7 @@ export default function SystemPresetDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-border bg-secondary text-white max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="border-border bg-secondary text-white sm:max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{isEditMode ? 'edit template' : 'create template'}</DialogTitle>
           <DialogDescription className="text-muted-foreground">

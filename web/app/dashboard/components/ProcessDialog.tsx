@@ -56,7 +56,7 @@ export function ProcessDialog({
 }: ProcessDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="border-border bg-card text-foreground max-w-3xl">
+      <DialogContent className="border-border bg-card text-foreground sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="text-white">
             {mode === 'create' ? 'add process' : 'edit process'}

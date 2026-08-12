@@ -123,7 +123,7 @@ export function CreateWebhookDialog({
         if (!o) reset();
       }}
     >
-      <DialogContent className="max-w-xl bg-card border-border">
+      <DialogContent className="sm:max-w-xl bg-card border-border">
         <DialogHeader>
           <DialogTitle className="text-white">create webhook</DialogTitle>
           <DialogDescription className="text-muted-foreground">

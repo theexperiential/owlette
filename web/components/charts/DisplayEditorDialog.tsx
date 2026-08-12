@@ -166,7 +166,7 @@ export function DisplayEditorDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="border-border bg-card text-foreground max-w-lg">
+      <DialogContent className="border-border bg-card text-foreground sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="text-white">edit display</DialogTitle>
           <DialogDescription className="text-muted-foreground">

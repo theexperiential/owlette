@@ -1334,7 +1334,7 @@ export default function DashboardPage() {
 
       {/* Process Dialog (Create/Edit) */}
       <Dialog open={processDialogOpen} onOpenChange={setProcessDialogOpen}>
-        <DialogContent className="border-border bg-muted text-foreground max-w-3xl">
+        <DialogContent className="border-border bg-muted text-foreground sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle className="text-foreground">
               {processDialogMode === 'create' ? 'add process' : 'edit process'}

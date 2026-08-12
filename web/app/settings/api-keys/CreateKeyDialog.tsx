@@ -164,7 +164,7 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: Props) {
         onOpenChange(next);
       }}
     >
-      <DialogContent className="max-w-xl bg-card border-border">
+      <DialogContent className="sm:max-w-xl bg-card border-border">
         <DialogHeader>
           <DialogTitle className="text-white">create api key</DialogTitle>
           <DialogDescription>

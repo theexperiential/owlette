@@ -152,7 +152,7 @@ export default function UploadInstallerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-border bg-secondary text-white max-w-2xl">
+      <DialogContent className="border-border bg-secondary text-white sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="text-white">upload new installer version</DialogTitle>
           <DialogDescription className="text-muted-foreground">

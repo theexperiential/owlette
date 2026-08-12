@@ -117,7 +117,7 @@ export function ManageUserSitesDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-border bg-card text-foreground max-w-2xl">
+      <DialogContent className="border-border bg-card text-foreground sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="text-foreground">manage site access</DialogTitle>
           <DialogDescription className="text-muted-foreground">
