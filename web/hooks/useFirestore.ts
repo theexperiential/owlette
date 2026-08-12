@@ -874,6 +874,15 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
 const EMPTY_MACHINES: Machine[] = [];
 const PROFILE_LISTENER_LIMIT = 50;
 
+// A machine's pill flips to offline once its heartbeat is older than this.
+// The agent beats every 30s (active) or 120s (idle), so 300s leaves room for
+// two consecutive missed idle beats (240s) before the dashboard calls it
+// offline — at 180s a single slow tick was enough to grey out a healthy
+// machine. Must stay in sync with OFFLINE_THRESHOLD_MS in
+// `app/api/cron/health-check/route.ts` (5 minutes) so the pill and the
+// offline alerting agree on when a machine is stale.
+const OFFLINE_HEARTBEAT_AGE_SEC = 300;
+
 export function useMachineHardware(siteId: string | null, machineId: string | null) {
   const requestedKey = db && siteId && machineId ? `${siteId}/${machineId}` : null;
   const [state, setState] = useState<{
@@ -1035,7 +1044,7 @@ export function useMachines(siteId: string) {
             return machine;
           }
           const heartbeatAge = now - machine.lastHeartbeat;
-          const shouldBeOnline = (machine.online === true) && (heartbeatAge < 180);
+          const shouldBeOnline = (machine.online === true) && (heartbeatAge < OFFLINE_HEARTBEAT_AGE_SEC);
 
           // If calculated online state differs from current state, update it
           if (machine.online !== shouldBeOnline) {
@@ -1233,14 +1242,16 @@ export function useMachines(siteId: string) {
           // Determine online status: use both boolean flag AND heartbeat timestamp
           // Machine is online if BOTH conditions are true:
           // 1. online flag is true
-          // 2. Last heartbeat was within 180 seconds
-          //    Agent sends metrics every 30s (active) or 120s (idle), so 180s allows 60s buffer
+          // 2. Last heartbeat was within OFFLINE_HEARTBEAT_AGE_SEC (300s)
+          //    Agent sends metrics every 30s (active) or 120s (idle), so 300s
+          //    survives two consecutive missed idle beats and matches the cron
+          //    health-check's OFFLINE_THRESHOLD_MS.
           // Exception: on cached snapshots the heartbeat age is unreliable, so trust the flag alone.
           const now = Math.floor(Date.now() / 1000); // Current time in seconds
           const heartbeatAge = now - lastHeartbeat; // Age in seconds
           const isOnline = isFromCache
             ? (data.online === true)
-            : (data.online === true) && (heartbeatAge < 180);
+            : (data.online === true) && (heartbeatAge < OFFLINE_HEARTBEAT_AGE_SEC);
 
             // Preserve GPU data if current update has invalid/missing GPU (name is "N/A" or missing)
             const metrics = data.metrics ? {

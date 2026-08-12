@@ -2,7 +2,7 @@
  * Time-travel — heartbeat recovery flips the pill back online (E3.3)
  *
  * Closes wave E3. The recovery path: a machine was marked offline by
- * `useMachines`' 30s setInterval (heartbeatAge >= 180s), the agent
+ * `useMachines`' 30s setInterval (heartbeatAge >= 300s), the agent
  * reports in with a fresh heartbeat + online=true, the onSnapshot
  * listener at `useFirestore.ts:911` fires, `setMachines` wholesale
  * replaces the machine object with the fresh data, and the idle
@@ -11,15 +11,15 @@
  *
  * Sequence:
  *   1. Install fake clock; seed stale machine (online=true but
- *      heartbeat 200s old) so the interval's first tick will flip it.
+ *      heartbeat 320s old) so the interval's first tick will flip it.
  *   2. Load dashboard — the initial render reads `online: true` from
  *      Firestore directly, so the pill starts green (the interval
  *      hasn't fired yet).
- *   3. fastForward 30s → the interval tick sees heartbeatAge=230 and
+ *   3. fastForward 30s → the interval tick sees heartbeatAge=350 and
  *      flips `online: false` locally → pill flips to red "offline".
  *   4. Admin SDK writes a fresh heartbeat (runs in Node — uses real
  *      wall-clock Date.now(), which is ~30s behind the fake clock but
- *      still well within the 180s threshold).
+ *      still well within the 300s threshold).
  *   5. Snapshot delivers the update → setMachines replaces the
  *      machine → pill flips back to green "online".
  *
@@ -44,11 +44,11 @@ test('stale machine recovers to online when the agent writes a fresh heartbeat',
   const realNow = Date.now();
   await page.clock.install({ time: realNow });
 
-  // Seed stale: online=true + heartbeat 200s old. The onSnapshot listener
+  // Seed stale: online=true + heartbeat 320s old. The onSnapshot listener
   // initially renders the pill as "online" directly from `data.online`;
   // the 30s setInterval's first tick will then detect the stale heartbeat
-  // (heartbeatAge=200 >= 180) and flip local state to offline.
-  await seedMachine(SITE_ID, MACHINE_ID, { heartbeatOffsetSec: 200 });
+  // (heartbeatAge=320 >= 300) and flip local state to offline.
+  await seedMachine(SITE_ID, MACHINE_ID, { heartbeatOffsetSec: 320 });
 
   await page.goto('/dashboard');
 
@@ -66,7 +66,7 @@ test('stale machine recovers to online when the agent writes a fresh heartbeat',
   // admin SDK runs in Node, so Date.now() here is the real wall-clock
   // time (untouched by page.clock). From the browser's fake-clock
   // perspective the write lands ~30s in the past — heartbeatAge at the
-  // next interval will be ~30s, well under the 180s threshold.
+  // next interval will be ~30s, well under the 300s threshold.
   const db = getAdminDb();
   await db
     .collection('sites')

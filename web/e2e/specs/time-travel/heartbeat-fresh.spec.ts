@@ -3,7 +3,7 @@
  *
  * Baseline state for E3.x's staleness transitions. useMachines' 30s
  * setInterval (`useFirestore.ts:854-880`) re-evaluates `online` as
- * `machine.online === true && heartbeatAge < 180`. With a freshly
+ * `machine.online === true && heartbeatAge < 300`. With a freshly
  * seeded heartbeat (age ~0s), both conditions hold and the pill
  * renders "online" green.
  *
@@ -25,7 +25,7 @@ const MACHINE_ID = 'e2e-heartbeat-fresh';
 
 test('fresh heartbeat renders the green online pill', async ({ page }) => {
   // heartbeatOffsetSec=0 (the default) writes lastHeartbeat = nowSec,
-  // so heartbeatAge = 0 and the staleness check (<180s) passes
+  // so heartbeatAge = 0 and the staleness check (<300s) passes
   // trivially. online=true is also set by seedMachine, satisfying
   // the dual-condition gate at useFirestore.ts:869.
   await seedMachine(SITE_ID, MACHINE_ID);

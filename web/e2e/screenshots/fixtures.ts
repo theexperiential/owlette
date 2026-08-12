@@ -276,7 +276,9 @@ async function writeMachineMetrics(
     .doc(machineId)
     .set(
       {
-        online: heartbeatOffsetSec < 180,
+        // Mirrors useMachines' OFFLINE_HEARTBEAT_AGE_SEC (300s) so the seeded
+        // flag agrees with how the dashboard would classify this heartbeat.
+        online: heartbeatOffsetSec < 300,
         lastHeartbeat: heartbeat,
         agent_version: '3.0.0',
         machine_timezone_iana: 'America/Los_Angeles',
