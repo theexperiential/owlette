@@ -123,10 +123,11 @@ echo Configuring service...
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Description "Owlette process monitoring and management service"
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService Start SERVICE_AUTO_START
 
-:: Enable delayed auto-start — gives Windows time to fully initialise the desktop,
-:: network adapters and user sessions before Owlette starts.  This is a separate
-:: registry flag on top of SERVICE_AUTO_START.
-reg add "HKLM\SYSTEM\CurrentControlSet\Services\OwletteService" /v DelayedAutostart /t REG_DWORD /d 1 /f >nul 2>&1
+:: Disable delayed auto-start — the service gates on real network readiness in
+:: process, so a blind timer (up to 120s) only delays monitoring for no gain.
+:: Written explicitly as 0 (not just omitted) because machines deployed with the
+:: old value of 1 keep the flag through an upgrade; this corrects them in place.
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\OwletteService" /v DelayedAutostart /t REG_DWORD /d 0 /f >nul 2>&1
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppNoConsole 1
 
 :: Run service as LocalSystem for elevated privileges (needed for silent installer execution)
@@ -142,7 +143,7 @@ echo Configuring service to run as LocalSystem...
 "%INSTALL_DIR%\tools\nssm.exe" set OwletteService AppRotateBytes 10485760
 
 :: Set service dependencies (wait for network)
-"%INSTALL_DIR%\tools\nssm.exe" set OwletteService DependOnService Tcpip Dnscache
+"%INSTALL_DIR%\tools\nssm.exe" set OwletteService DependOnService Tcpip Dnscache NlaSvc
 
 :: Configure restart behavior
 :: - Exit code 0 (clean exit) -> Don't restart (user intentionally stopped it)

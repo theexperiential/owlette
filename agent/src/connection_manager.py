@@ -69,6 +69,15 @@ WATCHDOG_DEFAULTS = {
 # without hammering the cross-process config lock every 10s.
 _WATCHDOG_CONFIG_TTL_SECONDS = 60.0
 
+# Cold-boot grace extension. On a slow cold boot (DHCP lease, domain logon,
+# VPN dial-up, NIC driver init) the network is often still settling when the
+# 180s process-uptime grace expires — restarting there accomplishes nothing and
+# burns restart budget. While the SYSTEM has been up for less than
+# _COLD_BOOT_WINDOW_SECONDS, the effective boot grace widens to
+# _COLD_BOOT_GRACE_SECONDS.
+_COLD_BOOT_WINDOW_SECONDS = 600.0
+_COLD_BOOT_GRACE_SECONDS = 300.0
+
 # Sentinel file: touch this to disable the watchdog without restarting the
 # service. Checked every watchdog cycle; belt-and-braces for when config sync
 # itself is broken.
@@ -94,12 +103,19 @@ def _should_restart(
     process_start_mono: float,
     last_fatal_mono: Optional[float],
     config: dict,
+    system_uptime_seconds: Optional[float] = None,
 ) -> RestartDecision:
     """Pure decision function — no I/O, no clock reads.
 
     Caller supplies all timing inputs so this is deterministically testable.
     Does NOT check internet, budget, or reboot state — those have side effects
     and are evaluated separately in _check_self_restart.
+
+    Args:
+        system_uptime_seconds: Seconds since the OS booted, or None when it
+            can't be determined. Supplied by the caller (see
+            _system_uptime_seconds) purely to widen the boot grace on a cold
+            boot; it is never used as a "time since last success" reference.
 
     Returns a RestartDecision with should_fire=True only when the time-since-
     last-success threshold has been exceeded AND the boot grace has elapsed
@@ -115,10 +131,30 @@ def _should_restart(
     fatal_suppress_seconds = float(preconditions.get('fatal_error_suppression_seconds', 3600))
 
     # Boot grace — based on process uptime (monotonic), not system uptime.
-    # psutil.boot_time() is wall-clock and vulnerable to NTP corrections.
+    # psutil.boot_time() is wall-clock and vulnerable to NTP corrections, so it
+    # only ever widens the grace (fail-safe direction) and never shortens it.
+    #
+    # Cold-boot extension: a delayed cold boot expires the process grace at
+    # exactly the moment the network stabilises. While the system itself booted
+    # recently, hold off longer. A configured grace of 0 is an explicit opt-out
+    # and is never widened; an implausible uptime (negative, e.g. after an NTP
+    # correction) is ignored.
+    cold_boot_extended = (
+        boot_grace_seconds > 0
+        and system_uptime_seconds is not None
+        and 0 <= system_uptime_seconds < _COLD_BOOT_WINDOW_SECONDS
+        and boot_grace_seconds < _COLD_BOOT_GRACE_SECONDS
+    )
+    if cold_boot_extended:
+        boot_grace_seconds = _COLD_BOOT_GRACE_SECONDS
+
     process_uptime = now_mono - process_start_mono
     if process_uptime < boot_grace_seconds:
-        return RestartDecision(False, detail=f"in boot grace ({process_uptime:.0f}s < {boot_grace_seconds:.0f}s)")
+        grace_note = " (cold-boot extended)" if cold_boot_extended else ""
+        return RestartDecision(
+            False,
+            detail=f"in boot grace ({process_uptime:.0f}s < {boot_grace_seconds:.0f}s){grace_note}",
+        )
 
     # Fatal-error suppression — if we recently saw an error fingerprint that
     # a restart won't fix (revoked token, deleted project), don't churn.
@@ -138,6 +174,22 @@ def _should_restart(
 
     return RestartDecision(True, reason_code=REASON_CONNECTION_STUCK,
                            detail=f"{seconds_since_success:.0f}s since last success")
+
+
+def _system_uptime_seconds() -> Optional[float]:
+    """Seconds since the OS booted, or None if it can't be determined.
+
+    Wall-clock derived, so it is only ever used to widen the boot grace (see
+    _should_restart) — never as the authoritative time reference. psutil is
+    imported lazily and all failures degrade to None so a missing or broken
+    dependency falls back to the plain process-uptime grace instead of taking
+    down the watchdog thread.
+    """
+    try:
+        import psutil
+        return time.time() - psutil.boot_time()
+    except Exception:
+        return None
 
 
 def _emergency_kill_active() -> bool:
@@ -774,7 +826,8 @@ class ConnectionManager:
         Handle failed connection attempt.
 
         Increments failure counter, updates backoff, checks circuit breaker,
-        and schedules next attempt.
+        and transitions to DISCONNECTED. Does NOT schedule the next attempt —
+        see the note at the end of this method.
 
         Args:
             reason: Reason for the failure
@@ -800,9 +853,20 @@ class ConnectionManager:
             f"{reason} (attempt #{self._consecutive_failures})"
         )
 
-        # Schedule next attempt (if not shutdown)
-        if not self._shutdown_event.is_set():
-            self._trigger_reconnect(f"Retry after failure #{self._consecutive_failures}")
+        # No retry is scheduled from here — by design.
+        #
+        # The metrics loop is the SOLE reconnect driver: while the state is
+        # DISCONNECTED it calls force_reconnect() on every poll (30s when
+        # disconnected — see firebase_client._metrics_loop). That thread is
+        # unsupervised and starts unconditionally, so it covers the failed-
+        # initial-connect case too.
+        #
+        # A _trigger_reconnect() call here would also be dead code on the
+        # reconnect path: that path reaches this method from inside
+        # _reconnect_sequence, which clears _reconnect_in_progress only in its
+        # finally block, so the call would always hit the "already in progress"
+        # guard and return. Do NOT reinstate the self-perpetuating retry ladder
+        # — the fixed 30s poll cadence is the intended behaviour.
 
     def _calculate_backoff_wait(self) -> float:
         """
@@ -1092,6 +1156,7 @@ class ConnectionManager:
                 process_start_mono=self._process_start_time_mono,
                 last_fatal_mono=self._last_fatal_error_time_mono,
                 config=config,
+                system_uptime_seconds=_system_uptime_seconds(),
             )
             if not decision.should_fire:
                 return
