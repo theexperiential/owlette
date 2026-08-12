@@ -194,10 +194,17 @@ function buildLogsQuery(
   return q;
 }
 
-// Shared grid template so the column header and every log row line up exactly:
+// Shared column template so the column header and every log row line up exactly:
 // chevron · level · time · event · machine · process · details(flex, truncates).
-const LOG_GRID =
-  'grid grid-cols-[14px_76px_104px_150px_132px_116px_minmax(0,1fr)] items-center gap-3';
+// The fixed columns add up to ~664px, so they only apply from `md` up.
+const LOG_COLS =
+  'md:grid-cols-[14px_76px_104px_150px_132px_116px_minmax(0,1fr)] md:gap-3';
+
+// Row layout. Below `md` the row is a wrapping stack — level + time + event on
+// the first line, machine + process next, the details preview on its own
+// full-width line — and the column header is hidden, since each field reads for
+// itself at that size. From `md` up it is the original fixed grid, untouched.
+const LOG_GRID = `flex flex-wrap items-center gap-x-2 gap-y-1 md:grid ${LOG_COLS}`;
 
 // Compact relative time for the scannable time column ("2m ago", "3d ago"). The
 // absolute timestamp is shown on hover and in the expanded row.
@@ -249,16 +256,16 @@ const LogRow = React.memo(function LogRow({
       className={`group/row hover:bg-card/40 transition-colors border-b border-border last:border-b-0`}
     >
       <CollapsibleTrigger asChild>
-        <button type="button" className="w-full px-4 py-2.5 text-left cursor-pointer">
+        <button type="button" className="w-full px-4 py-3 md:py-2.5 text-left cursor-pointer">
           <div className={`${LOG_GRID} text-sm`}>
-            {/* chevron */}
-            <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
+            {/* chevron — always visible on touch (there is no hover to reveal it) */}
+            <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 text-muted-foreground transition-all ${isExpanded ? 'opacity-100 rotate-180' : 'opacity-100 md:opacity-0 md:group-hover/row:opacity-100'}`} />
             {/* level */}
-            <div>{getLevelBadge(log.level)}</div>
+            <div className="flex-shrink-0">{getLevelBadge(log.level)}</div>
             {/* time (relative; absolute on hover) */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="text-muted-foreground text-xs whitespace-nowrap truncate cursor-help">
+                <span className="text-muted-foreground text-xs whitespace-nowrap truncate cursor-help flex-shrink-0">
                   {relativeTime(log.timestamp?.toDate())}
                 </span>
               </TooltipTrigger>
@@ -283,8 +290,8 @@ const LogRow = React.memo(function LogRow({
             <span className="text-foreground truncate">{log.machineName}</span>
             {/* process */}
             <span className="text-muted-foreground truncate">{log.processName || '—'}</span>
-            {/* details preview (flex, truncates) + screenshot indicator — hidden once expanded, where the full details render below (avoids duplicating the text) */}
-            <div className="flex items-center gap-2 min-w-0">
+            {/* details preview (flex, truncates) + screenshot indicator — hidden once expanded, where the full details render below (avoids duplicating the text). Below `md` it takes its own full-width line under the other fields. */}
+            <div className="flex items-center gap-2 min-w-0 w-full md:w-auto">
               {!isExpanded && log.screenshotUrl && <Camera className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
               {!isExpanded && (log.details ? (
                 <Tooltip>
@@ -301,14 +308,14 @@ const LogRow = React.memo(function LogRow({
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-        <div className="px-4 pb-3 pt-3 border-t border-border/50 text-sm flex gap-6 bg-card">
+        <div className="px-4 pb-3 pt-3 border-t border-border/50 text-sm flex flex-col md:flex-row gap-4 md:gap-6 bg-card">
           <div className="flex-shrink-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 self-start">
             <span className="text-muted-foreground">machine id</span>
-            <span className="text-foreground text-xs font-mono">{log.machineId}</span>
+            <span className="text-foreground text-xs font-mono break-all">{log.machineId}</span>
             {log.userId && (
               <>
                 <span className="text-muted-foreground">user</span>
-                <span className="text-foreground text-xs font-mono">{log.userId}</span>
+                <span className="text-foreground text-xs font-mono break-all">{log.userId}</span>
               </>
             )}
             <span className="text-muted-foreground">timestamp</span>
@@ -323,13 +330,13 @@ const LogRow = React.memo(function LogRow({
             </span>
           </div>
           {log.details && (
-            <div className="flex-1 min-w-0 border-l border-border/50 pl-6">
+            <div className="flex-1 min-w-0 border-t md:border-t-0 md:border-l border-border/50 pt-3 md:pt-0 md:pl-6">
               <span className="text-muted-foreground text-xs">details</span>
               <p className="text-foreground mt-1 whitespace-pre-wrap break-words select-text">{log.details}</p>
             </div>
           )}
           {log.screenshotUrl && (
-            <div className="flex-shrink-0 border-l border-border/50 pl-6">
+            <div className="flex-shrink-0 border-t md:border-t-0 md:border-l border-border/50 pt-3 md:pt-0 md:pl-6">
               <span className="text-muted-foreground text-xs">crash screenshot</span>
               <button onClick={() => onOpenScreenshot(log.screenshotUrl!)} className="block mt-1">
                 <img
@@ -785,10 +792,10 @@ export default function LogsPage() {
       <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
         {/* Section header with inline stats */}
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-center gap-6 md:gap-8">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3 md:gap-8">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">logs</h2>
 
-            <div className="flex items-center gap-6 md:gap-8">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 md:gap-8">
               <div className="flex items-center gap-2.5">
                 <div className={`rounded-md p-1.5 ${filteredLogs.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
                   <ScrollText className="h-4 w-4" />
@@ -801,7 +808,7 @@ export default function LogsPage() {
                 </div>
               </div>
 
-              <div className="h-8 w-px bg-border" />
+              <div className="hidden md:block h-8 w-px bg-border" />
 
               <div className="flex items-center gap-2.5">
                 <div className={`rounded-md p-1.5 ${warningCount > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-muted text-muted-foreground'}`}>
@@ -815,7 +822,7 @@ export default function LogsPage() {
                 </div>
               </div>
 
-              <div className="h-8 w-px bg-border" />
+              <div className="hidden md:block h-8 w-px bg-border" />
 
               <div className="flex items-center gap-2.5">
                 <div className={`rounded-md p-1.5 ${errorCount > 0 ? 'bg-red-500/10 text-red-400' : 'bg-muted text-muted-foreground'}`}>
@@ -831,7 +838,7 @@ export default function LogsPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
             {filteredLogs.length > 0 && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1045,7 +1052,7 @@ export default function LogsPage() {
         {/* Logs List */}
         <Card className="bg-card-sunken border-border/60 overflow-hidden py-0 gap-0">
           {!logsLoading && filteredLogs.length > 0 && (
-            <div className={`${LOG_GRID} px-4 py-3 border-b border-border bg-card-header rounded-t-xl text-[11px] font-medium tracking-wide text-muted-foreground`}>
+            <div className={`hidden md:grid ${LOG_COLS} items-center px-4 py-3 border-b border-border bg-card-header rounded-t-xl text-[11px] font-medium tracking-wide text-muted-foreground`}>
               <span aria-hidden />
               <span>level</span>
               <span>time</span>
