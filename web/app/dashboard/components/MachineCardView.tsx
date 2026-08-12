@@ -730,8 +730,14 @@ function MachineCard({
             onClick={onMetricClick ? (e) => { e.stopPropagation(); onMetricClick('display'); } : undefined}
           >
             {displayMonitors.length > 0 ? (
-              <div className="grid grid-cols-2 gap-0">
-                <div className="min-w-0 h-[160px] border border-border/30 bg-card rounded-l-lg md:border-r-0 overflow-hidden">
+              /* One column below sm: the monitor list's nowrap rows (name +
+                 resolution + primary star) demand ~200px of min-content each,
+                 and a two-`fr` split doubles that demand into the card's
+                 intrinsically-sized grid track — which is what pushed the
+                 document past 390px. Stacked, the panes share one track and the
+                 shared enclosure rounds top/bottom instead of left/right. */
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-0">
+                <div className="min-w-0 h-[160px] border border-border/30 bg-card border-b-0 sm:border-b rounded-t-lg sm:rounded-tr-none sm:rounded-bl-lg md:border-r-0 overflow-hidden">
                   <DisplayCanvas
                     monitors={displayMonitors}
                     mosaicGrids={displayProfile?.mosaicGrids}
@@ -739,7 +745,7 @@ function MachineCard({
                     className="h-[160px]"
                   />
                 </div>
-                <div className="h-[160px] border border-border/30 bg-card rounded-r-lg overflow-hidden flex flex-col justify-center gap-1.5 px-3 text-xs text-muted-foreground">
+                <div className="h-[160px] border border-border/30 bg-card rounded-b-lg sm:rounded-bl-none sm:rounded-tr-lg overflow-hidden flex flex-col justify-center gap-1.5 px-3 text-xs text-muted-foreground">
                   {displayMonitors.map((m, i) => {
                     // Post-rotation dimensions match what Windows treats the
                     // panel as (and what the canvas rect renders): a 4K panel
@@ -808,7 +814,9 @@ function MachineCard({
             <div className="relative px-6 pb-2 pt-0 md:pb-4 md:pt-0">
               <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
                 {machine.processes.map((process) => (
-                  <div key={process.id} className="flex flex-wrap items-center justify-between gap-y-2 px-3 py-2.5 pl-4">
+                  /* Below sm the control rail stacks under the process info
+                     instead of wrap-packing beside it — see MachineListView. */
+                  <div key={process.id} className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-y-2 px-3 py-2.5 pl-4">
                         {/* min-w-40 (not 0): with flex-wrap, line packing uses
                             flex-basis clamped by min-width — at min-w-0 the
                             flex-1 name contributes nothing, never wraps, and
@@ -819,7 +827,7 @@ function MachineCard({
                             {(!machine.online ? 'unknown' : process.status === 'LAUNCH_FAILED' ? 'failed' : process.status).toLowerCase()}
                           </Badge>
                         </div>
-                        <div className="flex items-center gap-2 md:gap-3 ml-2 md:ml-4 flex-shrink-0">
+                        <div className="flex items-center gap-2 md:gap-3 sm:ml-2 md:ml-4 flex-shrink-0">
                           {(() => {
                             const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
                             const modeLabels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' } as const;
@@ -1034,7 +1042,13 @@ export function MachineCardView({
     // data-slide-pausing="true" during the detail panel's transition,
     // each card here gets `content-visibility: auto` so offscreen cards
     // skip layout/paint and don't compete with the slide for frame budget.
-    <div className="machines-grid grid gap-4 md:grid-cols-2">
+    //
+    // `grid-cols-1` is load-bearing below md: without an explicit template the
+    // single implicit column is an `auto` track, so its base size is the card's
+    // min-content — any intrinsically-wide descendant (a nowrap label, a nested
+    // fr split) drags the track past the viewport and the whole page scrolls
+    // sideways. `minmax(0, 1fr)` pins the track to the container instead.
+    <div className="machines-grid grid grid-cols-1 gap-4 md:grid-cols-2">
       {machines.map((machine) => (
         <MachineCard
           key={machine.machineId}

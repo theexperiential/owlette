@@ -889,8 +889,8 @@ export default function DashboardPage() {
         <TrialBanner snapshot={billingSnapshot} />
 
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex-1">
-            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-1">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-1 truncate">
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -910,8 +910,10 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          {/* Quick stats - inline with welcome */}
-          <div className="flex items-center gap-6 md:gap-8">
+          {/* Quick stats - inline with welcome. Wraps at narrow widths so the
+              two stat blocks + divider can never push the page wider than the
+              viewport. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3 sm:gap-x-6 md:gap-8">
             {/* Machines / Online ratio */}
             <div className="flex items-center gap-2.5">
               <div className={`rounded-md p-1.5 ${onlineMachines > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-muted text-muted-foreground'}`}>
@@ -1002,7 +1004,10 @@ export default function DashboardPage() {
                 enforcing; this just explains the 402s. */}
             <ReadOnlyNotice snapshot={billingSnapshot} currentSiteId={currentSiteId} />
 
-            <div className="flex items-center justify-between">
+            {/* Heading + controls. `flex-wrap` lets the add-machine button and
+                the segmented view toggle drop under the heading at narrow
+                widths instead of squeezing the row past the viewport. */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-lg md:text-xl font-bold text-foreground">machines</h3>
 
               <div className="flex items-center gap-2">
@@ -1107,7 +1112,12 @@ export default function DashboardPage() {
 
             {/* List View — only rendered when active */}
             {viewType === 'list' && (
-              <div className="rounded-xl border border-border/60 bg-card-sunken overflow-hidden animate-in fade-in duration-300">
+              /* `overflow-x-auto` (not `hidden`) so the table primitive's own
+                 horizontal scroller has somewhere to go — a fixed-layout table
+                 that outgrows a narrow viewport becomes scrollable rather than
+                 silently clipped. `overflow-y-hidden` keeps the rounded corners
+                 clipping the first/last rows as before. */
+              <div className="rounded-xl border border-border/60 bg-card-sunken overflow-x-auto overflow-y-hidden animate-in fade-in duration-300">
                 <Table style={{ contain: 'layout', tableLayout: 'fixed' }}>
                   <MachineTableHeader
                     deviceUnion={deviceUnion}
@@ -1618,7 +1628,7 @@ export default function DashboardPage() {
 
       {/* Kill Process Confirmation Dialog */}
       <Dialog open={killConfirmOpen} onOpenChange={setKillConfirmOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>kill process</DialogTitle>
             <DialogDescription>
@@ -1653,7 +1663,7 @@ export default function DashboardPage() {
           if (!open) setRestartTarget(null);
         }}
       >
-        <DialogContent className="max-w-sm">
+        <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>restart {restartTarget?.processName}?</DialogTitle>
             <DialogDescription>

@@ -175,9 +175,7 @@ test.describe('mobile responsive acceptance — authenticated routes', () => {
       .delete();
   });
 
-  // FIXME(task 3.4): the machine card overflows to ~500px at a 390px viewport.
-  // Delete this marker when 3.4 lands.
-  test.fixme('/dashboard (card view) does not scroll horizontally', async ({ page }) => {
+  test('/dashboard (card view) does not scroll horizontally', async ({ page }) => {
     await seedDashboardMachines();
     await page.goto('/dashboard');
     // Card is the default view (dashboard/page.tsx seeds viewType='card' and

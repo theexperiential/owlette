@@ -387,7 +387,7 @@ export function MachineRow({
             )}
           </div>
         </TableCell>
-        <TableCell className="w-[100px] font-medium text-white select-text overflow-hidden">
+        <TableCell className="w-[140px] font-medium text-white select-text overflow-hidden">
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex items-center gap-2">
               <div className="relative flex-shrink-0">
@@ -630,7 +630,7 @@ export function MachineRow({
             );
           })()}
         </TableCell>
-        <TableCell className="w-0 md:w-[150px] overflow-hidden p-0 md:p-2">
+        <TableCell className="w-0 md:w-[110px] overflow-hidden p-0 md:p-2">
           <Tooltip>
             <TooltipTrigger asChild>
               <span
@@ -693,7 +693,11 @@ export function MachineRow({
                       card view instead of the old floating bordered cards. */}
                   <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
                     {machine.processes.map((process) => (
-                      <div key={process.id} className="flex flex-wrap items-center justify-between gap-y-2 p-3">
+                      /* Below sm the control rail stacks under the process info
+                         (full-width name/path block, buttons on their own line)
+                         instead of wrap-packing into a ragged two-column mess.
+                         From sm up this is the original wrapping row. */
+                      <div key={process.id} className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-y-2 p-3">
                           {/* min-w-40 (not 0): see MachineCardView — at min-w-0 the
                               flex-1 name block never wraps and squeezes to 0px */}
                           <div className="flex-1 min-w-40">
@@ -842,7 +846,7 @@ export function MachineRow({
                                   )}
                                 </div>
                                 {/* Compact controls (<lg) */}
-                                <div className="flex lg:hidden items-center gap-2 ml-2 flex-shrink-0">
+                                <div className="flex lg:hidden items-center gap-2 sm:ml-2 flex-shrink-0">
                                   {!isSiteAdmin ? (
                                     // Non-admins are read-only: static mode pill, no write menu.
                                     <span className={`flex items-center px-2.5 h-8 text-xs font-medium rounded-md border bg-card ${currentMode === 'always' ? 'text-emerald-400 border-emerald-600/40' : currentMode === 'scheduled' ? 'text-blue-400 border-blue-600/40' : 'text-muted-foreground border-border'}`}>

@@ -166,8 +166,9 @@ export default function DemoPage() {
               </p>
             </div>
 
-            {/* Quick stats */}
-            <div className="flex items-center gap-6 md:gap-8">
+            {/* Quick stats — mirrors the dashboard, including the narrow-width
+                wrap so the row can never widen the page. */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-3 sm:gap-x-6 md:gap-8">
               <div className="flex items-center gap-2.5">
                 <div className={`rounded-md p-1.5 ${onlineMachines > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-muted text-muted-foreground'}`}>
                   <Monitor className="h-4 w-4" />
