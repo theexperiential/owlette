@@ -25,9 +25,16 @@ export function MachineSelector({ machines, selectedMachineId, onSelect }: Machi
 
   return (
     <Select value={selectedMachineId} onValueChange={onSelect}>
+      {/* `w-full max-w-[220px] min-w-0` rather than a hard `w-[220px]`: the
+          selector shares a row with the sidebar toggle and the approval/power
+          toggles, which at a 390px viewport leaves it well under 220px. Capping
+          instead of fixing keeps the desktop width identical while letting the
+          trigger shrink (and its label truncate) on narrow screens. `min-w-0`
+          is required — a flex item's automatic minimum size would otherwise
+          hold it at its content width and push the row into overflow. */}
       <SelectTrigger
         aria-label="cortex target"
-        className="w-[220px] bg-secondary border-border text-foreground"
+        className="w-full max-w-[220px] min-w-0 bg-secondary border-border text-foreground"
       >
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {isSiteMode ? (

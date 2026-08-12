@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSites, useMachines } from '@/hooks/useFirestore';
 import { useOwletteChat, type ChatConversation } from '@/hooks/useCortex';
@@ -80,6 +81,32 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   const [categorizingAll, setCategorizingAll] = useState(false);
   // Sidebar expand/collapse state persists per-device to Firestore.
   const { sidebarOpen, setSidebarOpen, collapsedGroups, setCollapsedGroups } = useCortexSidebarPrefs();
+  // Below `md` the sidebar has no room, so the conversation list moves into a
+  // left-slide sheet. Transient UI state on purpose — unlike `sidebarOpen` it is
+  // NOT persisted to devicePrefs; a sheet that reopened itself on every visit
+  // would bury the chat behind an overlay.
+  const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
+  // Viewport-aware branching between the desktop aside and the mobile sheet.
+  // `md:hidden` on the sheet is NOT sufficient — Radix portals the overlay +
+  // content into document.body, escaping any wrapper class. Only JS gating keeps
+  // the mobile overlay off the desktop viewport. It also guarantees the
+  // conversation list is mounted on exactly ONE surface at a time, which
+  // `sidebarScrollRef` / `loadMoreSentinelRef` depend on (see below).
+  // Starts `true` so SSR and hydration agree; the effect corrects it on mount.
+  const [isDesktop, setIsDesktop] = useState(true);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const sync = () => setIsDesktop(mq.matches);
+    sync();
+    const onChange = () => {
+      sync();
+      // Crossing up into the desktop layout unmounts the sheet; drop the open
+      // flag too so coming back down doesn't reopen it over the chat.
+      if (mq.matches) setMobileConversationsOpen(false);
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
 
   const { machines } = useMachines(currentSiteId);
 
@@ -223,6 +250,10 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
 
   const handleNewChat = useCallback((overrides?: { machineId?: string; machineName?: string }) => {
+    // The sheet is the only way to reach "new conversation" on mobile, so
+    // starting one has to dismiss it and reveal the chat. No-op on desktop,
+    // where the flag is never set.
+    setMobileConversationsOpen(false);
     if (initialChatId) {
       // Navigate back to the landing URL but keep it there until the chat is
       // persisted (handleChatPersisted replaces to /cortex/{id}). suppress stops
@@ -239,6 +270,9 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   }, [chat, initialChatId, router]);
 
   const handleConversationClick = useCallback((conversationId: string) => {
+    // Same as handleNewChat: selecting a conversation on mobile means the user
+    // is done with the list, so close the sheet onto the chat they picked.
+    setMobileConversationsOpen(false);
     // Expand the selected conversation's category group if the user had it
     // collapsed, so the row it lives in is actually visible after selecting.
     const convo = conversationsRef.current.find((c) => c.id === conversationId);
@@ -284,7 +318,12 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMoreConversations, loadingMore, loadMoreConversations]);
+    // `isDesktop` / `mobileConversationsOpen` are deps even though the effect
+    // never reads them: they decide WHICH surface holds the scroller and the
+    // sentinel, and remounting the list swaps the nodes these refs point at.
+    // Without them the observer would stay bound to a detached node (or never
+    // attach at all when the list first mounts inside the sheet).
+  }, [hasMoreConversations, loadingMore, loadMoreConversations, isDesktop, mobileConversationsOpen]);
 
   // Latest conversations, readable from event handlers without re-subscribing.
   const conversationsRef = useRef(chat.conversations);
@@ -293,6 +332,9 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   // Scroll the active conversation row into view whenever the active chat changes
   // (selecting a conversation, starting a new one), so the highlighted row is
   // never left scrolled out of sight. No state writes here — purely a DOM nudge.
+  // Also re-runs when the list moves between the desktop aside and the mobile
+  // sheet, so a freshly-opened sheet lands on the current conversation instead
+  // of at the top of the list.
   useEffect(() => {
     if (!chat.chatId) return;
     const raf = requestAnimationFrame(() => {
@@ -301,7 +343,7 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
         ?.scrollIntoView({ block: 'nearest' });
     });
     return () => cancelAnimationFrame(raf);
-  }, [chat.chatId]);
+  }, [chat.chatId, isDesktop, mobileConversationsOpen]);
 
   // Skip "new conversation" entries — the API requires a title or first message to categorize
   const uncategorizedIds = chat.conversations
@@ -385,6 +427,11 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
 
   const showConversationNotFound = Boolean(initialChatId && chat.chatLoadError === 'not_found');
 
+  // The desktop aside animates between `w-64` and `w-0`, so its children carry a
+  // fixed width to stop the content reflowing mid-collapse. In the mobile sheet
+  // the shell owns the width instead, and a fixed 256px child would leave a gap.
+  const conversationPanelWidth = isDesktop ? 'w-64 min-w-64' : 'w-full min-w-0';
+
   if (authLoading || sitesLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -396,7 +443,10 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
   if (!user) return null;
 
   return (
-    <div className="h-screen flex flex-col">
+    // `h-dvh`, not `h-screen`: on iOS Safari `100vh` is the URL-bar-collapsed
+    // height, so a full-height shell overflows by the height of the visible
+    // browser chrome and pushes the composer below the fold.
+    <div className="h-dvh flex flex-col">
       <PageHeader
         currentPage="cortex"
         sites={sites}
@@ -433,9 +483,17 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
           </div>
         )}
 
-        {/* Sidebar — Conversation List */}
-        <aside className={`bg-card flex-col hidden md:flex overflow-hidden transition-all duration-300 ease-in-out rounded-lg border border-border ${sidebarOpen ? 'w-64' : 'w-0 border-0'}`}>
-          <div className="w-64 min-w-64 h-12 px-2 border-b border-border flex items-center gap-1">
+        {/* Conversation list. Above `md` this is the collapsible aside beside
+            the chat; below it, the same children render inside a left-slide
+            sheet reached from the header button. Exactly one surface mounts at
+            a time — see ConversationPanelShell. */}
+        <ConversationPanelShell
+          isDesktop={isDesktop}
+          sidebarOpen={sidebarOpen}
+          mobileOpen={mobileConversationsOpen}
+          onMobileOpenChange={setMobileConversationsOpen}
+        >
+          <div className={`${conversationPanelWidth} h-12 px-2 border-b border-border flex items-center gap-1`}>
             {searchOpen ? (
               /* Search mode: compact new chat + expanded input */
               <>
@@ -527,7 +585,10 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
             )}
           </div>
 
-          <div ref={sidebarScrollRef} className="w-64 min-w-64 flex-1 overflow-y-auto border-r border-border">
+          <div
+            ref={sidebarScrollRef}
+            className={`${conversationPanelWidth} flex-1 overflow-y-auto ${isDesktop ? 'border-r border-border' : ''}`}
+          >
             {chat.conversations.length === 0 ? (
               <div className="p-4 text-center text-xs text-muted-foreground">
                 {chat.searchQuery ? 'no matches' : 'no conversations yet'}
@@ -640,12 +701,24 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
               </div>
             )}
           </div>
-        </aside>
+        </ConversationPanelShell>
 
         {/* Main Chat Area */}
         <main className="flex-1 flex flex-col min-h-0 rounded-lg border border-border bg-card overflow-hidden">
-          {/* Machine selector bar — matches sidebar header height */}
-          <div className="h-12 px-3 border-b border-border flex items-center gap-3">
+          {/* Machine selector bar — matches sidebar header height above `md`
+              (`md:h-12` + `md:py-0` keep that row pixel-identical). Below it the
+              row wraps instead: the target selector, the offline warning and the
+              approval/power toggles cannot share a single 366px line. */}
+          <div className="min-h-12 md:h-12 px-3 py-2 md:py-0 border-b border-border flex flex-wrap md:flex-nowrap items-center gap-x-3 gap-y-2">
+            {/* Mobile: the only entry point to conversation history and "new
+                conversation", both of which live in the sheet at this width. */}
+            <button
+              onClick={() => setMobileConversationsOpen(true)}
+              aria-label="conversations"
+              className="md:hidden p-1 rounded hover:bg-accent transition-colors cursor-pointer text-muted-foreground hover:text-foreground"
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+            </button>
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
@@ -781,6 +854,70 @@ export function CortexChatView({ initialChatId }: CortexChatViewProps) {
         initialSection={settingsInitialSection}
       />
     </div>
+  );
+}
+
+/**
+ * Surface for the conversation list.
+ *
+ * Above `md` it is the collapsible aside beside the chat. Below `md` there is no
+ * room for a 256px column next to a usable chat pane, so the same children move
+ * into a left-slide sheet — without it, conversation history and "new
+ * conversation" are simply unreachable on a phone.
+ *
+ * Built straight on the `@radix-ui/react-dialog` primitives — the same building
+ * blocks as `components/roost/RoostMobileSheet`, and deliberately not
+ * `components/ui/dialog`, whose `DialogContent` is a centred modal that fights an
+ * edge-anchored panel. Esc, overlay-click-to-close and the focus trap are
+ * inherited from Radix.
+ *
+ * The branch is driven by a JS media query rather than `md:hidden`, and the two
+ * branches are mutually exclusive, for two reasons: Radix portals the overlay +
+ * content into document.body where a wrapper class no longer reaches them, and
+ * the caller's `sidebarScrollRef` / `loadMoreSentinelRef` are single refs that
+ * would end up pointing at whichever copy mounted last if both surfaces rendered.
+ */
+function ConversationPanelShell({
+  isDesktop,
+  sidebarOpen,
+  mobileOpen,
+  onMobileOpenChange,
+  children,
+}: {
+  isDesktop: boolean;
+  sidebarOpen: boolean;
+  mobileOpen: boolean;
+  onMobileOpenChange: (open: boolean) => void;
+  children: React.ReactNode;
+}) {
+  if (isDesktop) {
+    return (
+      <aside className={`bg-card flex-col hidden md:flex overflow-hidden transition-all duration-300 ease-in-out rounded-lg border border-border ${sidebarOpen ? 'w-64' : 'w-0 border-0'}`}>
+        {children}
+      </aside>
+    );
+  }
+
+  return (
+    <DialogPrimitive.Root open={mobileOpen} onOpenChange={onMobileOpenChange}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0" />
+        <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 flex w-[85vw] max-w-xs flex-col bg-card border-r border-border shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left">
+          <div className="h-12 px-3 flex flex-shrink-0 items-center justify-between border-b border-border">
+            <DialogPrimitive.Title className="text-sm font-medium text-foreground">
+              conversations
+            </DialogPrimitive.Title>
+            <DialogPrimitive.Close
+              aria-label="close conversations"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </DialogPrimitive.Close>
+          </div>
+          {children}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 
@@ -946,7 +1083,12 @@ function ConversationItem({
           </p>
         </div>
       </button>
-      <div className="opacity-0 group-hover:opacity-100 flex items-center transition-all">
+      {/* Reveal-on-hover above `md` only. Touch devices never fire hover, so
+          below the breakpoint (where these rows live in the mobile sheet) the
+          rename/delete controls would be permanently invisible — still clickable,
+          which is worse than hidden. The `md:` pair restores the desktop
+          behaviour exactly. */}
+      <div className="opacity-100 md:opacity-0 md:group-hover:opacity-100 flex items-center transition-all">
         <button
           onClick={(e) => {
             e.stopPropagation();
