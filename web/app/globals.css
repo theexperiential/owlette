@@ -210,6 +210,20 @@ input[type="week"] {
     font-family: var(--font-geist);
   }
 
+  /* No typographic orphans, anywhere (platform rule, 2026-08-13): headings
+     balance their lines; body copy avoids a lone word on the last line.
+     `pretty` is a no-op in engines that don't support it, so this can only
+     improve wrapping — never change what fits. */
+  h1, h2, h3, h4, h5, h6,
+  [data-slot="card-title"],
+  [data-slot="dialog-title"] {
+    text-wrap: balance;
+  }
+
+  p, li, figcaption, [data-slot="card-description"], [data-slot="dialog-description"] {
+    text-wrap: pretty;
+  }
+
   /* Tabular figures for aligned numbers in data tables */
   table, [data-table], .tabular-nums {
     font-variant-numeric: tabular-nums;

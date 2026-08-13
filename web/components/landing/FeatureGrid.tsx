@@ -19,7 +19,7 @@ interface Vertical {
 const verticals: Vertical[] = [
   {
     label: 'theme parks',
-    tagline: 'keep every ride, queue, and show running 24/7',
+    tagline: 'keep every ride, queue, and show running 24/7',
     icon: FerrisWheel,
   },
   {

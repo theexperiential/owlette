@@ -45,7 +45,8 @@ export function HeroSection({ headline }: HeroSectionProps) {
 
         {/* Subheadline */}
         <p className="hero-subheadline max-w-5xl mx-auto mb-8 sm:mb-10 hero-enter-delay-1">
-          owlette keeps your installations running 24/7
+          {/* Non-breaking space: "24/7" must never wrap onto its own line. */}
+          owlette keeps your installations running&nbsp;24/7
         </p>
 
         {/* CTA */}
