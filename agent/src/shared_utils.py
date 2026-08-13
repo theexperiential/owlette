@@ -1422,6 +1422,50 @@ def cleanup_old_logs(max_age_days=90):
         logging.error(f"Error during log cleanup: {e}")
         return 0
 
+# Size at which an externally-written log gets rotated. 2 MB is generous for
+# a single installer run and keeps the on-disk worst case (current + .1) at
+# ~4 MB.
+EXTERNAL_LOG_MAX_BYTES = 2 * 1024 * 1024
+
+
+def rotate_log_if_oversized(log_path, max_bytes=EXTERNAL_LOG_MAX_BYTES):
+    """
+    Rotate ONCE (``<name>`` -> ``<name>.1``) if the file is bigger than
+    max_bytes, so the next writer starts from empty.
+
+    For logs written by an external process — the Inno Setup installer's
+    ``/LOG=`` file is the one that motivated this — which appends forever and
+    therefore isn't covered by the RotatingFileHandler our own logging uses.
+    ``cleanup_old_logs`` doesn't catch it either: every update refreshes the
+    mtime, so it never ages out.
+
+    Deliberately dumb: one rename, no handlers, no locks. This log has to
+    survive the very upgrade it documents, so there is nothing here that can
+    hold the file open or fail the update. Never raises.
+
+    Returns True if a rotation happened.
+    """
+    try:
+        if not os.path.exists(log_path):
+            return False
+        size = os.path.getsize(log_path)
+        if size <= max_bytes:
+            return False
+        # os.replace overwrites an existing .1 atomically — we keep exactly one
+        # generation of history, never a growing chain.
+        os.replace(log_path, f"{log_path}.1")
+        logging.info(
+            f"Rotated oversized log {os.path.basename(log_path)} "
+            f"({round(size / 1024 / 1024, 2)} MB) to .1"
+        )
+        return True
+    except Exception as e:
+        # A log we couldn't rotate is a disk-space annoyance; failing the
+        # caller (an in-progress agent update) would be far worse.
+        logging.warning(f"Could not rotate log {log_path}: {e}")
+        return False
+
+
 def get_log_tail(log_name='service', lines=100):
     """Read the last N lines from a log file. Returns empty string on failure."""
     try:

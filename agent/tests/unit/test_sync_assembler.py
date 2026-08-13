@@ -618,3 +618,323 @@ def test_post_rename_allows_sibling_root_substring(tmp_path):
         assert (extract_bar / 'file.toe').exists()
     finally:
         state.close()
+
+
+# ─── tree reconciliation (the project-level swap) ────────────────────
+
+
+def _snapshot(root: Path) -> dict:
+    """{relative posix path -> bytes} for every file under root."""
+    out = {}
+    for p in sorted(root.rglob('*')):
+        if p.is_file():
+            out[p.relative_to(root).as_posix()] = p.read_bytes()
+    return out
+
+
+def _register(state, version_id, files, extract, chunks=None):
+    """register a distribution row the way sync_commands does."""
+    return state.start_distribution(
+        site_id='s', roost_id='r', version_id=version_id,
+        version_url=f'u-{version_id}',
+        files=[{'path': f.path, 'size': f.size} for f in files],
+        chunks=chunks or [],
+        extract_root=str(extract),
+    )
+
+
+def test_rollback_to_v1_leaves_tree_exactly_equal_to_v1(tmp_path):
+    """
+    the headline contract: assemble v2 over v1, roll back to v1, and the
+    extract tree must equal v1 EXACTLY. before tree reconciliation the file
+    v2 added survived the rollback, so the documented "atomic project-level
+    swap" was a per-file overwrite in practice.
+    """
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        root = tmp_path / 'extract'
+        extract = root / 'show'
+        extract.mkdir(parents=True)
+        allowlist = DestinationAllowlist([str(root)])
+
+        v1_main = b'v1 main project'
+        v2_main = b'v2 main project (edited)'
+        v2_extra = b'asset only v2 shipped'
+
+        v1_files = [_mk_version_file('main.toe', [v1_main])]
+        v2_files = [
+            _mk_version_file('main.toe', [v2_main]),
+            _mk_version_file('assets/extra.dat', [v2_extra]),
+        ]
+
+        # --- v1 ---
+        _put_chunk(content, v1_main)
+        d1 = _register(state, 'v1', v1_files, extract)
+        assemble_all(
+            distribution_id=d1, files=v1_files, extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+        v1_tree = _snapshot(extract)
+        assert v1_tree == {'main.toe': v1_main}
+
+        # --- v2 over v1 ---
+        _put_chunk(content, v2_main)
+        _put_chunk(content, v2_extra)
+        d2 = _register(state, 'v2', v2_files, extract)
+        r2 = assemble_all(
+            distribution_id=d2, files=v2_files, extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+        assert r2.assembled == 2
+        assert r2.pruned == 0  # nothing v1 had is missing from v2
+        assert (extract / 'assets' / 'extra.dat').exists()
+
+        # --- rollback: the agent just re-pulls the older version ---
+        _put_chunk(content, v1_main)
+        r1 = assemble_all(
+            distribution_id=d1, files=v1_files, extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+
+        assert r1.pruned == 1
+        assert r1.prune_failed == 0
+        assert _snapshot(extract) == v1_tree
+        # the directory that only held the v2-only asset went with it
+        assert not (extract / 'assets').exists()
+        # ...but the roost keeps its own root
+        assert extract.is_dir()
+    finally:
+        state.close()
+
+
+def test_prune_never_touches_files_the_agent_did_not_write(tmp_path):
+    """
+    provenance, not a directory walk: the default extract root is shared
+    between roosts, so anything we have no record of writing stays put.
+    """
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        root = tmp_path / 'extract'
+        extract = root / 'show'
+        extract.mkdir(parents=True)
+        allowlist = DestinationAllowlist([str(root)])
+
+        operator_file = extract / 'operator-notes.txt'
+        operator_file.write_bytes(b'not ours')
+        other_roost_file = extract / 'nested' / 'other-roost.toe'
+        other_roost_file.parent.mkdir()
+        other_roost_file.write_bytes(b'another roost lives here')
+
+        data = b'our only file'
+        _put_chunk(content, data)
+        files = [_mk_version_file('main.toe', [data])]
+        dist_id = _register(state, 'v1', files, extract)
+        result = assemble_all(
+            distribution_id=dist_id, files=files, extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+
+        assert result.pruned == 0
+        assert operator_file.read_bytes() == b'not ours'
+        assert other_roost_file.read_bytes() == b'another roost lives here'
+    finally:
+        state.close()
+
+
+def test_prune_ignores_distributions_that_landed_in_another_root(tmp_path):
+    """
+    a roost whose extract_path was changed must not have its OLD tree's file
+    names deleted out of the NEW tree just because the names collide.
+    """
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        root = tmp_path / 'extract'
+        old_extract = root / 'old'
+        new_extract = root / 'new'
+        old_extract.mkdir(parents=True)
+        new_extract.mkdir(parents=True)
+        allowlist = DestinationAllowlist([str(root)])
+
+        old_data = b'old root file'
+        _put_chunk(content, old_data)
+        old_files = [_mk_version_file('legacy.toe', [old_data])]
+        d_old = _register(state, 'v1', old_files, old_extract)
+        assemble_all(
+            distribution_id=d_old, files=old_files, extract_root=str(old_extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+
+        # a same-named file appears in the NEW root, written by someone else
+        collision = new_extract / 'legacy.toe'
+        collision.write_bytes(b'unrelated file in the new root')
+
+        new_data = b'new root file'
+        _put_chunk(content, new_data)
+        new_files = [_mk_version_file('main.toe', [new_data])]
+        d_new = _register(state, 'v2', new_files, new_extract)
+        result = assemble_all(
+            distribution_id=d_new, files=new_files, extract_root=str(new_extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+
+        assert result.pruned == 0
+        assert collision.read_bytes() == b'unrelated file in the new root'
+        assert (old_extract / 'legacy.toe').exists()
+    finally:
+        state.close()
+
+
+def test_prune_removes_orphaned_partial_sidecar(tmp_path):
+    """an interrupted write for a file the new version dropped is garbage."""
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        root = tmp_path / 'extract'
+        extract = root / 'show'
+        extract.mkdir(parents=True)
+        allowlist = DestinationAllowlist([str(root)])
+
+        gone_data = b'file that v2 drops'
+        _put_chunk(content, gone_data)
+        v1_files = [_mk_version_file('dropped.toe', [gone_data])]
+        d1 = _register(state, 'v1', v1_files, extract)
+        assemble_all(
+            distribution_id=d1, files=v1_files, extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+        # simulate a crash mid-rewrite of that same file
+        sidecar = extract / 'dropped.toe.partial'
+        sidecar.write_bytes(b'half-written bytes')
+
+        kept_data = b'v2 keeps only this'
+        _put_chunk(content, kept_data)
+        v2_files = [_mk_version_file('kept.toe', [kept_data])]
+        d2 = _register(state, 'v2', v2_files, extract)
+        result = assemble_all(
+            distribution_id=d2, files=v2_files, extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+
+        assert result.pruned == 1
+        assert not (extract / 'dropped.toe').exists()
+        assert not sidecar.exists()
+        assert (extract / 'kept.toe').read_bytes() == kept_data
+    finally:
+        state.close()
+
+
+def test_prune_can_be_disabled(tmp_path):
+    """prune=False keeps the pre-reconciliation behaviour for callers that want it."""
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        root = tmp_path / 'extract'
+        extract = root / 'show'
+        extract.mkdir(parents=True)
+        allowlist = DestinationAllowlist([str(root)])
+
+        old_data = b'dropped by v2'
+        _put_chunk(content, old_data)
+        v1_files = [_mk_version_file('dropped.toe', [old_data])]
+        d1 = _register(state, 'v1', v1_files, extract)
+        assemble_all(
+            distribution_id=d1, files=v1_files, extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+
+        new_data = b'v2 file'
+        _put_chunk(content, new_data)
+        v2_files = [_mk_version_file('kept.toe', [new_data])]
+        d2 = _register(state, 'v2', v2_files, extract)
+        result = assemble_all(
+            distribution_id=d2, files=v2_files, extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+            prune=False,
+        )
+
+        assert result.pruned == 0
+        assert (extract / 'dropped.toe').exists()
+    finally:
+        state.close()
+
+
+def test_prune_skipped_when_cancelled(tmp_path):
+    """
+    a cancelled run must not reconcile: the tree is a partial install and
+    deleting the previous version's files would leave gaps.
+    """
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        root = tmp_path / 'extract'
+        extract = root / 'show'
+        extract.mkdir(parents=True)
+        allowlist = DestinationAllowlist([str(root)])
+
+        old_data = b'v1 file that v2 drops'
+        _put_chunk(content, old_data)
+        v1_files = [_mk_version_file('dropped.toe', [old_data])]
+        d1 = _register(state, 'v1', v1_files, extract)
+        assemble_all(
+            distribution_id=d1, files=v1_files, extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+
+        new_data = b'v2 file'
+        _put_chunk(content, new_data)
+        v2_files = [_mk_version_file('kept.toe', [new_data])]
+        d2 = _register(state, 'v2', v2_files, extract)
+        cancel = threading.Event()
+        cancel.set()
+        result = assemble_all(
+            distribution_id=d2, files=v2_files, extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+            cancel_event=cancel,
+        )
+
+        assert result.cancelled is True
+        assert result.pruned == 0
+        assert (extract / 'dropped.toe').exists()
+    finally:
+        state.close()
+
+
+def test_prune_skipped_for_rows_without_an_extract_root(tmp_path):
+    """
+    a pre-4a.4 distribution row has no extract_root, so we cannot prove its
+    files landed in this tree — leave them.
+    """
+    state = SyncState(str(tmp_path / 'state.db'))
+    try:
+        content = tmp_path / 'content'
+        root = tmp_path / 'extract'
+        extract = root / 'show'
+        extract.mkdir(parents=True)
+        allowlist = DestinationAllowlist([str(root)])
+
+        legacy = extract / 'legacy.toe'
+        legacy.write_bytes(b'written by an older agent build')
+        # row with extract_root=None, file marked as written
+        d_legacy = state.start_distribution(
+            site_id='s', roost_id='r', version_id='v0', version_url='u0',
+            files=[{'path': 'legacy.toe', 'size': legacy.stat().st_size}],
+            chunks=[],
+        )
+        state.set_file_state(d_legacy, 'legacy.toe', 'committed')
+
+        data = b'current version'
+        _put_chunk(content, data)
+        files = [_mk_version_file('main.toe', [data])]
+        dist_id = _register(state, 'v1', files, extract)
+        result = assemble_all(
+            distribution_id=dist_id, files=files, extract_root=str(extract),
+            state=state, allowlist=allowlist, content_store=str(content),
+        )
+
+        assert result.pruned == 0
+        assert legacy.exists()
+    finally:
+        state.close()

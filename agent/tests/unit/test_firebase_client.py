@@ -326,3 +326,41 @@ class TestEnsureDisplayModesCatalogue:
         assert out['uploaded'] is False
         assert out['reason'] == 'offline'
         mock_rest_client.collection.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestTerminalCommandStatus — completed vs failed is decided by the "Error:"
+# prefix on the handler's result. roost handlers used to return
+# "sync_pull failed: ..." with no prefix, so a refused deploy was written to
+# firestore as status:'completed'.
+# ---------------------------------------------------------------------------
+class TestTerminalCommandStatus:
+    @staticmethod
+    def _run(firebase_client, result, monkeypatch):
+        firebase_client.connection_manager._state = ConnectionState.CONNECTED
+        firebase_client.command_callback = lambda cmd_id, cmd_data: result
+        monkeypatch.setattr(firebase_client, '_mark_command_running', MagicMock())
+        monkeypatch.setattr(firebase_client, '_mark_command_completed', MagicMock())
+        monkeypatch.setattr(firebase_client, '_mark_command_failed', MagicMock())
+        monkeypatch.setattr(firebase_client, '_upload_metrics', MagicMock())
+        with patch('firebase_client.shared_utils'):
+            firebase_client._execute_command('cmd-1', {'type': 'sync_pull'})
+        return firebase_client
+
+    def test_error_prefixed_result_is_marked_failed(self, firebase_client, monkeypatch):
+        client = self._run(
+            firebase_client,
+            'Error: sync_pull refused: extract_root is not allowed by '
+            'destination_allowlist',
+            monkeypatch,
+        )
+        client._mark_command_failed.assert_called_once()
+        client._mark_command_completed.assert_not_called()
+        assert 'destination_allowlist' in client._mark_command_failed.call_args[0][1]
+
+    def test_success_result_is_marked_completed(self, firebase_client, monkeypatch):
+        client = self._run(
+            firebase_client, 'sync_pull complete (distribution 3)', monkeypatch,
+        )
+        client._mark_command_completed.assert_called_once()
+        client._mark_command_failed.assert_not_called()

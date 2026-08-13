@@ -3185,7 +3185,21 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # handlers (sync_pull, cancel_sync, rollback_to_version) register
             # via self._command_router and are dispatched here.
             if self._command_router.has_handler(cmd_type):
-                return self._command_router.dispatch(cmd_type, cmd_data, cmd_id, self)
+                try:
+                    return self._command_router.dispatch(cmd_type, cmd_data, cmd_id, self)
+                except Exception as e:
+                    # Router handlers signal failure two ways: an "Error: ..."
+                    # return (see sync_commands._failure) or a raise. Without
+                    # this catch the raise would fall through to the outer
+                    # handler below, whose message does NOT start with
+                    # "Error:" — and firebase_client._execute_command keys the
+                    # completed-vs-failed decision off exactly that prefix, so
+                    # a crashed handler would be recorded as a success.
+                    logging.error(
+                        f"Command handler for '{cmd_type}' raised: {e}",
+                        exc_info=True,
+                    )
+                    return f"Error: {cmd_type} failed: {e}"
 
             if cmd_type in ('restart_process', 'start_process'):
                 # Restart or start a specific process by public id or name.
@@ -3664,6 +3678,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # Launch installer via Windows Task Scheduler (survives service stop)
                     # This ensures installer keeps running even when Inno Setup kills the service
                     log_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'owlette', 'logs', 'installer_update.log')
+                    # Inno Setup APPENDS to /LOG, so this file grows for the
+                    # life of the machine and never ages out of
+                    # cleanup_old_logs (every update refreshes its mtime).
+                    # Rotate once here — the last moment before the installer
+                    # opens it — so the worst case stays bounded.
+                    shared_utils.rotate_log_if_oversized(log_path)
                     silent_flags = f'/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS /LOG="{log_path}"'
                     task_name = f"OwletteUpdate_{int(time.time())}"
 
@@ -4244,8 +4264,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 return f"Unknown command type: {cmd_type}"
 
         except Exception as e:
-            error_msg = f"Error executing command {cmd_type}: {e}"
-            logging.error(error_msg)
+            # "Error:" prefix is required, not stylistic: firebase_client's
+            # _execute_command writes status:'failed' only for results that
+            # start with it. Without the colon this read as an error to a
+            # human but was recorded in firestore as a completed command.
+            error_msg = f"Error: executing command {cmd_type}: {e}"
+            logging.error(error_msg, exc_info=True)
             return error_msg
 
     def _check_display_topology(self):
@@ -4967,11 +4991,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.warning(f"_run_auto_restore failed: {e}")
 
     def _maybe_dispatch_roost_scrub(self):
-        """Run roost scrub_all_due() on a daemon thread if not already in-flight.
+        """Run roost scrub + content-store reap on a daemon thread if idle.
 
         Called from the main loop every ROOST_SCRUB_CHECK_ITERATIONS. Single-flight:
         if a previous scrub thread is still alive, this iteration is a no-op.
-        Scrub runs off-loop so a long re-hash never stalls process monitoring.
+        Both jobs run off-loop so a long re-hash never stalls process monitoring.
+
+        The reap runs after the scrub and independently of it: it collects
+        cached chunks that no in-flight distribution references and that are
+        older than the reaper's age threshold, which is what stops a failed
+        distribution's downloaded bytes from sitting on disk forever.
         """
         if self._roost_scrub_thread is not None and self._roost_scrub_thread.is_alive():
             return
@@ -4996,6 +5025,21 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # exc_info so an unexpected failure (e.g. a schema mismatch)
                 # surfaces its stack instead of just a bare message.
                 logging.warning(f"roost scrub failed: {e}", exc_info=True)
+
+            # Separate try: a scrub failure must not skip the reap (and vice
+            # versa) — they share nothing but the state DB handle.
+            try:
+                from sync_commands import _state_for
+                from sync_scrub import reap_orphan_chunks
+                report = reap_orphan_chunks(_state_for(self))
+                if report.deleted or report.failed:
+                    logging.info(
+                        f"roost content-store reap: deleted {report.deleted} orphan "
+                        f"chunk(s), {report.bytes_freed / (1024 * 1024):.1f} MiB freed, "
+                        f"{report.failed} failed"
+                    )
+            except Exception as e:
+                logging.warning(f"roost content-store reap failed: {e}", exc_info=True)
 
         t = threading.Thread(target=_run_scrub, daemon=True, name='roost-scrub')
         t.start()

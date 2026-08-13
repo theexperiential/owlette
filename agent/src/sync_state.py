@@ -37,7 +37,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator, List, Optional
+from typing import Any, Iterable, Iterator, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,12 @@ def _default_state_db_path() -> str:
 # (XDG_DATA_HOME) takes effect; call sites that need the string should use
 # _default_state_db_path() rather than DEFAULT_STATE_DB_PATH directly.
 DEFAULT_STATE_DB_PATH = _default_state_db_path()
+
+# distribution states that are still in flight: their chunks are either
+# being downloaded or about to be assembled, so the content-store reaper
+# must leave those blobs alone. every other state ('committed', 'failed',
+# 'cancelled') is terminal — a resume never happens from those rows.
+ACTIVE_DISTRIBUTION_STATES = ('pending', 'downloading', 'verifying', 'assembling')
 
 # transition states for chunk + file rows.
 # CHUNK: planned -> downloading -> verified -> assembled
@@ -394,10 +400,12 @@ class SyncState:
         """
         with self._lock:
             assert self._conn is not None
+            placeholders = ', '.join('?' * len(ACTIVE_DISTRIBUTION_STATES))
             cur = self._conn.execute(
-                '''SELECT * FROM distributions
-                   WHERE state IN ('pending', 'downloading', 'verifying', 'assembling')
-                   ORDER BY created_at ASC'''
+                f'''SELECT * FROM distributions
+                    WHERE state IN ({placeholders})
+                    ORDER BY created_at ASC''',
+                ACTIVE_DISTRIBUTION_STATES,
             )
             return list(cur.fetchall())
 
@@ -450,6 +458,35 @@ class SyncState:
                 )
             return list(cur.fetchall())
 
+    def list_referenced_chunk_hashes(
+        self, states: Optional[Iterable[str]] = None
+    ) -> Set[str]:
+        """
+        every chunk hash still referenced by a distribution in one of
+        `states` (default: ACTIVE_DISTRIBUTION_STATES).
+
+        this is the "do not delete" set for the content-store reaper
+        (sync_scrub.reap_orphan_chunks): a hash in here belongs to a
+        distribution that is mid-download or mid-assembly and needs the
+        blob to stay put. hashes referenced only by terminal distributions
+        are NOT returned — those rows are history, and their chunks were
+        either already released by the assembler or leaked by a failure.
+        """
+        state_list = tuple(states) if states is not None else ACTIVE_DISTRIBUTION_STATES
+        if not state_list:
+            return set()
+        with self._lock:
+            assert self._conn is not None
+            placeholders = ', '.join('?' * len(state_list))
+            cur = self._conn.execute(
+                f'''SELECT DISTINCT c.hash
+                    FROM chunks c
+                    JOIN distributions d ON d.id = c.distribution_id
+                    WHERE d.state IN ({placeholders})''',
+                state_list,
+            )
+            return {row['hash'] for row in cur.fetchall()}
+
     def set_chunk_state(
         self,
         dist_id: int,
@@ -493,6 +530,36 @@ class SyncState:
                        WHERE distribution_id = ? AND state = ?''',
                     (dist_id, state),
                 )
+            return list(cur.fetchall())
+
+    def list_roost_written_files(
+        self, site_id: str, roost_id: str
+    ) -> List[sqlite3.Row]:
+        """
+        every (path, extract_root) this agent has ever put on disk for a
+        roost, across all of its distributions.
+
+        this is the provenance set the assembler's tree reconciliation
+        prunes from: a path in here that the version being installed does
+        NOT declare is a leftover from an older version and gets deleted.
+        deliberately scoped to files WE wrote — the default extract root is
+        shared between roosts, so a "delete anything the version doesn't
+        list" rule would have one roost eat another's files.
+
+        'planned' rows are excluded: nothing was ever written for them. every
+        other state ('assembling' — a `.partial` may exist, 'assembled',
+        'committed', 'failed') may have left bytes behind.
+        """
+        with self._lock:
+            assert self._conn is not None
+            cur = self._conn.execute(
+                '''SELECT DISTINCT f.path AS path, d.extract_root AS extract_root
+                   FROM files f
+                   JOIN distributions d ON d.id = f.distribution_id
+                   WHERE d.site_id = ? AND d.roost_id = ?
+                     AND f.state != 'planned' ''',
+                (site_id, roost_id),
+            )
             return list(cur.fetchall())
 
     def set_file_state(
