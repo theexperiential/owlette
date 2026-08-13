@@ -14,4 +14,7 @@ export const HERO_HEADLINE = new RegExp(
 );
 
 /** The subhead is fixed — it's what grounds whichever headline was rolled. */
-export const HERO_SUBHEADLINE = /owlette keeps your installations running 24\/7/i;
+// \s (not a literal space): the rendered copy binds "running 24/7" with a
+// non-breaking space so "24/7" can never orphan onto its own line, and a
+// literal space in a regex matches only U+0020.
+export const HERO_SUBHEADLINE = /owlette keeps your installations running\s24\/7/i;
