@@ -114,7 +114,8 @@ curl -s -X PUT "$BASE_URL/api/installer/upload" \
 - **Never modify `python311._pth`** without understanding embedded Python import resolution — breaking this kills all imports
 - **Never skip the Defender exclusion** in the installer — LibreHardwareMonitor's WinRing0 driver triggers false positives
 - **Never change NSSM exit behavior** — exit code 0 = don't restart (graceful stop), non-zero = restart (crash recovery). `owlette_runner.py` depends on this.
-- **Never drop `AppUserModelID: "app.owlette.desktop"`** from the `[Icons]` entries. Windows silently discards every toast an unpackaged app raises unless a Start-menu shortcut registers its AUMID — the notification API still reports success. The id must stay byte-identical to `tauri.conf.json`'s `identifier` and `startup_link.rs`'s `APP_USER_MODEL_ID`.
+- **Never drop `AppUserModelID: "app.owlette.desktop"`** from the two `[Icons]` entries that carry it (`{group}\Owlette` and `{userstartup}\Owlette`). Windows silently discards every toast an unpackaged app raises unless a Start-menu shortcut registers its AUMID — the notification API still reports success. The id must stay byte-identical to `tauri.conf.json`'s `identifier` and `startup_link.rs`'s `APP_USER_MODEL_ID`.
+- **Never add the AUMID to a third shortcut, and never rename either of those two.** Windows draws a toast's attribution line from the *name* of a registered shortcut and does not specify which it picks when several share an id — that is why `Owlette Configuration` carries no id and why the startup shortcut is `Owlette.lnk`. Both registrars must be named exactly `Owlette` or notifications get attributed to something else.
 - **Never let the Tauri bundler run** (`tauri build` without `--no-bundle`) — it wants NSIS/WiX and builds an installer that competes with ours.
 
 ---

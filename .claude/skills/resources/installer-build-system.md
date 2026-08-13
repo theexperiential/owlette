@@ -275,24 +275,34 @@ C:\ProgramData\Owlette\                  Installation + data directory
 ├── tmp\service_status.json              IPC status file (service → tray)
 └── .tokens.enc                          Encrypted OAuth tokens (hidden file)
 
-Start Menu\Programs\Owlette\             Shortcuts (AppUserModelID: app.owlette.desktop)
+Start Menu\Programs\Owlette\             Shortcuts
 ├── Owlette Configuration                → app\owlette-desktop.exe
-├── Owlette                              → app\owlette-desktop.exe --tray
+├── Owlette                              → app\owlette-desktop.exe --tray   [AppUserModelID]
 ├── View Logs                            → C:\ProgramData\Owlette\logs\
 ├── Edit Configuration                   → config.json
 └── Uninstall Owlette
 
 Startup\                                 Auto-start on login
-└── Owlette Tray                         → app\owlette-desktop.exe --tray
+└── Owlette                              → app\owlette-desktop.exe --tray   [AppUserModelID]
 ```
 
-The `AppUserModelID` on those shortcuts is load-bearing, not cosmetic: Windows
-silently discards toasts from an unpackaged app that no Start-menu shortcut
-registers an id for, and the notification call still returns success. The
-desktop app's own "start on login" toggle writes and deletes the same
-`Owlette Tray.lnk` with the same id (`desktop/src-tauri/src/startup_link.rs`),
-so setup recreating it on every upgrade is what repairs a 2.x machine's
-shortcut — and also what re-enables the toggle for anyone who turned it off.
+The `AppUserModelID` (`app.owlette.desktop`) on those two shortcuts is
+load-bearing, not cosmetic: Windows silently discards toasts from an unpackaged
+app that no Start-menu shortcut registers an id for, and the notification call
+still returns success.
+
+**Exactly two shortcuts carry it, and both are named "Owlette".** Windows draws
+a toast's attribution line from the *name* of a registered shortcut, and with
+several carrying the same id it does not specify which one it picks — so
+"Owlette Configuration" deliberately has no id (a third registrar made toasts
+read "Owlette Configuration" in 3.0.0 testing), and the startup shortcut is
+`Owlette.lnk`, not the `Owlette Tray.lnk` it was called through 2.x.
+
+The desktop app's own "start on login" toggle writes and deletes that same
+startup shortcut with the same id (`desktop/src-tauri/src/startup_link.rs`), so
+setup recreating it on every upgrade is what repairs a 2.x machine's shortcut —
+and also what re-enables the toggle for anyone who turned it off. The old
+`Owlette Tray.lnk` name is removed by both `[InstallDelete]` and the toggle.
 
 ---
 

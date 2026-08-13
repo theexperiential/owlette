@@ -1,11 +1,11 @@
-//! `{userstartup}\Owlette Tray.lnk` — storage for the tray's "start on login".
+//! `{userstartup}\Owlette.lnk` — storage for the tray's "start on login".
 //!
 //! The legacy tray toggled the *service* start type instead
 //! (`owlette_tray.on_select` runs `sc config OwletteService start= …`), which
 //! costs a UAC prompt and conflates "supervise this machine" with "show me a
 //! tray icon". The desktop app owns the shortcut the installer creates
-//! (`owlette_installer.iss:159`) instead: no elevation, and turning it off
-//! leaves the service running.
+//! (`owlette_installer.iss`, `[Icons]`) instead: no elevation, and turning it
+//! off leaves the service running.
 //!
 //! Enabling always rewrites the shortcut so an upgraded machine stops
 //! auto-starting the python tray — the installer's version points at
@@ -27,8 +27,21 @@ use windows::Win32::UI::Shell::{
 };
 
 /// File name of the shortcut, byte-identical to the installer's `[Icons]` entry
-/// (`Name: "{userstartup}\Owlette Tray"`) so the two never coexist.
-pub const LINK_NAME: &str = "Owlette Tray.lnk";
+/// (`Name: "{userstartup}\Owlette"`) so the two never coexist.
+///
+/// The name is load-bearing beyond the file system: Windows draws a toast's
+/// attribution line from the *name* of a shortcut registering the sending
+/// app id, so every shortcut that carries [`APP_USER_MODEL_ID`] has to be
+/// called "Owlette" or the notification is attributed to something else.
+pub const LINK_NAME: &str = "Owlette.lnk";
+
+/// What [`LINK_NAME`] was called through 2.x and the first 3.0.0 builds.
+///
+/// Removed whenever this module writes or clears the shortcut, so a machine
+/// that upgrades without running the installer — every dev box — does not end up
+/// auto-starting twice, and so "start on login: off" really is off. The
+/// installer removes it too (`[InstallDelete]`); this covers the other path.
+const LEGACY_LINK_NAME: &str = "Owlette Tray.lnk";
 
 /// Argument the shortcut passes, which starts the app hidden in the tray.
 pub const TRAY_ARG: &str = "--tray";
@@ -50,15 +63,23 @@ pub fn link_path() -> Result<PathBuf, String> {
   Ok(startup_dir()?.join(LINK_NAME))
 }
 
+/// Absolute path of the pre-rename shortcut, for cleanup only.
+fn legacy_link_path() -> Result<PathBuf, String> {
+  Ok(startup_dir()?.join(LEGACY_LINK_NAME))
+}
+
 /// True when owlette is set to start with this user's session.
 ///
 /// Presence is the whole test: a shortcut left by the installer still points at
 /// the python tray, and reporting it as "on" is correct — something owlette
-/// launches at login. [`enable`] then replaces it with ours.
+/// launches at login. [`enable`] then replaces it with ours. The pre-rename name
+/// counts for the same reason: it still launches owlette at login, so reporting
+/// "off" while it sits there would be a lie the toggle then could not fix.
 pub fn is_enabled() -> bool {
-  match link_path() {
-    Ok(path) => path.is_file(),
-    Err(error) => {
+  match (link_path(), legacy_link_path()) {
+    (Ok(path), Ok(legacy)) => path.is_file() || legacy.is_file(),
+    (Ok(path), Err(_)) => path.is_file(),
+    (Err(error), _) => {
       log::warn!("could not locate the startup folder: {error}");
       false
     }
@@ -69,6 +90,9 @@ pub fn is_enabled() -> bool {
 pub fn enable() -> Result<PathBuf, String> {
   let path = link_path()?;
   write_link(&path)?;
+  // Only after the new one is on disk: a failed write must not leave the machine
+  // with no startup entry at all.
+  remove_legacy_link();
   Ok(path)
 }
 
@@ -125,12 +149,31 @@ fn write_link(path: &Path) -> Result<(), String> {
 }
 
 /// Remove the startup shortcut. A missing shortcut is already the target state.
+///
+/// The pre-rename name goes too, or "off" would leave the old shortcut still
+/// launching owlette at login.
 pub fn disable() -> Result<(), String> {
   let path = link_path()?;
-  match std::fs::remove_file(&path) {
+  let removed = match std::fs::remove_file(&path) {
     Ok(()) => Ok(()),
     Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
     Err(error) => Err(format!("could not remove {}: {error}", path.display())),
+  };
+  remove_legacy_link();
+  removed
+}
+
+/// Best effort: the legacy shortcut not going away is worth a log line, never a
+/// failed toggle — the current name is what [`is_enabled`] and the installer act
+/// on, and it has already been dealt with by the time this runs.
+fn remove_legacy_link() {
+  let Ok(path) = legacy_link_path() else {
+    return;
+  };
+  match std::fs::remove_file(&path) {
+    Ok(()) => log::info!("removed the legacy startup shortcut {}", path.display()),
+    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+    Err(error) => log::warn!("could not remove {}: {error}", path.display()),
   }
 }
 
@@ -190,16 +233,28 @@ mod tests {
       path
         .to_string_lossy()
         .to_lowercase()
-        .ends_with("\\startup\\owlette tray.lnk"),
+        .ends_with("\\startup\\owlette.lnk"),
       "unexpected startup path: {}",
       path.display()
     );
   }
 
+  /// The toast attribution line is the shortcut's name, so a shortcut carrying
+  /// the app id under any other name attributes owlette's notifications to that
+  /// name instead. Both shortcuts that carry the id are called "Owlette"; this
+  /// pins the one this module owns.
+  #[test]
+  fn the_shortcut_is_named_for_the_product_not_the_tray() {
+    assert_eq!(LINK_NAME, "Owlette.lnk");
+    assert_ne!(LINK_NAME, LEGACY_LINK_NAME);
+    assert_eq!(LEGACY_LINK_NAME, "Owlette Tray.lnk");
+  }
+
   #[test]
   fn is_enabled_matches_the_file_on_disk() {
     let path = link_path().expect("startup folder");
-    assert_eq!(is_enabled(), path.is_file());
+    let legacy = legacy_link_path().expect("startup folder");
+    assert_eq!(is_enabled(), path.is_file() || legacy.is_file());
   }
 
   /// The shortcut is not just a launcher: its `System.AppUserModel.ID` is what

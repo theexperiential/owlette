@@ -185,15 +185,25 @@ Type: files; Name: "{autodesktop}\Owlette Tray Icon.lnk"
 ; each one is immediately recreated below.
 Type: files; Name: "{group}\Owlette Configuration.lnk"
 Type: files; Name: "{group}\Owlette.lnk"
+; The startup shortcut was "Owlette Tray.lnk" through 2.x and the first 3.0.0
+; builds; it is "Owlette.lnk" now (see [Icons]), so the old name has to go or the
+; machine keeps two startup entries — and the stale one is a second candidate
+; source for the toast attribution line, which is exactly what the rename fixes.
 Type: files; Name: "{userstartup}\Owlette Tray.lnk"
 
 [Icons]
-; Start Menu shortcuts. All three app entries carry AppUserModelID: without a
-; Start-menu shortcut registering that id, Windows drops every toast the
-; unpackaged desktop app raises (see the MyAppUserModelID note above).
+; Start Menu shortcuts. Exactly ONE Start-menu entry registers the
+; AppUserModelID — and every shortcut that does is named "Owlette".
+;
+; Windows needs *a* Start-menu shortcut carrying the id or it drops every toast
+; the unpackaged desktop app raises (see the MyAppUserModelID note above), but it
+; also draws the toast's attribution line from the NAME of whichever registered
+; shortcut it resolves — and with several carrying the same id, which one it
+; picks is not specified. Stamping only this entry makes the attribution read
+; "Owlette" deterministically; "Owlette Configuration" needs no id of its own.
 ; No arguments = "show me the window" (a forwarded second-instance launch
 ; without --tray raises the main window); --tray = tray icon only.
-Name: "{group}\Owlette Configuration"; Filename: "{#MyAppExePath}"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"; AppUserModelID: "{#MyAppUserModelID}"
+Name: "{group}\Owlette Configuration"; Filename: "{#MyAppExePath}"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"
 Name: "{group}\Owlette"; Filename: "{#MyAppExePath}"; Parameters: "--tray"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"; AppUserModelID: "{#MyAppUserModelID}"
 Name: "{group}\View Logs"; Filename: "{commonappdata}\Owlette\logs"; IconFilename: "{sys}\shell32.dll"; IconIndex: 4
 Name: "{group}\Edit Configuration"; Filename: "{commonappdata}\Owlette\config\config.json"; IconFilename: "{sys}\shell32.dll"; IconIndex: 70
@@ -201,11 +211,16 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
 ; Startup shortcut — the desktop app's own "start on login" toggle writes and
 ; deletes this exact file (desktop/src-tauri/src/startup_link.rs, LINK_NAME =
-; "Owlette Tray.lnk"), and stamps the same AppUserModelID on it. Setup creates
-; it unconditionally because a 2.x machine's copy points at the now-deleted
-; owlette_tray.py and must be repaired; an operator who turns the toggle off
-; after upgrading keeps that choice until the next agent update.
-Name: "{userstartup}\Owlette Tray"; Filename: "{#MyAppExePath}"; Parameters: "--tray"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"; AppUserModelID: "{#MyAppUserModelID}"
+; "Owlette.lnk"), and stamps the same AppUserModelID on it. It keeps the id
+; deliberately: a dev machine that never ran this installer has no other
+; registered shortcut, and without one its toasts are silently dropped. The file
+; name is "Owlette" and not "Owlette Tray" for the reason given above — the
+; Startup folder is inside the Start-menu tree, so this shortcut is a candidate
+; attribution source too, and every candidate must carry the same name.
+; Setup creates it unconditionally because a 2.x machine's copy points at the
+; now-deleted owlette_tray.py and must be repaired; an operator who turns the
+; toggle off after upgrading keeps that choice until the next agent update.
+Name: "{userstartup}\Owlette"; Filename: "{#MyAppExePath}"; Parameters: "--tray"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"; AppUserModelID: "{#MyAppUserModelID}"
 
 [Run]
 ; Step 0: Add Windows Defender exclusions for the WinRing0 driver used by LibreHardwareMonitor.

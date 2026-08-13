@@ -66,7 +66,7 @@ desktop/
    ├─ src/process_ctl.rs # WM_CLOSE-then-terminate with an identity check
    ├─ src/pid_file.rs    # tmp/tray.pid + tmp/gui.pid
    ├─ src/tray.rs        # notification-area icon, menu, status monitor
-   ├─ src/startup_link.rs # {userstartup}\Owlette Tray.lnk ("start on login")
+   ├─ src/startup_link.rs # {userstartup}\Owlette.lnk ("start on login")
    ├─ src/window_state.rs # per-user layout memory (window size, sidebar width)
    ├─ src/commands.rs    # #[tauri::command] adapters (no logic)
    └─ src/lib.rs         # builder, plugins, watcher wiring, exit cleanup
