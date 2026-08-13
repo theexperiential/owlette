@@ -231,7 +231,11 @@ export function ProcessList({
                         aria-current={selected}
                         className={cn(
                           'group flex w-full touch-none items-center gap-2 rounded-md px-1.5 py-2 text-left text-sm transition-colors select-none',
-                          draggingId ? 'cursor-grabbing' : 'cursor-grab',
+                          // The grab hand lives on the grip alone; the row is a
+                          // click-to-select surface. A drag can still start
+                          // anywhere on the row — once it does, the whole row
+                          // reads as grabbed.
+                          draggingId ? 'cursor-grabbing' : 'cursor-pointer',
                           selected
                             ? 'bg-accent text-accent-foreground'
                             : 'text-foreground/90 hover:bg-accent/50',
@@ -253,6 +257,7 @@ export function ProcessList({
                           className={cn(
                             'size-3.5 shrink-0 text-muted-foreground transition-opacity',
                             dragged ? 'opacity-70' : 'opacity-0 group-hover:opacity-60',
+                            !draggingId && 'cursor-grab',
                           )}
                         />
                         <span

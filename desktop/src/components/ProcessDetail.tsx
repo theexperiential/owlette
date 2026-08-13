@@ -1,5 +1,5 @@
 import { FileSearch, FolderOpen, RotateCcw, Square } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -45,6 +45,34 @@ const LAUNCH_MODES: { value: LaunchMode; label: string }[] = [
   { value: 'always', label: 'always on' },
   { value: 'scheduled', label: 'scheduled' },
 ]
+
+/**
+ * A path input that reveals its full value in a tooltip — but only when the
+ * text actually overflows the box, measured on hover, so short paths never
+ * grow a pointless tooltip. Radix's own hover/focus opening is suppressed
+ * (typing in the field must not pop it); only the overflow check opens.
+ */
+function PathInput(props: ComponentProps<typeof Input>) {
+  const [open, setOpen] = useState(false)
+  const value = typeof props.value === 'string' ? props.value : ''
+  return (
+    <Tooltip open={open} onOpenChange={(next) => next || setOpen(false)}>
+      <TooltipTrigger asChild>
+        <Input
+          {...props}
+          onPointerEnter={(event) => {
+            const el = event.currentTarget
+            if (el.scrollWidth > el.clientWidth) setOpen(true)
+          }}
+          onPointerLeave={() => setOpen(false)}
+        />
+      </TooltipTrigger>
+      <TooltipContent className="max-w-[min(48rem,calc(100vw-4rem))] font-mono text-xs break-all">
+        {value}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
 
 /**
  * The dashboard's launch-mode colours (`web/.../ProcessDialog.tsx:85-105`),
@@ -397,7 +425,7 @@ export function ProcessDetail({
             >
               <FileSearch />
             </Button>
-            <Input
+            <PathInput
               id="exe_path"
               placeholder="the full path to your executable"
               className="font-mono text-xs"
@@ -424,7 +452,7 @@ export function ProcessDetail({
             >
               <FileSearch />
             </Button>
-            <Input
+            <PathInput
               id="file_path"
               placeholder="a file to open, or command line arguments"
               className="font-mono text-xs"
@@ -451,7 +479,7 @@ export function ProcessDetail({
             >
               <FolderOpen />
             </Button>
-            <Input
+            <PathInput
               id="cwd"
               placeholder="the working directory for your process"
               className="font-mono text-xs"
