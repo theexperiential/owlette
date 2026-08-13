@@ -166,6 +166,12 @@ Name: "{commonappdata}\Owlette\cache"; Permissions: users-modify
 Name: "{commonappdata}\Owlette\tmp"; Permissions: users-modify
 
 [InstallDelete]
+; Dead log files from the deleted python UI (owlette_gui/owlette_tray/
+; report_issue were removed in 3.0.0) — the wildcard also catches their
+; rotation siblings (.log.1 … .log.5). Live logs are never named here.
+Type: files; Name: "{commonappdata}\Owlette\logs\gui.log*"
+Type: files; Name: "{commonappdata}\Owlette\logs\tray.log*"
+Type: files; Name: "{commonappdata}\Owlette\logs\report_issue.log*"
 ; Clean up shortcuts from earlier versions that have since been renamed, so an
 ; upgrade doesn't leave a confusing duplicate in the Start menu. The single
 ; Start-menu tray entry is now "{group}\Owlette" (it was "Owlette Tray Icon"),
