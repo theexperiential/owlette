@@ -191,6 +191,85 @@ Type: files; Name: "{group}\Owlette.lnk"
 ; source for the toast attribution line, which is exactly what the rename fixes.
 Type: files; Name: "{userstartup}\Owlette Tray.lnk"
 
+; ---------------------------------------------------------------------------
+; 3.0.0 upgrade pruning — the python UI stack and the modules that served it.
+;
+; The upgrade strategy is "overwrite in place" (see InitializeSetup): [Files]
+; only ever ADDS, so everything an older payload laid down and this one no
+; longer ships simply stays on disk forever. On a machine upgraded from 2.x
+; that is ~13 MB of Tcl/Tk, tkinter, customtkinter and friends, plus the deleted
+; agent modules and their bytecode — code nothing imports, that a fleet-wide
+; vulnerability scan still has to account for, and that makes the installed tree
+; disagree with the shipped one.
+;
+; Every path below is provably an orphan: none of them exists in
+; build\installer_package after a clean full build (the Tcl/Tk copy step and the
+; GUI requirements were both removed in 3.0.0). [InstallDelete] runs BEFORE the
+; file copy, so even if a future payload reintroduced one it would be laid back
+; down a moment later — this can strip a file out of an install but never out of
+; a release.
+;
+; Nothing here touches user data: config\, logs\, cache\, tmp\ and .tokens.enc
+; are never named. Nor is
+; python\Lib\site-packages\claude_agent_sdk\_bundled\claude.exe — the 242 MB CLI
+; that build_installer_full.bat strips from the payload but which survives on
+; machines that installed it earlier, where Cortex uses it in place of
+; downloading its own copy.
+
+; Tcl/Tk runtime. The 2.x build copied these in from the system Python 3.11 so
+; tkinter would have a toolkit; the 3.11.8 embeddable zip we ship contains none
+; of them.
+Type: filesandordirs; Name: "{app}\python\tcl"
+Type: files; Name: "{app}\python\tcl86t.dll"
+Type: files; Name: "{app}\python\tk86t.dll"
+; The extension module sits at the interpreter root — an embeddable layout has
+; no DLLs\ directory.
+Type: files; Name: "{app}\python\_tkinter.pyd"
+Type: filesandordirs; Name: "{app}\python\Lib\tkinter"
+
+; The python UI's packages, dropped from requirements.txt in 3.0.0 when the
+; Tauri app replaced the tray and configuration windows. Version-wildcarded
+; .dist-info so this also cleans machines that stopped at an older pin.
+; Pillow and mss deliberately stay — screenshot_capture still imports both.
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\customtkinter"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\customtkinter-*.dist-info"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\CTkListbox"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\CTkListbox-*.dist-info"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\CTkMessagebox"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\CTkMessagebox-*.dist-info"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\CTkToolTip"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\CTkToolTip-*.dist-info"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\pystray"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\pystray-*.dist-info"
+; customtkinter's appearance-mode probe; nothing else ever imported it.
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\darkdetect"
+Type: filesandordirs; Name: "{app}\python\Lib\site-packages\darkdetect-*.dist-info"
+
+; Agent modules deleted in 3.0.0 with the UI they served.
+Type: files; Name: "{app}\agent\src\owlette_gui.py"
+Type: files; Name: "{app}\agent\src\owlette_tray.py"
+Type: files; Name: "{app}\agent\src\prompt_restart.py"
+Type: files; Name: "{app}\agent\src\report_issue.py"
+Type: files; Name: "{app}\agent\src\custom_messagebox.py"
+Type: files; Name: "{app}\agent\src\CTkMessagebox.py"
+Type: files; Name: "{app}\agent\src\cleanup_commands.py"
+; ...and their bytecode. The whole cache goes rather than seven named .pyc: a
+; stale .pyc whose .py is gone is still importable, and the build drops
+; __pycache__ from the payload anyway, so the interpreter rebuilds it on the
+; first import after this.
+Type: filesandordirs; Name: "{app}\agent\src\__pycache__"
+; CTkMessagebox's dialog artwork (cancel/check/question/warning). The payload
+; copies agent\src\* and the repo has no src\icons at all, so the folder is
+; orphaned whole. The tray and status icons are a different directory
+; ({app}\agent\icons) and are not touched.
+Type: filesandordirs; Name: "{app}\agent\src\icons"
+
+; The pythonw launcher hops. Every shortcut points straight at
+; owlette-desktop.exe now (see [Icons]), and build_installer_full.bat stopped
+; copying these in 3.0.0.
+Type: files; Name: "{app}\scripts\launch_gui.bat"
+Type: files; Name: "{app}\scripts\launch_tray.bat"
+
 [Icons]
 ; Start Menu shortcuts. Exactly ONE Start-menu entry registers the
 ; AppUserModelID — and every shortcut that does is named "Owlette".

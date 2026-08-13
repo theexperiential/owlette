@@ -15,6 +15,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
 use crate::paths::TRAY_PID_REL;
 
@@ -28,6 +29,19 @@ pub const EVENT_SECOND_INSTANCE: &str = "owlette://second-instance";
 /// Argument the service passes when it spawns us to supply the tray icon; the
 /// window stays hidden until the operator asks for it.
 pub const ARG_TRAY: &str = "--tray";
+
+/// Base name of the log file inside the app log directory. `productName` is
+/// "owlette", which the plugin would otherwise use — name it after the binary
+/// so a support bundle cannot confuse it with the service's own logs.
+const LOG_FILE_NAME: &str = "owlette-desktop";
+
+/// Size a log file reaches before it rotates. The plugin's default is 40 KB,
+/// which on a machine that runs unattended for months is a window of minutes.
+const LOG_MAX_FILE_SIZE: u128 = 4 * 1024 * 1024;
+
+/// Rotated files kept beside the active one, so a fault reported a week late
+/// still has the run that caused it on disk. Total ceiling: 4 × 4 MB.
+const LOG_FILES_KEPT: usize = 3;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -83,13 +97,37 @@ pub fn run() {
       commands::set_sidebar_width,
     ])
     .setup(|app| {
+      // Registered in both profiles. A release build is `windows_subsystem =
+      // "windows"` with no console attached and, until this, no logger at all —
+      // so a tray icon that never appeared, a toast Windows dropped or a pairing
+      // dialog that failed to open left nothing behind to read, on a machine
+      // that is typically in a rack in another building. Every existing log call
+      // in this crate now has somewhere to land; none were added for it.
+      //
+      // `LogDir` is %LOCALAPPDATA%\<identifier>\logs on Windows —
+      // per-user, and therefore writable by the unelevated session this app runs
+      // in, unlike the service's own %PROGRAMDATA%\Owlette\logs.
+      let mut logger = tauri_plugin_log::Builder::new()
+        .level(log::LevelFilter::Info)
+        .max_file_size(LOG_MAX_FILE_SIZE)
+        .rotation_strategy(RotationStrategy::KeepSome(LOG_FILES_KEPT))
+        // Local time rather than the plugin's UTC default, so a line here lines
+        // up with the same moment in the service's log without arithmetic.
+        .timezone_strategy(TimezoneStrategy::UseLocal)
+        // `Builder::new()` seeds stdout plus an unnamed log-dir target; clear
+        // both so the named file below and the stdout decision after it are the
+        // only targets this app has.
+        .clear_targets()
+        .target(Target::new(TargetKind::LogDir {
+          file_name: Some(LOG_FILE_NAME.to_owned()),
+        }));
+      // A debug build is `tauri dev` in a terminal, where the console is the log
+      // anyone actually reads. This is the one piece of the old debug-only
+      // behaviour worth keeping profile-specific.
       if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
+        logger = logger.target(Target::new(TargetKind::Stdout));
       }
+      app.handle().plugin(logger.build())?;
 
       let root = paths::data_root();
 

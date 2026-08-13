@@ -100,6 +100,36 @@ the Start menu — `notification().show()` still returns `Ok`, and nothing appea
 writes, but a machine that never turns on "start on login" has no such shortcut,
 so the installer must ship a Start menu shortcut carrying the same id.
 
+## Logs
+
+`src/lib.rs` registers `tauri_plugin_log` in **both** profiles — it used to be
+behind `cfg!(debug_assertions)`, which meant a release build wrote nothing and a
+field failure of the tray, a toast or the pairing dialog was undiagnosable. Every
+log call in this crate lands here; none exist to record a token or a config
+value, and none should be added that do.
+
+| Profile | Level | Where |
+| --- | --- | --- |
+| debug | Info | stdout (the `tauri dev` terminal) **and** the file below |
+| release | Info | the file below only — there is no console (`windows_subsystem = "windows"`) |
+
+```
+%LOCALAPPDATA%\app.owlette.desktop\logs\owlette-desktop.log
+```
+
+That is the plugin's `TargetKind::LogDir`, which resolves to
+`{FOLDERID_LocalAppData}\{identifier}\logs` — **per-user**, so it belongs to
+whoever the app is running as (the kiosk's auto-login account), not to the
+`LocalSystem` service. It is a different tree from
+`C:\ProgramData\Owlette\logs\service.log`; a field report wants both, and their
+timestamps line up directly because this sink is configured for local time
+rather than the plugin's UTC default.
+
+The file rotates at 4 MB and three rotated copies are kept
+(`owlette-desktop_<date>.log`), so the ceiling is 16 MB — the plugin's own
+default is 40 KB with one file kept, which on a machine that runs for months is
+a window of minutes.
+
 ## The service seam
 
 The python service and this app share three files under
