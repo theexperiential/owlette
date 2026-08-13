@@ -747,14 +747,14 @@ export function MachineRow({
                                     // Non-admins are read-only: static mode pill, no toggle (which would 403).
                                     <div className="flex items-center h-8">
                                       <span className={`flex items-center px-3 text-sm font-medium rounded-md border bg-card ${currentMode === 'always' ? 'text-emerald-400 border-emerald-600/40' : currentMode === 'scheduled' ? 'text-blue-400 border-blue-600/40' : 'text-muted-foreground border-border'}`}>
-                                        {currentMode === 'always' ? 'Always On' : currentMode === 'scheduled' ? 'Scheduled' : 'Off'}
+                                        {currentMode === 'always' ? 'always on' : currentMode === 'scheduled' ? 'scheduled' : 'off'}
                                       </span>
                                     </div>
                                   ) : (
                                   <div className="flex items-stretch rounded-md overflow-hidden border border-border h-8">
                                     {(['off', 'always', 'scheduled'] as const).map((mode) => {
                                       const isActive = currentMode === mode;
-                                      const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+                                      const labels = { off: 'off', always: 'always on', scheduled: 'scheduled' };
                                       const activeColors = {
                                         off: 'bg-muted text-foreground',
                                         always: 'bg-emerald-600 text-white',
@@ -850,7 +850,7 @@ export function MachineRow({
                                   {!isSiteAdmin ? (
                                     // Non-admins are read-only: static mode pill, no write menu.
                                     <span className={`flex items-center px-2.5 h-8 text-xs font-medium rounded-md border bg-card ${currentMode === 'always' ? 'text-emerald-400 border-emerald-600/40' : currentMode === 'scheduled' ? 'text-blue-400 border-blue-600/40' : 'text-muted-foreground border-border'}`}>
-                                      {currentMode === 'always' ? 'Always On' : currentMode === 'scheduled' ? 'Scheduled' : 'Off'}
+                                      {currentMode === 'always' ? 'always on' : currentMode === 'scheduled' ? 'scheduled' : 'off'}
                                     </span>
                                   ) : (
                                     <>
@@ -884,13 +884,13 @@ export function MachineRow({
                                         }}
                                       >
                                         <DropdownMenuRadioItem value="off" className="cursor-pointer">
-                                          Off
+                                          off
                                         </DropdownMenuRadioItem>
                                         <DropdownMenuRadioItem value="always" className="text-emerald-400 cursor-pointer">
-                                          Always On
+                                          always on
                                         </DropdownMenuRadioItem>
                                         <DropdownMenuRadioItem value="scheduled" className="text-blue-400 cursor-pointer">
-                                          Scheduled
+                                          scheduled
                                         </DropdownMenuRadioItem>
                                       </DropdownMenuRadioGroup>
                                       <DropdownMenuItem

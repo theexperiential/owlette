@@ -507,8 +507,8 @@ export default function DashboardPage() {
         ? DEFAULT_SCHEDULE
         : schedules;
       await setLaunchMode(machineId, processId, processName, mode, effectiveSchedules, schedulePresetId);
-      const modeLabels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
-      toast.success(successMessage ?? `Launch mode set to ${modeLabels[mode]} for "${processName}"`);
+      const modeLabels = { off: 'off', always: 'always on', scheduled: 'scheduled' };
+      toast.success(successMessage ?? `launch mode set to ${modeLabels[mode]} for "${processName}"`);
     } catch (error: unknown) {
       console.error('handleSetLaunchMode error:', error);
       const msg = error instanceof Error ? error.message : 'Failed to set launch mode';
@@ -1373,7 +1373,7 @@ export default function DashboardPage() {
               <Label className="text-foreground text-sm">launch mode</Label>
               <div className="flex rounded-lg overflow-hidden border border-border">
                 {(['off', 'always', 'scheduled'] as const).map((mode) => {
-                  const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+                  const labels = { off: 'off', always: 'always on', scheduled: 'scheduled' };
                   const isActive = editProcessForm.launch_mode === mode;
                   const colors = {
                     off: isActive ? 'bg-muted text-foreground' : '',

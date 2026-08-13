@@ -830,7 +830,7 @@ function MachineCard({
                         <div className="flex items-center gap-2 md:gap-3 sm:ml-2 md:ml-4 flex-shrink-0">
                           {(() => {
                             const currentMode = (process._optimisticLaunchMode ?? process.launch_mode ?? (process.autolaunch ? 'always' : 'off')) as LaunchMode;
-                            const modeLabels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' } as const;
+                            const modeLabels = { off: 'off', always: 'always on', scheduled: 'scheduled' } as const;
                             // Non-admins are read-only: show the current launch mode as a
                             // static pill instead of the interactive toggle (which would 403).
                             if (!isSiteAdmin) {
@@ -851,7 +851,7 @@ function MachineCard({
                               <div className="hidden md:flex items-stretch rounded-md overflow-hidden border border-border/50 h-8">
                                 {(['off', 'always', 'scheduled'] as const).map((mode) => {
                                   const isActive = currentMode === mode;
-                                  const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+                                  const labels = { off: 'off', always: 'always on', scheduled: 'scheduled' };
                                   const activeColors = {
                                     off: 'bg-muted text-foreground',
                                     always: 'bg-emerald-600 text-white',

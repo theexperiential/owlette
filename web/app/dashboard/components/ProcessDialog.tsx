@@ -84,7 +84,7 @@ export function ProcessDialog({
             <Label className="text-white text-sm">launch mode</Label>
             <div className="flex rounded-lg overflow-hidden border border-border">
               {(['off', 'always', 'scheduled'] as const).map((m) => {
-                const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+                const labels = { off: 'off', always: 'always on', scheduled: 'scheduled' };
                 const isActive = (form.launch_mode || 'off') === m;
                 const colors = {
                   off: isActive ? 'bg-muted text-foreground' : '',
