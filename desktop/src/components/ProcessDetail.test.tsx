@@ -27,6 +27,7 @@ const base: ProcessEntry = {
 function setup(process: ProcessEntry = base) {
   const onSave = vi.fn()
   const onLaunchMode = vi.fn()
+  const onSchedules = vi.fn()
 
   function ui(entry: ProcessEntry) {
     return (
@@ -36,6 +37,7 @@ function setup(process: ProcessEntry = base) {
           status="INACTIVE"
           onSave={onSave}
           onLaunchMode={onLaunchMode}
+          onSchedules={onSchedules}
           onPriority={vi.fn()}
           onVisibility={vi.fn()}
           onRestart={vi.fn()}
@@ -47,7 +49,12 @@ function setup(process: ProcessEntry = base) {
 
   const view = render(ui(process))
 
-  return { onSave, onLaunchMode, rerender: (next: ProcessEntry) => view.rerender(ui(next)) }
+  return {
+    onSave,
+    onLaunchMode,
+    onSchedules,
+    rerender: (next: ProcessEntry) => view.rerender(ui(next)),
+  }
 }
 
 function field(label: string): HTMLInputElement {
@@ -237,15 +244,17 @@ describe('the launch mode control', () => {
 })
 
 describe('schedules', () => {
-  it('points at the web app when a scheduled entry has no windows', () => {
+  it('says what an empty schedule actually does when the mode is scheduled', () => {
     setup({ ...base, launch_mode: 'scheduled' })
 
+    // The service reads no windows as "always in window", so the note must not
+    // suggest the process is being held back.
     expect(screen.getByTestId('schedule-note').textContent).toBe(
-      '(no schedule set — configure via web)',
+      '(no schedule set — runs at all times)',
     )
   })
 
-  it('summarises the windows the web app authored', () => {
+  it('summarises the windows on the entry', () => {
     setup({
       ...base,
       launch_mode: 'scheduled',
@@ -259,5 +268,73 @@ describe('schedules', () => {
     setup({ ...base, launch_mode: 'always' })
 
     expect(screen.queryByTestId('schedule-note')).toBeNull()
+  })
+
+  it('offers the editor only for a scheduled entry', () => {
+    const { rerender } = setup({ ...base, launch_mode: 'always' })
+    expect(screen.queryByTestId('edit-schedule')).toBeNull()
+
+    rerender({ ...base, launch_mode: 'scheduled' })
+    expect(screen.getByTestId('edit-schedule')).toBeTruthy()
+  })
+
+  it('opens the editor on the windows the entry holds, and saves them back', () => {
+    const { onSchedules } = setup({
+      ...base,
+      launch_mode: 'scheduled',
+      schedules: [{ days: ['sat'], ranges: [{ start: '10:00', stop: '18:00' }] }],
+    })
+
+    fireEvent.click(screen.getByTestId('edit-schedule'))
+    expect(screen.getByTestId('schedule-editor')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'save schedule' }))
+
+    expect(onSchedules).toHaveBeenCalledExactlyOnceWith([
+      { days: ['sat'], ranges: [{ start: '10:00', stop: '18:00' }] },
+    ])
+    expect(screen.queryByTestId('schedule-editor')).toBeNull()
+  })
+
+  it('prefills the default schedule for an entry that has none', () => {
+    const { onSchedules } = setup({ ...base, launch_mode: 'scheduled' })
+
+    fireEvent.click(screen.getByTestId('edit-schedule'))
+    fireEvent.click(screen.getByRole('button', { name: 'save schedule' }))
+
+    expect(onSchedules).toHaveBeenCalledExactlyOnceWith([
+      { days: ['mon', 'tue', 'wed', 'thu', 'fri'], ranges: [{ start: '09:00', stop: '17:00' }] },
+    ])
+  })
+
+  it('writes nothing when the editor is cancelled', () => {
+    const { onSchedules } = setup({ ...base, launch_mode: 'scheduled' })
+
+    fireEvent.click(screen.getByTestId('edit-schedule'))
+    fireEvent.click(screen.getByRole('button', { name: 'cancel' }))
+
+    expect(onSchedules).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('schedule-editor')).toBeNull()
+  })
+
+  it('updates the note as soon as the saved schedule lands on disk', () => {
+    const { rerender } = setup({ ...base, launch_mode: 'scheduled' })
+
+    expect(screen.getByTestId('schedule-note').textContent).toBe(
+      '(no schedule set — runs at all times)',
+    )
+
+    // What the config watcher hands back after the write.
+    rerender({
+      ...base,
+      launch_mode: 'scheduled',
+      schedules: [
+        { days: ['mon', 'tue', 'wed', 'thu', 'fri'], ranges: [{ start: '09:00', stop: '17:00' }] },
+      ],
+    })
+
+    expect(screen.getByTestId('schedule-note').textContent).toBe(
+      'mon, tue, wed, thu, fri: 09:00-17:00',
+    )
   })
 })

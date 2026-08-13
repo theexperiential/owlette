@@ -11,6 +11,7 @@ import { ProcessDetail } from '@/components/ProcessDetail'
 import { ProcessList, type ProcessAction } from '@/components/ProcessList'
 import { ReportIssueDialog } from '@/components/ReportIssueDialog'
 import { RestartCountdown } from '@/components/RestartCountdown'
+import { SidebarDivider } from '@/components/SidebarDivider'
 import { StatusFooter } from '@/components/StatusFooter'
 import { WindowControls } from '@/components/WindowControls'
 import { InlineNotice } from '@/components/ui/inline-notice'
@@ -21,6 +22,7 @@ import { useFileDrop } from '@/hooks/useFileDrop'
 import { useOwletteConfig } from '@/hooks/useOwletteConfig'
 import { useRestartPrompt } from '@/hooks/useRestartPrompt'
 import { useServiceHealth } from '@/hooks/useServiceHealth'
+import { useSidebarWidth } from '@/hooks/useSidebarWidth'
 import { siteIdOf } from '@/lib/serviceHealth'
 import { classifyDrop, toProcessEntry, type ProcessEntryDraft } from '@/lib/dropClassifier'
 import {
@@ -46,6 +48,7 @@ import {
   reorderProcess,
   setLaunchMode,
   setPriority,
+  setSchedules,
   setVisibility,
   updateProcess,
   type LaunchMode,
@@ -53,6 +56,7 @@ import {
   type Priority,
   type ProcessEntry,
   type ProcessForm,
+  type ScheduleBlock,
   type Visibility,
 } from '@/lib/owletteConfig'
 import { livePidForProcess, statusForProcess } from '@/lib/processStatus'
@@ -81,6 +85,7 @@ function App() {
   const appStates = useAppStates()
   const health = useServiceHealth()
   const restartPrompt = useRestartPrompt()
+  const sidebar = useSidebarWidth()
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
@@ -425,7 +430,13 @@ function App() {
         )}
 
         <div className="flex min-h-0 flex-1">
-          <aside className="w-72 shrink-0 border-r">
+          {/*
+            The width is remembered per user by the host, so it arrives a tick
+            after mount; until then this is the width the sidebar always had.
+            The divider carries the border the aside used to draw — one line,
+            not two.
+          */}
+          <aside className="min-w-0 shrink-0" style={{ width: sidebar.width }}>
             <ProcessList
               processes={processes}
               states={appStates.states}
@@ -438,6 +449,8 @@ function App() {
             />
           </aside>
 
+          <SidebarDivider width={sidebar.width} onWidth={sidebar.set} onCommit={sidebar.commit} />
+
           <section className="min-w-0 flex-1">
             {selected ? (
               <ProcessDetail
@@ -446,6 +459,11 @@ function App() {
                 status={statusForProcess(appStates.states, selected.id)}
                 onSave={handleSaveForm}
                 onLaunchMode={handleLaunchMode}
+                onSchedules={(schedules: ScheduleBlock[]) =>
+                  editSelected('could not save the schedule', (process) =>
+                    setSchedules(process, schedules),
+                  )
+                }
                 onPriority={(priority: Priority) =>
                   editSelected('could not change the priority', (process) =>
                     setPriority(process, priority),

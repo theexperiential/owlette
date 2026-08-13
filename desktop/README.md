@@ -56,6 +56,7 @@ desktop/
 │  ├─ lib/dropClassifier.ts  # dropped path -> process entry (pure, injected fs)
 │  ├─ lib/fsProbe.ts     # the real disk behind it + per-machine search paths
 │  ├─ lib/dropQueue.ts   # the confirm-card queue between a drop and a write
+│  ├─ lib/sidebarWidth.ts    # the sidebar clamp + drag/keyboard geometry
 │  └─ test/              # vitest setup + design-system smoke test
 └─ src-tauri/
    ├─ src/paths.rs       # %PROGRAMDATA%\Owlette layout + path scoping
@@ -66,6 +67,7 @@ desktop/
    ├─ src/pid_file.rs    # tmp/tray.pid + tmp/gui.pid
    ├─ src/tray.rs        # notification-area icon, menu, status monitor
    ├─ src/startup_link.rs # {userstartup}\Owlette Tray.lnk ("start on login")
+   ├─ src/window_state.rs # per-user layout memory (window size, sidebar width)
    ├─ src/commands.rs    # #[tauri::command] adapters (no logic)
    └─ src/lib.rs         # builder, plugins, watcher wiring, exit cleanup
 ```

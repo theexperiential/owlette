@@ -22,6 +22,7 @@ use crate::paths::{self, SERVICE_STATUS_REL};
 use crate::process_ctl::{self, TerminateOutcome, DEFAULT_GRACEFUL_TIMEOUT};
 use crate::service_ctl::{self, ServiceCommandOutcome, ServiceStatus};
 use crate::shell_open;
+use crate::window_state::LayoutState;
 
 /// Absolute path of the owlette data root (`%PROGRAMDATA%\Owlette`).
 ///
@@ -132,4 +133,22 @@ pub fn open_owlette_path(path: String) -> Result<(), String> {
 #[tauri::command(async)]
 pub fn open_external_url(url: String) -> Result<(), String> {
   shell_open::open_url(&url)
+}
+
+/// Width the process-list sidebar should open at, in logical pixels.
+///
+/// Comes from the same per-user layout file the window size lives in, so the
+/// two halves of the shell are remembered together.
+#[tauri::command(async)]
+pub fn sidebar_width(layout: State<'_, LayoutState>) -> f64 {
+  layout.sidebar_width()
+}
+
+/// Store the sidebar width, returning the value actually kept.
+///
+/// The host clamps: the divider applies the same bounds while dragging, but a
+/// width that reached here out of range would otherwise be remembered forever.
+#[tauri::command(async)]
+pub fn set_sidebar_width(layout: State<'_, LayoutState>, width: f64) -> Result<f64, String> {
+  layout.set_sidebar_width(width)
 }

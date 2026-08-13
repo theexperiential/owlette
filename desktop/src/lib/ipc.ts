@@ -207,6 +207,28 @@ export function terminatePid(
 }
 
 /**
+ * Width the process-list sidebar should open at, in logical pixels.
+ *
+ * Layout memory is device-local shell geometry, so it lives in a per-user JSON
+ * beside the remembered window size (`%APPDATA%\app.owlette.desktop\layout.json`)
+ * rather than in `config.json` — nothing here belongs to the fleet.
+ */
+export function sidebarWidth(): Promise<number> {
+  return invoke<number>('sidebar_width')
+}
+
+/**
+ * Store the sidebar width, resolving to the value actually kept.
+ *
+ * The host clamps, so the resolved width is not always the one that was asked
+ * for. Callers should debounce: this writes a file, and a drag produces a move
+ * event per frame.
+ */
+export function setSidebarWidth(width: number): Promise<number> {
+  return invoke<number>('set_sidebar_width', { width })
+}
+
+/**
  * Is owlette supervising this machine right now?
  *
  * Both halves matter: a service that is running but has stopped refreshing

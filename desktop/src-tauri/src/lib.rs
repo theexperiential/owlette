@@ -9,6 +9,7 @@ mod shell_open;
 mod startup_link;
 mod tray;
 mod watchers;
+mod window_state;
 
 use std::sync::Mutex;
 
@@ -78,6 +79,8 @@ pub fn run() {
       commands::agent_cli_cancel,
       commands::open_owlette_path,
       commands::open_external_url,
+      commands::sidebar_width,
+      commands::set_sidebar_width,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -100,6 +103,11 @@ pub fn run() {
         Ok(path) => log::info!("wrote {}", path.display()),
         Err(error) => log::warn!("could not write the tray pid file: {error}"),
       }
+
+      // Size the window from the operator's last session before anything can
+      // show it: the tray, a plain launch and a forwarded second instance all
+      // reach `show_main_window`, and this is the one point ahead of all three.
+      app.manage(window_state::restore(app.handle()));
 
       // The window is configured hidden so a `--tray` launch never flashes one.
       // Every other launch is someone asking for the UI.
@@ -132,14 +140,32 @@ pub fn run() {
       Ok(())
     })
     .on_window_event(|window, event| {
-      // Closing the window hides it instead of quitting: the tray icon is the
-      // app's real lifetime, and quitting here would drop it until the service's
-      // next launch attempt (up to 30 s later).
-      if let WindowEvent::CloseRequested { api, .. } = event {
-        if window.label() == "main" {
+      if window.label() != "main" {
+        return;
+      }
+      let layout = window.app_handle().try_state::<window_state::LayoutState>();
+
+      match event {
+        // Every resize is folded into the layout state but nothing is written
+        // here — a drag of the window edge is a continuous stream of these.
+        WindowEvent::Resized(size) => {
+          if let Some(layout) = layout {
+            window_state::record_resize(window, &layout, *size);
+          }
+        }
+        // Closing the window hides it instead of quitting: the tray icon is the
+        // app's real lifetime, and quitting here would drop it until the
+        // service's next launch attempt (up to 30 s later). That makes this the
+        // moment the operator "put the window away", so it is where the layout
+        // is written — the process itself may then live for days.
+        WindowEvent::CloseRequested { api, .. } => {
           api.prevent_close();
+          if let Some(layout) = layout {
+            layout.persist();
+          }
           tray::hide_main_window(window.app_handle());
         }
+        _ => {}
       }
     })
     .build(tauri::generate_context!())
@@ -150,6 +176,12 @@ pub fn run() {
       // explicit `app.exit(code)` carries a code and is always honoured.
       RunEvent::ExitRequested { code, api, .. } if code.is_none() => api.prevent_exit(),
       RunEvent::Exit => {
+        // The tray's "exit" quits without a close request, so the layout is
+        // written here as well. Both paths save the same tracked geometry, so
+        // doing it twice costs one file write, not a wrong one.
+        if let Some(layout) = app.try_state::<window_state::LayoutState>() {
+          layout.persist();
+        }
         // Stop the tray monitor and the watcher threads before the process tears
         // down, then drop both pid markers so the service stops treating the UI
         // as open.

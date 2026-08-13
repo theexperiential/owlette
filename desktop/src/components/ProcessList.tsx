@@ -1,4 +1,4 @@
-import { Copy, GripVertical, Plus, RotateCcw, Square, Trash2 } from 'lucide-react'
+import { Copy, FilePlus2, GripVertical, Plus, RotateCcw, Square, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ProcessListEmpty } from '@/components/ProcessListEmpty'
 import { Button } from '@/components/ui/button'
@@ -193,86 +193,113 @@ export function ProcessList({
         {processes.length === 0 ? (
           <ProcessListEmpty dragOver={dragOver} />
         ) : (
-          <ul ref={listRef} className="flex flex-col gap-0.5">
-            {processes.map((process, position) => {
-              const status = statusForProcess(states, process.id)
-              const selected = process.id === selectedId
-              const dragged = draggingId === process.id
-              // No indicator for a drop that would change nothing.
-              const showGap =
-                dropGap !== null && dragRef.current !== null
-                  ? dropGap !== dragRef.current.from && dropGap !== dragRef.current.from + 1
-                  : false
+          // At least the height of the scroller, so the hint below can take the
+          // space the rows leave; past that the column grows and the hint tucks
+          // in under the last row.
+          <div className="flex min-h-full flex-col">
+            <ul ref={listRef} className="flex flex-col gap-0.5">
+              {processes.map((process, position) => {
+                const status = statusForProcess(states, process.id)
+                const selected = process.id === selectedId
+                const dragged = draggingId === process.id
+                // No indicator for a drop that would change nothing.
+                const showGap =
+                  dropGap !== null && dragRef.current !== null
+                    ? dropGap !== dragRef.current.from && dropGap !== dragRef.current.from + 1
+                    : false
 
-              return (
-                <li key={process.id} className="relative">
-                  {showGap && dropGap === position && (
-                    <span
-                      aria-hidden
-                      data-testid="drop-indicator"
-                      className="absolute -top-px left-2 right-2 z-10 h-0.5 rounded-full bg-primary"
-                    />
-                  )}
-                  {showGap && dropGap === processes.length && position === processes.length - 1 && (
-                    <span
-                      aria-hidden
-                      data-testid="drop-indicator"
-                      className="absolute -bottom-px left-2 right-2 z-10 h-0.5 rounded-full bg-primary"
-                    />
-                  )}
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        type="button"
-                        data-testid="process-row"
-                        data-process-id={process.id}
-                        data-status={status}
-                        data-dragging={dragged || undefined}
-                        aria-current={selected}
-                        className={cn(
-                          'group flex w-full touch-none items-center gap-2 rounded-md px-1.5 py-2 text-left text-sm transition-colors select-none',
-                          // The grab hand lives on the grip alone; the row is a
-                          // click-to-select surface. A drag can still start
-                          // anywhere on the row — once it does, the whole row
-                          // reads as grabbed.
-                          draggingId ? 'cursor-grabbing' : 'cursor-pointer',
-                          selected
-                            ? 'bg-accent text-accent-foreground'
-                            : 'text-foreground/90 hover:bg-accent/50',
-                          dragged && 'opacity-90 shadow-lg ring-1 ring-border',
-                        )}
-                        onClick={() => onSelect(process.id)}
-                        onPointerDown={(event) => handlePointerDown(event, process.id, position)}
-                        onPointerMove={handlePointerMove}
-                        onPointerUp={handlePointerUp}
-                        onPointerCancel={endDrag}
-                        onContextMenu={(event) => {
-                          event.preventDefault()
-                          onSelect(process.id)
-                          setAnchor({ id: process.id, x: event.clientX, y: event.clientY })
-                        }}
-                      >
-                        <GripVertical
-                          aria-hidden
+                return (
+                  <li key={process.id} className="relative">
+                    {showGap && dropGap === position && (
+                      <span
+                        aria-hidden
+                        data-testid="drop-indicator"
+                        className="absolute -top-px left-2 right-2 z-10 h-0.5 rounded-full bg-primary"
+                      />
+                    )}
+                    {showGap && dropGap === processes.length && position === processes.length - 1 && (
+                      <span
+                        aria-hidden
+                        data-testid="drop-indicator"
+                        className="absolute -bottom-px left-2 right-2 z-10 h-0.5 rounded-full bg-primary"
+                      />
+                    )}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          data-testid="process-row"
+                          data-process-id={process.id}
+                          data-status={status}
+                          data-dragging={dragged || undefined}
+                          aria-current={selected}
                           className={cn(
-                            'size-3.5 shrink-0 text-muted-foreground transition-opacity',
-                            dragged ? 'opacity-70' : 'opacity-0 group-hover:opacity-60',
-                            !draggingId && 'cursor-grab',
+                            'group flex w-full touch-none items-center gap-2 rounded-md px-1.5 py-2 text-left text-sm transition-colors select-none',
+                            // The grab hand lives on the grip alone; the row is a
+                            // click-to-select surface. A drag can still start
+                            // anywhere on the row — once it does, the whole row
+                            // reads as grabbed.
+                            draggingId ? 'cursor-grabbing' : 'cursor-pointer',
+                            selected
+                              ? 'bg-accent text-accent-foreground'
+                              : 'text-foreground/90 hover:bg-accent/50',
+                            dragged && 'opacity-90 shadow-lg ring-1 ring-border',
                           )}
-                        />
-                        <span
-                          aria-hidden
-                          className={cn('size-2 shrink-0 rounded-full', STATUS_DOT[status])}
-                        />
-                        <span className="truncate">{process.name || 'untitled process'}</span>
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">{statusLabel(status)}</TooltipContent>
-                  </Tooltip>
-                </li>
-              )
-            })}
-          </ul>
+                          onClick={() => onSelect(process.id)}
+                          onPointerDown={(event) => handlePointerDown(event, process.id, position)}
+                          onPointerMove={handlePointerMove}
+                          onPointerUp={handlePointerUp}
+                          onPointerCancel={endDrag}
+                          onContextMenu={(event) => {
+                            event.preventDefault()
+                            onSelect(process.id)
+                            setAnchor({ id: process.id, x: event.clientX, y: event.clientY })
+                          }}
+                        >
+                          <GripVertical
+                            aria-hidden
+                            className={cn(
+                              'size-3.5 shrink-0 text-muted-foreground transition-opacity',
+                              dragged ? 'opacity-70' : 'opacity-0 group-hover:opacity-60',
+                              !draggingId && 'cursor-grab',
+                            )}
+                          />
+                          <span
+                            aria-hidden
+                            className={cn('size-2 shrink-0 rounded-full', STATUS_DOT[status])}
+                          />
+                          <span className="truncate">{process.name || 'untitled process'}</span>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">{statusLabel(status)}</TooltipContent>
+                    </Tooltip>
+                  </li>
+                )
+              })}
+            </ul>
+
+            {/*
+              Once there are rows, the empty state's lesson — that a file dropped
+              on this window becomes a process — has nowhere left to be said.
+              This is that sentence, at a whisper, floating in whatever room the
+              list leaves.
+
+              It is inert (`pointer-events-none`) and outside the `ul`, so it
+              cannot take a drag away from a row, an OS drop from the window, or
+              a right-click from the context menu.
+            */}
+            <div className="flex flex-1 items-center justify-center px-3 py-6">
+              <p
+                data-testid="process-list-drop-hint"
+                className="pointer-events-none flex flex-col items-center gap-2 text-center text-sm leading-relaxed text-muted-foreground"
+              >
+                <FilePlus2 aria-hidden className="size-4 shrink-0" />
+                {/* max-w forces the copy onto two lines so the hint reads as a
+                    compact stack instead of one wide strip. */}
+                <span className="min-w-0 max-w-36">drop an app or script here to add it</span>
+              </p>
+            </div>
+          </div>
         )}
       </div>
 

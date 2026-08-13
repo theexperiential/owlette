@@ -15,6 +15,7 @@ import {
   reorderProcess,
   scheduleSummary,
   setLaunchMode,
+  setSchedules,
   setVisibility,
   uniqueCopyName,
   updateProcess,
@@ -195,7 +196,7 @@ describe('launch mode', () => {
     expect(launchModeBlockedReason({ id: 'a', name: 'x', exe_path: 'x.exe' })).toBeNull()
   })
 
-  it('summarises a schedule, and says where to author one', () => {
+  it('summarises a schedule, and says what an empty one does', () => {
     const scheduled: ProcessEntry = {
       id: 'a',
       schedules: [{ days: ['mon', 'tue'], ranges: [{ start: '09:00', stop: '17:00' }] }],
@@ -203,11 +204,33 @@ describe('launch mode', () => {
 
     expect(scheduleSummary(scheduled)).toBe('mon, tue: 09:00-17:00')
     expect(scheduleSummary({ id: 'a', schedules: null })).toBe(
-      '(no schedule set — configure via web)',
+      '(no schedule set — runs at all times)',
     )
-    expect(scheduleSummary({ id: 'a', schedules: [{ ranges: [] }] })).toBe(
-      '(no schedule set — configure via web)',
+    expect(scheduleSummary({ id: 'a', schedules: [{ days: [], ranges: [] }] })).toBe(
+      '(no schedule set — runs at all times)',
     )
+  })
+
+  it('stores schedule blocks the way the web app writes them', () => {
+    const authored = [
+      { days: ['mon', 'tue', 'wed', 'thu', 'fri'], ranges: [{ start: '09:00', stop: '17:00' }] },
+    ]
+    // A web-authored entry, `schedulePresetId` and all.
+    const entry: ProcessEntry = {
+      id: 'a',
+      name: 'touch',
+      launch_mode: 'scheduled',
+      schedulePresetId: 'builtin-0',
+      schedules: null,
+    }
+
+    const updated = setSchedules(entry, authored)
+
+    expect(updated.schedules).toStrictEqual(authored)
+    // Left alone on purpose: the presets live in Firestore, so this app cannot
+    // tell whether the edited blocks still match the one that was named.
+    expect(updated.schedulePresetId).toBe('builtin-0')
+    expect(Object.keys(updated)).toStrictEqual(Object.keys(entry))
   })
 })
 

@@ -159,6 +159,34 @@ describe('process list', () => {
 
     expect(screen.getByTestId('process-list-empty').dataset.dragOver).toBe('true')
   })
+
+  it('keeps whispering the drop gesture once there are rows to list', () => {
+    setup()
+
+    // The empty state is where an operator learns that a dropped file becomes a
+    // process; with rows on screen that lesson has nowhere else to live.
+    const hint = screen.getByTestId('process-list-drop-hint')
+    expect(hint.textContent).toMatch(/drop an app or script here to add it/)
+    // Inert on purpose: a drop target, a reorder drag and a context menu all
+    // live in this column already.
+    expect(hint.className).toContain('pointer-events-none')
+    expect(hint.className).toContain('text-sm')
+    // It floats in the room the rows leave: outside the `ul` (so it is not part
+    // of the reorder surface) in a region that takes the leftover height.
+    expect(hint.closest('ul')).toBeNull()
+    const region = hint.parentElement
+    expect(region?.className).toContain('flex-1')
+    expect(region?.className).toContain('items-center')
+    expect(region?.className).toContain('justify-center')
+    expect(region?.previousElementSibling?.tagName).toBe('UL')
+    expect(region?.parentElement?.className).toContain('min-h-full')
+  })
+
+  it('leaves the hint to the empty state when there is nothing to list', () => {
+    setup(null, [])
+
+    expect(screen.queryByTestId('process-list-drop-hint')).toBeNull()
+  })
 })
 
 describe('drag to reorder', () => {

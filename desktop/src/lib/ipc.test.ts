@@ -18,6 +18,8 @@ const {
   serviceStart,
   serviceStatus,
   serviceStop,
+  setSidebarWidth,
+  sidebarWidth,
   terminatePid,
   writeOwletteJson,
 } = await import('./ipc')
@@ -155,6 +157,23 @@ describe('terminate_pid', () => {
       expectedExe: 'player.exe',
       gracefulTimeoutMs: null,
     })
+  })
+})
+
+describe('layout memory', () => {
+  it('reads the sidebar width with no arguments', async () => {
+    invoke.mockResolvedValue(352)
+
+    await expect(sidebarWidth()).resolves.toBe(352)
+    expect(invoke).toHaveBeenCalledWith('sidebar_width')
+  })
+
+  it('writes the sidebar width and resolves to what the host kept', async () => {
+    // The host clamps, so the answer is not always the request.
+    invoke.mockResolvedValue(400)
+
+    await expect(setSidebarWidth(9000)).resolves.toBe(400)
+    expect(invoke).toHaveBeenCalledWith('set_sidebar_width', { width: 9000 })
   })
 })
 

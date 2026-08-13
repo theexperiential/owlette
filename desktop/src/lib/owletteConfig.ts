@@ -28,14 +28,37 @@ export type Priority = (typeof PRIORITIES)[number]
 export const VISIBILITIES = ['Normal', 'Hidden'] as const
 export type Visibility = (typeof VISIBILITIES)[number]
 
+/**
+ * One window of a schedule block, `HH:MM` on a 24-hour clock.
+ *
+ * A `stop` earlier than its `start` is an overnight window: it opens on each
+ * scheduled day and closes the following morning (`shared_utils.is_within_schedule`).
+ */
 export interface ScheduleRange {
-  start?: string
-  stop?: string
+  start: string
+  stop: string
 }
 
+/**
+ * One schedule block: a set of days, and the windows that apply to them.
+ *
+ * Field for field the web's `ScheduleBlock` (`web/hooks/useFirestore.ts:150-160`),
+ * because both apps write this array into the same `config.json` and the same
+ * python service reads it. `name` and `colorIndex` are the editor's own
+ * bookkeeping — the service ignores them, and neither app may drop one it did
+ * not add.
+ *
+ * `days` and `ranges` are required, as they are on the web: that is the shape
+ * every writer produces. Readers here still check before walking one, because
+ * the file can also be edited by hand.
+ */
 export interface ScheduleBlock {
-  days?: string[]
-  ranges?: ScheduleRange[]
+  /** The operator's label for the block, e.g. `morning shift`. */
+  name?: string
+  /** Stable colour slot, so deleting a block does not recolour its neighbours. */
+  colorIndex?: number
+  days: string[]
+  ranges: ScheduleRange[]
 }
 
 /**
@@ -239,6 +262,20 @@ export function setVisibility(process: ProcessEntry, visibility: Visibility): Pr
 }
 
 /**
+ * Replace the schedule windows.
+ *
+ * `schedulePresetId` — the web's record of which preset the blocks came from —
+ * is deliberately left alone rather than cleared. The presets themselves live in
+ * Firestore, so this app cannot tell whether the edited blocks still match the
+ * named preset or have diverged from it; the web's own process dialog edits
+ * these blocks without touching the field either
+ * (`web/app/dashboard/components/ProcessDialog.tsx:241-245`).
+ */
+export function setSchedules(process: ProcessEntry, schedules: ScheduleBlock[]): ProcessEntry {
+  return { ...process, schedules }
+}
+
+/**
  * Can this entry be switched out of `off`?
  *
  * The legacy GUI also stats the executable (`os.path.isfile`), which the
@@ -345,10 +382,13 @@ export function reorderProcess(config: OwletteConfig, id: string, toIndex: numbe
 }
 
 /**
- * Read-only summary of a scheduled entry's windows.
+ * One-line summary of a scheduled entry's windows, in the wording the legacy
+ * GUI shows beside the launch mode (`owlette_gui.py:784-800`).
  *
- * Schedules are authored in the web app — there is no editor here, only the
- * note the legacy GUI shows (`owlette_gui.py:784-800`).
+ * The empty case is not "nothing runs": the service treats a scheduled entry
+ * with no windows as always in window (`shared_utils.is_within_schedule`
+ * returns True for an empty schedule), so the note says so rather than leaving
+ * the operator to assume the opposite.
  */
 export function scheduleSummary(process: ProcessEntry): string {
   const blocks = Array.isArray(process.schedules) ? process.schedules : []
@@ -365,7 +405,7 @@ export function scheduleSummary(process: ProcessEntry): string {
     })
     .filter((part): part is string => part !== null)
 
-  return parts.length ? parts.join(' | ') : '(no schedule set — configure via web)'
+  return parts.length ? parts.join(' | ') : '(no schedule set — runs at all times)'
 }
 
 /**

@@ -1,6 +1,7 @@
 import { FileSearch, FolderOpen, RotateCcw, Square } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react'
 import { toast } from 'sonner'
+import { ScheduleEditor } from '@/components/ScheduleEditor'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -27,6 +28,7 @@ import {
   type Priority,
   type ProcessEntry,
   type ProcessForm,
+  type ScheduleBlock,
   type TextField,
   type Visibility,
 } from '@/lib/owletteConfig'
@@ -100,6 +102,8 @@ interface ProcessDetailProps {
   /** Persist the seven text fields. Already coerced; the caller only writes. */
   onSave: (form: ProcessForm) => void
   onLaunchMode: (mode: LaunchMode) => void
+  /** Persist the schedule windows authored in the editor. */
+  onSchedules: (schedules: ScheduleBlock[]) => void
   onPriority: (priority: Priority) => void
   onVisibility: (visibility: Visibility) => void
   onRestart: () => void
@@ -128,6 +132,7 @@ export function ProcessDetail({
   status,
   onSave,
   onLaunchMode,
+  onSchedules,
   onPriority,
   onVisibility,
   onRestart,
@@ -135,6 +140,7 @@ export function ProcessDetail({
 }: ProcessDetailProps) {
   const [draft, setDraft] = useState<ProcessForm>(() => formFromProcess(process))
   const [pendingRefresh, setPendingRefresh] = useState(false)
+  const [editingSchedule, setEditingSchedule] = useState(false)
 
   // The values last known to be on disk, so an incoming document can be told
   // apart from the echo of our own write.
@@ -388,9 +394,23 @@ export function ProcessDetail({
               })}
             </div>
             {mode === 'scheduled' && (
-              <span className="truncate text-xs text-muted-foreground" data-testid="schedule-note">
-                {scheduleSummary(process)}
-              </span>
+              <div className="flex min-w-0 items-center gap-2">
+                <span
+                  className="truncate text-xs text-muted-foreground"
+                  data-testid="schedule-note"
+                >
+                  {scheduleSummary(process)}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 shrink-0 px-2 text-xs"
+                  onClick={() => setEditingSchedule(true)}
+                  data-testid="edit-schedule"
+                >
+                  edit
+                </Button>
+              </div>
             )}
           </div>
 
@@ -590,6 +610,22 @@ export function ProcessDetail({
           />
         </div>
       </div>
+
+      {/*
+        Mounted only while it is open — the editor seeds its draft once, in a
+        state initializer, so remounting is what makes a second visit show what
+        is on disk rather than the last draft. Kept outside the `scheduled`
+        branch above so a launch-mode change arriving from the web app mid-edit
+        cannot pull the dialog out from under the operator.
+      */}
+      {editingSchedule && (
+        <ScheduleEditor
+          open
+          schedules={process.schedules}
+          onClose={() => setEditingSchedule(false)}
+          onSave={onSchedules}
+        />
+      )}
     </div>
   )
 }
