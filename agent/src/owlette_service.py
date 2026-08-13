@@ -92,6 +92,27 @@ MAX_RELAUNCH_ATTEMPTS = 3
 SLEEP_INTERVAL = 5
 TIME_TO_INIT = 60
 
+# Status the desktop app writes into tmp/app_states.json for a PID it is about
+# to terminate on the operator's behalf, immediately before the terminate.
+#
+# It exists because the desktop app has no Firebase client: the legacy GUI could
+# kill a process and write its own `process_restarted` audit event, and without a
+# marker the service would see the PID vanish and raise a `process_crash` alert
+# for an operator-initiated restart. KILLED would suppress the alert but also
+# lose the audit trail, so this is a third state — expected exit, still worth
+# recording. See handle_process()'s crash-detection branch.
+PROCESS_RESTARTING_STATUS = 'RESTARTING'
+
+# How long a launched restart prompt is treated as still on screen.
+#
+# The prompt used to be a separate python process, so "is it up?" was a process
+# scan; it is now a window inside the single-instance desktop app, which the
+# service cannot see. The countdown itself runs for two minutes and the operator
+# can pause it, so this is deliberately generous — the gate only suppresses
+# duplicate prompts and repeat notifications, and _handle_dismiss_reboot_pending
+# clears it the moment an admin dismisses from the dashboard.
+RESTART_PROMPT_ACTIVE_SECONDS = 300
+
 # Throttle for _write_service_status(). Main loop calls it every SLEEP_INTERVAL;
 # the GUI treats the file as stale after 120s, so a 30s refresh floor is safe
 # and cuts ~83% of writes when content is unchanged.
@@ -244,6 +265,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self._scm_stop_requested = False
         self.tray_icon_pid = None
         self.cortex_pid = None
+        # time.monotonic() deadline past which a launched reboot-countdown prompt
+        # is no longer assumed to be on screen (see _is_restart_prompt_active).
+        self._restart_prompt_until = 0.0
+        # De-spams the "desktop app not found" warning to one line per episode.
+        self._desktop_exe_missing_logged = False
         self.relaunch_attempts = {} # Restart attempts for each process
         self.first_start = True # First start of this service
         self.last_started = {} # Last time a process was started
@@ -1140,49 +1166,74 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.error(f"An unexpected error occurred while terminating the process: {e}")
 
     def _is_tray_alive(self):
-        """Check if the tray icon process is still running using tracked PID.
-        Falls back to a process scan only if we don't have a PID."""
+        """Check whether the desktop app (which supplies the tray icon) is running.
+
+        The tracked PID is only the fast path, and it is validated against the
+        image name because the desktop app is a single instance: when the app is
+        already up, our CreateProcessAsUser launch is folded into it and the
+        process we recorded exits within a second. Without the pid file below
+        that would look like "tray died" every cycle and relaunch forever.
+        """
         # Fast path: check tracked PID
         if self.tray_icon_pid:
             try:
                 proc = psutil.Process(self.tray_icon_pid)
-                if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                if (proc.is_running()
+                        and proc.status() != psutil.STATUS_ZOMBIE
+                        and (proc.name() or '').lower() == shared_utils.DESKTOP_EXE_NAME):
                     return True
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
             # PID is stale — clear it
             self.tray_icon_pid = None
 
-        # Slow path: the tray may have been launched by the Startup shortcut (not by us),
-        # so we don't have its PID.  Do a process scan, but this is rare.
-        if shared_utils.is_script_running('owlette_tray.py'):
+        # Authoritative path: the marker the desktop app writes for its whole
+        # lifetime. Also covers the app being launched by the {userstartup}
+        # shortcut rather than by us, and survives a service restart.
+        pid = shared_utils.read_desktop_pid(shared_utils.TRAY_PID_PATH)
+        if pid:
+            self.tray_icon_pid = pid
             return True
 
         return False
 
     def _try_launch_tray(self):
-        """Launch the tray icon with cooldown to avoid thrashing.
+        """Launch the desktop app in tray mode, with cooldown to avoid thrashing.
         Returns True if launched (or already running), False if skipped/failed."""
-        tray_script = 'owlette_tray.py'
-
         # Already running?
         if self._is_tray_alive():
             return True
 
-        # Cooldown — don't spam launches if the tray keeps crashing
+        # Cooldown — don't spam launches if the app keeps crashing, and don't
+        # retry a failing launch on every 5s tick either. Stamped before the
+        # attempt so a failure (missing exe, no interactive session) is paced
+        # the same as a crash-loop.
         now = time.time()
         elapsed = now - self._tray_last_launch_time
         if elapsed < self._tray_launch_cooldown:
             return False
+        self._tray_last_launch_time = now
 
         # Try to launch
-        if self.launch_python_script_as_user(tray_script):
-            self._tray_last_launch_time = now
+        if self.launch_desktop_app_as_user(shared_utils.DESKTOP_TRAY_ARG):
             logging.info("Tray icon launched")
             return True
         else:
-            logging.debug("Could not launch tray icon (no user session?)")
+            # launch_desktop_app_as_user already logged why (missing exe or no
+            # interactive session).
+            logging.debug("Could not launch tray icon")
             return False
+
+    def _is_restart_prompt_active(self):
+        """True while a reboot countdown prompt is believed to be on screen.
+
+        The prompt is a window inside the single-instance desktop app now, not a
+        separate process, so there is nothing for the service to scan for; it
+        tracks its own launch instead (see RESTART_PROMPT_ACTIVE_SECONDS). The
+        gate is conservative in the right direction — expiring early would
+        re-prompt an operator who is already looking at the countdown.
+        """
+        return time.monotonic() < self._restart_prompt_until
 
     # ─── Cortex Process Management ──────────────────────────────────────
 
@@ -1725,31 +1776,32 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.error(f"Failed to create elevated install token: {e}")
             return None, None
 
-    # Start a python script as a user
-    def launch_python_script_as_user(self, script_name, args=None):
-        try:
-            # Get full path to Python interpreter (handles bundled Python installations)
-            try:
-                python_exe = shared_utils.get_python_exe_path()
-            except FileNotFoundError as e:
-                logging.error(f"Cannot launch script {script_name}: {e}")
-                return False
+    # Start a command line in the interactive user's session
+    def _launch_command_as_user(self, command_line, description):
+        """CreateProcessAsUser on the interactive desktop.
 
+        Shared by the python-script launcher and the desktop-app launcher, so
+        the token refresh and the STARTUPINFO stay in one place.
+
+        Returns the new PID, or None when there is no interactive session or the
+        launch failed.
+        """
+        try:
             # Refresh token to handle session changes since service startup
             self._refresh_user_token()
             if not self.console_user_token:
-                logging.error(f"Cannot launch script {script_name}: no interactive user session")
-                return False
+                logging.error(f"Cannot launch {description}: no interactive user session")
+                return None
 
             # Use a fresh STARTUPINFO with the interactive desktop so the tray icon
-            # (and any other UI script) can access the notification area / create windows.
-            # Without lpDesktop, the process inherits the service's hidden desktop.
+            # (and any other UI process) can access the notification area / create
+            # windows. Without lpDesktop, the process inherits the service's hidden
+            # desktop.
             si = win32process.STARTUPINFO()
             si.dwFlags = win32process.STARTF_USESHOWWINDOW
             si.wShowWindow = win32con.SW_HIDE
             si.lpDesktop = "WinSta0\\Default"
 
-            command_line = f'"{python_exe}" "{shared_utils.get_path(script_name)}" {args}' if args else f'"{python_exe}" "{shared_utils.get_path(script_name)}"'
             _, _, pid, _ = win32process.CreateProcessAsUser(self.console_user_token,
                 None,  # Application Name
                 command_line,  # Command Line
@@ -1760,14 +1812,79 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self.environment,
                 None,
                 si)
-            if 'owlette_tray.py' in script_name:
-                self.tray_icon_pid = pid
-            elif 'owlette_cortex.py' in script_name:
-                self.cortex_pid = pid
-            return True
+            return pid
         except Exception as e:
-            logging.error(f"Failed to start process: {e}")
+            logging.error(f"Failed to start {description}: {e}")
+            return None
+
+    # Start a python script as a user
+    def launch_python_script_as_user(self, script_name, args=None):
+        # Get full path to Python interpreter (handles bundled Python installations)
+        try:
+            python_exe = shared_utils.get_python_exe_path()
+        except FileNotFoundError as e:
+            logging.error(f"Cannot launch script {script_name}: {e}")
             return False
+
+        script_path = shared_utils.get_path(script_name)
+        command_line = f'"{python_exe}" "{script_path}" {args}' if args else f'"{python_exe}" "{script_path}"'
+        pid = self._launch_command_as_user(command_line, f"script {script_name}")
+        if pid is None:
+            return False
+
+        if 'owlette_cortex.py' in script_name:
+            self.cortex_pid = pid
+        return True
+
+    # Start the desktop app (tray icon, config window, restart prompt) as a user
+    def launch_desktop_app_as_user(self, *args):
+        """Launch owlette-desktop.exe in the interactive session.
+
+        The desktop app replaces owlette_tray.py and owlette_gui.py: `--tray`
+        asks for a tray icon with no window, `--restart-prompt` for the reboot
+        countdown. It is a single instance, so a launch while it is already
+        running is forwarded to the live process and this one exits — which is
+        exactly how a `--restart-prompt` reaches an app that is already in the
+        tray.
+
+        Returns True when the launch was issued.
+        """
+        exe_path = shared_utils.get_desktop_exe_path()
+        if not exe_path:
+            # Not a crash: a machine mid-upgrade (or a dev box that has not
+            # built the app) simply has no local UI, and everything else the
+            # service does is unaffected. Warn once per episode and drop to
+            # debug after that — on a machine that will never have the app this
+            # would otherwise be a WARNING every cooldown, forever.
+            expected = os.path.join(
+                os.path.dirname(os.path.dirname(shared_utils.get_path())),
+                'app',
+                shared_utils.DESKTOP_EXE_NAME,
+            )
+            message = (
+                f"Desktop app not found - expected {expected}. "
+                f"No local UI will be available on this machine."
+            )
+            if self._desktop_exe_missing_logged:
+                logging.debug(message)
+            else:
+                logging.warning(message)
+                self._desktop_exe_missing_logged = True
+            return False
+
+        # Found it again after an absence — let the next disappearance warn.
+        self._desktop_exe_missing_logged = False
+
+        command_line = ' '.join([f'"{exe_path}"'] + list(args))
+        description = f"desktop app ({' '.join(args) if args else 'no args'})"
+        pid = self._launch_command_as_user(command_line, description)
+        if pid is None:
+            return False
+
+        if shared_utils.DESKTOP_TRAY_ARG in args:
+            self.tray_icon_pid = pid
+        logging.info(f"Launched {description} as PID {pid}")
+        return True
 
     def execute_in_user_session(self, job_type, code, timeout=30, trusted=False):
         """Execute code in the interactive user's desktop session.
@@ -2099,7 +2216,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 relaunches_to_attempt = MAX_RELAUNCH_ATTEMPTS
 
             # Check if restart prompt is running
-            if not shared_utils.is_script_running('prompt_restart.py'):
+            if not self._is_restart_prompt_active():
                 # If attempts are less than or equal to the relaunch attempts, log it
                 if 0 < attempts <= relaunches_to_attempt:
                     self.log_and_notify(
@@ -2117,11 +2234,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         )
 
                     # If a restart prompt isn't already running, open one (local fallback)
-                    started_restart_prompt = self.launch_python_script_as_user(
-                        shared_utils.get_path('prompt_restart.py'),
-                        None
+                    started_restart_prompt = self.launch_desktop_app_as_user(
+                        shared_utils.DESKTOP_RESTART_PROMPT_ARG
                     )
                     if started_restart_prompt:
+                        self._restart_prompt_until = time.monotonic() + RESTART_PROMPT_ACTIVE_SECONDS
                         self.log_and_notify(
                             process,
                             f'Terminated {process_name} {relaunches_to_attempt} times. System reboot imminent'
@@ -2478,20 +2595,42 @@ class OwletteService(win32serviceutil.ServiceFramework):
             else:
                 # Process crashed or was manually closed
                 if last_pid:
-                    # Check if process was manually killed (don't log crash if it was)
+                    # Read the marker the terminating side left behind, if any.
+                    # KILLED     - the service or a dashboard command killed it
+                    # RESTARTING - an operator restarted it from the local app
+                    # Both mean "this exit was intended"; only RESTARTING is
+                    # worth an audit event, because the operator asked for it.
                     try:
                         results = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
                         # Defensive programming: ensure results is never None
                         if results is None:
                             results = {}
                         process_status = results.get(str(last_pid), {}).get('status', '')
-                        was_manually_killed = (process_status == 'KILLED')
                     except Exception as e:
                         logging.warning(f"Error checking manual kill status: {e}")
-                        was_manually_killed = False
+                        process_status = ''
+                    was_manually_killed = (process_status == 'KILLED')
+                    was_restarted = (process_status == PROCESS_RESTARTING_STATUS)
 
-                    # Only log crash if it wasn't manually killed and not shutting down
-                    if not was_manually_killed and not self._shutting_down:
+                    if self._shutting_down:
+                        logging.debug(f"Process {last_pid} stopped during reboot/shutdown - skipping crash alert")
+                    elif was_restarted:
+                        # The desktop app has no Firebase client of its own — the
+                        # legacy GUI wrote this event itself, and losing it is why
+                        # the marker exists. The relaunch happens below on the
+                        # normal autolaunch path, exactly as for a crash.
+                        process_name = Util.get_process_name(process)
+                        logging.info(f"Process {last_pid} ('{process_name}') was restarted from the local app - skipping crash alert")
+                        if self.firebase_client and self.firebase_client.is_connected():
+                            self.firebase_client.log_event(
+                                action='process_restarted',
+                                level='info',
+                                process_name=process_name,
+                                details=f'Manual restart from the local app - terminated PID {last_pid} (service will relaunch on next tick)'
+                            )
+                    elif was_manually_killed:
+                        logging.debug(f"Process {last_pid} was manually killed - skipping crash log")
+                    else:
                         process_name = Util.get_process_name(process)
 
                         # Best-effort screenshot capture before relaunch
@@ -2513,10 +2652,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash'
                             )
                         self._write_cortex_event(process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash')
-                    elif self._shutting_down:
-                        logging.debug(f"Process {last_pid} stopped during reboot/shutdown - skipping crash alert")
-                    else:
-                        logging.debug(f"Process {last_pid} was manually killed - skipping crash log")
 
                 # Re-read config to get the latest launch_mode state
                 # (config may have changed via GUI/Firestore since the main loop started)
@@ -5545,16 +5680,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 del self.relaunch_attempts[process_name]
                 logging.info(f"Reset relaunch counter for {process_name}")
 
-            # Kill the local restart prompt if it's still running
-            if shared_utils.is_script_running('prompt_restart.py'):
-                try:
-                    import subprocess
-                    subprocess.run(
-                        ['taskkill', '/F', '/IM', 'pythonw.exe', '/FI', 'WINDOWTITLE eq *restart*'],
-                        capture_output=True
-                    )
-                except Exception:
-                    pass
+            # Re-arm the local prompt. The countdown window belongs to the
+            # desktop app, which owns closing it; what the service must do is
+            # drop its own "a prompt is up" gate, so a later exceedance can
+            # prompt again instead of being suppressed for the rest of the
+            # window (see _is_restart_prompt_active).
+            self._restart_prompt_until = 0.0
 
             self.firebase_client.log_event(
                 action='command_executed',

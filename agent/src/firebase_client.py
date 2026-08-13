@@ -663,7 +663,7 @@ class FirebaseClient:
         This is the main loop that also handles reconnection via ConnectionManager.
 
         Intervals:
-        - 5s when GUI is open (user actively monitoring)
+        - 5s while the desktop app's window is open (user actively monitoring)
         - 30s when processes are running (active monitoring)
         - 120s when idle (minimal overhead)
         """
@@ -717,12 +717,20 @@ class FirebaseClient:
                         if upload_ok:
                             self.connection_manager.report_success()
 
-                        # Adaptive interval based on activity
-                        gui_running = shared_utils.is_script_running('owlette_gui.py')
+                        # Adaptive interval based on activity.
+                        #
+                        # "Someone is watching" is now the desktop app's main
+                        # window being on screen, read from tmp/gui.pid. The
+                        # previous test scanned running processes for a python
+                        # image running owlette_gui.py, which cannot match the
+                        # native owlette-desktop.exe — and the app lives in the
+                        # tray, so process lifetime is not the same question as
+                        # window visibility any more.
+                        window_open = shared_utils.is_desktop_window_open()
 
-                        if gui_running:
+                        if window_open:
                             interval = 5
-                            mode = 'GUI active'
+                            mode = 'UI window open'
                         else:
                             processes = metrics.get('processes', {})
                             any_process_active = any(

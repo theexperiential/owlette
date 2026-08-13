@@ -32,11 +32,23 @@ Usage:
                      servers showing live content, headless boxes, or over RDP,
                      where you'll authorize from your phone or another computer.
                      Can also be set with the OWLETTE_NO_BROWSER=1 env var.
+
+Headless modes (the desktop app's bridge into the agent — see
+`_run_headless_mode`). Each writes one JSON object per line to stdout and
+nothing else, so the caller can stream progress; the console/clipboard UI above
+is never touched:
+
+    --json-progress      Pair this machine, emitting phrase/status/authorized/error.
+    --leave              Leave the current site (config, cache, service, machine doc).
+    --report-issue FILE  Submit the feedback payload in FILE to `bug_reports`.
+    --reboot-now         Record an owlette-initiated reboot and restart Windows.
+    --dismiss-reboot     Clear the cloud rebootPending flag for this machine.
 """
 
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 import argparse
@@ -255,7 +267,8 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
                      show_prompts: bool = True, open_browser: bool = False,
                      prompt_open_browser: bool = True,
                      on_phrase: Optional[Callable[[dict], None]] = None,
-                     should_cancel: Optional[Callable[[], bool]] = None):
+                     should_cancel: Optional[Callable[[], bool]] = None,
+                     copy_clipboard: bool = True):
     """
     Run device code pairing flow to configure site authentication.
 
@@ -283,6 +296,11 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
             authorization; when it returns True the wait is abandoned and the
             flow returns (False, "Cancelled by user", None). Lets the GUI
             Cancel button abort without waiting out the code's expiry.
+        copy_clipboard: Copy the phrase to the Windows clipboard. True for the
+            console/installer flow, where the operator has no other way to get
+            it into owlette.app/add. The desktop app owns its own clipboard
+            affordance and passes False so a background subprocess never steals
+            the operator's clipboard.
 
     Returns:
         tuple: (success: bool, message: str, site_id: Optional[str])
@@ -462,7 +480,7 @@ def run_pairing_flow(api_base: str = None, add_phrase: str = None,
             # Copy the phrase to the clipboard so the operator can paste it
             # straight into owlette.app/add instead of retyping. Best-effort —
             # a locked/unavailable clipboard never blocks pairing.
-            phrase_copied = _copy_to_clipboard(pair_phrase)
+            phrase_copied = _copy_to_clipboard(pair_phrase) if copy_clipboard else False
 
             if show_prompts:
                 print(f"{DIM}{'=' * 60}{RESET}")
@@ -596,6 +614,534 @@ def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts
                             on_phrase=on_phrase, should_cancel=should_cancel)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Headless modes — the desktop app's bridge into the agent
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# The desktop app (`desktop/`) owns no cloud client and no token crypto; both
+# stay here, behind the bundled interpreter. It spawns
+# `{root}\python\python.exe {root}\agent\src\configure_site.py <mode>` and reads
+# stdout, so every mode below speaks one protocol: one JSON object per line,
+# `{"event": ..., "value": ...}`, flushed as it happens. Events:
+#
+#   phrase      the pairing phrase and its URLs, once, as soon as the server
+#               issues a device code                          (--json-progress)
+#   status      human-readable progress, safe to show verbatim      (all modes)
+#   authorized  pairing completed; value carries `siteId`    (--json-progress)
+#   done        a non-pairing mode completed; value carries its outcome
+#   error       the mode failed; value is the message to show
+#
+# Exactly one terminal event (`authorized`, `done` or `error`) is emitted per
+# run, and the exit code agrees with it: 0 for success, 1 for failure.
+#
+# Nothing here writes to stdout except `_emit`, and none of it touches the
+# console/clipboard affordances above — those belong to the installer flow,
+# which is left byte-for-byte as it was.
+
+# How often --json-progress repeats its "waiting" status while polling. The
+# desktop app renders a live elapsed time from these; more often would be noise,
+# less often would let the window look stalled.
+_STATUS_HEARTBEAT_SECONDS = 15
+
+# Seconds to wait after asking NSSM to stop the service before assuming it is
+# down, and after starting it before returning. Ported from
+# `owlette_gui.on_leave_site_click`.
+_SERVICE_STOP_SETTLE = 3
+_SERVICE_START_SETTLE = 2
+
+# Feedback categories the web API accepts (`web/app/api/bug-report/route.ts`).
+_REPORT_CATEGORIES = ('bug', 'feature_request', 'other', 'compliment', 'rant')
+
+# Legacy dialog labels (`report_issue.ReportIssueApp.CATEGORY_MAP`), still
+# accepted so a payload written by either UI resolves the same way.
+_REPORT_CATEGORY_ALIASES = {
+    'feature request': 'feature_request',
+    'feedback': 'other',
+}
+
+
+def _emit(event: str, value=None) -> None:
+    """Write one progress line to stdout and flush it.
+
+    Deliberately not exception-guarded: the only realistic failure is the parent
+    closing the pipe, and in that case this process must die rather than keep
+    polling for ten minutes with nobody listening.
+    """
+    sys.stdout.write(json.dumps({'event': event, 'value': value}) + '\n')
+    sys.stdout.flush()
+
+
+def _nssm_path() -> str:
+    """`<install>\\tools\\nssm.exe` — three directories up from this file."""
+    src_dir = os.path.dirname(os.path.abspath(__file__))
+    install_root = os.path.dirname(os.path.dirname(src_dir))
+    return os.path.join(install_root, 'tools', 'nssm.exe')
+
+
+def _nssm_service(action: str, timeout: int = 10) -> bool:
+    """Run `nssm <action> OwletteService`. True only when NSSM reported success.
+
+    Never raises: leaving a site must complete even on a machine where the
+    service cannot be controlled from this session (NSSM missing, or no rights),
+    exactly as the GUI teardown behaved. The return value lets the caller tell
+    the operator which half happened.
+    """
+    nssm = _nssm_path()
+    if not os.path.exists(nssm):
+        logging.warning(f"NSSM not found at {nssm}; skipping service {action}")
+        return False
+    try:
+        completed = subprocess.run(
+            [nssm, action, 'OwletteService'],
+            check=False,
+            capture_output=True,
+            timeout=timeout,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+        )
+        if completed.returncode != 0:
+            logging.warning(f"nssm {action} returned {completed.returncode}")
+        return completed.returncode == 0
+    except Exception as e:
+        logging.warning(f"nssm {action} failed: {e}")
+        return False
+
+
+def _machine_document(project_id: str, api_base: str, site_id: str):
+    """Resolve `sites/{site_id}/machines/{hostname}` through the agent's client.
+
+    Returns (client, document_ref). The caller closes the client. Raises
+    RuntimeError when this machine has no usable credentials — the desktop app
+    never sees the token store, so the message is what it shows the operator.
+    """
+    from auth_manager import AuthManager
+    from firestore_rest_client import FirestoreRestClient
+
+    if not project_id:
+        raise RuntimeError('no firebase project is configured for this machine')
+    if not site_id:
+        raise RuntimeError('this machine is not paired with a site')
+
+    auth_manager = AuthManager(api_base=api_base)
+    if not auth_manager.is_authenticated():
+        raise RuntimeError('owlette is not authenticated with the cloud')
+
+    client = FirestoreRestClient(project_id=project_id, auth_manager=auth_manager)
+    document = client.collection('sites').document(site_id) \
+        .collection('machines').document(shared_utils.get_hostname())
+    return client, document
+
+
+def run_json_progress(api_base: str = None, timeout_seconds: int = TIMEOUT_SECONDS) -> int:
+    """Pair this machine, reporting progress as JSON lines.
+
+    The same `run_pairing_flow` the installer runs, with the console and
+    clipboard affordances switched off: the desktop app renders the phrase
+    itself and owns the clipboard. Cancellation is the caller killing this
+    process — the device code simply expires server-side.
+    """
+    _emit('status', 'requesting a pairing phrase')
+
+    last_heartbeat = [time.monotonic()]
+
+    def heartbeat() -> bool:
+        # Polled every ~0.25 s by `AuthManager.poll_device_code`; used here only
+        # to keep the window's status line alive. Never cancels.
+        now = time.monotonic()
+        if now - last_heartbeat[0] >= _STATUS_HEARTBEAT_SECONDS:
+            last_heartbeat[0] = now
+            _emit('status', 'waiting for authorization')
+        return False
+
+    def on_phrase(device_data: dict) -> None:
+        _emit('phrase', {
+            'pairPhrase': device_data.get('pairPhrase', ''),
+            'pairingUrl': (device_data.get('pairingUrl')
+                           or device_data.get('qrUrl')
+                           or device_data.get('verificationUri', '')),
+            'verificationUri': device_data.get('verificationUri', ''),
+            'expiresIn': device_data.get('expiresIn', 600),
+        })
+        _emit('status', 'waiting for authorization')
+
+    success, message, site_id = run_pairing_flow(
+        api_base=api_base,
+        timeout_seconds=timeout_seconds,
+        show_prompts=False,
+        open_browser=False,
+        prompt_open_browser=False,
+        copy_clipboard=False,
+        on_phrase=on_phrase,
+        should_cancel=heartbeat,
+    )
+
+    if not success:
+        _emit('error', message)
+        return 1
+
+    # The service reads `firebase.site_id` once at startup, so it has to be
+    # restarted before this machine appears on the dashboard — the same thing
+    # `owlette_gui._restart_owlette_service` did after a successful join.
+    #
+    # NSSM needs SERVICE_STOP on OwletteService, which a standard user does not
+    # have, so this genuinely fails in the field. The GUI only logged it and left
+    # the operator wondering why the machine never showed up; the outcome is
+    # reported here so the caller can say what to do instead.
+    _emit('status', 'restarting the service')
+    stopped = _nssm_service('stop')
+    time.sleep(_SERVICE_STOP_SETTLE)
+    started = _nssm_service('start')
+    time.sleep(_SERVICE_START_SETTLE)
+
+    _emit('authorized', {'siteId': site_id, 'serviceRestarted': stopped and started})
+    return 0
+
+
+def run_leave_site() -> int:
+    """Remove this machine from its site.
+
+    Ported from `owlette_gui.on_leave_site_click` (:1968-2092), in the same
+    order and for the same reasons: the config is disabled *first* so the
+    service cannot recreate the machine document, the cached cloud config goes
+    with it, and the service is stopped before the document is deleted.
+
+    One deliberate fix: the GUI read `site_id` back out of the config it had
+    just blanked, so its delete addressed `sites//machines/{host}` and never
+    removed anything. The site is captured up front here.
+    """
+    config = shared_utils.load_config()
+    firebase_cfg = config.get('firebase') or {}
+    site_id = firebase_cfg.get('site_id', '')
+    project_id = firebase_cfg.get('project_id', '')
+    api_base = firebase_cfg.get('api_base') or shared_utils.get_api_base_url()
+
+    if not site_id:
+        _emit('error', 'this machine is not paired with a site')
+        return 1
+
+    _emit('status', 'disabling cloud sync')
+    if 'firebase' not in config:
+        config['firebase'] = {}
+    config['firebase']['enabled'] = False
+    config['firebase']['site_id'] = ''
+    shared_utils.save_config(config)
+    logging.info("Firebase disabled and site_id cleared in config")
+
+    # The service prefers the cached cloud config when it has one; leaving it in
+    # place would hand the next start a stale site.
+    try:
+        cache_path = shared_utils.get_data_path('cache/firebase_cache.json')
+        if os.path.exists(cache_path):
+            os.remove(cache_path)
+            logging.info("Deleted cached Firebase config")
+    except Exception as e:
+        logging.warning(f"Failed to delete cached config (non-critical): {e}")
+
+    _emit('status', 'stopping the service')
+    service_stopped = _nssm_service('stop')
+    if service_stopped:
+        time.sleep(_SERVICE_STOP_SETTLE)
+
+    _emit('status', 'deregistering this machine')
+    deregistered = False
+    client = None
+    try:
+        client, document = _machine_document(project_id, api_base, site_id)
+        document.delete()
+        deregistered = True
+        logging.info("Machine document deleted from Firestore")
+    except Exception as e:
+        # Non-fatal, exactly as in the GUI: the machine is already detached
+        # locally, and an admin can remove the row from the dashboard.
+        logging.warning(f"Failed to delete machine from Firestore (non-critical): {e}")
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    _emit('status', 'restarting the service')
+    _nssm_service('start')
+    time.sleep(_SERVICE_START_SETTLE)
+
+    _emit('done', {
+        'siteId': site_id,
+        'deregistered': deregistered,
+        'serviceStopped': service_stopped,
+    })
+    return 0
+
+
+def _normalize_report_category(raw) -> str:
+    """Map a payload's category onto one the web API accepts."""
+    value = str(raw or '').strip().lower()
+    value = _REPORT_CATEGORY_ALIASES.get(value, value)
+    return value if value in _REPORT_CATEGORIES else 'other'
+
+
+def _format_system_info(info: dict) -> str:
+    """Format a system-info dict into readable lines."""
+    return '\n'.join(f"  {key.replace('_', ' ')}: {value}" for key, value in info.items())
+
+
+def build_report_data(category: str, description: str) -> dict:
+    """Gather system info and recent logs for a feedback submission.
+
+    Ported from `report_issue.build_report_data`; GPU probing is skipped because
+    `nvidia-smi` flashes a console window on the operator's desktop.
+    """
+    config = shared_utils.read_config()
+    firebase_cfg = config.get('firebase', {})
+
+    system_info = {}
+    try:
+        system_info = shared_utils.get_system_metrics(skip_gpu=True)
+    except Exception as e:
+        logging.warning(f"Failed to gather system info: {e}")
+
+    import platform
+    import socket
+
+    return {
+        'category': category,
+        'title': 'agent feedback',
+        'description': description,
+        'hostname': socket.gethostname(),
+        'siteId': firebase_cfg.get('site_id', ''),
+        'os': platform.platform(),
+        'systemInfo': system_info,
+        'logTail': shared_utils.get_log_tail('service', 100),
+    }
+
+
+def submit_report(data: dict) -> None:
+    """POST a feedback report to `/api/bug-report`.
+
+    Ported from `report_issue.submit_report`. The agent's own access token is
+    the credential; the endpoint accepts it as a bearer token and files the
+    report under `bug_reports` with `source: 'agent'`.
+    """
+    import requests as http_requests
+    from auth_manager import AuthManager
+
+    config = shared_utils.read_config()
+    api_base = config.get('firebase', {}).get('api_base') or shared_utils.get_api_base_url()
+
+    auth_manager = AuthManager(api_base=api_base)
+    if not auth_manager.is_authenticated():
+        raise RuntimeError('owlette is not connected to a site — pair this machine first.')
+
+    token = auth_manager.get_valid_token()
+    if not token:
+        raise RuntimeError('failed to obtain a valid auth token.')
+
+    web_base = api_base.rstrip('/')
+    if web_base.endswith('/api'):
+        web_base = web_base[:-len('/api')]
+
+    description = data.get('description', '')
+    system_info = data.get('systemInfo', {})
+    log_tail = data.get('logTail', '')
+    if system_info:
+        description += f"\n\n--- system info ---\n{_format_system_info(system_info)}"
+    if log_tail:
+        description += f"\n\n--- recent logs (last ~100 lines) ---\n{log_tail}"
+
+    # The API rejects anything over 50 000 characters; trim the log tail rather
+    # than lose the report.
+    if len(description) > 50000:
+        description = description[:49950] + '\n\n[truncated]'
+
+    response = http_requests.post(
+        f"{web_base}/api/bug-report",
+        json={
+            'title': data.get('title', 'agent feedback'),
+            'category': data.get('category', 'other'),
+            'description': description,
+            'browserUA': f"Owlette Agent v{shared_utils.APP_VERSION} / {data.get('os', '')}",
+            'pageUrl': f"agent://{data.get('hostname', 'unknown')}",
+        },
+        headers={'Authorization': f'Bearer {token}'},
+        timeout=15,
+    )
+
+    if response.status_code != 200:
+        try:
+            error_msg = response.json().get('error', response.text)
+        except Exception:
+            error_msg = response.text
+        raise RuntimeError(f"the server rejected the report ({response.status_code}): {error_msg}")
+
+    try:
+        report_id = response.json().get('id', 'unknown')
+    except Exception:
+        report_id = 'unknown'
+    logging.info(f"Bug report submitted via API: {report_id}")
+
+
+def run_report_issue(payload_path: str) -> int:
+    """Submit the feedback payload written by the desktop app.
+
+    The payload is `{"category": ..., "description": ...}` in a file under the
+    owlette tree; it is deleted as soon as it has been read so an operator's
+    description is not left lying on disk.
+    """
+    try:
+        with open(payload_path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+    except (OSError, ValueError) as e:
+        _emit('error', f"could not read the feedback payload: {e}")
+        return 1
+    finally:
+        try:
+            os.remove(payload_path)
+        except OSError:
+            pass
+
+    description = str(payload.get('description') or '').strip()
+    if not description:
+        _emit('error', 'please describe the issue before submitting.')
+        return 1
+
+    category = _normalize_report_category(payload.get('category'))
+
+    _emit('status', 'collecting system info and recent logs')
+    try:
+        report = build_report_data(category, description)
+    except Exception as e:
+        _emit('error', f"could not collect diagnostics: {e}")
+        return 1
+
+    _emit('status', 'submitting')
+    try:
+        submit_report(report)
+    except Exception as e:
+        _emit('error', str(e) or repr(e))
+        return 1
+
+    _emit('done', {'category': category})
+    return 0
+
+
+def run_reboot_now() -> int:
+    """Restart Windows, recorded as an owlette-initiated reboot.
+
+    Ported from `prompt_restart.PromptRestart.restart_now`: the intent is
+    written *before* the shutdown call so the next startup classifier treats the
+    reboot as planned and stays silent, and survives even if the call hangs.
+    """
+    try:
+        import session_state
+        session_state.set_intent('owlette_reboot')
+    except Exception as e:
+        # A missing intent only costs a spurious "unexpected reboot" warning;
+        # it must never stop the reboot the operator asked for.
+        logging.warning(f"session_state.set_intent failed before reboot: {e}")
+
+    _emit('status', 'restarting windows')
+    try:
+        subprocess.run(
+            ['shutdown', '/r', '/t', '1'],
+            check=False,
+            capture_output=True,
+            timeout=10,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+        )
+    except Exception as e:
+        _emit('error', f"could not restart windows: {e}")
+        return 1
+
+    _emit('done', {'rebooting': True})
+    return 0
+
+
+def run_dismiss_reboot() -> int:
+    """Clear this machine's cloud `rebootPending` flag.
+
+    The local half of the dashboard's `dismiss_reboot_pending` command: it
+    writes the same document shape `FirebaseClient.clear_reboot_pending` writes,
+    so a countdown dismissed on the machine stops showing as pending on the
+    dashboard. The service's own in-memory prompt gate is not touched — it
+    expires on its own (`owlette_service.RESTART_PROMPT_ACTIVE_SECONDS`).
+    """
+    config = shared_utils.read_config()
+    firebase_cfg = config.get('firebase', {})
+    site_id = firebase_cfg.get('site_id', '')
+    project_id = firebase_cfg.get('project_id', '')
+    api_base = firebase_cfg.get('api_base') or shared_utils.get_api_base_url()
+
+    if not site_id:
+        # Nothing to clear on an unpaired machine, and no reason to fail the
+        # operator's dismissal over it.
+        _emit('done', {'cleared': False, 'reason': 'not paired'})
+        return 0
+
+    client = None
+    try:
+        client, document = _machine_document(project_id, api_base, site_id)
+        document.set({
+            'rebootPending': {
+                'active': False,
+                'processName': None,
+                'reason': None,
+                'timestamp': None,
+            }
+        }, merge=True)
+    except Exception as e:
+        _emit('error', f"could not clear the pending reboot: {e}")
+        return 1
+    finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    _emit('done', {'cleared': True})
+    return 0
+
+
+def _run_headless_mode(args) -> Optional[int]:
+    """Dispatch a headless mode, or None when this is an interactive run.
+
+    Returning None is what keeps the installer path untouched: `main` only
+    consults this before any of its own work, and every branch below is
+    additive.
+    """
+    selected = [
+        name for name, chosen in (
+            ('--json-progress', args.json_progress),
+            ('--leave', args.leave),
+            ('--report-issue', args.report_issue is not None),
+            ('--reboot-now', args.reboot_now),
+            ('--dismiss-reboot', args.dismiss_reboot),
+        ) if chosen
+    ]
+    if not selected:
+        return None
+    if len(selected) > 1:
+        _emit('error', f"pick one mode, not {' and '.join(selected)}")
+        return 2
+
+    try:
+        if args.json_progress:
+            api_base = args.url
+            if not api_base and 'dev.owlette.app' in os.environ.get('OWLETTE_SETUP_URL', ''):
+                api_base = 'https://dev.owlette.app/api'
+            return run_json_progress(api_base=api_base)
+        if args.leave:
+            return run_leave_site()
+        if args.report_issue is not None:
+            return run_report_issue(args.report_issue)
+        if args.reboot_now:
+            return run_reboot_now()
+        return run_dismiss_reboot()
+    except Exception as e:
+        logging.exception("Headless mode failed")
+        _emit('error', str(e) or repr(e))
+        return 1
+
+
 def main():
     """Entry point for device code pairing flow."""
     parser = argparse.ArgumentParser(description='owlette Site Configuration')
@@ -610,7 +1156,25 @@ def main():
                         help="Do not offer to open a browser on this machine; just print "
                              "the pairing link and poll (kiosks/headless/RDP — "
                              "authorize from any device). Also: OWLETTE_NO_BROWSER=1")
+
+    # Headless modes for the desktop app. Mutually exclusive with each other;
+    # any one of them replaces the interactive flow entirely.
+    parser.add_argument('--json-progress', action='store_true',
+                        help='Pair headlessly, emitting JSON progress lines on stdout.')
+    parser.add_argument('--leave', action='store_true',
+                        help='Leave the current site and deregister this machine.')
+    parser.add_argument('--report-issue', type=str, default=None, metavar='PAYLOAD',
+                        help='Submit the feedback payload in PAYLOAD (JSON file, deleted after read).')
+    parser.add_argument('--reboot-now', action='store_true',
+                        help='Record an owlette-initiated reboot and restart Windows.')
+    parser.add_argument('--dismiss-reboot', action='store_true',
+                        help="Clear this machine's cloud rebootPending flag.")
+
     args = parser.parse_args()
+
+    headless_exit_code = _run_headless_mode(args)
+    if headless_exit_code is not None:
+        return headless_exit_code
 
     # Determine API base
     api_base = args.url

@@ -151,6 +151,14 @@ if __name__ == '__main__':
             self.is_alive = True
             self._restart_exit_code = 0
             self.tray_icon_pid = None
+            # Reboot-prompt suppression deadline (mirror OwletteService.__init__);
+            # without it reached_max_relaunch_attempts raises AttributeError the
+            # first time a process exceeds its relaunch budget under NSSM.
+            self._restart_prompt_until = 0.0
+            # "desktop app not found" log de-spam flag (mirror
+            # OwletteService.__init__); launch_desktop_app_as_user reads it on
+            # the very first tray launch attempt, which happens under NSSM too.
+            self._desktop_exe_missing_logged = False
             self.relaunch_attempts = {}
             self.first_start = True
             self.last_started = {}

@@ -56,6 +56,7 @@ CORNER_RADIUS = 6             # consistent corner radius for all elements
 STATUS_COLORS = {
     'RUNNING':       '#4ade80',  # green-400
     'LAUNCHING':     '#facc15',  # yellow-400
+    'RESTARTING':    '#facc15',  # yellow-400 (operator-initiated, mid-flight)
     'QUEUED':        '#fb923c',  # orange-400
     'LAUNCH_FAILED': '#ef4444',  # red-500
     'KILLED':        '#f87171',  # red-400
@@ -75,18 +76,71 @@ SERVICE_NAME = 'OwletteService'
 # Initialize a global lock (thread-level)
 json_lock = threading.Lock()
 
-# Cross-process mutex for JSON file access (service + GUI coordination)
+# Cross-process mutex for JSON file access (service + desktop app coordination)
 _json_file_mutex = None
+
+_JSON_MUTEX_NAME = "Global\\OwletteJsonFileMutex"
+
+# Security descriptor for that mutex.
+#
+# The service runs as LocalSystem, and a kernel object it creates with a NULL
+# descriptor inherits that token's default DACL — LocalSystem and Administrators
+# only. Every other process then fails BOTH CreateMutex and OpenMutex with
+# ACCESS_DENIED, so _CrossProcessLock silently degraded to "no lock at all"
+# everywhere except inside the service itself; the legacy GUI never once held it
+# (measured 2026-08-12). Creating the object with an explicit descriptor is the
+# only fix, because whoever creates it sets the DACL for its whole lifetime.
+#
+# Authenticated Users get exactly SYNCHRONIZE (0x00100000) | MUTEX_MODIFY_STATE
+# (0x0001): enough to wait on the mutex and release it, and nothing else —
+# notably not WRITE_DAC, so a user process cannot re-permission the object.
+# LocalSystem and Administrators keep MUTEX_ALL_ACCESS (0x001F0001).
+_JSON_MUTEX_SDDL = "D:(A;;0x1F0001;;;SY)(A;;0x1F0001;;;BA)(A;;0x100001;;;AU)"
+
+# The two rights the descriptor above hands to ordinary users.
+_MUTEX_OPEN_ACCESS = 0x00100000 | 0x0001  # SYNCHRONIZE | MUTEX_MODIFY_STATE
+
+
 def _get_json_file_mutex():
-    """Get or create a Windows named mutex for cross-process JSON file locking."""
+    """Get or create the Windows named mutex for cross-process JSON file locking.
+
+    Creation carries an explicit descriptor (see _JSON_MUTEX_SDDL) so that
+    whichever process wins the race — normally the service — leaves the object
+    reachable by the desktop app and by any other agent process.
+
+    CreateMutex always asks for MUTEX_ALL_ACCESS, which that descriptor
+    deliberately withholds from ordinary users, so a non-elevated process falls
+    through to OpenMutex with just the rights it needs. The desktop host does
+    exactly the same thing (desktop/src-tauri/src/json_io.rs::json_mutex).
+    """
     global _json_file_mutex
     if _json_file_mutex is None:
         try:
             import win32event
-            # Named mutex shared between service and GUI processes
-            _json_file_mutex = win32event.CreateMutex(None, False, "Global\\OwletteJsonFileMutex")
-        except Exception:
-            _json_file_mutex = False  # Fallback: skip cross-process locking
+            import win32security
+
+            attributes = win32security.SECURITY_ATTRIBUTES()
+            attributes.SECURITY_DESCRIPTOR = (
+                win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
+                    _JSON_MUTEX_SDDL, win32security.SDDL_REVISION_1
+                )
+            )
+            _json_file_mutex = win32event.CreateMutex(attributes, False, _JSON_MUTEX_NAME)
+        except Exception as create_error:
+            try:
+                import win32event
+                _json_file_mutex = win32event.OpenMutex(
+                    _MUTEX_OPEN_ACCESS, False, _JSON_MUTEX_NAME
+                )
+            except Exception as open_error:
+                # Both paths refused: proceed unlocked. The writes are atomic
+                # (temp file + os.replace), so the worst case is a lost update,
+                # never a torn file.
+                logging.debug(
+                    f"Cross-process JSON mutex unavailable "
+                    f"(create: {create_error}; open: {open_error}) — proceeding unlocked"
+                )
+                _json_file_mutex = False  # Fallback: skip cross-process locking
     return _json_file_mutex
 
 class _CrossProcessLock:
@@ -1071,6 +1125,64 @@ def _is_script_running_uncached(script_name):
 # PATHS - Now using ProgramData for proper Windows service data storage
 CONFIG_PATH = get_data_path('config/config.json')
 RESULT_FILE_PATH = get_data_path('tmp/app_states.json')
+
+# DESKTOP APP (Tauri) — replaces owlette_tray.py and owlette_gui.py.
+#
+# The installer drops it at {app}\app\owlette-desktop.exe, alongside the agent
+# and the bundled interpreter. Two pid markers tell the service what the
+# operator has open:
+#   tmp/tray.pid — written for the life of the process (tray icon present)
+#   tmp/gui.pid  — written only while the main window is on screen
+# See desktop/src-tauri/src/pid_file.rs for the writer.
+DESKTOP_EXE_NAME = 'owlette-desktop.exe'
+DESKTOP_TRAY_ARG = '--tray'
+DESKTOP_RESTART_PROMPT_ARG = '--restart-prompt'
+TRAY_PID_PATH = get_data_path('tmp/tray.pid')
+GUI_PID_PATH = get_data_path('tmp/gui.pid')
+
+
+def get_desktop_exe_path():
+    """Full path to the desktop app, or None when it is not installed.
+
+    Resolved from the install root the same way get_python_exe_path() does
+    (src lives at <install>\\agent\\src), so a relocated install is followed
+    rather than hardcoded.
+    """
+    install_root = os.path.dirname(os.path.dirname(get_path()))
+    candidate = os.path.join(install_root, 'app', DESKTOP_EXE_NAME)
+    return candidate if os.path.exists(candidate) else None
+
+
+def read_desktop_pid(pid_path):
+    """PID recorded in pid_path, but only if it is a live owlette-desktop.exe.
+
+    Replaces the is_script_running() image scan the python tray and GUI relied
+    on: that helper only inspects processes whose image name contains "python",
+    so it can never match a native executable. Checking the image name as well
+    as the PID is what stops a recycled PID from reading as a live UI.
+
+    Returns the PID, or None when the marker is absent, stale or foreign.
+    """
+    try:
+        with open(pid_path, 'r') as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+    if pid <= 0 or not psutil.pid_exists(pid):
+        return None
+
+    try:
+        if (psutil.Process(pid).name() or '').lower() == DESKTOP_EXE_NAME:
+            return pid
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+    return None
+
+
+def is_desktop_window_open():
+    """True while the operator has the desktop app's main window on screen."""
+    return read_desktop_pid(GUI_PID_PATH) is not None
 
 # Lazy GPUtil import — avoids eager GPU probing at module load (saves ~5-10 MB
 # baseline and a startup delay for every process that imports shared_utils).
