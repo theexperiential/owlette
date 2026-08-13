@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { StatusFooter } from '@/components/StatusFooter'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -22,6 +22,16 @@ const connected: ServiceStatusFile = {
 
 const joined = { firebase: { enabled: true, site_id: 'default_site' } } as OwletteConfig
 
+const unpaired = { firebase: { enabled: false, site_id: '' } } as OwletteConfig
+
+const serviceStopped: ServiceStatus = {
+  installed: true,
+  running: false,
+  state: 'stopped',
+  startType: 'auto_start',
+  statusFile: { exists: true, ageSecs: 400, stale: true },
+}
+
 function setup(overrides: Partial<Parameters<typeof StatusFooter>[0]> = {}) {
   const props = {
     status: healthy,
@@ -29,13 +39,19 @@ function setup(overrides: Partial<Parameters<typeof StatusFooter>[0]> = {}) {
     config: joined,
     starting: false,
     onStart: vi.fn(),
+    onJoin: vi.fn(),
     ...overrides,
   }
-  return render(
+  render(
     <TooltipProvider>
       <StatusFooter {...props} />
     </TooltipProvider>,
   )
+  return props
+}
+
+function joinButton(): HTMLButtonElement | null {
+  return screen.queryByRole('button', { name: 'join site' }) as HTMLButtonElement | null
 }
 
 describe('StatusFooter sentence', () => {
@@ -54,5 +70,45 @@ describe('StatusFooter sentence', () => {
   it('shows the running service version on the right', () => {
     setup({ hostname: 'TEC-A4D' })
     expect(screen.getByText('v3.0.0')).toBeTruthy()
+  })
+})
+
+describe('StatusFooter join site', () => {
+  it('offers a way into a site when this machine belongs to none', () => {
+    const props = setup({ config: unpaired, hostname: 'TEC-A4D' })
+
+    // The sentence keeps saying what it said; the button is beside it.
+    expect(screen.getByTestId('footer-status').textContent).toBe('disabled')
+    fireEvent.click(joinButton() as HTMLButtonElement)
+    expect(props.onJoin).toHaveBeenCalledOnce()
+  })
+
+  it('offers it to a machine that was removed from its site', () => {
+    setup({
+      config: { firebase: { enabled: true, site_id: '' } } as OwletteConfig,
+      hostname: 'TEC-A4D',
+    })
+
+    expect(screen.getByTestId('footer-status').textContent).toBe('TEC-A4D was removed from site')
+    expect(joinButton()).toBeTruthy()
+  })
+
+  it('says nothing about joining a site this machine is already in', () => {
+    setup({ hostname: 'TEC-A4D' })
+    expect(joinButton()).toBeNull()
+  })
+
+  it('waits for config.json rather than flashing the button on startup', () => {
+    setup({ config: null, hostname: 'TEC-A4D' })
+    expect(joinButton()).toBeNull()
+  })
+
+  it('yields the slot to start service when nothing is supervising the machine', () => {
+    // An unpaired machine with a dead service has one useful next step, and it
+    // is not pairing.
+    setup({ config: unpaired, status: serviceStopped, hostname: 'TEC-A4D' })
+
+    expect(screen.getByRole('button', { name: 'start service' })).toBeTruthy()
+    expect(joinButton()).toBeNull()
   })
 })

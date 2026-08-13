@@ -236,6 +236,25 @@ describe('the launch mode control', () => {
     expect(indicator.className).toContain('bg-blue-600')
   })
 
+  it('hangs the schedule pencil off the group, flush and outside the grid', () => {
+    setup()
+
+    const group = screen.getByTestId('launch-mode')
+    const pencil = screen.getByTestId('edit-schedule')
+    const shell = group.parentElement
+
+    // One bordered shell holds both, so the pencil reads as a fourth segment
+    // rather than a detached icon button a gap away.
+    expect(pencil.parentElement).toBe(shell)
+    expect(shell?.className).toContain('border-border')
+
+    // Outside the grid on purpose: the indicator is a third of the group and
+    // translates by whole multiples of itself, so a fourth cell would make it a
+    // quarter wide and land it short of every segment.
+    expect(group.className).toContain('grid-cols-3')
+    expect(group.contains(pencil)).toBe(false)
+  })
+
   it('reads the legacy autolaunch flag when there is no launch mode', () => {
     setup({ ...base, launch_mode: undefined, autolaunch: true })
 
@@ -270,12 +289,31 @@ describe('schedules', () => {
     expect(screen.queryByTestId('schedule-note')).toBeNull()
   })
 
-  it('offers the editor only for a scheduled entry', () => {
-    const { rerender } = setup({ ...base, launch_mode: 'always' })
-    expect(screen.queryByTestId('edit-schedule')).toBeNull()
+  it('offers the editor in every launch mode', () => {
+    // The editor used to appear only once the entry was already scheduled,
+    // which put the windows behind the mode they configure.
+    const { rerender } = setup({ ...base, launch_mode: 'off' })
+    expect(screen.getByTestId('edit-schedule')).toBeTruthy()
+
+    rerender({ ...base, launch_mode: 'always' })
+    expect(screen.getByTestId('edit-schedule')).toBeTruthy()
 
     rerender({ ...base, launch_mode: 'scheduled' })
     expect(screen.getByTestId('edit-schedule')).toBeTruthy()
+  })
+
+  it('stores the windows authored from an unscheduled entry without switching mode', () => {
+    const { onSchedules, onLaunchMode } = setup({ ...base, launch_mode: 'off' })
+
+    fireEvent.click(screen.getByTestId('edit-schedule'))
+    fireEvent.click(screen.getByRole('button', { name: 'save schedule' }))
+
+    expect(onSchedules).toHaveBeenCalledExactlyOnceWith([
+      { days: ['mon', 'tue', 'wed', 'thu', 'fri'], ranges: [{ start: '09:00', stop: '17:00' }] },
+    ])
+    // Pre-configuring is not the same as switching on: the segmented control is
+    // the only thing that changes the launch mode.
+    expect(onLaunchMode).not.toHaveBeenCalled()
   })
 
   it('opens the editor on the windows the entry holds, and saves them back', () => {

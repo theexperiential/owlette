@@ -1,4 +1,4 @@
-import { Menu } from 'lucide-react'
+import { BookOpen, Bug, FileCog, LogIn, LogOut, Menu, ScrollText } from 'lucide-react'
 import { useCallback } from 'react'
 import { toast } from 'sonner'
 import {
@@ -31,10 +31,14 @@ interface AppMenuProps {
  * (`owlette_gui._toggle_overflow_menu`, :2524-2574).
  *
  * Same four items in the same order — config, logs, docs, feedback — plus the
- * site action the legacy GUI kept in its firebase status footer. That is now
- * here rather than in both places: the footer is a status line, and a second
- * conditional button on it competes with `start service` for the operator's
- * attention at exactly the moment neither should be ambiguous.
+ * site action the legacy GUI kept in its firebase status footer.
+ *
+ * Both places carry it now, for different readers. This menu is where an
+ * operator who knows the app looks for `leave site`; the footer's `join site`
+ * button is for the one who does not yet know this menu exists, and a machine
+ * that belongs to no site cannot be talked about without offering the way back.
+ * The footer shows only that one, only while the service is up, so it never
+ * competes with `start service`.
  *
  * Opening a file, a folder or a link goes through the host
  * (`src-tauri/src/shell_open.rs`), which is what `os.startfile` was doing under
@@ -69,10 +73,12 @@ export function AppMenu({ paired, onJoinSite, onLeaveSite, onReportIssue }: AppM
       <DropdownMenuContent align="end" className={`${MENU_SURFACE} w-52`}>
         {paired ? (
           <DropdownMenuItem data-testid="menu-leave-site" onSelect={onLeaveSite}>
+            <LogOut aria-hidden className="size-4" />
             leave site
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem data-testid="menu-join-site" onSelect={onJoinSite}>
+            <LogIn aria-hidden className="size-4" />
             join site
           </DropdownMenuItem>
         )}
@@ -81,15 +87,19 @@ export function AppMenu({ paired, onJoinSite, onLeaveSite, onReportIssue }: AppM
           data-testid="menu-config"
           onSelect={() => open(OWLETTE_FILES.config, 'config.json')}
         >
+          <FileCog aria-hidden className="size-4" />
           config
         </DropdownMenuItem>
         <DropdownMenuItem data-testid="menu-logs" onSelect={() => open(LOGS_DIR, 'the logs folder')}>
+          <ScrollText aria-hidden className="size-4" />
           logs
         </DropdownMenuItem>
         <DropdownMenuItem data-testid="menu-docs" onSelect={openDocs}>
+          <BookOpen aria-hidden className="size-4" />
           docs
         </DropdownMenuItem>
         <DropdownMenuItem data-testid="menu-report-issue" onSelect={onReportIssue}>
+          <Bug aria-hidden className="size-4" />
           submit bug report
         </DropdownMenuItem>
       </DropdownMenuContent>

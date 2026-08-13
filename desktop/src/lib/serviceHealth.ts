@@ -90,6 +90,20 @@ export function siteIdOf(config: OwletteConfig | null, statusFile: ServiceStatus
 }
 
 /**
+ * Whether this machine belongs to a site.
+ *
+ * Read from `config.json` rather than from the service's status file: the
+ * config is what the service acts on, and it is what joining and leaving
+ * rewrite. Null before the first read lands — neither paired nor unpaired — so
+ * that an affordance offered to one of those states does not flash on startup.
+ */
+export function isPaired(config: OwletteConfig | null): boolean | null {
+  if (!config) return null
+  const firebase = firebaseSection(config)
+  return Boolean(firebase.enabled && firebase.site_id)
+}
+
+/**
  * Resolve the footer's state.
  *
  * Order matters and is not the legacy GUI's, because one case outranks

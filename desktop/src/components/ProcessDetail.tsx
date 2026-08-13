@@ -1,4 +1,4 @@
-import { FileSearch, FolderOpen, RotateCcw, Square } from 'lucide-react'
+import { FileSearch, FolderOpen, Pencil, RotateCcw, Square } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ComponentProps } from 'react'
 import { toast } from 'sonner'
 import { ScheduleEditor } from '@/components/ScheduleEditor'
@@ -340,77 +340,107 @@ export function ProcessDetail({
           </Tooltip>
           <div className="flex min-w-0 items-center gap-3">
             {/*
-              Three states, all three always visible and one click apart —
-              a select would hide two of them behind a popover for no gain at
-              this width. The fill slides between segments rather than jumping,
-              which is what makes it read as one control with a position rather
-              than three buttons that change colour.
+              One bordered shell around two children: the three-mode group and
+              the schedule pencil, flush against each other with a single hairline
+              between — the same run of segments the dashboard draws, so the two
+              screens read alike.
 
-              Equal columns are load-bearing: the indicator is a third of the
-              group wide and moves by whole multiples of itself, so segments
-              sized to their own labels ("off" against "scheduled") would leave
-              it landing short. `grid-cols-3` under `w-fit` gives every column
-              the width of the widest label.
+              The border, rounding and clipping live out here rather than on the
+              group so the pencil sits inside them; the group keeps only its own
+              geometry.
             */}
-            <div
-              role="radiogroup"
-              aria-labelledby="launch-mode-label"
-              data-testid="launch-mode"
-              className="relative grid w-fit grid-cols-3 overflow-hidden rounded-lg border border-border bg-card"
-            >
-              <span
-                aria-hidden
-                data-testid="launch-mode-indicator"
-                className={cn(
-                  'pointer-events-none absolute inset-y-0 left-0 w-1/3 transition-[transform,background-color] duration-200 motion-reduce:transition-none',
-                  LAUNCH_MODE_FILL[mode],
-                )}
-                style={{ transform: `translateX(${modeIndex * 100}%)` }}
-              />
-              {LAUNCH_MODES.map((option) => {
-                const active = option.value === mode
-                return (
+            <div className="flex w-fit overflow-hidden rounded-lg border border-border bg-card">
+              {/*
+                Three states, all three always visible and one click apart —
+                a select would hide two of them behind a popover for no gain at
+                this width. The fill slides between segments rather than jumping,
+                which is what makes it read as one control with a position rather
+                than three buttons that change colour.
+
+                Equal columns are load-bearing: the indicator is a third of the
+                group wide and moves by whole multiples of itself, so segments
+                sized to their own labels ("off" against "scheduled") would leave
+                it landing short. `grid-cols-3` under `w-fit` gives every column
+                the width of the widest label — and it is why the pencil is a
+                sibling of this grid rather than a fourth cell in it: a fourth
+                column would make the indicator a quarter wide and land it short
+                of every segment.
+              */}
+              <div
+                role="radiogroup"
+                aria-labelledby="launch-mode-label"
+                data-testid="launch-mode"
+                className="relative grid w-fit grid-cols-3"
+              >
+                <span
+                  aria-hidden
+                  data-testid="launch-mode-indicator"
+                  className={cn(
+                    'pointer-events-none absolute inset-y-0 left-0 w-1/3 transition-[transform,background-color] duration-200 motion-reduce:transition-none',
+                    LAUNCH_MODE_FILL[mode],
+                  )}
+                  style={{ transform: `translateX(${modeIndex * 100}%)` }}
+                />
+                {LAUNCH_MODES.map((option) => {
+                  const active = option.value === mode
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      data-testid={`launch-mode-${option.value}`}
+                      // Clicking the mode it is already in is not a change. The
+                      // select this replaced swallowed those too, and the caller
+                      // writes config.json for every one it is told about — which
+                      // makes the service re-read and re-upload for nothing.
+                      onClick={() => !active && onLaunchMode(option.value)}
+                      className={cn(
+                        'relative z-10 cursor-pointer px-3 py-1.5 text-xs font-medium transition-colors',
+                        active
+                          ? LAUNCH_MODE_TEXT[option.value]
+                          : 'text-muted-foreground hover:bg-muted/50',
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  )
+                })}
+              </div>
+              {/*
+                Always offered, in every launch mode.
+
+                It used to appear only once the entry was already `scheduled`,
+                which put the windows behind the mode that needs them — and a
+                scheduled entry with no windows runs at all times, so committing
+                to the mode first did the opposite of what it looked like. Two
+                walkthroughs ran into exactly that.
+
+                Editing from `off` or `always on` is pre-configuring: the windows
+                are stored and the mode stays where it was. The segmented control
+                is still the only thing that changes a launch mode — which is why
+                the pencil is painted as an inactive segment and never picks up a
+                fill: it opens an editor, it does not select a mode.
+              */}
+              <Tooltip>
+                <TooltipTrigger asChild>
                   <button
-                    key={option.value}
                     type="button"
-                    role="radio"
-                    aria-checked={active}
-                    data-testid={`launch-mode-${option.value}`}
-                    // Clicking the mode it is already in is not a change. The
-                    // select this replaced swallowed those too, and the caller
-                    // writes config.json for every one it is told about — which
-                    // makes the service re-read and re-upload for nothing.
-                    onClick={() => !active && onLaunchMode(option.value)}
-                    className={cn(
-                      'relative z-10 cursor-pointer px-3 py-1.5 text-xs font-medium transition-colors',
-                      active
-                        ? LAUNCH_MODE_TEXT[option.value]
-                        : 'text-muted-foreground hover:bg-muted/50',
-                    )}
+                    onClick={() => setEditingSchedule(true)}
+                    aria-label="edit schedule"
+                    data-testid="edit-schedule"
+                    className="flex cursor-pointer items-center border-l border-border px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted/50"
                   >
-                    {option.label}
+                    <Pencil className="size-3.5" />
                   </button>
-                )
-              })}
+                </TooltipTrigger>
+                <TooltipContent>edit schedule</TooltipContent>
+              </Tooltip>
             </div>
             {mode === 'scheduled' && (
-              <div className="flex min-w-0 items-center gap-2">
-                <span
-                  className="truncate text-xs text-muted-foreground"
-                  data-testid="schedule-note"
-                >
-                  {scheduleSummary(process)}
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-6 shrink-0 px-2 text-xs"
-                  onClick={() => setEditingSchedule(true)}
-                  data-testid="edit-schedule"
-                >
-                  edit
-                </Button>
-              </div>
+              <span className="truncate text-xs text-muted-foreground" data-testid="schedule-note">
+                {scheduleSummary(process)}
+              </span>
             )}
           </div>
 
@@ -614,8 +644,8 @@ export function ProcessDetail({
       {/*
         Mounted only while it is open — the editor seeds its draft once, in a
         state initializer, so remounting is what makes a second visit show what
-        is on disk rather than the last draft. Kept outside the `scheduled`
-        branch above so a launch-mode change arriving from the web app mid-edit
+        is on disk rather than the last draft. Kept outside the mode-conditional
+        markup above so a launch-mode change arriving from the web app mid-edit
         cannot pull the dialog out from under the operator.
       */}
       {editingSchedule && (

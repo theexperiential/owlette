@@ -31,6 +31,16 @@ export interface ServiceHealthStore {
   error: string | null
   refresh: () => void
   start: () => Promise<void>
+  /**
+   * Claim the service's state for an operation that deliberately stops it —
+   * leaving a site stops the service, deregisters the machine, and starts it
+   * again. Returns the release, which the caller must call however the
+   * operation ends. While a claim is out the auto-start below stands down: a
+   * UAC prompt of its own in the middle of a teardown would both surprise the
+   * operator and start the service back up while the machine document is being
+   * deleted, which is what would recreate it.
+   */
+  hold: () => () => void
 }
 
 function message(error: unknown): string {
@@ -54,6 +64,9 @@ export function useServiceHealth(): ServiceHealthStore {
   const disposed = useRef(false)
   const autoStarted = useRef(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
+  // Outstanding claims on the service's state. Counted rather than a flag so
+  // two overlapping claims cannot release each other's.
+  const holds = useRef(0)
 
   useEffect(() => {
     disposed.current = false
@@ -108,6 +121,23 @@ export function useServiceHealth(): ServiceHealthStore {
     }
   }, [refresh])
 
+  const hold = useCallback(() => {
+    holds.current += 1
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      holds.current -= 1
+      // The auto-start below is a launch-time courtesy, and it has now been
+      // outranked: something drove the service deliberately and told the
+      // operator where it ended up. If that ended with the service down — an
+      // elevation they declined — raising a second prompt of our own fifteen
+      // seconds later would take the decision back off them. The footer's
+      // `start service` button is still right there.
+      autoStarted.current = true
+    }
+  }, [])
+
   useEffect(refresh, [refresh])
   useOwletteFileWatch('service_status', refresh)
 
@@ -116,13 +146,14 @@ export function useServiceHealth(): ServiceHealthStore {
     return () => clearInterval(timer)
   }, [queryScm])
 
-  // Auto-start, once, on the first status that says it is needed.
+  // Auto-start, once, on the first status that says it is needed — unless
+  // something in the app is holding the service down on purpose.
   useEffect(() => {
-    if (autoStarted.current || !status) return
+    if (autoStarted.current || holds.current > 0 || !status) return
     if (!status.installed || status.running || status.state === 'start_pending') return
     autoStarted.current = true
     void start()
   }, [status, start])
 
-  return { status, statusFile, starting, error, refresh, start }
+  return { status, statusFile, starting, error, refresh, start, hold }
 }

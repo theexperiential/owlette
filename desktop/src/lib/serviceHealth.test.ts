@@ -3,6 +3,7 @@ import type { ServiceStatus } from './ipc'
 import {
   deriveFooterState,
   footerSentence,
+  isPaired,
   siteIdOf,
   type FooterState,
   type ServiceStatusFile,
@@ -128,6 +129,21 @@ describe('site id', () => {
   it('falls back to the status file before giving up', () => {
     expect(siteIdOf({ firebase: {} }, connected)).toBe('default_site')
     expect(siteIdOf(null, null)).toBe('')
+  })
+})
+
+describe('pairing', () => {
+  it('needs both halves of the firebase block', () => {
+    expect(isPaired(joined)).toBe(true)
+    expect(isPaired({ firebase: { enabled: true, site_id: '' } })).toBe(false)
+    expect(isPaired({ firebase: { enabled: false, site_id: 'default_site' } })).toBe(false)
+    expect(isPaired({})).toBe(false)
+  })
+
+  it('answers neither way until config.json has been read', () => {
+    // The menu and the footer both branch on this; a momentary `false` would
+    // offer to pair a machine that is already paired.
+    expect(isPaired(null)).toBeNull()
   })
 })
 

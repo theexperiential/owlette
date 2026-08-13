@@ -23,7 +23,7 @@ import { useOwletteConfig } from '@/hooks/useOwletteConfig'
 import { useRestartPrompt } from '@/hooks/useRestartPrompt'
 import { useServiceHealth } from '@/hooks/useServiceHealth'
 import { useSidebarWidth } from '@/hooks/useSidebarWidth'
-import { siteIdOf } from '@/lib/serviceHealth'
+import { isPaired, siteIdOf } from '@/lib/serviceHealth'
 import { classifyDrop, toProcessEntry, type ProcessEntryDraft } from '@/lib/dropClassifier'
 import {
   cardBlockedReason,
@@ -101,15 +101,10 @@ function App() {
 
   /**
    * Whether this machine belongs to a site, and therefore whether the menu
-   * offers leaving or joining. Read from `config.json` rather than from the
-   * service's status file: the config is what the service acts on, and it is
-   * what leaving rewrites.
+   * offers leaving or joining. The footer reads the same verdict for its
+   * `join site` button.
    */
-  const paired = Boolean(
-    config.config &&
-      (config.config.firebase as { enabled?: boolean; site_id?: string } | undefined)?.enabled &&
-      (config.config.firebase as { site_id?: string } | undefined)?.site_id,
-  )
+  const paired = isPaired(config.config) === true
 
   const handleJoined = useCallback(() => {
     // The helper restarts the service; the config watcher picks up the new site
@@ -494,6 +489,7 @@ function App() {
           hostname={host}
           starting={health.starting}
           onStart={() => void health.start()}
+          onJoin={() => setMenuDialog('join')}
         />
 
         <JoinSiteDialog
@@ -506,6 +502,7 @@ function App() {
           siteId={siteId}
           onClose={() => setMenuDialog(null)}
           onLeft={handleLeft}
+          onHold={health.hold}
         />
         <ReportIssueDialog open={menuDialog === 'report'} onClose={() => setMenuDialog(null)} />
         <RestartCountdown open={restartPrompt.armed} onClose={restartPrompt.dismiss} />
