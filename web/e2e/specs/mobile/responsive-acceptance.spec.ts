@@ -222,10 +222,7 @@ test.describe('mobile responsive acceptance — authenticated routes', () => {
     await assertNoHorizontalOverflow(page);
   });
 
-  // FIXME(task 4.4): the `deployments` heading + inline stats cluster is a
-  // non-wrapping flex row that pushes the document to ~512px at a 390px
-  // viewport. Delete this marker when 4.4 lands.
-  test.fixme('/deployments does not scroll horizontally', async ({ page }) => {
+  test('/deployments does not scroll horizontally', async ({ page }) => {
     await seedMachine(SITE_ID, MACHINE_ID);
     await page.goto('/deployments');
     await expect(

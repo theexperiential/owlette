@@ -91,7 +91,7 @@ export default function ApiKeysSettingsPage() {
   return (
     <div className="min-h-screen bg-background">
       <PageHeader currentPage="api keys" />
-      <main className="max-w-4xl mx-auto px-6 py-8">
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
         {showEmptyStateGate ? (
           <ProTierGate
             tier={accountTier}

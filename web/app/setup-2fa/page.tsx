@@ -327,7 +327,7 @@ export default function Setup2FAPage() {
               </div>
 
               <div className="bg-card border border-border rounded-lg p-4">
-                <div className="grid grid-cols-2 gap-2 font-mono text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-mono text-sm">
                   {backupCodes.map((code, index) => (
                     <div key={index} className="flex items-center gap-2">
                       <span className="text-muted-foreground">{index + 1}.</span>

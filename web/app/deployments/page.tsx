@@ -132,15 +132,18 @@ const DeploymentRow = React.memo(function DeploymentRow({
             }
           }}
         >
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           {getStatusIcon(deployment.status)}
           <div className="min-w-0">
-            <span className="text-foreground font-medium select-text">{deployment.name}</span>
+            <span className="block truncate text-foreground font-medium select-text">{deployment.name}</span>
             <p className="text-xs text-muted-foreground select-text truncate">{deployment.installer_name}</p>
           </div>
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
-          <div className="w-[90px] flex justify-end">
+          {/* Status text badge is desktop-only — below `sm` the leading status
+              icon already carries the same state, so the row stays icon-only
+              instead of spending 90px of a 390px viewport on a duplicate. */}
+          <div className="hidden sm:flex w-[90px] shrink-0 justify-end">
             {getStatusBadge(deployment.status, errorMessages || undefined)}
           </div>
           <span className="text-xs text-muted-foreground hidden sm:block w-[150px] text-right">
@@ -155,7 +158,7 @@ const DeploymentRow = React.memo(function DeploymentRow({
                     variant="ghost"
                     onClick={(e) => e.stopPropagation()}
                     aria-label={`deployment actions for ${deployment.name}`}
-                    className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                    className="h-7 w-7 pointer-coarse:h-10 pointer-coarse:w-10 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
                   >
                     <MoreVertical className="h-4 w-4" />
                   </Button>
@@ -532,10 +535,13 @@ export default function DeploymentsPage() {
           const inProgressCount = deployments.filter(d => d.status === 'in_progress').length;
           return (
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-center gap-6 md:gap-8">
+          {/* Heading + inline stats wrap at narrow widths so the cluster can
+              never push the document past the viewport (same shape as the
+              dashboard's quick-stats row). */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3 sm:gap-x-6 md:gap-8">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">deployments</h2>
 
-            <div className="flex items-center gap-6 md:gap-8">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-3 sm:gap-x-6 md:gap-8">
               <div className="flex items-center gap-2.5">
                 <div className={`rounded-md p-1.5 ${!statsLoading && deployments.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
                   <Package className="h-4 w-4" />
@@ -578,7 +584,9 @@ export default function DeploymentsPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Wraps too: with an update pending, `update owlette to vX` sits
+              beside `new deployment` and the pair is wider than a phone. */}
+          <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
             <UpdateOwletteButton siteId={currentSiteId} machines={machines} />
             <Button
               onClick={() => setDeployDialogOpen(true)}

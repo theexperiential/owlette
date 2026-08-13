@@ -339,7 +339,7 @@ export default function RegisterPage() {
             {emailExpanded && (
               <div className="form-reveal">
                 <div className="space-y-5">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="firstName" className="text-foreground">first name</Label>
                     <Input
