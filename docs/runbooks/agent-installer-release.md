@@ -10,7 +10,7 @@ This document is only for the installer surface. For non-installer deploys, use 
 
 - Windows machine with admin rights.
 - Inno Setup 6.x installed, or `%ISCC%` set to the compiler path.
-- Python 3.11 with `tkinter`, or `%PYTHON311_ROOT%` set.
+- Node.js 22 + npm, and the Rust toolchain (rustup) with the MSVC C++ build tools — the full build compiles the desktop app.
 - `/.claude/.env.local` containing `OWLETTE_API_KEY`.
 - API key scope: `installer=*:write`.
 - Installer upload keys must be minted by a superadmin.
@@ -333,7 +333,7 @@ If omitted, the server computes the checksum.
 - [ ] `/web/package.json` is bumped.
 - [ ] Version and changelog changes are committed and pushed.
 - [ ] Inno Setup 6.x is installed, `%ISCC%` is set, or `PATH` can find `ISCC`.
-- [ ] Python 3.11 with `tkinter` is installed, or `%PYTHON311_ROOT%` is set.
+- [ ] Node.js 22 + npm and the Rust toolchain are available (the build compiles `desktop/`).
 - [ ] Build output is `agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe`.
 - [ ] sha256 is computed for the exact installer being uploaded.
 - [ ] `BASE_URL` points at the intended environment.
@@ -365,6 +365,7 @@ If omitted, the server computes the checksum.
 - [ ] If using CI artifact, it was downloaded from the GitHub Release.
 - [ ] If using local artifact, no checksum match with CI is expected.
 - [ ] A Windows test machine is ready for smoke testing.
+- [ ] `installer_metadata/cortex_cli` exists in the target environment and pins the CLI version the shipped SDK expects (`claude_agent_sdk/_cli_version.py`). Since 3.0.0 the installer no longer bundles `claude.exe`; a missing or stale pin leaves Cortex dead on every fresh install. See `/docs/internal/cortex-cli-provisioning.md`.
 
 ## post-release smoke
 
@@ -444,5 +445,6 @@ The signing decision is deferred. Treat it as a business and product call, not a
 - `/docs/runbooks/production-deploy.md`
 - `/docs/runbooks/hotfix-rollback.md`
 - `/docs/internal/version-management.md`
+- `/docs/internal/cortex-cli-provisioning.md`
 - `/agent/BUILD.md`
 - `/CLAUDE.md`

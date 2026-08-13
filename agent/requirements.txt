@@ -1,13 +1,14 @@
 pywin32==306
 psutil==5.9.5
-pystray==0.19.4
 email-validator==2.0.0
 GPUtil==1.4.0
 cryptography==50.0.0
-customtkinter==5.2.2
-CTkListbox==0.9
-CTkMessagebox==2.5
-CTkToolTip==0.8
+# Pillow is a DIRECT dependency: screenshot_capture + owlette_service compress
+# captures to JPEG with it. It used to arrive transitively through pystray, which
+# 3.0.0 dropped along with the rest of the python UI (customtkinter, CTkListbox,
+# CTkMessagebox, CTkToolTip) when the Tauri desktop app replaced it — so it has
+# to be pinned here or the screenshot path breaks on the next clean build.
+Pillow==12.3.0
 packaging==24.2  # >=24.0 required by the wheel that get-pip bootstraps
 setuptools==83.0.0  # >=78.1.1 fixes PackageIndex.download path traversal (CVE-2025-47273)
 requests==2.34.2  # >=2.32.0/.4/2.33.0 CVE fixes; 2.34.0 also fixes greedy no_proxy matching
@@ -27,8 +28,9 @@ nvidia-ml-py==12.560.30  # NVIDIA GPU fallback (NVML bindings)
 # pywin32 dependency. Under the old range pip silently backtracked to exactly
 # here and exited 0; the pin makes that visible. Raising pywin32 to 310 (not
 # higher) unblocks both: verified to resolve claude-agent-sdk 0.2.132 + mcp
-# 1.29.0. Note the upgrade is API-compatible but adds ~42 MB to the installer,
-# since the SDK vendors the Claude CLI.
+# 1.29.0. The upgrade is API-compatible; its size cost no longer applies, since
+# build_installer_full.bat deletes the CLI the SDK vendors (_bundled/claude.exe)
+# and Cortex fetches its own copy on demand.
 claude-agent-sdk==0.1.69
 
 # Error monitoring (optional — only active when DSN configured in config.json)

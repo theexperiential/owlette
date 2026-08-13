@@ -63,7 +63,16 @@
 #define MyAppPublisher "The Experiential Company"
 #define MyAppURL "https://owlette.app"
 #define MyAppRepoURL "https://github.com/theexperiential/owlette"
-#define MyAppExeName "pythonw.exe"
+; The desktop app (Tauri) is the product's face as of 3.0.0 — it replaced the
+; pythonw-hosted tray and configuration GUI. Installed to {app}\app.
+#define MyAppExeName "owlette-desktop.exe"
+#define MyAppExePath "{app}\app\owlette-desktop.exe"
+; Registered on the Start-menu shortcuts below. Windows silently DROPS toast
+; notifications from an unpackaged app whose AppUserModelID is not registered by
+; a Start-menu shortcut — the notification API still returns success and nothing
+; appears. Must stay byte-identical to `identifier` in desktop/src-tauri/
+; tauri.conf.json and APP_USER_MODEL_ID in desktop/src-tauri/src/startup_link.rs.
+#define MyAppUserModelID "app.owlette.desktop"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application.
@@ -114,6 +123,29 @@ Source: "build\installer_package\python\*"; DestDir: "{app}\python"; Flags: igno
 ; Agent source code
 Source: "build\installer_package\agent\*"; DestDir: "{app}\agent"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+; Desktop app (Tauri) — the tray icon, configuration window and reboot prompt.
+; shared_utils.get_desktop_exe_path() resolves exactly this path, so the
+; directory name is a contract with the service, not a preference.
+Source: "build\installer_package\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; WebView2 Evergreen bootstrapper. Never installed — `dontcopy` keeps it out of
+; {app} and EnsureWebView2Runtime() extracts it to {tmp} only on the machines
+; that actually need it (see [Code]). Vendored rather than downloaded at build
+; time for the same reason as vendor\nssm-2.24.zip: a build must not depend on
+; someone else's host being up. `*.exe` is gitignored with a negation for this
+; one path — see /.gitignore.
+;
+;   Source:  https://go.microsoft.com/fwlink/p/?LinkId=2124703  (the documented
+;            "Get the Link" evergreen bootstrapper URL)
+;   Version: 1.3.251.23, 1,695,960 bytes
+;   SHA256:  8C4A80540B6BBCBEF30A4E8C7D1AC504B6FC09DB922B4ACDFD85C9D5F6F1050E
+;   Signed:  CN=Microsoft Corporation (Authenticode verified at vendor time)
+;
+; To refresh: re-download from that link, re-verify the signature, and update
+; the three lines above. The bootstrapper pulls the current runtime at install
+; time, so refreshing it is housekeeping, not a security-critical update.
+Source: "vendor\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
+
 ; Tools (NSSM)
 Source: "build\installer_package\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion
 
@@ -145,25 +177,46 @@ Type: files; Name: "{group}\Owlette Tray Icon.lnk"
 ; name, no wildcard — a harmless no-op when absent, and it can't touch a
 ; user-created desktop shortcut of any other name.
 Type: files; Name: "{autodesktop}\Owlette Tray Icon.lnk"
+; 3.0.0: the three shortcuts below all changed target — they used to run
+; pythonw.exe against owlette_gui.py / owlette_tray.py (both deleted) via the
+; scripts\launch_*.bat hops (also deleted). Delete them rather than let [Icons]
+; rewrite them in place, so no shell-cached target or AppUserModelID from the
+; 2.x shortcut can survive the upgrade. [InstallDelete] runs before [Icons], so
+; each one is immediately recreated below.
+Type: files; Name: "{group}\Owlette Configuration.lnk"
+Type: files; Name: "{group}\Owlette.lnk"
+Type: files; Name: "{userstartup}\Owlette Tray.lnk"
 
 [Icons]
-; Start Menu shortcuts (now pointing to ProgramData for user data)
-Name: "{group}\Owlette Configuration"; Filename: "{app}\scripts\launch_gui.bat"; IconFilename: "{app}\agent\icons\normal.png"; WorkingDir: "{app}"
-Name: "{group}\Owlette"; Filename: "{app}\scripts\launch_tray.bat"; IconFilename: "{app}\agent\icons\normal.png"; WorkingDir: "{app}"
+; Start Menu shortcuts. All three app entries carry AppUserModelID: without a
+; Start-menu shortcut registering that id, Windows drops every toast the
+; unpackaged desktop app raises (see the MyAppUserModelID note above).
+; No arguments = "show me the window" (a forwarded second-instance launch
+; without --tray raises the main window); --tray = tray icon only.
+Name: "{group}\Owlette Configuration"; Filename: "{#MyAppExePath}"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"; AppUserModelID: "{#MyAppUserModelID}"
+Name: "{group}\Owlette"; Filename: "{#MyAppExePath}"; Parameters: "--tray"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"; AppUserModelID: "{#MyAppUserModelID}"
 Name: "{group}\View Logs"; Filename: "{commonappdata}\Owlette\logs"; IconFilename: "{sys}\shell32.dll"; IconIndex: 4
 Name: "{group}\Edit Configuration"; Filename: "{commonappdata}\Owlette\config\config.json"; IconFilename: "{sys}\shell32.dll"; IconIndex: 70
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 
-; Startup shortcut — launches pythonw.exe directly (no batch file hop) for faster tray appearance.
-; owlette_tray.py has its own sys.path setup so PYTHONPATH is not required.
-Name: "{userstartup}\Owlette Tray"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\agent\src\owlette_tray.py"""; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}"
+; Startup shortcut — the desktop app's own "start on login" toggle writes and
+; deletes this exact file (desktop/src-tauri/src/startup_link.rs, LINK_NAME =
+; "Owlette Tray.lnk"), and stamps the same AppUserModelID on it. Setup creates
+; it unconditionally because a 2.x machine's copy points at the now-deleted
+; owlette_tray.py and must be repaired; an operator who turns the toggle off
+; after upgrading keeps that choice until the next agent update.
+Name: "{userstartup}\Owlette Tray"; Filename: "{#MyAppExePath}"; Parameters: "--tray"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"; AppUserModelID: "{#MyAppUserModelID}"
 
 [Run]
 ; Step 0: Add Windows Defender exclusions for the WinRing0 driver used by LibreHardwareMonitor.
 ; WinRing0 is flagged as VulnerableDriver:WinNT/Winring0 but is required for CPU/GPU temperature monitoring.
 ; LibreHardwareMonitorLib.dll (inside the WinTmp package) extracts WinRing0 AT RUNTIME to
-; {app}\python\python.sys (and \pythonw.sys when the GUI/pythonw host reads temps) and loads it as kernel
-; service R0python / R0pythonw. Process exclusions do NOT cover a kernel-driver FILE load, and the WinTmp
+; {app}\python\python.sys (and \pythonw.sys when a pythonw host reads temps) and loads it as kernel
+; service R0python / R0pythonw. The pythonw entries are still required in 3.0.0 even though the tray and
+; GUI that used to be the pythonw hosts are gone: shared_utils.get_python_exe_path() prefers pythonw.exe,
+; so every script the service launches into the user session runs under it — including owlette_cortex.py,
+; whose mcp_tools.get_system_info() calls shared_utils.get_system_metrics() and therefore reads WinTmp.
+; Process exclusions do NOT cover a kernel-driver FILE load, and the WinTmp
 ; path exclusion is the DLL's subfolder — NOT where the .sys lands — so we MUST path-exclude the extracted
 ; .sys files themselves (this is the file Defender actually quarantines; see docs/agent/troubleshooting.md).
 ; We also drop a stale legacy C:\Owlette\python exclusion from pre-ProgramData installs, and append the
@@ -178,6 +231,11 @@ Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-
 ; No need to launch it here - it will start on next login or can be launched manually from Start Menu
 
 [UninstallRun]
+; Close the desktop app first — it lives in {app}\app and would otherwise hold
+; its own image open while CurUninstallStepChanged tries to DelTree that folder.
+; Scoped by exe path (not a bare /IM name kill) for the same reason the install
+; path is: never touch a same-named process outside this installation.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-Process -Name owlette-desktop -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '*\Owlette\*' } | Stop-Process -Force -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
 ; Stop and remove the Windows service before uninstalling
 Filename: "{app}\tools\nssm.exe"; Parameters: "stop OwletteService"; Flags: runhidden waituntilterminated
 Filename: "{app}\tools\nssm.exe"; Parameters: "remove OwletteService confirm"; Flags: runhidden waituntilterminated
@@ -324,6 +382,82 @@ begin
   Result := False;
 end;
 
+// WebView2 Evergreen runtime, per Microsoft's documented detection contract:
+// a `pv` REG_SZ under the WebView2 Runtime's EdgeUpdate client GUID that is
+// neither empty nor 0.0.0.0. HKLM is the per-machine install, HKCU the per-user
+// one. Both HKLM spellings are probed because Inno's registry view depends on
+// the install mode: whichever view HKEY_LOCAL_MACHINE resolves to, one of the
+// two paths is the right one and the other simply misses.
+// https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution
+function WebView2RuntimeVersion(RootKey: Integer; SubKey: String): String;
+var
+  Version: String;
+begin
+  Result := '';
+  if RegQueryStringValue(RootKey, SubKey, 'pv', Version) then
+    if (Version <> '') and (Version <> '0.0.0.0') then
+      Result := Version;
+end;
+
+function FindWebView2Runtime(): String;
+var
+  ClientGuid: String;
+begin
+  ClientGuid := '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+  Result := WebView2RuntimeVersion(HKEY_LOCAL_MACHINE, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\' + ClientGuid);
+  if Result <> '' then Exit;
+  Result := WebView2RuntimeVersion(HKEY_LOCAL_MACHINE, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\' + ClientGuid);
+  if Result <> '' then Exit;
+  Result := WebView2RuntimeVersion(HKEY_CURRENT_USER, 'Software\Microsoft\EdgeUpdate\Clients\' + ClientGuid);
+end;
+
+// The desktop app renders in WebView2. Windows 11 and mainstream Windows 10
+// ship the Evergreen runtime, but LTSC/IoT kiosk images — a large slice of the
+// installations Owlette runs on — often do not, and there the app would fail to
+// create its window with no useful error. Install it from the bundled
+// Microsoft-signed bootstrapper before anything tries to launch the app.
+//
+// Never fatal: a machine without the runtime still gets a working service, and
+// the operator can drive it entirely from the dashboard. `/silent /install` is
+// idempotent, so a false negative from the probe costs a no-op, not a reinstall.
+procedure EnsureWebView2Runtime();
+var
+  ResultCode: Integer;
+  Existing: String;
+begin
+  Existing := FindWebView2Runtime();
+  if Existing <> '' then
+  begin
+    Log('WebView2 runtime present (pv=' + Existing + ') - skipping bootstrapper');
+    Exit;
+  end;
+
+  Log('WebView2 runtime not found - running bundled Evergreen bootstrapper');
+  if not WizardSilent() then
+    WizardForm.StatusLabel.Caption := 'Installing the WebView2 runtime...';
+
+  try
+    ExtractTemporaryFile('MicrosoftEdgeWebview2Setup.exe');
+  except
+    Log('Failed to extract the WebView2 bootstrapper: ' + GetExceptionMessage);
+    Exit;
+  end;
+
+  // Elevated (setup requires admin) so this is a per-machine install, which is
+  // what a kiosk running under an auto-login account needs.
+  if Exec(ExpandConstant('{tmp}\MicrosoftEdgeWebview2Setup.exe'), '/silent /install', '',
+          SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log('WebView2 bootstrapper exit code: ' + IntToStr(ResultCode))
+  else
+    Log('Could not start the WebView2 bootstrapper: ' + SysErrorMessage(ResultCode));
+
+  Existing := FindWebView2Runtime();
+  if Existing <> '' then
+    Log('WebView2 runtime now present (pv=' + Existing + ')')
+  else
+    Log('WebView2 runtime still not detected - the desktop app may not open on this machine');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
@@ -335,6 +469,10 @@ begin
   begin
     InstallSucceeded := True;
     PairingSucceeded := True;  // Assume success (upgrade scenario skips pairing)
+
+    // Step 0: WebView2 runtime — must precede the service install, because
+    // install.bat starts the service and the service launches the desktop app.
+    EnsureWebView2Runtime();
 
     // Step 1: Run pairing flow (if needed)
     if ShouldConfigureSite() then
@@ -389,7 +527,6 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   DataDir: String;
   InstallDir: String;
-  ResultCode: Integer;
 begin
   if CurUninstallStep = usUninstall then
   begin
@@ -411,6 +548,7 @@ begin
       Log('Cleaning installed components from: ' + InstallDir);
       DelTree(InstallDir + '\python', True, True, True);
       DelTree(InstallDir + '\agent', True, True, True);
+      DelTree(InstallDir + '\app', True, True, True);
       DelTree(InstallDir + '\tools', True, True, True);
       DelTree(InstallDir + '\scripts', True, True, True);
       // Remove installed doc files (but not user data files)
@@ -554,6 +692,22 @@ begin
   //      (Get-Process can't read MainModule.FileName for processes with restricted
   //      integrity-level access, even from an elevated admin) and processes whose
   //      exe lives outside Owlette but loaded an Owlette .pyd/.dll.
+  // The desktop app is a long-lived native process living inside {app} (it is
+  // the tray icon), so it holds its own image open across an upgrade. Inno's
+  // CloseApplications would usually catch that, but Restart Manager sees a
+  // process running in the interactive session while Setup is elevated, and a
+  // miss here costs a "DeleteFile failed: code 5" mid-copy. Kill it explicitly,
+  // scoped by exe path so a same-named process elsewhere is never touched.
+  // The service is already stopped at this point, so nothing relaunches it.
+  Log('Killing the Owlette desktop app...');
+  Exec('powershell.exe',
+    '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"Get-Process -Name owlette-desktop -ErrorAction SilentlyContinue | ' +
+    'Where-Object { $_.Path -like ''*\Owlette\*'' } | ' +
+    'Stop-Process -Force -ErrorAction SilentlyContinue"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log('Desktop app kill returned: ' + IntToStr(ResultCode));
+
   Log('Killing Owlette Python processes by exe path...');
   Exec('powershell.exe',
     '-NoProfile -ExecutionPolicy Bypass -Command ' +

@@ -390,23 +390,28 @@ Invoke-Check -Name 'Python 3.11' -OnError Fail -ScriptBlock {
     }
 }
 
-Invoke-Check -Name 'Python 3.11 tkinter' -OnError Warn -ScriptBlock {
-    if (-not (Test-Command 'py')) {
-        Write-Warn 'Python 3.11 tkinter: py launcher missing; GUI build degrades gracefully but warns'
+# The desktop app replaced the tkinter GUI in 3.0.0, so the installer build now
+# needs a Rust toolchain instead of a system Python with Tk. Fatal, not a warn:
+# without cargo the full build stops at step 6 rather than degrading.
+Invoke-Check -Name 'Rust toolchain' -OnError Fail -ScriptBlock {
+    $cargoExe = if (Test-Command 'cargo') { 'cargo' } elseif (Test-Path "$env:USERPROFILE\.cargo\bin\cargo.exe") { "$env:USERPROFILE\.cargo\bin\cargo.exe" } else { $null }
+
+    if (-not $cargoExe) {
+        Write-Fail 'Rust toolchain: cargo not found; install via rustup for desktop app builds'
         return
     }
 
-    $tkResult = Invoke-Native -FilePath 'py' -ArgumentList @('-3.11', '-c', 'import tkinter; print(tkinter.TkVersion)')
-    $tkVersion = Get-FirstLine $tkResult.Output
+    $cargoResult = Invoke-Native -FilePath $cargoExe -ArgumentList @('--version')
+    $cargoVersion = Get-FirstLine $cargoResult.Output
 
-    if ($tkResult.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($tkVersion)) {
-        Write-Pass "Python 3.11 tkinter: Tk $tkVersion"
+    if ($cargoResult.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($cargoVersion)) {
+        Write-Pass "Rust toolchain: $cargoVersion"
     }
     else {
-        Write-Warn 'Python 3.11 tkinter: not importable; GUI build degrades gracefully but warns'
+        Write-Fail 'Rust toolchain: cargo present but not runnable'
     }
 
-    Write-Detail "Python 3.11 tkinter detail: Tk version $tkVersion"
+    Write-Detail "Rust toolchain detail: $cargoExe -> $cargoVersion"
 }
 
 Write-Host ''

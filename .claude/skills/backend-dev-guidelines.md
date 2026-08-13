@@ -13,13 +13,12 @@
 - **Cloud**: Firestore REST API (`firestore_rest_client.py`) — NOT Firebase Admin SDK
 - **Auth**: OAuth two-token system (access + refresh) with Fernet AES encrypted storage
 - **Process Management**: psutil, pywin32, Task Scheduler (schtasks)
-- **GUI**: CustomTkinter (`owlette_gui.py`)
-- **System Tray**: pystray (`owlette_tray.py`)
-- **Build**: Inno Setup with embedded Python 3.11 + NSSM (not PyInstaller)
+- **Local UI**: none in python — the Tauri desktop app in `desktop/` owns the tray, the config window and the reboot prompt (3.0.0+)
+- **Build**: Inno Setup with embedded Python 3.11 + NSSM (not PyInstaller), plus a `tauri build --no-bundle` step for the desktop exe
 
 ---
 
-## Module Map (21 files in `agent/src/`)
+## Module Map (`agent/src/`, ~40 modules — the tables below cover the load-bearing ones)
 
 ### Core Service
 | Module | Purpose |
@@ -41,18 +40,22 @@
 | Module | Purpose |
 |--------|---------|
 | `owlette_scout.py` | Process responsiveness checker — sends WM_NULL to window handles |
-| `prompt_restart.py` | UI prompt when process exceeds relaunch limits (countdown to reboot) |
 
 ### User-Facing
+The local UI lives in `desktop/` (Tauri), not here. The service launches
+`{app}\app\owlette-desktop.exe` with `--tray` for the notification-area icon and
+`--restart-prompt` for the relaunch-limit countdown; the app talks back through
+`config.json`, `tmp/app_states.json` and `tmp/service_status.json` under the
+`Global\OwletteJsonFileMutex` contract. See `desktop/README.md`.
+
 | Module | Purpose |
 |--------|---------|
-| `owlette_gui.py` | CustomTkinter configuration GUI (separate process) |
-| `owlette_tray.py` | System tray icon — reads `service_status.json` for status colors |
+| `session_exec.py` | Runs python/cmd/PowerShell in the interactive session (CreateProcessAsUser) |
 
 ### Installation & Updates
 | Module | Purpose |
 |--------|---------|
-| `configure_site.py` | OAuth registration during install — localhost:8765 callback server |
+| `configure_site.py` | Pairing (device code) during install, plus the desktop app's CLI back end for join/leave/report-issue/reboot |
 | `owlette_updater.py` | Self-update bootstrap — stop service → download → silent install → verify |
 | `installer_utils.py` | Download/execute/cancel remote installers (deployment system) |
 
@@ -61,7 +64,6 @@
 |--------|---------|
 | `project_utils.py` | Project directory management |
 | `registry_utils.py` | Windows registry queries (installed software list) |
-| `cleanup_commands.py` | Firestore command queue cleanup |
 
 > **Full architecture details**: See `skills/resources/agent-architecture.md`
 > **Build system details**: See `skills/resources/installer-build-system.md`

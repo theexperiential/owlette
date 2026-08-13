@@ -11,10 +11,20 @@
 | | Full Build | Quick Build |
 |--|-----------|------------|
 | **Script** | `build_installer_full.bat` | `build_installer_quick.bat` |
-| **Duration** | 5-10 min | ~30 sec |
-| **When** | First build, dependency changes | Source code changes only |
+| **Duration** | 5-10 min (longer on a cold cargo cache) | ~30 sec |
+| **When** | First build, dependency changes, desktop app changes | Agent source changes only |
 
-**Prerequisite**: Inno Setup 6 at `C:\Program Files (x86)\Inno Setup 6\ISCC.exe`
+**Prerequisites**: Inno Setup 6 at `C:\Program Files (x86)\Inno Setup 6\ISCC.exe`; Node 22 + npm; the Rust toolchain (rustup — the full build prepends `%USERPROFILE%\.cargo\bin` to PATH itself, so cargo does not have to be on the system PATH); MSVC C++ build tools.
+
+### The desktop app is part of the payload (3.0.0+)
+
+Step 6 of the full build compiles `desktop/` and step 8 copies the binary to `build\installer_package\app\owlette-desktop.exe`, which the installer lays down at `{app}\app\owlette-desktop.exe` — the exact path `shared_utils.get_desktop_exe_path()` resolves, so the folder name is a contract with the service, not a preference.
+
+- The build runs **`npx tauri build --no-bundle`**. Inno Setup is this product's packager; letting the Tauri bundler run would demand NSIS/WiX and produce a second installer we do not ship.
+- `npm ci` runs **only when `desktop/node_modules` is absent**. `npm ci` deletes `node_modules` before repopulating it, which would pull the tree out from under a dev server or a parallel build on a developer machine.
+- The **quick build does not compile it** — it only re-copies `desktop/src-tauri/target/release/owlette-desktop.exe` if one is there, and fails loudly when the package has no desktop app at all (Inno errors on an empty `app\*` source anyway).
+- The full build **deletes `claude_agent_sdk/_bundled/claude.exe`** (242 MB) after pip install. It reappears on every clean install, which is why it is scripted; Cortex fetches its own CLI on demand instead.
+- The installer probes for the **WebView2 Evergreen runtime** and runs the bundled `vendor\MicrosoftEdgeWebview2Setup.exe` (`/silent /install`) when it is missing — LTSC/IoT kiosk images often lack it, and the app cannot create a window without it. Never fatal; the service works regardless.
 
 ### Version Bump Flow
 
@@ -104,6 +114,8 @@ curl -s -X PUT "$BASE_URL/api/installer/upload" \
 - **Never modify `python311._pth`** without understanding embedded Python import resolution — breaking this kills all imports
 - **Never skip the Defender exclusion** in the installer — LibreHardwareMonitor's WinRing0 driver triggers false positives
 - **Never change NSSM exit behavior** — exit code 0 = don't restart (graceful stop), non-zero = restart (crash recovery). `owlette_runner.py` depends on this.
+- **Never drop `AppUserModelID: "app.owlette.desktop"`** from the `[Icons]` entries. Windows silently discards every toast an unpackaged app raises unless a Start-menu shortcut registers its AUMID — the notification API still reports success. The id must stay byte-identical to `tauri.conf.json`'s `identifier` and `startup_link.rs`'s `APP_USER_MODEL_ID`.
+- **Never let the Tauri bundler run** (`tauri build` without `--no-bundle`) — it wants NSIS/WiX and builds an installer that competes with ours.
 
 ---
 
@@ -111,9 +123,11 @@ curl -s -X PUT "$BASE_URL/api/installer/upload" \
 
 | File | Purpose | Danger Level |
 |------|---------|-------------|
-| `owlette_installer.iss` | Inno Setup script — install/uninstall/upgrade logic | High |
-| `build_installer_full.bat` | Downloads Python, pip, deps, NSSM, assembles package | Medium |
-| `build_installer_quick.bat` | Copies source + compiles installer (fast iteration) | Low |
+| `owlette_installer.iss` | Inno Setup script — install/uninstall/upgrade logic, WebView2 check | High |
+| `build_installer_full.bat` | Downloads Python, pip, deps, NSSM; builds the desktop app; assembles package | Medium |
+| `build_installer_quick.bat` | Copies source + desktop exe, compiles installer (fast iteration) | Low |
+| `desktop/` | Tauri 2 app — tray icon, config window, reboot prompt (replaced the python UI in 3.0.0) | Medium |
+| `agent/vendor/` | Hash-verified third-party binaries shipped with the build (NSSM zip, WebView2 bootstrapper) | Low |
 | `scripts/install.bat` | NSSM service registration (run during install) | High |
 | `src/owlette_runner.py` | NSSM↔Service bridge, signal handling | High |
 | `src/owlette_updater.py` | Self-update: stop → download → silent install → verify | High |
@@ -157,8 +171,11 @@ The installer handles config preservation:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| "Python 3.11 not found" | Tkinter copy needs system Python 3.11 | Install Python 3.11 to `C:\Program Files\Python311` |
+| "cargo not found on PATH" | Rust toolchain missing (or installed outside `%USERPROFILE%\.cargo`) | `rustup` install, or put cargo on PATH |
 | Quick build fails | No Python runtime in `build/` | Run full build first |
+| Quick build: "No desktop app in the installer package" | Never ran a full build, or `desktop/src-tauri/target` was cleaned | Full build, or `cd desktop && npx tauri build --no-bundle` |
+| ISCC: "No files found matching ...\app\*" | Same as above — the desktop exe never made it into the package | Same as above |
+| Desktop app never opens on a kiosk, service fine | WebView2 runtime absent and the bootstrapper failed | Check `SetupLog` for the `EnsureWebView2Runtime` lines |
 | Installer hangs on silent update | `ShouldConfigureSite()` returned true | Check config.json exists at `C:\ProgramData\Owlette\config\` |
 | Service won't start after update | Import errors from missing deps | Full rebuild needed |
 | Installer flagged by AV | Missing Defender exclusion | Check `Add-MpPreference` step ran |

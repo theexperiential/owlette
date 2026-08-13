@@ -160,6 +160,25 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+
+:: Drop the Claude CLI that claude-agent-sdk vendors. It is a 242 MB single-file
+:: node bundle — nearly 60%% of the uncompressed payload — and it reappears on
+:: every clean pip install, which is why this is scripted rather than a one-off
+:: cleanup. Cortex fetches its own CLI on demand instead (cortex_cli_fetch), so
+:: nothing imports this path at runtime; the SDK only falls back to it when no
+:: `cli_path` is supplied.
+set "CLAUDE_BUNDLED=%~dp0build\python\Lib\site-packages\claude_agent_sdk\_bundled"
+if exist "%CLAUDE_BUNDLED%\claude.exe" (
+    echo Removing bundled Claude CLI ^(242 MB^) from the payload...
+    del /q "%CLAUDE_BUNDLED%\claude.exe"
+    if exist "%CLAUDE_BUNDLED%\claude.exe" (
+        echo ERROR: Could not delete "%CLAUDE_BUNDLED%\claude.exe"
+        pause
+        exit /b 1
+    )
+)
+set "CLAUDE_BUNDLED="
+
 :: Verify installed packages have no dependency conflicts. Fatal: this was a
 :: non-fatal WARNING for as long as the tree had a standing conflict (wheel
 :: wanted packaging>=24.0 against our packaging==23.1), which trained everyone
@@ -174,42 +193,70 @@ if errorlevel 1 (
 echo Dependencies installed successfully!
 
 :: ============================================================================
-:: Step 6: Copy tkinter from system Python 3.11
+:: Step 6: Build the desktop app (Tauri)
 :: ============================================================================
-echo [6/9] Copying tkinter from system Python...
-set "PYTHON311_SOURCE="
-if defined PYTHON311_ROOT (
-    if exist "%PYTHON311_ROOT%\Lib\tkinter" if exist "%PYTHON311_ROOT%\DLLs\_tkinter.pyd" if exist "%PYTHON311_ROOT%\DLLs\tcl86t.dll" if exist "%PYTHON311_ROOT%\DLLs\tk86t.dll" if exist "%PYTHON311_ROOT%\tcl" set "PYTHON311_SOURCE=%PYTHON311_ROOT%"
+:: Replaces the old "copy tkinter/tcl from system Python 3.11" step: the python
+:: UI (owlette_gui.py / owlette_tray.py and friends) was deleted in 3.0.0, so the
+:: embedded interpreter no longer needs a GUI toolkit at all.
+::
+:: --no-bundle is deliberate: Inno Setup is this product's packager. Letting the
+:: Tauri bundler run would demand NSIS/WiX and produce a second, competing
+:: installer we do not ship. We want the release binary and nothing else.
+echo [6/9] Building the desktop app ^(Tauri, release^)...
+
+set "DESKTOP_DIR=%~dp0..\desktop"
+if not exist "%DESKTOP_DIR%\src-tauri\Cargo.toml" (
+    echo ERROR: Desktop app sources not found at "%DESKTOP_DIR%"
+    pause
+    exit /b 1
 )
-if not defined PYTHON311_SOURCE (
-    for /f "delims=" %%p in ('py -3.11 -c "import sys; print(sys.prefix)" 2^>nul') do (
-        if not defined PYTHON311_SOURCE (
-            if exist "%%p\Lib\tkinter" if exist "%%p\DLLs\_tkinter.pyd" if exist "%%p\DLLs\tcl86t.dll" if exist "%%p\DLLs\tk86t.dll" if exist "%%p\tcl" set "PYTHON311_SOURCE=%%p"
-        )
+
+:: rustup installs cargo per-user and does not always land on a service/CI PATH.
+if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+where cargo >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: cargo not found on PATH. Install the Rust toolchain ^(rustup^) first.
+    pause
+    exit /b 1
+)
+
+pushd "%DESKTOP_DIR%"
+
+:: Install dependencies ONLY when there are none. `npm ci` deletes node_modules
+:: before repopulating it, which would pull the rug out from under anything else
+:: working in this tree (a dev server, an editor, a parallel build). A clean CI
+:: machine has no node_modules and gets the reproducible install; a developer
+:: machine keeps the tree it already has.
+if not exist "node_modules" (
+    echo Installing desktop dependencies ^(npm ci^)...
+    call npm ci
+    if errorlevel 1 (
+        echo ERROR: npm ci failed in "%DESKTOP_DIR%"
+        popd
+        pause
+        exit /b 1
     )
-)
-if not defined PYTHON311_SOURCE (
-    if exist "C:\Program Files\Python311\Lib\tkinter" if exist "C:\Program Files\Python311\DLLs\_tkinter.pyd" if exist "C:\Program Files\Python311\DLLs\tcl86t.dll" if exist "C:\Program Files\Python311\DLLs\tk86t.dll" if exist "C:\Program Files\Python311\tcl" set "PYTHON311_SOURCE=C:\Program Files\Python311"
-)
-
-if defined PYTHON311_SOURCE (
-    echo Using Python 3.11 from !PYTHON311_SOURCE!
-    echo Copying tkinter module...
-    xcopy /E /I /Y "!PYTHON311_SOURCE!\Lib\tkinter" build\python\Lib\tkinter\ >nul
-
-    echo Copying tkinter DLLs...
-    copy /Y "!PYTHON311_SOURCE!\DLLs\_tkinter.pyd" build\python\ >nul
-    copy /Y "!PYTHON311_SOURCE!\DLLs\tcl86t.dll" build\python\ >nul
-    copy /Y "!PYTHON311_SOURCE!\DLLs\tk86t.dll" build\python\ >nul
-
-    echo Copying tcl directory...
-    xcopy /E /I /Y "!PYTHON311_SOURCE!\tcl" build\python\tcl\ >nul
 ) else (
-    echo WARNING: Python 3.11 with tkinter not found.
-    echo          Set PYTHON311_ROOT or install Python 3.11 with tkinter to enable the GUI.
-    echo          Continuing without tkinter; core build will proceed.
+    echo Using the existing desktop node_modules.
 )
-set "PYTHON311_SOURCE="
+
+echo Compiling owlette-desktop.exe ^(this takes several minutes on a cold cache^)...
+call npx tauri build --no-bundle
+if errorlevel 1 (
+    echo ERROR: tauri build failed
+    popd
+    pause
+    exit /b 1
+)
+popd
+
+set "DESKTOP_EXE=%DESKTOP_DIR%\src-tauri\target\release\owlette-desktop.exe"
+if not exist "%DESKTOP_EXE%" (
+    echo ERROR: tauri build reported success but "%DESKTOP_EXE%" is missing
+    pause
+    exit /b 1
+)
+echo Desktop app built OK
 
 :: ============================================================================
 :: Step 7: Acquire NSSM (cached download or local install fallback)
@@ -294,6 +341,7 @@ echo [8/9] Creating installer package...
 mkdir build\installer_package\python 2>nul
 mkdir build\installer_package\agent\src 2>nul
 mkdir build\installer_package\agent\icons 2>nul
+mkdir build\installer_package\app 2>nul
 mkdir build\installer_package\tools 2>nul
 mkdir build\installer_package\scripts 2>nul
 
@@ -307,9 +355,15 @@ xcopy /E /I /Y build\python\* build\installer_package\python\ >nul
 echo Copying VERSION file...
 copy /Y VERSION build\installer_package\agent\ >nul
 
-:: Copy agent source code
+:: Copy agent source code. __pycache__ is dropped afterwards: xcopy /E takes it
+:: along, and a build machine's cache carries .pyc for modules that no longer
+:: exist in src (the deleted python UI, for one) plus a second copy for every
+:: interpreter version that ever ran the tree.
 echo Copying agent source code...
 xcopy /E /I /Y src\* build\installer_package\agent\src\ >nul
+for /d /r "build\installer_package\agent\src" %%d in (__pycache__) do (
+    if exist "%%d" rmdir /s /q "%%d"
+)
 
 :: Copy Cortex constitution (Agent SDK loads via setting_sources=["project"])
 if exist CLAUDE.md (
@@ -329,12 +383,22 @@ if exist "icons" (
     xcopy /E /I /Y icons\* build\installer_package\agent\icons\ >nul
 )
 
-:: Copy installation scripts
+:: Copy the desktop app. Lands at {app}\app\owlette-desktop.exe on the target —
+:: the exact path shared_utils.get_desktop_exe_path() resolves.
+echo Copying desktop app...
+copy /Y "%DESKTOP_EXE%" build\installer_package\app\ >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy "%DESKTOP_EXE%"
+    pause
+    exit /b 1
+)
+
+:: Copy installation scripts. The launch_gui.bat / launch_tray.bat hops are gone
+:: with the python UI — the Start-menu and startup shortcuts now point straight
+:: at the desktop exe.
 echo Copying installation scripts...
 copy /Y scripts\install.bat build\installer_package\scripts\ >nul
 copy /Y scripts\uninstall.bat build\installer_package\scripts\ >nul
-copy /Y scripts\launch_gui.bat build\installer_package\scripts\ >nul
-copy /Y scripts\launch_tray.bat build\installer_package\scripts\ >nul
 
 :: ============================================================================
 :: Step 9: Compile with Inno Setup

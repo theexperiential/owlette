@@ -114,7 +114,7 @@ This prevents duplicate instances after service restarts or crashes.
 Each process has a configurable `relaunch_attempts` limit (default: 3). When the limit is reached:
 
 1. The agent stops trying to restart the process
-2. A **reboot countdown prompt** appears on screen (`prompt_restart.py`)
+2. A **reboot countdown prompt** appears on screen (the desktop app, launched with `--restart-prompt`)
 3. The user can dismiss the prompt or allow the reboot
 4. The relaunch counter resets after a successful process start or manual intervention
 

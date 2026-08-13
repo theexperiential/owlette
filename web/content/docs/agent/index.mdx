@@ -37,7 +37,7 @@ NSSM (Service Manager)
               └── mcp_tools.py (Remote Command Execution)
 
 Spawned into user session by the service:
-  ├── owlette_tray.py (System Tray Icon)
+  ├── app\owlette-desktop.exe (Desktop App — tray icon, configuration window, reboot prompt)
   ├── owlette_cortex.py (Local AI Agent)
   │     ├── cortex_firestore.py (Message Polling & Response Writing)
   │     ├── cortex_tools.py (MCP Tool Server for Agent SDK)
@@ -46,9 +46,8 @@ Spawned into user session by the service:
   └── session_exec.py (User Session Command Executor)
 
 Launched on demand:
-  ├── owlette_gui.py (Configuration GUI)
-  ├── configure_site.py (Device Code Pairing)
-  └── report_issue.py (Bug Report Dialog)
+  └── configure_site.py (Device Code Pairing, and the desktop app's back end
+        for join / leave site, bug reports and reboot control)
 ```
 
 See [Cortex tools reference](/docs/reference/cortex-tools) for the current tool list.

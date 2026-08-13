@@ -168,11 +168,11 @@ Reviews are judged on calibration, not volume. Three accurate findings are more 
 The `deploy-agent.mjs` hook auto-copies edited `agent/src/*.py` files to `C:\ProgramData\Owlette\agent\src\`. Service files (`owlette_service.py`, `shared_utils.py`, `firebase_client.py`, `connection_manager.py`, `auth_manager.py`) require a restart. **Do this automatically** — don't wait for the user to ask.
 
 ### Restart sequence (order matters):
-1. **Kill GUI**: `taskkill /F /IM pythonw.exe /FI "WINDOWTITLE eq Owlette*"` (or wmic for owlette_gui.py)
+1. **Close the desktop app** (it holds the tray icon): kill the `owlette-desktop.exe` PID from `C:\ProgramData\Owlette\tmp\tray.pid` — by PID, never by image name.
 2. **Restart service**: `powershell -Command "Start-Process cmd -ArgumentList '/c net stop OwletteService && net start OwletteService' -Verb RunAs -Wait"`
-3. **Relaunch GUI**: `start "" "C:/ProgramData/Owlette/python/pythonw.exe" "C:/ProgramData/Owlette/agent/src/owlette_gui.py"`
+3. The service relaunches the desktop app itself on its next status check (`launch_desktop_app_as_user`) — only start it manually (`C:\ProgramData\Owlette\app\owlette-desktop.exe --tray`) if you don't want to wait.
 
-GUI-only files (e.g. `owlette_gui.py`) only need steps 1 + 3 (no service restart).
+The local UI is the Tauri app in `desktop/`, not python — `agent/src` has no GUI modules since 3.0.0. Desktop changes need a rebuild (`cd desktop && npx tauri build --no-bundle`) and a copy of the exe into `C:\ProgramData\Owlette\app\`; the deploy hook only mirrors `agent/src/*.py`.
 
 ---
 

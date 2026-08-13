@@ -89,8 +89,15 @@ For a new maintainer cloning this repo, start with the [maintainer quickstart](d
 git clone https://github.com/theexperiential/Owlette.git
 cd Owlette/agent
 pip install -r requirements.txt
-cd src && python owlette_gui.py          # configure and authenticate
+cd src && python configure_site.py       # pair this machine with a site
 python owlette_service.py install && python owlette_service.py start
+```
+
+**desktop app (tray + configuration window):**
+```bash
+cd Owlette/desktop
+npm install
+npm run tauri dev                        # or: npx tauri build --no-bundle
 ```
 
 **web dashboard:**
@@ -122,7 +129,8 @@ npm run dev                               # http://localhost:3000
 | component | technology |
 |-----------|-----------|
 | **dashboard** | Next.js 16, React 19, TypeScript, Tailwind CSS 4, shadcn/ui |
-| **agent** | Python 3.9+, Windows Service (NSSM), psutil, CustomTkinter |
+| **agent** | Python 3.9+, Windows Service (NSSM), psutil, pywin32 |
+| **desktop app** | Tauri 2 (Rust), React 19, TypeScript, Tailwind CSS 4 |
 | **database** | Cloud Firestore (real-time NoSQL) |
 | **auth** | Firebase Auth, WebAuthn/Passkeys, TOTP 2FA, device code pairing |
 | **ai** | Anthropic + OpenAI via AI SDK, MCP tool-calling |

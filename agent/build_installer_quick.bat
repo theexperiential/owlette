@@ -54,8 +54,31 @@ echo.
 echo [3/3] Copying updated files...
 copy /Y VERSION build\installer_package\agent\ >nul 2>&1
 xcopy /E /I /Y src\* build\installer_package\agent\src\ >nul
+for /d /r "build\installer_package\agent\src" %%d in (__pycache__) do (
+    if exist "%%d" rmdir /s /q "%%d"
+)
 xcopy /E /I /Y icons\* build\installer_package\agent\icons\ >nul
 copy /Y scripts\*.bat build\installer_package\scripts\ >nul
+
+:: Re-copy the desktop app if it has been rebuilt since the last full build.
+:: The quick build deliberately does NOT compile it — that is a multi-minute
+:: cargo build and the whole point of this script is the ~30 second loop. Run
+:: `npx tauri build --no-bundle` in desktop/ yourself, then come back here.
+mkdir build\installer_package\app 2>nul
+set "DESKTOP_EXE=%~dp0..\desktop\src-tauri\target\release\owlette-desktop.exe"
+if exist "%DESKTOP_EXE%" (
+    copy /Y "%DESKTOP_EXE%" build\installer_package\app\ >nul
+)
+if not exist "build\installer_package\app\owlette-desktop.exe" (
+    echo.
+    echo ERROR: No desktop app in the installer package and none built at:
+    echo   %DESKTOP_EXE%
+    echo Run build_installer_full.bat, or build it manually with:
+    echo   cd ..\desktop ^&^& npx tauri build --no-bundle
+    echo.
+    pause
+    exit /b 1
+)
 echo Files copied!
 echo.
 

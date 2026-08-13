@@ -21,7 +21,9 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 ### Prerequisites
 
 - Windows 10/11 or Windows Server
-- Python 3.11 with tkinter for GUI (packaged installer bundles Python 3.11.8)
+- Python 3.11 (the packaged installer bundles the 3.11.8 embedded runtime)
+- WebView2 runtime for the desktop app (present on Windows 11; the installer
+  adds it on the LTSC/IoT images that lack it)
 - Firebase project with Firestore enabled
 
 ### Installation
@@ -37,7 +39,7 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
    See [INSTALLER-USAGE.md](INSTALLER-USAGE.md) for the full device-code pairing documentation.
 
 2. **Configure processes** (optional):
-   - Use the GUI: `python src/owlette_gui.py`
+   - Use the desktop app (Start menu → "Owlette Configuration", or the tray icon)
    - Or manage from the web dashboard
 
 3. **Connect to Owlette Dashboard**:
@@ -107,7 +109,7 @@ The Owlette Agent is a Python-based Windows service that monitors and manages pr
 
 If the installer doesn't work, follow these manual steps:
 
-1. **Install Python 3.11 with tkinter**
+1. **Install Python 3.11**
    ```cmd
    # Download from python.org and install
    ```
@@ -168,8 +170,7 @@ node scripts/sync-versions.js 2.3.0
 ```
 
 The version automatically propagates to:
-- System tray display (`owlette_tray.py`)
-- Configuration GUI (`owlette_gui.py`)
+- The desktop app's status footer (reads the installed `agent/VERSION`)
 - Firestore agent registration (`firebase_client.py`)
 - Device-code registration (`auth_manager.py`)
 - Installer filename (`Owlette-Installer-v2.2.0.exe`)
@@ -296,11 +297,9 @@ python owlette_service.py remove
 
 ```
 agent/
-├── src/                           # Python source code (24 modules)
+├── src/                           # Python source code
 │   ├── owlette_service.py         # Main Windows service
 │   ├── owlette_runner.py          # Process lifecycle management
-│   ├── owlette_gui.py             # Configuration GUI
-│   ├── owlette_tray.py            # System tray icon
 │   ├── owlette_scout.py           # System metrics collector
 │   ├── firebase_client.py         # Firebase integration & sync
 │   ├── firestore_rest_client.py   # Firestore REST API client
@@ -316,11 +315,7 @@ agent/
 │   ├── installer_utils.py         # Remote deployment handler
 │   ├── project_utils.py           # Project distribution handler
 │   ├── registry_utils.py          # Windows registry operations
-│   ├── cleanup_commands.py        # Command queue cleanup
-│   ├── start_service.py           # Service startup helper
-│   ├── prompt_restart.py          # Restart countdown dialog
-│   ├── CTkMessagebox.py           # Custom message box widget
-│   └── custom_messagebox.py       # PyQt6 message box widget
+│   └── start_service.py           # Service startup helper
 ├── tests/                         # pytest tests
 ├── config/                        # Configuration (gitignored)
 │   └── config.json                # Main config

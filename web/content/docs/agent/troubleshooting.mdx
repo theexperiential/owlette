@@ -175,13 +175,16 @@ If stuck in `BACKOFF`:
 
 **Check**:
 
-1. Look at `gui.log` for errors.
-2. Verify GUI file exists: `C:\ProgramData\Owlette\agent\src\owlette_gui.py`.
+1. Look at `service.log` for the launch attempt — the service reports both the launch and a missing executable.
+2. Verify the desktop app exists: `C:\ProgramData\Owlette\app\owlette-desktop.exe`.
 3. Try launching manually:
     ```bash
-    "C:\ProgramData\Owlette\python\pythonw.exe" "C:\ProgramData\Owlette\agent\src\owlette_gui.py"
+    "C:\ProgramData\Owlette\app\owlette-desktop.exe"
     ```
-4. Check for CustomTkinter import errors.
+4. Confirm the WebView2 runtime is installed — the app renders in it and cannot open a window without it. The installer adds it when missing, but a blocked or offline install can leave it absent:
+    ```powershell
+    (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv
+    ```
 
 ---
 

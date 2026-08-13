@@ -33,8 +33,8 @@ This document covers the complete build-to-installation pipeline. Read this befo
 [2/9] Download Python 3.11.8 embedded (python.org → build/python-embed.zip)
 [3/9] Configure python311._pth (import paths for embedded runtime)
 [4/9] Bootstrap pip (get-pip.py)
-[5/9] Install requirements.txt (the slow step)
-[6/9] Copy tkinter from system Python 3.11 (C:\Program Files\Python311)
+[5/9] Install requirements.txt (the slow step) + delete the SDK's bundled claude.exe (242MB)
+[6/9] Build the desktop app (npx tauri build --no-bundle → owlette-desktop.exe)
 [7/9] Download NSSM 2.24 (nssm.cc → build/nssm.zip)
 [8/9] Assemble installer_package/ directory
 [9/9] Compile with Inno Setup → Owlette-Installer-v{VERSION}.exe
@@ -43,28 +43,27 @@ This document covers the complete build-to-installation pipeline. Read this befo
 ### Package Structure (what gets bundled)
 ```
 build/installer_package/
-├── python/              Embedded Python 3.11 runtime (~100MB)
+├── python/              Embedded Python 3.11 runtime
 │   ├── python.exe       Console Python
-│   ├── pythonw.exe      GUI Python (no console window)
+│   ├── pythonw.exe      GUI Python (no console window) — hosts cortex + session_exec
 │   ├── python311._pth   Import path configuration
-│   ├── Lib/
-│   │   ├── tkinter/     Copied from system Python (for GUI)
-│   │   └── site-packages/  All pip dependencies
-│   ├── _tkinter.pyd     Tkinter C extension
-│   ├── tcl86t.dll       Tcl/Tk libraries
-│   └── tcl/             Tcl runtime
+│   └── Lib/
+│       └── site-packages/  All pip dependencies
 ├── agent/
-│   ├── src/             All Python source files
+│   ├── src/             All Python source files (__pycache__ stripped)
 │   ├── icons/           Application icons (ICO/PNG)
 │   └── VERSION          Version file
+├── app/
+│   └── owlette-desktop.exe  Tauri desktop app — tray, config window, reboot prompt
 ├── tools/
 │   └── nssm.exe         Windows service manager (v2.24)
 └── scripts/
     ├── install.bat      Service installation
-    ├── uninstall.bat    Service removal
-    ├── launch_gui.bat   Start configuration GUI (pythonw.exe)
-    └── launch_tray.bat  Start system tray icon (pythonw.exe)
+    └── uninstall.bat    Service removal
 ```
+
+No tkinter/tcl: the python UI was deleted in 3.0.0 and the embedded runtime has
+never shipped a GUI toolkit of its own.
 
 ### Embedded Python Configuration (`python311._pth`)
 ```
@@ -76,7 +75,7 @@ Lib\site-packages    # Third-party packages
 import site          # Enables site.main() for pip
 ```
 
-**Important**: Tkinter must be copied from a system Python 3.11 installation. The embedded distribution doesn't include it. Without tkinter at `C:\Program Files\Python311`, the GUI won't work.
+**Important**: `..\agent\src` on that path is what lets `{app}\app\owlette-desktop.exe`'s sibling python scripts import each other from any working directory. Never edit `python311._pth` without understanding embedded-Python import resolution — breaking it kills every import.
 
 ---
 
@@ -269,24 +268,31 @@ C:\ProgramData\Owlette\                  Installation + data directory
 │   ├── service.log                      Main service log (RotatingFileHandler)
 │   ├── service_stdout.log               NSSM stdout capture
 │   ├── service_stderr.log               NSSM stderr capture
-│   ├── tray.log                         Tray icon log
-│   ├── gui.log                          GUI log
+│   ├── tray.log / gui.log               Legacy python UI logs (pre-3.0.0; the desktop app writes neither)
 │   ├── oauth_debug.log                  OAuth flow debug
 │   └── owlette_updater.log              Update process log
 ├── cache\firebase_cache.json            Offline Firestore config cache
 ├── tmp\service_status.json              IPC status file (service → tray)
 └── .tokens.enc                          Encrypted OAuth tokens (hidden file)
 
-Start Menu\Programs\Owlette\             Shortcuts
-├── Owlette Configuration                → launch_gui.bat
-├── Owlette                              → launch_tray.bat
+Start Menu\Programs\Owlette\             Shortcuts (AppUserModelID: app.owlette.desktop)
+├── Owlette Configuration                → app\owlette-desktop.exe
+├── Owlette                              → app\owlette-desktop.exe --tray
 ├── View Logs                            → C:\ProgramData\Owlette\logs\
 ├── Edit Configuration                   → config.json
 └── Uninstall Owlette
 
 Startup\                                 Auto-start on login
-└── Owlette Tray                         → launch_tray.bat
+└── Owlette Tray                         → app\owlette-desktop.exe --tray
 ```
+
+The `AppUserModelID` on those shortcuts is load-bearing, not cosmetic: Windows
+silently discards toasts from an unpackaged app that no Start-menu shortcut
+registers an id for, and the notification call still returns success. The
+desktop app's own "start on login" toggle writes and deletes the same
+`Owlette Tray.lnk` with the same id (`desktop/src-tauri/src/startup_link.rs`),
+so setup recreating it on every upgrade is what repairs a 2.x machine's
+shortcut — and also what re-enables the toggle for anyone who turned it off.
 
 ---
 

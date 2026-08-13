@@ -106,6 +106,9 @@ agent/downloads/
 agent/installer/
 *.exe
 *.msi
+# ...except the third-party binaries we deliberately vendor so a build never
+# depends on someone else's download host being up (same reason as vendor/nssm).
+!agent/vendor/MicrosoftEdgeWebview2Setup.exe
 
 # Configuration files with secrets
 client_secrets.json
