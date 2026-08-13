@@ -39,6 +39,21 @@ beforeEach(() => {
   })
 })
 
+/** Run the terminate, reporting what the table said about pid 4242 at that moment. */
+function terminateObserving(io: ReturnType<typeof deps>) {
+  const observed: { status?: unknown } = {}
+  terminatePid.mockImplementation(async () => {
+    observed.status = io.states['4242']?.status
+    return {
+      method: 'wm_close',
+      waitedMs: 120,
+      windowsClosed: 1,
+      imagePath: 'C:\\apps\\player.exe',
+    }
+  })
+  return observed
+}
+
 describe('kill', () => {
   it('terminates the live pid and marks it so the service leaves it alone', async () => {
     const io = deps(running())
@@ -46,20 +61,83 @@ describe('kill', () => {
     const result = await stopProcess(entry, 'kill', io)
 
     expect(terminatePid).toHaveBeenCalledWith(4242, 'C:/apps/player.exe')
-    expect(result).toMatchObject({ pid: 4242, marked: true })
+    expect(result).toMatchObject({ pid: 4242, marker: 'KILLED' })
     expect(io.states['4242']).toEqual({ id: 'a', status: 'KILLED', timestamp: 10 })
+  })
+
+  it('claims nothing until the process is actually gone', async () => {
+    const io = deps(running())
+    const observed = terminateObserving(io)
+
+    await stopProcess(entry, 'kill', io)
+
+    // KILLED asserts a fact. Writing it first would be a lie if the kill failed.
+    expect(observed.status).toBe('RUNNING')
   })
 })
 
 describe('restart', () => {
-  it('terminates and writes nothing, so the service relaunches on its next tick', async () => {
+  it('marks the pid RESTARTING and lets the service relaunch it', async () => {
     const io = deps(running())
 
     const result = await stopProcess(entry, 'restart', io)
 
     expect(terminatePid).toHaveBeenCalledOnce()
-    expect(io.mutateStates).not.toHaveBeenCalled()
-    expect(result.marked).toBe(false)
+    expect(result.marker).toBe('RESTARTING')
+    expect(io.states['4242']).toEqual({ id: 'a', status: 'RESTARTING', timestamp: 10 })
+  })
+
+  it('writes the marker before the kill, or the exit reads as a crash', async () => {
+    const io = deps(running())
+    const observed = terminateObserving(io)
+
+    await stopProcess(entry, 'restart', io)
+
+    // The service polls: an exit it sees before the marker lands costs a false
+    // crash alert, a screenshot and a Cortex event.
+    expect(observed.status).toBe('RESTARTING')
+  })
+
+  it('writes it again after the kill, over the RUNNING the service wrote meanwhile', async () => {
+    const io = deps(running())
+    terminatePid.mockImplementation(async () => {
+      // What the service does on every tick for a pid it can still see: closing
+      // a process takes seconds, and it is alive for all of them.
+      await io.mutateStates((states) => ({
+        ...states,
+        '4242': { ...states['4242'], status: 'RUNNING' },
+      }))
+      return { method: 'terminated', waitedMs: 5000, windowsClosed: 1, imagePath: 'C:\\apps\\player.exe' }
+    })
+
+    await stopProcess(entry, 'restart', io)
+
+    expect(io.states['4242'].status).toBe('RESTARTING')
+  })
+
+  it('takes the marker back when the kill fails', async () => {
+    const io = deps(running())
+    terminatePid.mockRejectedValue(new Error('could not open process 4242: access is denied'))
+
+    await expect(stopProcess(entry, 'restart', io)).rejects.toThrow(/access is denied/)
+
+    // Nothing exited, so nothing may claim the operator caused an exit.
+    expect(io.states['4242']).toEqual({ id: 'a', status: 'RUNNING', timestamp: 10 })
+  })
+
+  it('takes the marker back when the pid had already gone', async () => {
+    const io = deps(running())
+    terminatePid.mockResolvedValue({
+      method: 'not_found',
+      waitedMs: 0,
+      windowsClosed: 0,
+      imagePath: null,
+    })
+
+    await expect(stopProcess(entry, 'restart', io)).rejects.toBeInstanceOf(NoLiveInstanceError)
+
+    // A process that died a moment before the click really did crash, and the
+    // service must still be free to say so.
     expect(io.states['4242'].status).toBe('RUNNING')
   })
 })

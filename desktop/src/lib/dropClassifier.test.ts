@@ -10,6 +10,7 @@ import {
   type FsProbe,
   type UnsupportedDrop,
 } from './dropClassifier'
+import { NEW_PROCESS_DEFAULTS } from './owletteConfig'
 
 /**
  * An in-memory disk. Paths are matched case-insensitively and either separator
@@ -468,7 +469,7 @@ describe('config schema', () => {
       visibility: 'Normal',
       time_delay: '0',
       time_to_init: '10',
-      relaunch_attempts: '3',
+      relaunch_attempts: '5',
       launch_mode: 'off',
       autolaunch: false,
       schedules: null,
@@ -479,6 +480,13 @@ describe('config schema', () => {
     // A drop configures a process; it never starts one behind the operator.
     expect(DROP_DEFAULTS.launch_mode).toBe('off')
     expect(DROP_DEFAULTS.autolaunch).toBe(false)
+  })
+
+  it('gives a dropped process the same numbers as one added with the + button', () => {
+    // Two creation paths in one app, one set of defaults.
+    expect(DROP_DEFAULTS.time_delay).toBe(NEW_PROCESS_DEFAULTS.time_delay)
+    expect(DROP_DEFAULTS.time_to_init).toBe(NEW_PROCESS_DEFAULTS.time_to_init)
+    expect(DROP_DEFAULTS.relaunch_attempts).toBe(NEW_PROCESS_DEFAULTS.relaunch_attempts)
   })
 
   it('adds the id ahead of the rest of the entry', async () => {

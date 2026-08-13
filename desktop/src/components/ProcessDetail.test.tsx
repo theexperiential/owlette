@@ -26,39 +26,28 @@ const base: ProcessEntry = {
 
 function setup(process: ProcessEntry = base) {
   const onSave = vi.fn()
-  const view = render(
-    <TooltipProvider>
-      <ProcessDetail
-        process={process}
-        status="INACTIVE"
-        onSave={onSave}
-        onLaunchMode={vi.fn()}
-        onPriority={vi.fn()}
-        onVisibility={vi.fn()}
-        onRestart={vi.fn()}
-        onKill={vi.fn()}
-      />
-    </TooltipProvider>,
-  )
+  const onLaunchMode = vi.fn()
 
-  function rerender(next: ProcessEntry) {
-    view.rerender(
+  function ui(entry: ProcessEntry) {
+    return (
       <TooltipProvider>
         <ProcessDetail
-          process={next}
+          process={entry}
           status="INACTIVE"
           onSave={onSave}
-          onLaunchMode={vi.fn()}
+          onLaunchMode={onLaunchMode}
           onPriority={vi.fn()}
           onVisibility={vi.fn()}
           onRestart={vi.fn()}
           onKill={vi.fn()}
         />
-      </TooltipProvider>,
+      </TooltipProvider>
     )
   }
 
-  return { onSave, rerender }
+  const view = render(ui(process))
+
+  return { onSave, onLaunchMode, rerender: (next: ProcessEntry) => view.rerender(ui(next)) }
 }
 
 function field(label: string): HTMLInputElement {
@@ -190,6 +179,60 @@ describe('external changes', () => {
 
     expect(field('name').value).toBe('other')
     expect(field('exe').value).toBe('C:/apps/other.exe')
+  })
+})
+
+describe('the launch mode control', () => {
+  function segment(label: string): HTMLButtonElement {
+    return screen.getByRole('radio', { name: label }) as HTMLButtonElement
+  }
+
+  it('shows all three modes at once, with the current one checked', () => {
+    setup()
+
+    expect(screen.getByTestId('launch-mode').getAttribute('role')).toBe('radiogroup')
+    expect(segment('off').getAttribute('aria-checked')).toBe('true')
+    expect(segment('always on').getAttribute('aria-checked')).toBe('false')
+    expect(segment('scheduled').getAttribute('aria-checked')).toBe('false')
+  })
+
+  it('asks for the mode of the segment that was clicked', () => {
+    const { onLaunchMode } = setup()
+
+    fireEvent.click(segment('always on'))
+
+    expect(onLaunchMode).toHaveBeenCalledExactlyOnceWith('always')
+  })
+
+  it('does not ask again for the mode it is already in', () => {
+    const { onLaunchMode } = setup({ ...base, launch_mode: 'scheduled' })
+
+    fireEvent.click(segment('scheduled'))
+
+    // The caller writes config.json for every call, and rewriting it identically
+    // makes the service re-read and re-upload the config for nothing.
+    expect(onLaunchMode).not.toHaveBeenCalled()
+  })
+
+  it('slides the fill to the segment the mode names', () => {
+    const { rerender } = setup()
+    const indicator = screen.getByTestId('launch-mode-indicator')
+
+    expect(indicator.style.transform).toBe('translateX(0%)')
+
+    rerender({ ...base, launch_mode: 'always' })
+    expect(indicator.style.transform).toBe('translateX(100%)')
+    expect(indicator.className).toContain('bg-emerald-600')
+
+    rerender({ ...base, launch_mode: 'scheduled' })
+    expect(indicator.style.transform).toBe('translateX(200%)')
+    expect(indicator.className).toContain('bg-blue-600')
+  })
+
+  it('reads the legacy autolaunch flag when there is no launch mode', () => {
+    setup({ ...base, launch_mode: undefined, autolaunch: true })
+
+    expect(segment('always on').getAttribute('aria-checked')).toBe('true')
   })
 })
 

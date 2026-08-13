@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "owlette",
-  "version": "0.1.0",
+  "version": "3.0.0",
   "identifier": "app.owlette.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -13,13 +13,14 @@
     "windows": [
       {
         "title": "owlette",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 900,
-        "minHeight": 600,
+        "width": 1060,
+        "height": 640,
+        "minWidth": 780,
+        "minHeight": 540,
         "resizable": true,
         "fullscreen": false,
         "decorations": false,
+        "visible": false,
         "center": true,
         "theme": "Dark",
         "backgroundColor": "#020B16",

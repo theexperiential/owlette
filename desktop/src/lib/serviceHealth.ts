@@ -158,3 +158,39 @@ export function deriveFooterState({ status, statusFile, config }: FooterInputs):
     serviceDown: false,
   }
 }
+
+export interface FooterSentence {
+  /** Muted text before the status word ("TEC-A4D is "). Empty when none. */
+  before: string
+  /** Muted text after the status word (" to default_site"). Empty when none. */
+  after: string
+}
+
+/**
+ * The muted glue that turns the footer's status word into a sentence:
+ * "TEC-A4D is [connected] to default_site". The status word itself keeps its
+ * tone colour, so only the words around it are produced here. States that
+ * don't fit a sentence fall back to the bare status word, and before the
+ * hostname is known the site is appended the old segment way rather than
+ * pretending "is connected to" with no subject.
+ */
+export function footerSentence(state: FooterState, site: string, hostname: string | null): FooterSentence {
+  if (!hostname) {
+    return { before: '', after: site ? ` · ${site}` : '' }
+  }
+  switch (state.label) {
+    case 'connected':
+      return { before: `${hostname} is `, after: site ? ` to ${site}` : '' }
+    case 'disconnected':
+      return { before: `${hostname} is `, after: site ? ` from ${site}` : '' }
+    case 'service not running':
+      return { before: '', after: ` on ${hostname}` }
+    case 'removed from site':
+      return { before: `${hostname} was `, after: '' }
+    case 'authentication required':
+      return { before: '', after: ` for ${hostname}` }
+    default:
+      // "checking" and "disabled" say everything by themselves.
+      return { before: '', after: '' }
+  }
+}

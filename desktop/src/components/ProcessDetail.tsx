@@ -46,6 +46,26 @@ const LAUNCH_MODES: { value: LaunchMode; label: string }[] = [
   { value: 'scheduled', label: 'scheduled' },
 ]
 
+/**
+ * The dashboard's launch-mode colours (`web/.../ProcessDialog.tsx:85-105`),
+ * split in two because the fill slides and the text does not.
+ *
+ * Green for "running whatever happens", blue for "running on a clock", muted
+ * for "owlette is not touching this" — the same three the web app paints, so a
+ * screenshot from one is readable next to the other.
+ */
+const LAUNCH_MODE_FILL: Record<LaunchMode, string> = {
+  off: 'bg-muted',
+  always: 'bg-emerald-600',
+  scheduled: 'bg-blue-600',
+}
+
+const LAUNCH_MODE_TEXT: Record<LaunchMode, string> = {
+  off: 'text-foreground',
+  always: 'text-white',
+  scheduled: 'text-white',
+}
+
 interface ProcessDetailProps {
   process: ProcessEntry
   status: ProcessStatus
@@ -102,6 +122,8 @@ export function ProcessDetail({
   const latest = useRef(process)
 
   const mode = launchModeOf(process)
+  // Which third of the segmented control the fill sits over.
+  const modeIndex = LAUNCH_MODES.findIndex((option) => option.value === mode)
 
   useEffect(() => {
     latest.current = process
@@ -231,51 +253,112 @@ export function ProcessDetail({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex items-center justify-between gap-3 px-6 pt-4 pb-3">
-        <div className="flex min-w-0 items-baseline gap-3">
-          <h2 className="text-sm font-medium text-muted-foreground">process details</h2>
-          <span className={cn('text-xs', STATUS_TEXT[status])} data-testid="detail-status">
+      {/*
+        Same grid template as the form below, so the header is the first row of
+        one layout rather than a band of its own: `status` right-aligns with
+        `launch mode` and `name`, and the status word starts exactly where the
+        segmented control and every input do.
+      */}
+      <header className="grid grid-cols-[7rem_minmax(0,1fr)] items-baseline gap-x-3 px-6 pt-4 pb-3">
+        <h2 className="justify-self-end text-sm font-medium text-muted-foreground">status</h2>
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <span className={cn('text-sm', STATUS_TEXT[status])} data-testid="detail-status">
             {statusLabel(status)}
           </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button size="icon-sm" variant="outline" onClick={onRestart} aria-label="restart process">
-                <RotateCcw />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>restart — stop it and let the service bring it back</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button size="icon-sm" variant="outline" onClick={onKill} aria-label="kill process">
-                <Square />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>kill — terminate it now, without a crash alert</TooltipContent>
-          </Tooltip>
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  onClick={onRestart}
+                  aria-label="restart process"
+                >
+                  <RotateCcw />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>restart — stop it and let the service bring it back</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="icon-sm" variant="outline" onClick={onKill} aria-label="kill process">
+                  <Square />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>kill — terminate it now, without a crash alert</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
         <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
-          <Label htmlFor="launch-mode" className="justify-end text-muted-foreground">
-            launch mode
-          </Label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Label id="launch-mode-label" className="justify-end text-muted-foreground">
+                launch mode
+              </Label>
+            </TooltipTrigger>
+            <TooltipContent>
+              off: owlette leaves it alone · always on: kept running 24/7 and relaunched if it
+              crashes · scheduled: runs during the time windows you set
+            </TooltipContent>
+          </Tooltip>
           <div className="flex min-w-0 items-center gap-3">
-            <Select value={mode} onValueChange={(value) => onLaunchMode(value as LaunchMode)}>
-              <SelectTrigger id="launch-mode" className="w-36" data-testid="launch-mode">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LAUNCH_MODES.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
+            {/*
+              Three states, all three always visible and one click apart —
+              a select would hide two of them behind a popover for no gain at
+              this width. The fill slides between segments rather than jumping,
+              which is what makes it read as one control with a position rather
+              than three buttons that change colour.
+
+              Equal columns are load-bearing: the indicator is a third of the
+              group wide and moves by whole multiples of itself, so segments
+              sized to their own labels ("off" against "scheduled") would leave
+              it landing short. `grid-cols-3` under `w-fit` gives every column
+              the width of the widest label.
+            */}
+            <div
+              role="radiogroup"
+              aria-labelledby="launch-mode-label"
+              data-testid="launch-mode"
+              className="relative grid w-fit grid-cols-3 overflow-hidden rounded-lg border border-border bg-card"
+            >
+              <span
+                aria-hidden
+                data-testid="launch-mode-indicator"
+                className={cn(
+                  'pointer-events-none absolute inset-y-0 left-0 w-1/3 transition-[transform,background-color] duration-200 motion-reduce:transition-none',
+                  LAUNCH_MODE_FILL[mode],
+                )}
+                style={{ transform: `translateX(${modeIndex * 100}%)` }}
+              />
+              {LAUNCH_MODES.map((option) => {
+                const active = option.value === mode
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    data-testid={`launch-mode-${option.value}`}
+                    // Clicking the mode it is already in is not a change. The
+                    // select this replaced swallowed those too, and the caller
+                    // writes config.json for every one it is told about — which
+                    // makes the service re-read and re-upload for nothing.
+                    onClick={() => !active && onLaunchMode(option.value)}
+                    className={cn(
+                      'relative z-10 cursor-pointer px-3 py-1.5 text-xs font-medium transition-colors',
+                      active
+                        ? LAUNCH_MODE_TEXT[option.value]
+                        : 'text-muted-foreground hover:bg-muted/50',
+                    )}
+                  >
                     {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                  </button>
+                )
+              })}
+            </div>
             {mode === 'scheduled' && (
               <span className="truncate text-xs text-muted-foreground" data-testid="schedule-note">
                 {scheduleSummary(process)}
@@ -283,14 +366,28 @@ export function ProcessDetail({
             )}
           </div>
 
-          <Label htmlFor="name" className="justify-end text-muted-foreground">
-            name
-          </Label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Label htmlFor="name" className="justify-end text-muted-foreground">
+                name
+              </Label>
+            </TooltipTrigger>
+            <TooltipContent>
+              the display name for this process — how it appears here and on the dashboard
+            </TooltipContent>
+          </Tooltip>
           <Input id="name" placeholder="name of your process" {...field('name')} />
 
-          <Label htmlFor="exe_path" className="justify-end text-muted-foreground">
-            exe
-          </Label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Label htmlFor="exe_path" className="justify-end text-muted-foreground">
+                exe
+              </Label>
+            </TooltipTrigger>
+            <TooltipContent>
+              the full path to the executable or script to run (.exe, .bat, .cmd)
+            </TooltipContent>
+          </Tooltip>
           <div className="flex min-w-0 items-center gap-2">
             <Button
               size="icon"
@@ -308,9 +405,16 @@ export function ProcessDetail({
             />
           </div>
 
-          <Label htmlFor="file_path" className="justify-end text-muted-foreground">
-            path / args
-          </Label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Label htmlFor="file_path" className="justify-end text-muted-foreground">
+                path / args
+              </Label>
+            </TooltipTrigger>
+            <TooltipContent>
+              a file for the exe to open (e.g. a .toe project), or extra command-line arguments
+            </TooltipContent>
+          </Tooltip>
           <div className="flex min-w-0 items-center gap-2">
             <Button
               size="icon"
@@ -328,9 +432,16 @@ export function ProcessDetail({
             />
           </div>
 
-          <Label htmlFor="cwd" className="justify-end text-muted-foreground">
-            cwd
-          </Label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Label htmlFor="cwd" className="justify-end text-muted-foreground">
+                cwd
+              </Label>
+            </TooltipTrigger>
+            <TooltipContent>
+              the folder the process starts in — set it when your app loads files by relative paths
+            </TooltipContent>
+          </Tooltip>
           <div className="flex min-w-0 items-center gap-2">
             <Button
               size="icon"
@@ -348,19 +459,30 @@ export function ProcessDetail({
             />
           </div>
 
-          <Label htmlFor="time_delay" className="justify-end text-muted-foreground">
-            delay (sec)
-          </Label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Label htmlFor="time_delay" className="justify-end text-muted-foreground">
+                delay (sec)
+              </Label>
+            </TooltipTrigger>
+            <TooltipContent>
+              seconds to wait before launching this process on startup — stagger heavy apps so they
+              don&apos;t fight over the gpu
+            </TooltipContent>
+          </Tooltip>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <Input id="time_delay" className="w-20" inputMode="numeric" {...field('time_delay')} />
             <Tooltip>
               <TooltipTrigger asChild>
-                <Input id="time_delay" className="w-20" inputMode="numeric" {...field('time_delay')} />
+                <Label htmlFor="priority" className="pl-3 text-muted-foreground">
+                  priority
+                </Label>
               </TooltipTrigger>
-              <TooltipContent>seconds to wait before launching this process on startup</TooltipContent>
+              <TooltipContent>
+                windows cpu priority for this process — leave normal unless it must outrank
+                everything else
+              </TooltipContent>
             </Tooltip>
-            <Label htmlFor="priority" className="pl-3 text-muted-foreground">
-              priority
-            </Label>
             <Select
               value={priorityOf(process)}
               onValueChange={(value) => onPriority(value as Priority)}
@@ -378,24 +500,35 @@ export function ProcessDetail({
             </Select>
           </div>
 
-          <Label htmlFor="time_to_init" className="justify-end text-muted-foreground">
-            wait (sec)
-          </Label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Label htmlFor="time_to_init" className="justify-end text-muted-foreground">
+                wait (sec)
+              </Label>
+            </TooltipTrigger>
+            <TooltipContent>
+              seconds to wait after launch before monitoring starts — give slow apps time to boot
+              before crash checks apply
+            </TooltipContent>
+          </Tooltip>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <Input
+              id="time_to_init"
+              className="w-20"
+              inputMode="numeric"
+              {...field('time_to_init')}
+            />
             <Tooltip>
               <TooltipTrigger asChild>
-                <Input
-                  id="time_to_init"
-                  className="w-20"
-                  inputMode="numeric"
-                  {...field('time_to_init')}
-                />
+                <Label htmlFor="visibility" className="pl-3 text-muted-foreground">
+                  visibility
+                </Label>
               </TooltipTrigger>
-              <TooltipContent>seconds to wait after launch before monitoring starts</TooltipContent>
+              <TooltipContent>
+                window visibility on launch — hidden suppresses the console window (ideal for
+                background scripts); apps that create their own windows stay visible
+              </TooltipContent>
             </Tooltip>
-            <Label htmlFor="visibility" className="pl-3 text-muted-foreground">
-              visibility
-            </Label>
             <Select
               value={visibilityOf(process)}
               onValueChange={(value) => onVisibility(value as Visibility)}
@@ -413,20 +546,20 @@ export function ProcessDetail({
             </Select>
           </div>
 
-          <Label htmlFor="relaunch_attempts" className="justify-end text-muted-foreground">
-            attempts
-          </Label>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Input
-                id="relaunch_attempts"
-                className="w-20"
-                inputMode="numeric"
-                {...field('relaunch_attempts')}
-              />
+              <Label htmlFor="relaunch_attempts" className="justify-end text-muted-foreground">
+                attempts
+              </Label>
             </TooltipTrigger>
             <TooltipContent>max relaunch attempts before giving up — 0 is unlimited</TooltipContent>
           </Tooltip>
+          <Input
+            id="relaunch_attempts"
+            className="w-20"
+            inputMode="numeric"
+            {...field('relaunch_attempts')}
+          />
         </div>
       </div>
     </div>

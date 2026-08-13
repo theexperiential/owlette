@@ -50,6 +50,12 @@ desktop/
 │  ├─ lib/utils.ts       # cn()
 │  ├─ lib/surfaces.ts    # MENU_SURFACE recipe
 │  ├─ lib/ipc.ts         # typed wrappers for every host command + event
+│  ├─ lib/owletteConfig.ts   # config.json schema + the transforms behind every write
+│  ├─ lib/processStatus.ts   # app_states.json + the KILLED / RESTARTING markers
+│  ├─ lib/processControl.ts  # kill and restart, marker and all
+│  ├─ lib/dropClassifier.ts  # dropped path -> process entry (pure, injected fs)
+│  ├─ lib/fsProbe.ts     # the real disk behind it + per-machine search paths
+│  ├─ lib/dropQueue.ts   # the confirm-card queue between a drop and a write
 │  └─ test/              # vitest setup + design-system smoke test
 └─ src-tauri/
    ├─ src/paths.rs       # %PROGRAMDATA%\Owlette layout + path scoping
@@ -57,10 +63,40 @@ desktop/
    ├─ src/watchers.rs    # directory watchers for the three seam files
    ├─ src/service_ctl.rs # OwletteService SCM state / start / stop
    ├─ src/process_ctl.rs # WM_CLOSE-then-terminate with an identity check
-   ├─ src/pid_file.rs    # tmp/gui.pid
+   ├─ src/pid_file.rs    # tmp/tray.pid + tmp/gui.pid
+   ├─ src/tray.rs        # notification-area icon, menu, status monitor
+   ├─ src/startup_link.rs # {userstartup}\Owlette Tray.lnk ("start on login")
    ├─ src/commands.rs    # #[tauri::command] adapters (no logic)
    └─ src/lib.rs         # builder, plugins, watcher wiring, exit cleanup
 ```
+
+## Tray, window lifetime and launch arguments
+
+This is a tray app: `src-tauri/tauri.conf.json` starts the window hidden and
+closing it hides it again, so the notification-area icon — not a window — is what
+keeps the process alive. `src/tray.rs` replaces `agent/src/owlette_tray.py` and
+carries the porting notes for the status, icon and toast semantics.
+
+| Argument | Meaning |
+| --- | --- |
+| `--tray` | supply the tray icon, no window. What the service passes from `_try_launch_tray`, and what the startup shortcut passes. |
+| `--restart-prompt` | a process exceeded its relaunch budget; show the reboot countdown. The window for it is not built yet — the argv is only surfaced to the frontend. |
+
+A second launch never becomes a second process: the single-instance plugin
+forwards its argv on `owlette://second-instance`, and a forwarded launch without
+`--tray` shows the window. `launchArgs()` covers the *first* launch only, so a UI
+that reacts to either flag has to handle both.
+
+Two pid markers tell the service what is open (`src/pid_file.rs`):
+`tmp/tray.pid` for the life of the process, `tmp/gui.pid` only while the window
+is on screen — the second is what raises the service's metrics cadence to 5 s.
+
+**Toasts need an app identity.** Windows silently drops a toast from a
+non-packaged app whose `AppUserModelID` is not registered by some shortcut under
+the Start menu — `notification().show()` still returns `Ok`, and nothing appears.
+`startup_link::enable()` stamps `app.owlette.desktop` onto the shortcut it
+writes, but a machine that never turns on "start on login" has no such shortcut,
+so the installer must ship a Start menu shortcut carrying the same id.
 
 ## The service seam
 
@@ -79,16 +115,19 @@ Rules the host enforces, all sourced from `agent/src/shared_utils.py`:
 - Every read and write takes the named mutex `Global\OwletteJsonFileMutex` with
   a 2 000 ms budget and always releases it, matching `_CrossProcessLock`. On
   timeout it proceeds unlocked and says so in the returned `lock` field.
-- **The mutex is unreachable from a non-elevated process on a machine where the
-  service is running.** The service creates the object as LocalSystem, and that
-  token's default DACL does not give user processes access — measured, both
-  `CreateMutex` and `OpenMutex` return `ERROR_ACCESS_DENIED`, and
-  `shared_utils._CrossProcessLock` has been silently degrading to unlocked
-  access in the legacy GUI for the same reason (it reports `acquired=False`).
-  So the lock is best-effort on both sides today and **atomicity is what
-  actually protects the files**; writes report `lock: "unavailable"` rather than
-  hiding it. Fixing this properly means having the service create the mutex with
-  an explicit security descriptor — an agent-side change.
+- **`CreateMutexW` fails here and that is expected — the `OpenMutexW` fallback
+  is the real path.** The service creates the object with an explicit security
+  descriptor (`shared_utils._JSON_MUTEX_SDDL`) granting Authenticated Users
+  exactly `SYNCHRONIZE | MUTEX_MODIFY_STATE`; `CreateMutexW` asks for
+  `MUTEX_ALL_ACCESS`, which that descriptor deliberately withholds, so a
+  non-elevated process must open it with the two rights it actually needs. The
+  python side has the same fallback. Against an agent older than that fix the
+  object still carries LocalSystem's default DACL and both calls fail, so the
+  guard reports `lock: "unavailable"` and proceeds — atomicity, not the lock, is
+  what makes that safe.
+- The descriptor is fixed at creation time, so an in-place agent upgrade only
+  takes effect once every handle to the old object is closed (stop the service
+  *and* the desktop app, or reboot).
 - Writes go to a scratch file in the destination directory and are renamed over
   the target, with `indent=4` formatting and **key order preserved** — the
   `firebase` block must survive a desktop write byte-identical.
@@ -106,6 +145,77 @@ Rules the host enforces, all sourced from `agent/src/shared_utils.py`:
 
 `src/lib/ipc.ts` is the only place allowed to call `invoke` — one typed function
 per command, plus the event subscriptions.
+
+### The two markers this app writes
+
+`tmp/app_states.json` is the service's to write, with two exceptions. Both are
+statuses stamped on a pid to describe an exit the service is about to notice
+(`owlette_service.py:2598-2630`):
+
+| Marker | Written | Meaning to the service |
+| --- | --- | --- |
+| `KILLED` | *after* the kill | intended exit — no crash alert, no record |
+| `RESTARTING` | *before and after* the kill | intended exit, operator-initiated — no crash alert, plus a `process_restarted` audit event |
+
+The order is not incidental, and both halves of the restart write were paid for
+in live testing:
+
+- `KILLED` asserts the process is gone, so writing it before the kill would be a
+  lie whenever the kill fails.
+- `RESTARTING` asserts only an intent, so it goes in *before*: the service
+  polls, and an exit it sees before the marker lands is reported as a crash —
+  alert, screenshot and Cortex event — for a restart the operator asked for.
+- It goes in *again after*, because closing a process is not instant (WM_CLOSE,
+  a grace period, then a terminate) and every service tick in that window writes
+  `RUNNING` over the marker. With only the first write, a live agent overwrote
+  it and raised `process_crash` for a restart, screenshot and all.
+
+A restart whose kill then does not happen (the pid had already gone, or refused
+to die) puts the row back as it was, so the marker never suppresses a crash that
+was real.
+
+Neither marker decides whether the process comes back: that is the launch mode,
+read fresh from `config.json` by the service after the exit.
+
+## Drag and drop
+
+Dropping a file, an app or a Unity build folder anywhere on the window
+configures it as a process. The flow is four modules deep and each one is
+testable on its own:
+
+1. `hooks/useFileDrop.ts` — Tauri's `onDragDropEvent`. Not the html5 events:
+   with `dragDropEnabled` the webview hands drops to the host, so `ondrop` never
+   fires, and the host event carries absolute paths rather than a `File`. Row
+   reordering is a *pointer* drag in the same window, so this ignores everything
+   while `lib/rowDrag.ts` says one is in progress.
+2. `lib/dropClassifier.ts` — the rule matrix. `.toe` opens in the newest
+   installed TouchDesigner, a folder is a process only if it is a Unity player
+   build (`<name>.exe` beside `<name>_Data`), `.py` / `.ps1` get an interpreter,
+   `.bat` / `.cmd` go in as the executable themselves. Pure, with the disk
+   injected as an `FsProbe`.
+3. `lib/dropQueue.ts` + `components/DropConfirm.tsx` — one confirm card per
+   classified path, worked from the front of the queue. Nothing is written until
+   a card is confirmed, and each confirm is its own write.
+4. `lib/owletteConfig.ts` — `addProcess` on a document re-read from disk, so the
+   `firebase` block and every key this app has never heard of survive.
+
+Two rules the classifier will not bend:
+
+- **`file_path` only ever holds a real file**, never a command-line argument
+  string. The service runs that field through `os.path.abspath()`
+  (`owlette_service.py:1902-1910`), which turns `-File C:\x.ps1` into a path
+  under the service's working directory. That is a known agent-side bug, not a
+  classifier limitation, and it is why a `.ps1` travels as a bare quoted path
+  and why `.bat` files are launched directly.
+- **A dropped process starts with `launch_mode: 'off'`.** Configuring something
+  is not the same as starting it, and its numbers come from
+  `NEW_PROCESS_DEFAULTS` so that a dropped entry and one added with the `+`
+  button are the same entry.
+
+`lib/fsProbe.ts` is the only file that touches `@tauri-apps/plugin-fs`, which is
+capability-scoped to `exists`, `readDir` and `stat` — **metadata only**.
+Classification never needs a file's contents; keep it that way and a dropped
+file can be misread but never read.
 
 ## Design system
 

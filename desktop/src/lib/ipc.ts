@@ -37,10 +37,11 @@ const EVENT_SECOND_INSTANCE = 'owlette://second-instance'
 /**
  * How the cross-process mutex behaved for one operation.
  *
- * `unavailable` is the normal result on a machine where the service is running:
- * it creates the mutex as LocalSystem and the resulting DACL shuts out
- * non-elevated processes — the python GUI degrades the same way. The write is
- * still atomic, so this costs a lost update at worst, never a torn file.
+ * `acquired` is the normal result: the service creates the mutex with an
+ * explicit descriptor that lets this process wait on it. `unavailable` means the
+ * agent on this machine predates that fix and left the object with LocalSystem's
+ * default DACL, which shuts out non-elevated processes. The write is still
+ * atomic either way, so it costs a lost update at worst, never a torn file.
  */
 export type LockOutcome = 'acquired' | 'abandoned' | 'timeout' | 'unavailable'
 
@@ -124,6 +125,29 @@ export interface TerminateOutcome {
 /** Absolute path of the owlette data root (`%PROGRAMDATA%\Owlette`). */
 export function owletteDataRoot(): Promise<string> {
   return invoke<string>('owlette_data_root')
+}
+
+/** Argument the service passes to ask for a tray icon with no window. */
+export const ARG_TRAY = '--tray'
+
+/** Argument the service passes when a process has exhausted its relaunch budget. */
+export const ARG_RESTART_PROMPT = '--restart-prompt'
+
+/**
+ * argv this process was launched with, including argv[0].
+ *
+ * Only describes the *first* launch. A second launch is folded into this
+ * instance by the single-instance plugin, which forwards its argv through
+ * {@link onSecondInstance} instead — so anything reacting to
+ * {@link ARG_RESTART_PROMPT} has to read both.
+ */
+export function launchArgs(): Promise<string[]> {
+  return invoke<string[]>('launch_args')
+}
+
+/** This machine's name, as the fleet knows it (`COMPUTERNAME`). */
+export function hostname(): Promise<string> {
+  return invoke<string>('hostname')
 }
 
 /**

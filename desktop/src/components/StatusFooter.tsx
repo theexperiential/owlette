@@ -1,8 +1,8 @@
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { OwletteConfig } from '@/lib/owletteConfig'
 import {
   deriveFooterState,
+  footerSentence,
   FOOTER_DOT_CLASS,
   FOOTER_TONE_CLASS,
   siteIdOf,
@@ -15,47 +15,37 @@ interface StatusFooterProps {
   status: ServiceStatus | null
   statusFile: ServiceStatusFile | null
   config: OwletteConfig | null
+  /** COMPUTERNAME, shown as-is — machine names keep their real casing. */
+  hostname?: string | null
   starting: boolean
   onStart: () => void
 }
 
 /**
- * The one line that says whether this machine is being looked after.
- *
- * Left to right: the connection state, the site this machine belongs to, and
- * the version of the service that is running — which is the version that
- * matters, not this app's.
+ * The one line that says whether this machine is being looked after, phrased
+ * as a sentence — "TEC-A4D is connected to default_site" — with the status
+ * word carrying the tone colour. Right edge: the version of the service that
+ * is running, which is the version that matters, not this app's.
  */
-export function StatusFooter({ status, statusFile, config, starting, onStart }: StatusFooterProps) {
+export function StatusFooter({ status, statusFile, config, hostname, starting, onStart }: StatusFooterProps) {
   const state = deriveFooterState({ status, statusFile, config })
   const site = siteIdOf(config, statusFile)
+  const sentence = footerSentence(state, site, hostname ?? null)
   const version = statusFile?.service?.version
 
   return (
     <footer className="flex items-center gap-3 border-t px-4 py-2 text-xs">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="flex items-center gap-2" data-testid="footer-status">
-            <span
-              aria-hidden
-              className={cn('size-2 shrink-0 rounded-full', FOOTER_DOT_CLASS[state.tone])}
-            />
-            <span className={FOOTER_TONE_CLASS[state.tone]}>{state.label}</span>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>{state.detail ?? `owlette is connected to ${site || 'no site'}`}</TooltipContent>
-      </Tooltip>
-
-      {site && (
-        <>
-          <span aria-hidden className="text-border">
-            ·
-          </span>
-          <span className="truncate text-muted-foreground" title={site}>
-            {site}
-          </span>
-        </>
-      )}
+      <span className="flex min-w-0 items-center gap-2" data-testid="footer-status">
+        <span
+          aria-hidden
+          className={cn('size-2 shrink-0 rounded-full', FOOTER_DOT_CLASS[state.tone])}
+        />
+        <span className="truncate text-muted-foreground">
+          {sentence.before}
+          <span className={FOOTER_TONE_CLASS[state.tone]}>{state.label}</span>
+          {sentence.after}
+        </span>
+      </span>
 
       {state.serviceDown && (
         <Button size="sm" variant="secondary" className="h-6 px-2" disabled={starting} onClick={onStart}>

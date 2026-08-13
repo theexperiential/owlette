@@ -16,7 +16,7 @@ export interface AppStatesStore {
    * pid that has already been recycled is how a UI kills the wrong process.
    */
   read: () => Promise<AppStates>
-  /** Read-modify-write the table — used only to stamp the operator's KILLED marker. */
+  /** Read-modify-write the table — used only to stamp the operator's own markers. */
   mutate: (transform: (states: AppStates) => AppStates) => Promise<AppStates>
 }
 

@@ -17,7 +17,11 @@ const states: AppStates = {
   '200': { id: 'b', status: 'LAUNCH_FAILED', timestamp: 20 },
 }
 
-function setup(selectedId: string | null = null, entries = processes) {
+function setup(
+  selectedId: string | null = null,
+  entries = processes,
+  options: { dragOver?: boolean } = {},
+) {
   const handlers = {
     onSelect: vi.fn(),
     onAdd: vi.fn(),
@@ -27,7 +31,13 @@ function setup(selectedId: string | null = null, entries = processes) {
 
   render(
     <TooltipProvider>
-      <ProcessList processes={entries} states={states} selectedId={selectedId} {...handlers} />
+      <ProcessList
+        processes={entries}
+        states={states}
+        selectedId={selectedId}
+        dragOver={options.dragOver}
+        {...handlers}
+      />
     </TooltipProvider>,
   )
 
@@ -141,7 +151,13 @@ describe('process list', () => {
 
     expect(screen.queryAllByTestId('process-row')).toHaveLength(0)
     expect(screen.getByTestId('process-list-empty').textContent).toMatch(/no processes yet/)
-    expect(screen.getByTestId('process-list-empty').textContent).toMatch(/drag a script/)
+    expect(screen.getByTestId('process-list-empty').textContent).toMatch(/drag an app/)
+  })
+
+  it('lights up the empty state while a file is over the window', () => {
+    setup(null, [], { dragOver: true })
+
+    expect(screen.getByTestId('process-list-empty').dataset.dragOver).toBe('true')
   })
 })
 

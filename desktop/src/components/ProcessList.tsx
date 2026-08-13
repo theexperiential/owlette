@@ -31,6 +31,8 @@ interface ProcessListProps {
   onAction: (action: ProcessAction, id: string) => void
   /** Commit a new position. Called once, on drop. */
   onReorder: (id: string, toIndex: number) => void
+  /** True while an OS file drag is over the window; lights up the empty state. */
+  dragOver?: boolean
 }
 
 interface MenuAnchor {
@@ -72,6 +74,7 @@ export function ProcessList({
   onAdd,
   onAction,
   onReorder,
+  dragOver = false,
 }: ProcessListProps) {
   // Right-click opens a menu at the pointer. Radix positions against a trigger,
   // so the trigger is a zero-size element parked at the click — the same shape
@@ -188,7 +191,7 @@ export function ProcessList({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {processes.length === 0 ? (
-          <ProcessListEmpty />
+          <ProcessListEmpty dragOver={dragOver} />
         ) : (
           <ul ref={listRef} className="flex flex-col gap-0.5">
             {processes.map((process, position) => {

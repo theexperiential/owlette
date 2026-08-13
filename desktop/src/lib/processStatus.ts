@@ -17,6 +17,7 @@
 export const PROCESS_STATUSES = [
   'RUNNING',
   'LAUNCHING',
+  'RESTARTING',
   'QUEUED',
   'LAUNCH_FAILED',
   'KILLED',
@@ -25,6 +26,17 @@ export const PROCESS_STATUSES = [
 ] as const
 
 export type ProcessStatus = (typeof PROCESS_STATUSES)[number]
+
+/**
+ * The two statuses this app writes itself, both of them a message to the
+ * service about an exit it is about to see (`owlette_service.py:2598-2630`).
+ *
+ * `KILLED` says "intended, leave it alone"; `RESTARTING` says "intended, and
+ * the operator asked for it" — same suppression of the crash alert, plus a
+ * `process_restarted` audit event, and the relaunch decided by launch mode as
+ * usual. Everything else in {@link PROCESS_STATUSES} is the service's to write.
+ */
+export type ProcessMarker = Extract<ProcessStatus, 'KILLED' | 'RESTARTING'>
 
 export interface AppState {
   id?: string
@@ -105,16 +117,44 @@ export function livePidForProcess(states: AppStates, processId: string): number 
 }
 
 /**
- * Stamp `KILLED` on one pid, leaving the rest of the document alone.
+ * Stamp a marker on one pid, leaving the rest of the document alone.
  *
  * Same shape as `shared_utils.update_process_status_in_json`: the status is
  * replaced and the config id is (re)asserted, while the timestamp and anything
- * else the service put there is preserved. The service treats this marker as
- * "the operator did this" and skips both crash logging and the relaunch.
+ * else the service put there is preserved.
  */
-export function markKilled(states: AppStates, pid: number, processId: string): AppStates {
+export function markProcess(
+  states: AppStates,
+  pid: number,
+  processId: string,
+  marker: ProcessMarker,
+): AppStates {
   const key = String(pid)
-  return { ...states, [key]: { ...states[key], status: 'KILLED', id: processId } }
+  return { ...states, [key]: { ...states[key], status: marker, id: processId } }
+}
+
+/** "The operator killed it" — no crash alert, no audit event, no relaunch of ours. */
+export function markKilled(states: AppStates, pid: number, processId: string): AppStates {
+  return markProcess(states, pid, processId, 'KILLED')
+}
+
+/** "The operator restarted it" — no crash alert, but a `process_restarted` event. */
+export function markRestarting(states: AppStates, pid: number, processId: string): AppStates {
+  return markProcess(states, pid, processId, 'RESTARTING')
+}
+
+/**
+ * Put a pid's row back the way it was.
+ *
+ * `RESTARTING` has to be written before the process is terminated, which means
+ * it is sometimes written for a termination that does not happen — the pid had
+ * already exited, or refused to. Left in place it would be a claim nothing ever
+ * corrects: the service only rewrites rows for processes it is monitoring, so
+ * an unmanaged entry would sit at "restarting" until the next reboot, and a
+ * process that really had just crashed would have its crash alert suppressed.
+ */
+export function restoreState(states: AppStates, pid: number, previous: AppState): AppStates {
+  return { ...states, [String(pid)]: previous }
 }
 
 /**
@@ -128,6 +168,7 @@ export function markKilled(states: AppStates, pid: number, processId: string): A
 export const STATUS_DOT: Record<ProcessStatus, string> = {
   RUNNING: 'bg-green-500',
   LAUNCHING: 'bg-yellow-400',
+  RESTARTING: 'bg-yellow-400',
   QUEUED: 'bg-orange-400',
   LAUNCH_FAILED: 'bg-red-500',
   KILLED: 'bg-red-400',
@@ -139,6 +180,7 @@ export const STATUS_DOT: Record<ProcessStatus, string> = {
 export const STATUS_TEXT: Record<ProcessStatus, string> = {
   RUNNING: 'text-green-500',
   LAUNCHING: 'text-yellow-400',
+  RESTARTING: 'text-yellow-400',
   QUEUED: 'text-orange-400',
   LAUNCH_FAILED: 'text-red-500',
   KILLED: 'text-red-400',

@@ -1,10 +1,12 @@
 /**
  * Drag-and-drop classification: dropped paths in, owlette process entries out.
  *
- * The module is deliberately inert — zero imports, no module-level state, and
- * the only contact with the disk is the injected {@link FsProbe}. The whole
- * rule matrix is therefore unit-testable without Tauri, and the rules that run
- * in a test are byte-for-byte the ones that run on a kiosk.
+ * The module is deliberately inert — the only contact with the disk is the
+ * injected {@link FsProbe}, there is no module-level state, and the single
+ * import is the type/defaults module describing `config.json`, which is itself
+ * dependency-free. The whole rule matrix is therefore unit-testable without
+ * Tauri, and the rules that run in a test are byte-for-byte the ones that run
+ * on a kiosk.
  *
  * The draft it produces mirrors the python service's on-disk schema exactly
  * (`agent/src/owlette_gui.py:1043-1057`). Numeric fields are STRINGS: that is
@@ -14,35 +16,36 @@
  * out in a file two other writers (the GUI and the Firestore sync) also touch.
  */
 
-/** CPU priority, spelled the way the service's map expects it. */
-export type ProcessPriority = 'Low' | 'Normal' | 'High' | 'Realtime'
+import {
+  NEW_PROCESS_DEFAULTS,
+  type LaunchMode,
+  type Priority,
+  type ProcessEntry,
+  type Visibility,
+} from '@/lib/owletteConfig'
 
-/** Window visibility. `Show`/`Hide` are the legacy spellings — do not emit them. */
-export type ProcessVisibility = 'Normal' | 'Hidden'
-
-/** Supervision mode. A dropped process starts `off` so nothing launches unasked. */
-export type LaunchMode = 'off' | 'always' | 'scheduled'
-
-/** A `processes[]` entry minus the `id`, which the caller mints on confirm. */
+/**
+ * A `processes[]` entry minus the `id`, which the caller mints on confirm.
+ *
+ * Stricter than {@link ProcessEntry}, deliberately: that type describes what
+ * may be *read* out of a file three writers have edited over several versions,
+ * this one describes what this app is allowed to *write*. Every field is
+ * present and every value is the current spelling.
+ */
 export interface ProcessEntryDraft {
   name: string
   exe_path: string
   /** A document opened by `exe_path` — never CLI arguments, see below. */
   file_path: string
   cwd: string
-  priority: ProcessPriority
-  visibility: ProcessVisibility
+  priority: Priority
+  visibility: Visibility
   time_delay: string
   time_to_init: string
   relaunch_attempts: string
   launch_mode: LaunchMode
   autolaunch: boolean
   schedules: null
-}
-
-/** A full `processes[]` entry, ready to append to `config.json`. */
-export interface ProcessEntry extends ProcessEntryDraft {
-  id: string
 }
 
 /**
@@ -79,17 +82,23 @@ export type DropResult = ClassifiedDrop | UnsupportedDrop
 /**
  * Values every dropped entry starts with.
  *
- * `relaunch_attempts` is 3 rather than the python GUI's 5: a drop is a fresh,
- * unproven process, and three failed launches is enough to stop hammering it.
+ * The three numbers are taken from {@link NEW_PROCESS_DEFAULTS} rather than
+ * chosen here, so a process that arrives by drop and one added with the `+`
+ * button are the same entry. An earlier draft used a lower relaunch budget on
+ * the theory that a dropped process is unproven — but nothing about the drop
+ * makes it more likely to crash, `launch_mode: 'off'` already means it does not
+ * run until the operator says so, and two creation paths in one app quietly
+ * writing different values for the same field is a bug waiting to be filed.
+ *
  * `launch_mode: 'off'` (with the matching `autolaunch: false`) means dropping a
  * file configures it without starting it — the operator opts in afterwards.
  */
 export const DROP_DEFAULTS = {
   priority: 'Normal',
   visibility: 'Normal',
-  time_delay: '0',
-  time_to_init: '10',
-  relaunch_attempts: '3',
+  time_delay: NEW_PROCESS_DEFAULTS.time_delay,
+  time_to_init: NEW_PROCESS_DEFAULTS.time_to_init,
+  relaunch_attempts: NEW_PROCESS_DEFAULTS.relaunch_attempts,
   launch_mode: 'off',
   autolaunch: false,
   schedules: null,

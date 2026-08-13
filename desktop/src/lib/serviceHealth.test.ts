@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { ServiceStatus } from './ipc'
-import { deriveFooterState, siteIdOf, type ServiceStatusFile } from './serviceHealth'
+import {
+  deriveFooterState,
+  footerSentence,
+  siteIdOf,
+  type FooterState,
+  type ServiceStatusFile,
+} from './serviceHealth'
 
 const healthy: ServiceStatus = {
   installed: true,
@@ -122,5 +128,40 @@ describe('site id', () => {
   it('falls back to the status file before giving up', () => {
     expect(siteIdOf({ firebase: {} }, connected)).toBe('default_site')
     expect(siteIdOf(null, null)).toBe('')
+  })
+})
+
+describe('footer sentence', () => {
+  const state = (label: string): FooterState => ({ label, tone: 'ok', detail: null, serviceDown: false })
+
+  it('reads "<host> is connected to <site>"', () => {
+    expect(footerSentence(state('connected'), 'default_site', 'TEC-A4D')).toEqual({
+      before: 'TEC-A4D is ',
+      after: ' to default_site',
+    })
+  })
+
+  it('reads "<host> is disconnected from <site>"', () => {
+    expect(footerSentence(state('disconnected'), 'default_site', 'TEC-A4D')).toEqual({
+      before: 'TEC-A4D is ',
+      after: ' from default_site',
+    })
+  })
+
+  it('hangs the host off states that are not connection sentences', () => {
+    expect(footerSentence(state('service not running'), '', 'TEC-A4D').after).toBe(' on TEC-A4D')
+    expect(footerSentence(state('removed from site'), '', 'TEC-A4D').before).toBe('TEC-A4D was ')
+    expect(footerSentence(state('authentication required'), '', 'TEC-A4D').after).toBe(' for TEC-A4D')
+  })
+
+  it('leaves self-sufficient states alone', () => {
+    expect(footerSentence(state('checking'), 'default_site', 'TEC-A4D')).toEqual({ before: '', after: '' })
+  })
+
+  it('falls back to the segment form until the hostname is known', () => {
+    expect(footerSentence(state('connected'), 'default_site', null)).toEqual({
+      before: '',
+      after: ' · default_site',
+    })
   })
 })

@@ -1,17 +1,38 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
+import { AppMenu } from '@/components/AppMenu'
 import { ConfirmDialog, type ConfirmRequest } from '@/components/ConfirmDialog'
+import { DropConfirm } from '@/components/DropConfirm'
+import { DropOverlay } from '@/components/DropOverlay'
+import { JoinSiteDialog } from '@/components/JoinSiteDialog'
 import { OwletteEye } from '@/components/landing/OwletteEye'
+import { LeaveSiteDialog } from '@/components/LeaveSiteDialog'
 import { ProcessDetail } from '@/components/ProcessDetail'
 import { ProcessList, type ProcessAction } from '@/components/ProcessList'
+import { ReportIssueDialog } from '@/components/ReportIssueDialog'
+import { RestartCountdown } from '@/components/RestartCountdown'
 import { StatusFooter } from '@/components/StatusFooter'
 import { WindowControls } from '@/components/WindowControls'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useAppStates } from '@/hooks/useAppStates'
+import { useFileDrop } from '@/hooks/useFileDrop'
 import { useOwletteConfig } from '@/hooks/useOwletteConfig'
+import { useRestartPrompt } from '@/hooks/useRestartPrompt'
 import { useServiceHealth } from '@/hooks/useServiceHealth'
+import { siteIdOf } from '@/lib/serviceHealth'
+import { classifyDrop, toProcessEntry, type ProcessEntryDraft } from '@/lib/dropClassifier'
+import {
+  cardBlockedReason,
+  dequeueCard,
+  enqueueCards,
+  triage,
+  updateCard,
+  type DropCard,
+} from '@/lib/dropQueue'
+import { classifyOptions, tauriFsProbe } from '@/lib/fsProbe'
+import { hostname } from '@/lib/ipc'
 import {
   addProcess,
   applyForm,
@@ -41,6 +62,11 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** The dropped file's own name, for a toast that has to fit on one line. */
+function fileNameOf(path: string): string {
+  return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path
+}
+
 /**
  * The owlette configuration window.
  *
@@ -54,9 +80,41 @@ function App() {
   const config = useOwletteConfig()
   const appStates = useAppStates()
   const health = useServiceHealth()
+  const restartPrompt = useRestartPrompt()
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
+  const [dropped, setDropped] = useState<DropCard[]>([])
+  const [menuDialog, setMenuDialog] = useState<'join' | 'leave' | 'report' | null>(null)
+  const [host, setHost] = useState<string | null>(null)
+
+  useEffect(() => {
+    hostname().then(setHost, () => setHost(null))
+  }, [])
+
+  const siteId = siteIdOf(config.config, health.statusFile)
+
+  /**
+   * Whether this machine belongs to a site, and therefore whether the menu
+   * offers leaving or joining. Read from `config.json` rather than from the
+   * service's status file: the config is what the service acts on, and it is
+   * what leaving rewrites.
+   */
+  const paired = Boolean(
+    config.config &&
+      (config.config.firebase as { enabled?: boolean; site_id?: string } | undefined)?.enabled &&
+      (config.config.firebase as { site_id?: string } | undefined)?.site_id,
+  )
+
+  const handleJoined = useCallback(() => {
+    // The helper restarts the service; the config watcher picks up the new site
+    // on its own, so there is nothing to reload here.
+    toast.success('this machine joined a site')
+  }, [])
+
+  const handleLeft = useCallback(() => {
+    toast.success('this machine left its site')
+  }, [])
 
   const processes = useMemo(
     () => (config.config ? processesOf(config.config) : []),
@@ -112,6 +170,80 @@ function App() {
     },
     [edit],
   )
+
+  /**
+   * Files landed on the window.
+   *
+   * Classification is read-only — it stats paths and looks for host
+   * applications — so it happens immediately; nothing is written until a card
+   * is confirmed. Anything the classifier cannot place is reported here and
+   * then forgotten, because there is no entry to propose for it.
+   */
+  const handleDrop = useCallback(async (paths: string[]) => {
+    try {
+      const results = await classifyDrop(paths, tauriFsProbe, await classifyOptions())
+      const { cards, rejected } = triage(results)
+
+      for (const drop of rejected) {
+        toast.warning(`${fileNameOf(drop.path)} was not added`, { description: drop.reason })
+      }
+      if (cards.length) setDropped((queue) => enqueueCards(queue, cards))
+    } catch (cause) {
+      toast.error('could not read what was dropped', { description: message(cause) })
+    }
+  }, [])
+
+  const dragOver = useFileDrop((paths) => void handleDrop(paths))
+
+  /** The card being reviewed. The queue is worked from the front, one at a time. */
+  const dropCard = dropped[0] ?? null
+  const dropBlockedReason = dropCard
+    ? cardBlockedReason(
+        dropCard,
+        processes.map((process) => String(process.name ?? '')),
+      )
+    : null
+
+  const handleDropChange = useCallback((patch: Partial<ProcessEntryDraft>) => {
+    setDropped((queue) => (queue.length ? updateCard(queue, queue[0].path, patch) : queue))
+  }, [])
+
+  /**
+   * Add the reviewed card.
+   *
+   * The card leaves the queue before the write rather than after it, which
+   * makes a second click on `add process` a no-op instead of a second entry.
+   * The cost is a card lost if the write fails — and a write failing means
+   * `config.json` cannot be read or replaced at all, which the next card would
+   * hit just as hard.
+   */
+  const handleDropConfirm = useCallback(async () => {
+    if (!dropCard) return
+
+    const entry = toProcessEntry(
+      {
+        ...dropCard.entry,
+        name: dropCard.entry.name.trim(),
+        exe_path: dropCard.entry.exe_path.trim(),
+      },
+      crypto.randomUUID(),
+    )
+
+    setDropped((queue) => dequeueCard(queue, dropCard.path))
+    const written = await edit('could not add the process', (document) =>
+      addProcess(document, entry),
+    )
+    if (!written) return
+
+    setSelectedId(entry.id)
+    toast.success(`${entry.name} was added`, {
+      description: 'its launch mode is off — nothing will start it until you change that',
+    })
+  }, [dropCard, edit])
+
+  const handleDropSkip = useCallback(() => {
+    setDropped((queue) => queue.slice(1))
+  }, [])
 
   /** One write per drop — the drag itself never touches the file. */
   const handleReorder = useCallback(
@@ -274,6 +406,12 @@ function App() {
           <OwletteEye size={18} className="pointer-events-none" />
           <span className="pointer-events-none text-sm font-medium tracking-tight">owlette</span>
           <span data-tauri-drag-region className="h-full flex-1" />
+          <AppMenu
+            paired={paired}
+            onJoinSite={() => setMenuDialog('join')}
+            onLeaveSite={() => setMenuDialog('leave')}
+            onReportIssue={() => setMenuDialog('report')}
+          />
           <WindowControls />
         </header>
 
@@ -296,6 +434,7 @@ function App() {
               onAdd={() => void handleAdd()}
               onAction={handleAction}
               onReorder={handleReorder}
+              dragOver={dragOver}
             />
           </aside>
 
@@ -334,11 +473,35 @@ function App() {
           status={health.status}
           statusFile={health.statusFile}
           config={config.config}
+          hostname={host}
           starting={health.starting}
           onStart={() => void health.start()}
         />
 
+        <JoinSiteDialog
+          open={menuDialog === 'join'}
+          onClose={() => setMenuDialog(null)}
+          onJoined={handleJoined}
+        />
+        <LeaveSiteDialog
+          open={menuDialog === 'leave'}
+          siteId={siteId}
+          onClose={() => setMenuDialog(null)}
+          onLeft={handleLeft}
+        />
+        <ReportIssueDialog open={menuDialog === 'report'} onClose={() => setMenuDialog(null)} />
+        <RestartCountdown open={restartPrompt.armed} onClose={restartPrompt.dismiss} />
+
         <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />
+        <DropConfirm
+          card={dropCard}
+          remaining={dropped.length}
+          blockedReason={dropBlockedReason}
+          onChange={handleDropChange}
+          onConfirm={() => void handleDropConfirm()}
+          onSkip={handleDropSkip}
+        />
+        {dragOver && <DropOverlay />}
         <Toaster />
       </div>
     </TooltipProvider>

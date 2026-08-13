@@ -5,9 +5,9 @@ interface ProcessListEmptyProps {
   /**
    * True while a file is being dragged over the window.
    *
-   * The drop handling itself belongs to the drag-and-drop task; this component
-   * only has to be ready to light up when it lands, which is why the state is a
-   * prop rather than something it works out for itself.
+   * The window is the drop target, not this box — `useFileDrop` owns the state
+   * and it arrives here as a prop, so the two never disagree about whether
+   * something is hovering.
    */
   dragOver?: boolean
   className?: string
@@ -38,7 +38,8 @@ export function ProcessListEmpty({ dragOver = false, className }: ProcessListEmp
       />
       <p className="text-sm font-medium">no processes yet</p>
       <p className="text-xs leading-relaxed text-muted-foreground">
-        drag a script, app, or touchdesigner file anywhere in this window to add it
+        drag an app, a script, a touchdesigner project or a unity build folder anywhere in this
+        window to add it
       </p>
       <p className="text-xs text-muted-foreground/70">or use add process, above</p>
     </div>

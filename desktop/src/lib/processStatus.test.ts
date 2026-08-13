@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   livePidForProcess,
   markKilled,
+  markRestarting,
   parseAppStates,
+  restoreState,
   statusForProcess,
   statusLabel,
   STATUS_DOT,
+  STATUS_TEXT,
+  PROCESS_STATUSES,
   type AppStates,
 } from './processStatus'
 
@@ -74,7 +78,19 @@ describe('status for a config entry', () => {
     expect(statusLabel('RUNNING')).toBe('running')
     // The dashboard calls this one "failed"; so do we.
     expect(statusLabel('LAUNCH_FAILED')).toBe('failed')
-    expect(Object.values(STATUS_DOT).every((value) => value.length > 0)).toBe(true)
+    expect(statusLabel('RESTARTING')).toBe('restarting')
+    for (const status of PROCESS_STATUSES) {
+      expect(STATUS_DOT[status]).toBeTruthy()
+      expect(STATUS_TEXT[status]).toBeTruthy()
+    }
+  })
+
+  it('recognises the marker this app writes for a restart', () => {
+    // Not knowing our own write would blank the row to inactive for the couple
+    // of seconds the service takes to relaunch.
+    expect(statusForProcess({ '1': { id: 'a', status: 'RESTARTING', timestamp: 1 } }, 'a')).toBe(
+      'RESTARTING',
+    )
   })
 })
 
@@ -120,13 +136,13 @@ describe('picking a pid to act on', () => {
   })
 })
 
-describe('the killed marker', () => {
-  it('rewrites one pid and leaves the rest of the file alone', () => {
-    const states: AppStates = {
-      '100': { id: 'a', status: 'RUNNING', timestamp: 10 },
-      '300': { id: 'b', status: 'RUNNING', timestamp: 30 },
-    }
+describe('the operator’s markers', () => {
+  const states: AppStates = {
+    '100': { id: 'a', status: 'RUNNING', timestamp: 10 },
+    '300': { id: 'b', status: 'RUNNING', timestamp: 30 },
+  }
 
+  it('rewrites one pid and leaves the rest of the file alone', () => {
     const marked = markKilled(states, 100, 'a')
 
     expect(marked['100']).toEqual({ id: 'a', status: 'KILLED', timestamp: 10 })
@@ -134,7 +150,20 @@ describe('the killed marker', () => {
     expect(states['100'].status).toBe('RUNNING')
   })
 
+  it('says RESTARTING when the operator asked for the process back', () => {
+    const marked = markRestarting(states, 100, 'a')
+
+    expect(marked['100']).toEqual({ id: 'a', status: 'RESTARTING', timestamp: 10 })
+    expect(marked['300']).toBe(states['300'])
+  })
+
   it('creates the entry when the pid is not in the table yet', () => {
     expect(markKilled({}, 42, 'a')).toEqual({ '42': { status: 'KILLED', id: 'a' } })
+  })
+
+  it('restores a row whole, for a marker that turned out to be premature', () => {
+    const marked = markRestarting(states, 100, 'a')
+
+    expect(restoreState(marked, 100, states['100'])).toEqual(states)
   })
 })

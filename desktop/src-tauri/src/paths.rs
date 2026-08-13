@@ -20,7 +20,25 @@ const DATA_DIR_NAME: &str = "Owlette";
 pub const CONFIG_REL: &str = "config/config.json";
 pub const APP_STATES_REL: &str = "tmp/app_states.json";
 pub const SERVICE_STATUS_REL: &str = "tmp/service_status.json";
+
+/// Written while the main window is on screen; the service raises its metrics
+/// cadence to 5 s when it sees a live pid here
+/// (`firebase_client._metrics_loop`).
 pub const GUI_PID_REL: &str = "tmp/gui.pid";
+
+/// Written for the whole life of the process, window or no window. This is what
+/// `owlette_service._is_tray_alive` reads to decide whether it still needs to
+/// spawn a tray — the same file the python tray used as its singleton lock.
+pub const TRAY_PID_REL: &str = "tmp/tray.pid";
+
+/// Touched to ask a running service to exit 42 so NSSM restarts it
+/// (`owlette_service.main`, the restart-flag branch).
+pub const RESTART_FLAG_REL: &str = "tmp/restart.flag";
+
+/// The agent's version file. Present on an installed machine because the app
+/// root and the data root are the same directory (`{app}` is
+/// `%PROGRAMDATA%\Owlette`).
+pub const AGENT_VERSION_REL: &str = "agent/VERSION";
 
 /// Absolute path of the owlette data root.
 pub fn data_root() -> PathBuf {

@@ -257,6 +257,12 @@ pub fn write_json(path: &Path, value: &Value) -> Result<WriteOutcome, JsonIoErro
 
 /// Serialise with Python's `indent=4` shape so a desktop write and a service
 /// write produce the same bytes for the same document.
+///
+/// Line endings are part of that: `write_json_to_file` opens the scratch file in
+/// text mode (`open(temp_path, 'w')`), so every `\n` `json.dump` emits reaches
+/// disk as `\r\n`. serde_json emits bare `\n`, so we translate. Nothing inside a
+/// JSON string can be a literal newline — the encoder escapes those as `\\n` —
+/// so a blanket replacement only ever touches the formatter's own breaks.
 fn to_pretty_json(value: &Value) -> Result<String, JsonIoError> {
   let mut buffer = Vec::new();
   let formatter = serde_json::ser::PrettyFormatter::with_indent(INDENT);
@@ -266,7 +272,8 @@ fn to_pretty_json(value: &Value) -> Result<String, JsonIoError> {
     .map_err(JsonIoError::Encode)?;
   // serde_json only ever emits UTF-8, so this cannot fail for a value it just
   // serialised.
-  Ok(String::from_utf8(buffer).expect("serde_json emits valid utf-8"))
+  let text = String::from_utf8(buffer).expect("serde_json emits valid utf-8");
+  Ok(text.replace('\n', "\r\n"))
 }
 
 fn temp_path(path: &Path) -> PathBuf {
@@ -387,11 +394,13 @@ fn json_mutex() -> Option<HANDLE> {
         match CreateMutexW(None, false, MUTEX_NAME) {
           Ok(handle) => Some(SharedMutex(handle)),
           Err(create_error) => {
-            // The service (running as SYSTEM) may have created the object with
-            // a descriptor that denies us MUTEX_ALL_ACCESS. Opening it with the
-            // two rights we actually need still lets us take part in the lock;
-            // Python has no equivalent fallback and silently degrades to
-            // unlocked access when this happens.
+            // Expected on any machine where the service got there first: it
+            // creates the object with an explicit descriptor that grants
+            // Authenticated Users exactly SYNCHRONIZE | MUTEX_MODIFY_STATE
+            // (`shared_utils._JSON_MUTEX_SDDL`), and `CreateMutexW` asks for
+            // MUTEX_ALL_ACCESS. Opening it with the two rights we actually need
+            // is the path that descriptor exists for; the python side has the
+            // same fallback.
             match OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE | MUTEX_MODIFY_STATE, false, MUTEX_NAME) {
               Ok(handle) => Some(SharedMutex(handle)),
               Err(open_error) => {
@@ -466,11 +475,31 @@ mod tests {
 
     write_json(&path, &document).expect("write");
 
+    // CRLF, four-space indent, no trailing newline — byte-for-byte what
+    // `json.dump(..., indent=4)` into a text-mode file produces on Windows.
     let text = fs::read_to_string(&path).expect("read back");
     assert_eq!(
       text,
-      "{\n    \"zeta\": 1,\n    \"alpha\": {\n        \"nested\": true\n    }\n}"
+      "{\r\n    \"zeta\": 1,\r\n    \"alpha\": {\r\n        \"nested\": true\r\n    }\r\n}"
     );
+  }
+
+  #[test]
+  fn string_values_containing_escapes_are_not_disturbed_by_the_crlf_pass() {
+    let scratch = Scratch::new("escapes");
+    let path = scratch.path("config.json");
+    // A path with a newline in it is pathological but legal, and it is exactly
+    // what a naive newline translation would corrupt.
+    let document = json!({ "note": "line one\nline two", "path": "C:\\a\\b" });
+
+    write_json(&path, &document).expect("write");
+
+    let text = fs::read_to_string(&path).expect("read back");
+    assert!(
+      text.contains(r#""note": "line one\nline two""#),
+      "escaped newline was rewritten: {text:?}"
+    );
+    assert_eq!(read_json(&path).expect("read"), document);
   }
 
   #[test]
@@ -534,9 +563,10 @@ mod tests {
   #[test]
   fn a_guard_only_holds_a_handle_when_it_owns_the_lock() {
     // The safety invariant behind Drop: we must never release a mutex we do
-    // not own. Whether we *can* own it depends on the machine — the service
-    // creates the object as SYSTEM, so a non-elevated app is denied access and
-    // legitimately lands on Unavailable (which the write outcome reports).
+    // not own. Whether we *can* own it still depends on the machine — an agent
+    // older than the SDDL fix leaves the object with LocalSystem's default
+    // DACL, and a non-elevated app legitimately lands on Unavailable (which the
+    // write outcome reports) rather than failing.
     let guard = acquire_lock();
     assert_eq!(
       guard.handle.is_some(),
@@ -554,18 +584,16 @@ mod tests {
   /// Contention check against the real Python holder: both sides run the same
   /// protocol, so this proves the wait/release half of the seam end to end.
   ///
-  /// Ignored by default: it needs the deployed interpreter, touches the live
-  /// `Global\` mutex, and must run **elevated**. The service creates that object
-  /// as LocalSystem, whose default DACL grants Administrators less than
-  /// MUTEX_ALL_ACCESS, so a non-elevated process cannot reach it at all (see
-  /// `a_guard_only_holds_a_handle_when_it_owns_the_lock`).
+  /// Ignored by default: it needs the deployed interpreter and touches the live
+  /// `Global\` mutex, so it only means anything on a machine with the agent
+  /// installed. It no longer needs an elevated shell — the service now creates
+  /// the object with a descriptor that lets Authenticated Users wait on it.
   ///
-  /// The holder opens the mutex the same way this module does rather than going
-  /// through `shared_utils._CrossProcessLock`: that helper only ever calls
-  /// `CreateMutex`, which the same DACL denies, so it cannot hold the lock from
-  /// any process except the service itself.
+  /// The holder falls back to `OpenMutex` for the same reason this module does:
+  /// `CreateMutex` asks for MUTEX_ALL_ACCESS, which that descriptor withholds
+  /// from ordinary users on purpose.
   ///
-  /// Run from an elevated shell with:
+  /// Run with:
   /// `cargo test --lib -- --ignored --exact json_io::tests::mutex_contention_with_python_holder --nocapture`
   #[test]
   #[ignore = "needs the deployed agent interpreter and an elevated shell"]
