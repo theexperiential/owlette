@@ -14,14 +14,13 @@
  * webhook) via the existing helpers. A route asserted against a bare empty
  * state would be a green test that proves nothing.
  *
- * Routes that overflow TODAY are declared with `test.fixme(...)` and each names
- * the task that owns the fix. Removing a fixme before that task lands must turn
- * the suite red — that is the entire point of this gate. When a fix lands,
- * delete the fixme marker; never soften the assertion to make a route pass.
- *
- * Every fixme here was verified to fail on the current tree before it was
- * marked — a fixme on a route that already passes is a silent lie (unlike
- * `test.fail()`, Playwright does not flag a fixme that would have passed).
+ * Routes that overflowed when this gate was written were declared with
+ * `test.fixme(...)`, each naming the task that owned the fix. Every one of
+ * those fixes has landed, so ZERO fixmes remain here — all routes assert live
+ * and any regression turns the suite red immediately. If a future route
+ * overflows, fix the route; never soften the assertion, and never re-introduce
+ * a fixme for a route that already passes (unlike `test.fail()`, Playwright
+ * does not flag a fixme that would have passed).
  */
 
 import { test, expect, type Page } from '@playwright/test';

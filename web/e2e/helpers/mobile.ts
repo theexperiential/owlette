@@ -4,7 +4,7 @@
  * touch enabled.
  */
 
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 /**
  * Freeze the page before measuring layout.
@@ -97,4 +97,52 @@ export async function assertNoHorizontalOverflow(page: Page): Promise<void> {
       ? `horizontal overflow at ${page.url()} — widest offenders: ${overflow.culprits.join(', ')}`
       : `horizontal overflow at ${page.url()}`,
   ).toEqual([]);
+}
+
+/**
+ * Assert a single control is fully inside the viewport box.
+ *
+ * {@link assertNoHorizontalOverflow} measures the document scroll width, so it
+ * is blind to a position-fixed surface (a dialog, a portalled sheet) whose own
+ * contents run past the viewport edge — the overflow never reaches the document.
+ * Reachability of the controls inside such a surface has to be asserted
+ * directly, and this is that assertion.
+ *
+ * The element is scrolled into view first: vertical scrolling is ordinary phone
+ * behaviour, so only the resting geometry after that scroll is the claim. A
+ * control that still sits outside the box afterwards is genuinely untappable.
+ *
+ * On failure the measured edges are reported, so a regression says how far off
+ * the control is rather than just that it is.
+ */
+export async function expectFullyWithinViewport(
+  page: Page,
+  locator: Locator,
+  label: string,
+): Promise<void> {
+  // 1px matches assertNoHorizontalOverflow — absorbs sub-pixel layout rounding.
+  const TOLERANCE = 1;
+
+  const viewport = page.viewportSize();
+  expect(viewport, `${label}: viewportSize() is null — this helper needs a fixed viewport`)
+    .not.toBeNull();
+
+  await locator.scrollIntoViewIfNeeded();
+  const box = await locator.boundingBox();
+  expect(box, `${label} has no bounding box — it is not rendered`).not.toBeNull();
+
+  const { x, y, width, height } = box!;
+  const { width: vw, height: vh } = viewport!;
+  const withinViewport =
+    x >= -TOLERANCE &&
+    y >= -TOLERANCE &&
+    x + width <= vw + TOLERANCE &&
+    y + height <= vh + TOLERANCE;
+
+  expect(
+    withinViewport,
+    `${label} is not fully inside the ${vw}x${vh} viewport — measured ` +
+      `left ${Math.round(x)}, top ${Math.round(y)}, ` +
+      `right ${Math.round(x + width)}, bottom ${Math.round(y + height)}`,
+  ).toBe(true);
 }
