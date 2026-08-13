@@ -239,7 +239,10 @@ export function ManageSitesDialog({
           }}
         >
           <DialogHeader>
-            <div className="flex items-center justify-between gap-3">
+            {/* Wraps below sm: the search cluster takes its own line instead of
+                inflating the dialog's min-content — which used to push every
+                row's actions column off-screen on phones. */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <DialogTitle className="text-white">manage sites</DialogTitle>
                 <Button
@@ -259,9 +262,9 @@ export function ManageSitesDialog({
 "new site" so all four header controls sit on one axis. gap-6
                   keeps the close ✕ equidistant from the search field and the
                   panel edge (the p-6 gutter is also 24px). */}
-              <div className="flex items-center gap-6">
+              <div className="flex min-w-0 grow items-center justify-end gap-6">
                 {sites.length > 1 && (
-                  <div className="relative w-64 shrink-0">
+                  <div className="relative min-w-0 w-full max-w-64">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       ref={filterInputRef}
