@@ -5,8 +5,10 @@ import {
   mocks,
   mockDbFactory,
   docSnapshot,
+  querySnapshot,
   seedBilling,
 } from './helpers/firestore-mock';
+import { verifySignature } from '@/lib/webhookSignature';
 
 const mockEmitMutation = jest.fn();
 
@@ -211,6 +213,8 @@ beforeEach(() => {
   mocks.customerDocs.clear();
   mocks.siteDocs.set(SITE, { owner: 'user-operator' });
   mocks.get.mockResolvedValue(docSnapshot('idem', null)); // idempotency cache miss
+  // no webhook subscriptions unless a test seeds some
+  mocks.collectionGet.mockResolvedValue(querySnapshot([]));
 });
 
 /* ========================================================================== */
@@ -553,6 +557,205 @@ describe('POST /rollback — error narrowing', () => {
     const res = await rollback({ siteId: SITE, targetVersion: 7 });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('version_weird');
+  });
+});
+
+/* ========================================================================== */
+/*  version.rolled_back webhook emission                                      */
+/* ========================================================================== */
+
+describe('POST /rollback — version.rolled_back webhook', () => {
+  const SIGNING_SECRET = 'whsec_' + 'a'.repeat(48);
+
+  /** Delivery records written to `webhook_deliveries` by the emitter. */
+  function deliveryWrites(): Array<Record<string, unknown>> {
+    return mocks.set.mock.calls
+      .map((call) => call[0] as Record<string, unknown>)
+      .filter(
+        (payload) =>
+          !!payload && typeof payload === 'object' && 'subscriptionId' in payload,
+      );
+  }
+
+  function seedTargetVersion(): void {
+    txState.versionCounter = 5;
+    txState.currentVersionId = 'vrs_v5_id';
+    txState.previousVersionId = 'vrs_v4_id';
+    mockResolveVersion.mockResolvedValue({
+      versionId: 'vrs_v4_id',
+      versionNumber: 4,
+      doc: fakeVersionDoc('vrs_v4_id', {
+        versionUrl: 'https://r2.test/v4.json',
+        description: 'pre-prod build',
+        totalFiles: 3,
+        totalSize: 4096,
+      }),
+    });
+  }
+
+  it('queues one signed delivery per subscribed webhook', async () => {
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    seedTargetVersion();
+    mocks.collectionGet.mockResolvedValue(
+      querySnapshot([
+        {
+          id: 'wh_alpha',
+          data: {
+            url: 'https://hooks.example.test/roost',
+            events: ['version.rolled_back'],
+            signingSecret: SIGNING_SECRET,
+            paused: false,
+          },
+        },
+      ]),
+    );
+
+    const res = await rollback({ siteId: SITE });
+    nowSpy.mockRestore();
+    expect(res.status).toBe(200);
+
+    // Subscriptions are looked up on the site, filtered by event name.
+    expect(mocks.where).toHaveBeenCalledWith(
+      'events',
+      'array-contains',
+      'version.rolled_back',
+    );
+
+    const writes = deliveryWrites();
+    expect(writes).toHaveLength(1);
+    const record = writes[0]!;
+    expect(record).toMatchObject({
+      subscriptionId: 'wh_alpha',
+      siteId: SITE,
+      url: 'https://hooks.example.test/roost',
+      event: 'version.rolled_back',
+      attempt: 0,
+      state: 'pending',
+      nextAttemptAt: 1_700_000_000_000,
+      createdAt: 1_700_000_000_000,
+      secret: SIGNING_SECRET,
+    });
+
+    // Record id is `<content-hash>__<subscriptionId>` so two subscribers
+    // to the same event get separately-tracked deliveries.
+    const headers = record.headers as Record<string, string>;
+    expect(record.id).toBe(`${headers['Roost-Delivery']}__wh_alpha`);
+    expect(headers['Roost-Event']).toBe('version.rolled_back');
+    expect(headers['Content-Type']).toBe('application/json');
+
+    // Envelope matches the dispatcher's production shape: no top-level
+    // `id` (dedup rides the Roost-Delivery header), canonical key order.
+    const canonicalBody = record.canonicalBody as string;
+    expect(canonicalBody).toBe(
+      JSON.stringify({
+        data: {
+          fromVersion: 'vrs_v5_id',
+          roostId: ROOST,
+          siteId: SITE,
+          toVersion: 'vrs_v4_id',
+          triggeredBy: 'user-operator',
+        },
+        event: 'version.rolled_back',
+        occurredAt: new Date(1_700_000_000_000).toISOString(),
+        siteId: SITE,
+      }),
+    );
+
+    // The signature a receiver would verify actually verifies.
+    expect(
+      verifySignature(canonicalBody, SIGNING_SECRET, headers['Roost-Signature'], {
+        nowMs: 1_700_000_000_000,
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('skips paused, soft-deleted, and secret-less subscriptions', async () => {
+    seedTargetVersion();
+    mocks.collectionGet.mockResolvedValue(
+      querySnapshot([
+        {
+          id: 'wh_paused',
+          data: {
+            url: 'https://hooks.example.test/paused',
+            events: ['version.rolled_back'],
+            signingSecret: SIGNING_SECRET,
+            paused: true,
+          },
+        },
+        {
+          id: 'wh_deleted',
+          data: {
+            url: 'https://hooks.example.test/deleted',
+            events: ['version.rolled_back'],
+            signingSecret: SIGNING_SECRET,
+            deletedAt: new Date('2026-01-01T00:00:00Z'),
+          },
+        },
+        {
+          id: 'wh_no_secret',
+          data: {
+            url: 'https://hooks.example.test/no-secret',
+            events: ['version.rolled_back'],
+          },
+        },
+        {
+          id: 'wh_legacy',
+          data: {
+            url: 'https://hooks.example.test/legacy',
+            events: ['version.rolled_back'],
+            secret: 'legacy-secret-value',
+            enabled: true,
+          },
+        },
+      ]),
+    );
+
+    const res = await rollback({ siteId: SITE });
+    expect(res.status).toBe(200);
+
+    const writes = deliveryWrites();
+    expect(writes).toHaveLength(1);
+    // Pre-public-api records carry `secret`/`enabled` instead of
+    // `signingSecret`/`paused` — both shapes are honored.
+    expect(writes[0]).toMatchObject({
+      subscriptionId: 'wh_legacy',
+      secret: 'legacy-secret-value',
+    });
+  });
+
+  it('writes nothing when the site has no matching subscription', async () => {
+    seedTargetVersion();
+    const res = await rollback({ siteId: SITE });
+    expect(res.status).toBe(200);
+    expect(deliveryWrites()).toHaveLength(0);
+  });
+
+  it('still returns 200 when the delivery store is unavailable', async () => {
+    seedTargetVersion();
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.collectionGet.mockRejectedValue(new Error('firestore unavailable'));
+
+    const res = await rollback({ siteId: SITE });
+    expect(res.status).toBe(200);
+    expect(res.body.currentVersionId).toBe('vrs_v4_id');
+    expect(errSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[roostWebhooks]'),
+    );
+    errSpy.mockRestore();
+  });
+
+  it('does not emit when the rollback itself is rejected', async () => {
+    txState.versionCounter = 5;
+    txState.currentVersionId = 'vrs_v5_id';
+    mockResolveVersion.mockResolvedValue({
+      versionId: 'vrs_v5_id',
+      versionNumber: 5,
+      doc: fakeVersionDoc('vrs_v5_id', { versionUrl: 'u', totalFiles: 1, totalSize: 1 }),
+    });
+
+    const res = await rollback({ siteId: SITE, targetVersion: 'current' });
+    expect(res.status).toBe(400);
+    expect(deliveryWrites()).toHaveLength(0);
   });
 });
 
