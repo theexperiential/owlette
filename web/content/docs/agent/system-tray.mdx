@@ -13,9 +13,9 @@ The tray icon appears in the Windows notification area (system tray). It's a HAL
 
 | state | how it looks | what it means |
 |-------|--------------|---------------|
-| **connected** | normal icon with a white center dot | service running and connected to the cloud — everything healthy |
-| **connection issues** | warning/disconnected orange-dot icon | service running but not reaching the cloud (offline, or still starting up) |
-| **error** | flashing red error icon | service stopped/crashed or the health probe reports a failure. Disabled cloud/site configuration appears as a warning/disabled state. |
+| **connected** | the eye lit warm amber | service running and connected to the cloud — everything healthy |
+| **connection issues** | the same eye dimmed almost to black | service running but not reaching the cloud (offline, or still starting up). Disabled cloud/site configuration looks the same. |
+| **error** | red, alternating with the amber eye about every 0.8 seconds | service stopped or crashed, or the health probe reports a failure |
 
 The warm center and dark rim keep the icon legible on both light and dark taskbars.
 
@@ -25,18 +25,48 @@ The warm center and dark rim keep the icon legible on both light and dark taskba
 
 Right-clicking the tray icon shows:
 
-![the owlette tray right-click menu](/docs-screens/agent-right-click.png)
+![the owlette tray right-click menu, showing the version, hostname, service and cloud status above the actions](/docs-screens/agent-right-click.png)
+
+The four rows at the top are read-only status; the four below the separator are actions.
 
 | menu item | description |
 |-----------|-------------|
-| **owlette v&lt;version&gt;** | Current owlette version (read-only) |
-| **hostname: &lt;host&gt;** | Current machine hostname (read-only) |
-| **service status** | Current lowercased service status (read-only) |
-| **status: &lt;cloud status&gt;** | Current cloud status (read-only) |
-| **open owlette** | Launch the configuration GUI |
+| **owlette v&lt;version&gt;** | Version of the *agent* installed on this machine (read-only) |
+| **hostname: &lt;host&gt;** | This machine's `COMPUTERNAME` (read-only) |
+| **service: &lt;state&gt;** | Whether `OwletteService` is running (read-only) |
+| **status: &lt;cloud status&gt;** | Whether the service is reaching owlette (read-only). A fifth row appears under it when a health probe has something to report. |
+| **open owlette** | Open the desktop app's window |
+| **restart service** | Restart `OwletteService`. A running service is asked to restart itself through `tmp\restart.flag`, so no elevation prompt appears; only starting a *stopped* service can raise one. |
 | **start on login** | Toggle whether owlette starts on user login |
-| **restart** | Restart the OwletteService |
-| **exit** | Stop the Owlette service (triggers a UAC prompt). Also closes the GUI and the tray icon. |
+| **exit** | Stop `OwletteService` (triggers a UAC prompt), then quit the app — which closes the window and removes the tray icon. Declining the prompt leaves the service running, and it re-launches the tray within 30 seconds. |
+
+---
+
+## notifications
+
+The app raises a Windows toast when the machine's state changes in a way an operator standing at it would want to know about. Two rules keep them rare:
+
+- A degraded state must **hold for 5 seconds** before it is worth a toast, and each episode raises **one** — a flapping connection does not produce a stream of them.
+- Nothing is raised in the **first 10 seconds** after launch, so a service that is still starting is not reported as an incident.
+
+When the state clears, a single **owlette — back online** toast confirms it.
+
+| state | toast | what to do |
+|-------|-------|------------|
+| cloud unreachable | **owlette — reconnecting** | Nothing — local monitoring continues, and the agent reconnects on its own. |
+| service stopped | **owlette — service stopped** | Use `restart service` from the menu. |
+| `config_error` | **owlette — config error** | `config.json` is missing or corrupt — reinstall. |
+| `auth_error` | **owlette — not registered** | No token stored — pair the machine again. |
+| `network_error` | **owlette — network unreachable** | Check the machine's internet connection. |
+| `connection_failure` / `fatal_error` | **owlette — connection failed** / **owlette — fatal error** | Check `service.log`. |
+
+`restart service` confirms itself with a toast either way — **restarting** or **starting**, and the reason when it fails. `start on login` is silent unless the shortcut cannot be written.
+
+<Callout type="warning" title={"Toasts need the Start menu shortcut"}>
+
+Windows silently discards every toast from an app whose `AppUserModelID` is not registered by a Start menu shortcut — the app is told the notification succeeded and nothing appears. The installer ships the `Owlette` Start menu entry that carries that id. If toasts stop arriving, check that the entry still exists before looking anywhere else.
+
+</Callout>
 
 ---
 
@@ -57,7 +87,7 @@ The service attempts status updates from its main loop, but writes are throttled
   "service": {
     "running": true,
     "last_update": 1777053600,
-    "version": "2.3.1"
+    "version": "3.0.0"
   },
   "firebase": {
     "enabled": true,

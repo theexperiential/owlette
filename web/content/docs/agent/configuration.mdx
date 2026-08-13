@@ -1,15 +1,15 @@
 ---
 title: "configuration"
-description: "The agent can be configured locally via the GUI, remotely from the web dashboard, or by editing config.json directly. The local source file is C:\\ProgramData\\Owlette\\config\\config.json."
+description: "The agent can be configured locally in the desktop app, remotely from the web dashboard, or by editing config.json directly. The local source file is C:\\ProgramData\\Owlette\\config\\config.json."
 ---
 
-GUI/dashboard writes apply immediately; the agent picks up config changes on a polling listener with a 2-10 second interval.
+Desktop app and dashboard writes apply immediately; the agent picks up config changes on a polling listener with a 2-10 second interval.
 
-When the GUI is open, launch mode and schedule labels refresh from external dashboard or service changes. Text fields that are actively focused defer remote refresh until focus leaves.
+When the desktop app is open, launch mode and schedule labels refresh from external dashboard or service changes. Text fields that are actively focused defer remote refresh until focus leaves.
 
 ---
 
-## configuration gui
+## the desktop app
 
 The desktop app runs as a separate process from the service. Launch it from:
 
@@ -17,16 +17,28 @@ The desktop app runs as a separate process from the service. Launch it from:
 - **Start Menu** -> `Owlette Configuration`
 - **Directly**: `C:\ProgramData\Owlette\app\owlette-desktop.exe`
 
-![the owlette configuration gui — process list and per-process details](/docs-screens/agent.png)
+![the owlette desktop app — the process list on the left, the selected process's settings on the right](/docs-screens/agent.png)
 
-### gui features
+### what the window shows
 
-| section | controls |
+| area | contents |
 |---------|----------|
-| **Site Connection** | Join/leave site, connection status, site ID |
-| **Processes** | Add, edit, remove monitored processes |
-| **Process Settings** | Executable path, file path or arguments, working directory, priority, visibility, delays, launch mode, relaunch attempts |
-| **Footer** | `join site` button, overflow `...` menu (config, logs, docs, feedback/bug), and version info |
+| **Processes list** | Every monitored process, in launch order, with a status dot from the service's live table. Drag a row to reorder; right-click one for restart, kill, duplicate, and delete. Drop an app, a script, a TouchDesigner project, or a Unity build folder anywhere in the window to add it. |
+| **Process settings** | Launch mode and schedule, name, executable path, file path or arguments, working directory, startup delay, priority, initialization wait, visibility, and relaunch attempts. There is no save button — a field writes itself when it loses focus or takes an enter key. |
+| **Menu** (top right) | Join or leave a site, open `config.json`, open the logs folder, open these docs, and submit a bug report. |
+| **Footer** | One sentence saying whether this machine is being supervised and which site it belongs to, plus the version of the *service* that is running. A `start service` button appears here when the service is not. |
+
+Nothing has been configured yet on a freshly enrolled machine:
+
+![the owlette desktop app on a machine with no processes configured yet](/docs-screens/agent-empty.png)
+
+The menu at the top right is where a machine joins its first site, or leaves the one it is on:
+
+![the owlette desktop app's menu, open, on a machine that belongs to a site](/docs-screens/agent-menu.png)
+
+Joining shows a pairing phrase to approve from any device — the same device-code flow the installer uses:
+
+![the join a site dialog showing a pairing phrase](/docs-screens/agent-join-site.png)
 
 ---
 
@@ -116,9 +128,17 @@ If the agent regenerates a config and an existing `firebase` section is present,
 
 ## process configuration
 
-Each process in the `processes` array uses the current process keys. The generator creates an empty array; GUI-created and dashboard-created entries share most fields but are not identical.
+A process's launch mode is the first thing to set: `off` leaves it alone, `always on` keeps it running around the clock and relaunches it if it crashes, and `scheduled` runs it inside the windows you define.
 
-GUI-created entry:
+![the process settings panel with the launch mode set to scheduled](/docs-screens/agent-launch-mode.png)
+
+`edit` beside a scheduled process opens the schedule editor. Times follow the site's timezone, or this machine's local time when it is not paired to one:
+
+![the schedule editor, with one weekday block from 9am to 6pm](/docs-screens/agent-schedule-editor.png)
+
+Each process in the `processes` array uses the current process keys. The generator creates an empty array; entries created in the desktop app and entries created from the dashboard share most fields but are not identical.
+
+Desktop-app-created entry:
 
 ```json
 {
@@ -171,7 +191,7 @@ Dashboard writes include `schedulePresetId` only when a schedule preset is suppl
 | `exe_path` | string | Full path to the executable. |
 | `file_path` | string | File to open with the executable, or command-line arguments when the value is not a file on disk. |
 | `cwd` | string or null | Working directory. Empty string and null are treated as unset. |
-| `priority` | string | Priority label stored with the process. The GUI exposes `Low`, `Normal`, `High`, and `Realtime`. |
+| `priority` | string | Priority label stored with the process. The desktop app exposes `Low`, `Normal`, `High`, and `Realtime`. |
 | `visibility` | string | Window state used by the launcher. See accepted values below. |
 | `time_delay` | string or number | Seconds to wait before launching this process during startup or scheduled activation. |
 | `time_to_init` | string or number | Seconds to wait after launch before monitoring responsiveness. |
@@ -184,7 +204,7 @@ Dashboard writes include `schedulePresetId` only when a schedule preset is suppl
 
 ### visibility options
 
-The local GUI exposes `Normal` and `Hidden`. The launcher also accepts `Minimized` and `Maximized` when a process entry is edited manually.
+The desktop app exposes `Normal` and `Hidden`. The launcher also accepts `Minimized` and `Maximized` when a process entry is edited manually.
 
 | value | description |
 |-------|-------------|
@@ -215,12 +235,12 @@ The dashboard writes process updates to Firestore. The agent listener applies th
 ```mermaid
 flowchart TD
     FS["Cloud Firestore<br/>config + machine state"]
-    FS --> GUI["local GUI<br/>config.json"]
+    FS --> APP["desktop app<br/>config.json"]
     FS --> SVC["service<br/>config.json"]
     FS --> DASH["dashboard<br/>web writes"]
 ```
 
-- **GUI -> service**: The GUI writes to `config.json`; the service detects the file change.
+- **Desktop app -> service**: The desktop app writes to `config.json`; the service detects the file change.
 - **Service -> Firestore**: The service uploads local config changes.
 - **Firestore -> service**: The service listener applies remote config changes.
 - **Dashboard -> Firestore**: The dashboard writes config changes directly to Firestore.

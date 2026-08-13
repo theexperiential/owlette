@@ -67,17 +67,38 @@ git add -A && git commit -m "chore: bump version to X.Y.Z" && git push origin de
 # the trailing pause will hang non-interactive shells indefinitely.
 # Output: agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
 
-# 3. Compute checksum
+# 3. Refresh the agent docs screenshots (~15 s)
+#
+# Run this AFTER the build, never at bump time: the bump is pre-build, has no
+# binary to photograph, and must stay side-effect-free. Release time is the one
+# moment the documentation has to match what is about to ship.
+#
+#   cd web && npm run screenshots:desktop
+#
+# It drives the app installed at C:\ProgramData\Owlette\app\owlette-desktop.exe
+# over CDP and rewrites web/public/docs-screens/agent*.png. If this release
+# changed the desktop UI, install the freshly built installer on this machine
+# first (or copy build\installer_package\app\owlette-desktop.exe over the
+# installed one) — otherwise the shots are of the *previous* build.
+#
+# Needs an interactive desktop session with the owlette tray icon visible on the
+# taskbar (the tray-menu shot is captured by UI Automation, not CDP). It kills
+# and replaces the tray for the duration and restores the window layout after;
+# the service re-spawns a tray within 30 s. `git diff --stat web/public/docs-screens`
+# is the check — no diff means nothing user-visible changed, which is a valid
+# result. See web/e2e/desktop-screenshots/README.md.
+
+# 4. Compute checksum
 sha256sum agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
 
-# 4. Upload via API (3-step: request URL → upload binary → finalize)
+# 5. Upload via API (3-step: request URL → upload binary → finalize)
 # Endpoint is `/api/installer/upload` (api-sprint route — old `/api/admin/installer/upload` was removed).
 # Auth: api key with `installer=*:write` scope (superadmin-only at minting). `x-api-key` or `Authorization: Bearer owk_…` both work.
 # Idempotency-Key REQUIRED on both POST and PUT — the route is wrapped in `withIdempotency(..., { requireKey: true })`.
 API_KEY=$(grep OWLETTE_API_KEY .claude/.env.local | cut -d= -f2)
 BASE_URL="https://dev.owlette.app"  # or https://owlette.app for prod
 
-# Step 1: Get signed upload URL
+# Step 5a: Get signed upload URL
 curl -s -X POST "$BASE_URL/api/installer/upload" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
@@ -85,16 +106,16 @@ curl -s -X POST "$BASE_URL/api/installer/upload" \
   -d '{"version":"X.Y.Z","fileName":"Owlette-Installer-vX.Y.Z.exe","releaseNotes":"...","setAsLatest":true}'
 # → returns uploadUrl, uploadId, storagePath, expiresAt (15-min window)
 
-# Step 2: Upload binary to the signed GCS URL (no Idempotency-Key here — it's a direct GCS PUT)
+# Step 5b: Upload binary to the signed GCS URL (no Idempotency-Key here — it's a direct GCS PUT)
 curl -X PUT "$UPLOAD_URL" -H "Content-Type: application/octet-stream" \
   --data-binary @agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe
 
-# Step 3: Finalize (verifies file in storage, computes/checks checksum, writes installer_metadata, sets as latest)
+# Step 5c: Finalize (verifies file in storage, computes/checks checksum, writes installer_metadata, sets as latest)
 curl -s -X PUT "$BASE_URL/api/installer/upload" \
   -H "Content-Type: application/json" \
   -H "x-api-key: $API_KEY" \
   -H "Idempotency-Key: installer-finalize-X.Y.Z-$(date +%s)" \
-  -d '{"uploadId":"<from step 1>","checksum_sha256":"<sha256 from earlier>"}'
+  -d '{"uploadId":"<from step 5a>","checksum_sha256":"<sha256 from earlier>"}'
 # checksum_sha256 is optional — server computes it if omitted, but providing it gets a 412 `checksum_mismatch` on corruption.
 ```
 

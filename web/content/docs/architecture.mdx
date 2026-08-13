@@ -9,7 +9,7 @@ description: "owlette uses a split control, state, and data plane. Cloud Firesto
 
 ```mermaid
 flowchart LR
-    Agents["Desktop Services\n(Agents)"]
+    Agents["Windows Services\n(Agents)"]
     API["Next.js API routes\n(control plane)"]
     FS[("Cloud Firestore\nReal-time NoSQL")]
     Storage[("Firebase Storage / Cloudflare R2\nbinary data plane")]
@@ -41,10 +41,10 @@ flowchart LR
 The agent runs as a Windows service managed by [NSSM](https://nssm.cc/) (Non-Sucking Service Manager). It:
 
 - **Monitors processes** every 5 seconds — detects crashes, stalls, and exits
-- **Auto-restarts** crashed applications using Task Scheduler or CreateProcessAsUser
-- **Sends heartbeats & reports metrics** (CPU, memory, disk, GPU, network) at an adaptive interval — 5s when the system tray GUI is open, 30s when processes are running, 120s when idle
+- **Auto-restarts** crashed applications with `CreateProcessAsUser`, so they land in the logged-in user's session
+- **Sends heartbeats & reports metrics** (CPU, memory, disk, GPU, network) at an adaptive interval — 5s when the desktop app's window is open, 30s when processes are running, 120s when idle
 - **Executes commands** from the dashboard — restart process, install software, reboot, etc.
-- **Syncs configuration** bidirectionally between local GUI and cloud
+- **Syncs configuration** bidirectionally between the desktop app and the cloud
 - **Runs offline** — continues monitoring even without internet, syncs when reconnected
 
 The agent uses a **custom Firestore REST API client** (not the Firebase Admin SDK) with an OAuth two-token authentication system.
@@ -124,7 +124,7 @@ firebase use
 
 ```mermaid
 flowchart LR
-    Agent["Desktop Service\n(Agent)"]
+    Agent["Windows Service\n(Agent)"]
     FS[("Firestore")]
     CF["Cloud Function\n(onMetricsWrite)"]
     Dashboard["Web Dashboard"]
@@ -141,7 +141,7 @@ flowchart LR
 flowchart LR
     Dashboard["Web Dashboard"]
     FS[("Firestore")]
-    Agent["Desktop Service\n(Agent)"]
+    Agent["Windows Service\n(Agent)"]
     CF["Cloud Function\n(onCommandCompleted)"]
 
     Dashboard -->|"1. write command\nto pending"| FS
@@ -156,11 +156,11 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    GUI["Tray Icon /\nGUI (Agent)"] -->|"1. write"| FS[("Firestore")]
+    App["Desktop App\n(owlette-desktop.exe)"] -->|"1. write"| FS[("Firestore")]
     FS -->|"2. onSnapshot"| Dashboard["Web Dashboard"]
     Dashboard -->|"3. write"| FS
-    FS -->|"4. listener"| Agent["Desktop Service\n(Agent)"]
-    Agent -->|"5. update\nconfig.json"| GUI
+    FS -->|"4. listener"| Agent["Windows Service\n(Agent)"]
+    Agent -->|"5. update\nconfig.json"| App
 ```
 
 ### per-volume disk IO
@@ -407,13 +407,13 @@ version bodies are stored at `project-manifests/{siteId}/{roostId}/{versionId}.j
 
 ### version body format
 
-The version body is an OCI-derived JSON document with media type `application/vnd.owlette.version.v1+json`. It is canonical JSON and includes a `config` object plus a non-empty `files[]` array. Minimal shape:
+The version body is an OCI-derived JSON document with media type `application/vnd.owlette.version.v1+json`. It is canonical JSON and includes a `config` object plus a non-empty `files[]` array. `config` is free-form provenance about the push — the server validates only that it is an object and stores it verbatim, so it can answer "how was this version produced?" later. The keys below are what `owlette push` emits (`cli/src/lib/versionBuilder.ts`); `hostname` and `platform` are omitted when the CLI can't determine them. Minimal shape:
 
 ```json
 {
   "schemaVersion": 2,
   "mediaType": "application/vnd.owlette.version.v1+json",
-  "config": { "name": "lobby-show", "siteId": "nyc", "createdAt": "...", "createdBy": "uid" },
+  "config": { "producer": "owlette-cli", "cliVersion": "1.0.0-rc.0", "hostname": "studio-01", "platform": "win32" },
   "files": [
     { "path": "project.toe", "size": 123456, "chunks": [
       { "hash": "a1b2...", "size": 4194304 }
@@ -465,6 +465,8 @@ flowchart LR
 
 canary cohort selection is deterministic (FNV-1a hash of `machineId + versionId`) so trigger retries don't flap the chosen cohort. the abort threshold evaluates against `total`, not `settled`, so a rollout that's already past the 25% failure mark bails immediately without waiting for remaining machines.
 
+on a single-machine site the canary *is* the whole fleet: the canary wave holds the one target and the fleet wave is empty, so a passing canary settles straight to `complete` without a second wave. a failing one still aborts at the same threshold.
+
 ### security floor
 
 - **per-tenant signed-URL paths**: a signed URL issued for `site-a` cannot read `site-b`'s chunks — paths are scoped before signing
@@ -474,7 +476,7 @@ canary cohort selection is deterministic (FNV-1a hash of `machineId + versionId`
 
 ### current agent support
 
-The current checked-in agent version is `2.12.3`, and that agent registers the roost v2 handlers `sync_pull`, `cancel_sync`, and `rollback_to_version`. The v2 sync path does not use a `project_url` fallback; legacy v1 project-distribution records can coexist in Firestore during migration, but roost v2 deploys are consumed by agents with the v2 sync handlers.
+The current checked-in agent version is `3.0.0`, and that agent registers the roost v2 handlers `sync_pull`, `cancel_sync`, and `rollback_to_version`. The v2 sync path does not use a `project_url` fallback; legacy v1 project-distribution records can coexist in Firestore during migration, but roost v2 deploys are consumed by agents with the v2 sync handlers.
 
 ---
 

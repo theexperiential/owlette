@@ -169,11 +169,13 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 | log | path |
 |-----|------|
 | Service | `C:\ProgramData\Owlette\logs\service.log` |
-| GUI | `C:\ProgramData\Owlette\logs\gui.log` |
-| Tray | `C:\ProgramData\Owlette\logs\tray.log` |
+| Desktop app | `%LOCALAPPDATA%\app.owlette.desktop\logs\owlette-desktop.log` (per-user, not under ProgramData) |
+| Cortex | `C:\ProgramData\Owlette\logs\cortex.log` |
 | Pairing | `C:\ProgramData\Owlette\logs\pairing_debug.log` |
 | Self-update installer | `C:\ProgramData\Owlette\logs\installer_update.log` |
 | Interactive installer | Only where Inno Setup is launched with `/LOG=<path>`; use `/LOG="C:\ProgramData\Owlette\logs\setup.log"` to write a setup log there |
+
+The full inventory, including what each file is good for, is in [agent troubleshooting](/docs/agent/troubleshooting).
 
 ### dashboard logs
 

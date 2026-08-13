@@ -225,6 +225,12 @@ function syncVersions(newVersion) {
   console.log('   2. Commit changes: git commit -am "chore: Bump version to ' + newVersion + '"');
   console.log('   3. Create tag: git tag v' + newVersion);
   console.log('   4. Push with tags: git push origin main --tags\n');
+  // Deliberately *after* the build, not here: a bump has no installer to
+  // photograph yet, and this script must stay side-effect-free (it edits version
+  // files and nothing else). Release time is when the docs have to match what
+  // ships. See .claude/skills/build-system.md → "Agent Installer Release".
+  console.log('   After building the installer: cd web && npm run screenshots:desktop');
+  console.log('   (refreshes the agent docs screenshots from the shipping desktop app)\n');
 }
 
 // Main
