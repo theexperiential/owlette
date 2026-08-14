@@ -118,6 +118,27 @@ RESTART_PROMPT_ACTIVE_SECONDS = 300
 # and cuts ~83% of writes when content is unchanged.
 MIN_STATUS_WRITE_INTERVAL = 30
 
+# How often the SCM is asked whether an operator has stopped this service.
+#
+# Under NSSM the agent's only shutdown signal is a console Control-C event,
+# which NSSM sends on a best-effort basis: it has to attach to the application's
+# console first, and when that fails there is no signal at all — NSSM simply
+# terminates the process tree a few seconds later, taking the agent down with no
+# chance to flush `online: false` or log anything (2026-08-13 14:17). The SCM's
+# own STOP_PENDING is the one signal that cannot be missed, so it is polled as a
+# second, independent trigger. Anything slower than the stop-method budget below
+# would be pointless; anything faster buys nothing.
+SCM_STOP_POLL_INTERVAL = 0.25
+
+# How long the watcher assumes it has once STOP_PENDING appears.
+#
+# NSSM tries three stop methods with a 1500 ms timeout each before it starts
+# terminating processes (nssm.cc/usage: AppStopMethodConsole / -Window /
+# -Threads), which the incident bears out: the stop control landed at 14:17:05.7
+# and the first TerminateProcess at 14:17:10.3. The shutdown has to fit inside
+# that, so it is logged as a warning if it does not.
+SCM_STOP_GRACE_SECONDS = 4.5
+
 
 def _init_status_writer_logger():
     """Build a dedicated rotating logger for status-write decisions.
@@ -253,6 +274,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # call path that might somehow pre-empt this.
         self._last_status_signature = None
         self._last_status_write_time = 0.0
+
+        # Once-only guard for graceful_shutdown(). The console handler and the
+        # SCM watcher can both fire for the same stop, and neither is allowed to
+        # log agent_stopped twice or race the Firestore offline write.
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_trigger = None
+        # ConnectionManager the status-file listener is registered against, so
+        # re-initialising the Firebase client re-wires it against the new one.
+        self._connection_status_manager = None
 
         # Write early status so tray can show health alerts before Firebase init
         self._write_service_status_early()
@@ -476,14 +506,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             sync_result = self.firebase_client.sync_config_on_startup()
             logging.info(f"Config sync on reinit: {sync_result}")
 
-            # Wire state listener BEFORE start() so the CONNECTED event
-            # writes the status file immediately (tray polls every 1s)
-            def _on_connection_change(event):
-                try:
-                    self._write_service_status()
-                except Exception:
-                    pass
-            self.firebase_client.connection_manager.add_state_listener(_on_connection_change)
+            # Re-wire the status-file listener against the new connection
+            # manager, and publish the state it already reached during
+            # construction (the tray polls the file every second).
+            self._wire_connection_status_listener()
 
             # Wire health callback so connection failures update health state + alert
             self.firebase_client.connection_manager.set_health_callback(
@@ -686,6 +712,214 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 _status_writer_logger.info(f"error {type(e).__name__}: {e}")
             except Exception:
                 pass
+
+    def _wire_connection_status_listener(self):
+        """Keep tmp/service_status.json in step with the cloud connection.
+
+        The tray reads that file every second and paints the connection badge
+        from it, so the file *is* the tray's view of connectivity. A listener on
+        its own is not enough to make that view honest: the initial
+        CONNECTING -> CONNECTED transition happens inside FirebaseClient's
+        constructor, long before main() reaches the point where the listener
+        used to be registered — and on a startup whose config sync is slow
+        (15s is normal, and it sits between the two) the badge stayed red until
+        the first main-loop status write, ~25s after the connection was
+        actually established. The immediate write below is what closes that gap.
+
+        Idempotent per connection manager, so _initialize_firebase_client can
+        call it again after replacing the client and get the new one wired.
+        """
+        if not self.firebase_client:
+            return
+
+        manager = getattr(self.firebase_client, 'connection_manager', None)
+        if manager is None:
+            return
+
+        if manager is not self._connection_status_manager:
+            def _on_connection_change(event):
+                # Fires on every transition, so a disconnect turns the badge red
+                # as quickly as a connect turns it green. The write is throttled
+                # by content signature (MIN_STATUS_WRITE_INTERVAL), and
+                # `connected` is part of that signature, so a transition always
+                # writes and a steady state still costs nothing.
+                try:
+                    self._write_service_status()
+                except Exception as e:
+                    logging.debug(f"Status write on connection change failed: {e}")
+
+            manager.add_state_listener(_on_connection_change)
+            self._connection_status_manager = manager
+
+        # Publish the state that is already current — the transition this
+        # listener exists for has usually happened by now.
+        try:
+            self._write_service_status()
+        except Exception as e:
+            logging.debug(f"Initial connection status write failed: {e}")
+
+    def graceful_shutdown(self, trigger):
+        """Flush presence and log the shutdown. Runs at most once per process.
+
+        Every operator-initiated stop has to come through here: the machine is
+        marked offline in Firestore, an agent_stopped event is logged, the
+        session is recorded as a clean external stop, and the status file is
+        left saying the service is down.
+
+        Two independent triggers call it — the console control handler NSSM
+        *tries* to deliver, and the SCM watcher that notices STOP_PENDING
+        whether or not that signal ever arrives. Whichever gets here first does
+        the work; the other returns immediately.
+
+        Args:
+            trigger: Short name of what noticed the stop, for the log.
+
+        Returns:
+            True if this call performed the shutdown, False if it was already
+            done (or under way on another thread).
+        """
+        with self._shutdown_lock:
+            if self._shutdown_trigger is not None:
+                logging.debug(
+                    f"[SHUTDOWN] {trigger} ignored — already handled by "
+                    f"{self._shutdown_trigger}"
+                )
+                return False
+            self._shutdown_trigger = trigger
+
+        started = time.monotonic()
+        logging.warning(f"=== SERVICE STOP ({trigger}) === flushing presence")
+        self.is_alive = False
+
+        if self.firebase_client:
+            try:
+                version = shared_utils.get_app_version()
+                self.firebase_client.log_event(
+                    action='agent_stopped',
+                    level='info',
+                    details=f'owlette agent v{version} shutting down gracefully'
+                )
+                logging.info("[SHUTDOWN] agent_stopped event logged")
+            except Exception as e:
+                logging.error(f"[SHUTDOWN] Failed to log agent_stopped: {e}")
+
+            # Compare-and-set: an owlette_reboot/owlette_shutdown intent set
+            # moments earlier by _handle_reboot_machine must win over this.
+            try:
+                import session_state
+                session_state.set_intent_if_none("external_clean")
+            except Exception as e:
+                logging.debug(f"[SHUTDOWN] set_intent_if_none failed: {e}")
+
+            # This is the write that marks the machine offline.
+            try:
+                self.firebase_client.stop()
+                logging.info("[SHUTDOWN] Firebase client stopped, machine offline")
+            except Exception as e:
+                logging.error(f"[SHUTDOWN] Error stopping Firebase client: {e}")
+        else:
+            logging.warning("[SHUTDOWN] No Firebase client — presence not flushed")
+
+        try:
+            self._write_service_status(running=False)
+        except Exception as e:
+            logging.debug(f"[SHUTDOWN] Final status write failed: {e}")
+
+        elapsed = time.monotonic() - started
+        if elapsed > SCM_STOP_GRACE_SECONDS:
+            logging.warning(
+                f"=== SERVICE STOP COMPLETE ({trigger}) === took {elapsed:.1f}s, "
+                f"longer than the {SCM_STOP_GRACE_SECONDS}s NSSM allows — the "
+                f"offline write may not have landed"
+            )
+        else:
+            logging.info(f"=== SERVICE STOP COMPLETE ({trigger}) === in {elapsed:.1f}s")
+        return True
+
+    def _query_scm_stop_requested(self):
+        """True once the SCM reports this service is stopping.
+
+        Kept separate from the polling loop so the decision can be exercised
+        without a service. Any failure to read the SCM is reported as "not
+        stopping" — a watcher that cannot see the SCM must not invent a stop.
+        """
+        try:
+            manager = win32service.OpenSCManager(
+                None, None, win32service.SC_MANAGER_CONNECT)
+        except Exception as e:
+            logging.debug(f"[SCM WATCH] Could not open the SCM: {e}")
+            return False
+
+        try:
+            service = win32service.OpenService(
+                manager, shared_utils.SERVICE_NAME, win32service.SERVICE_QUERY_STATUS)
+        except Exception as e:
+            logging.debug(f"[SCM WATCH] Could not open {shared_utils.SERVICE_NAME}: {e}")
+            return False
+        finally:
+            try:
+                win32service.CloseServiceHandle(manager)
+            except Exception:
+                pass
+
+        try:
+            state = win32service.QueryServiceStatus(service)[1]
+        except Exception as e:
+            logging.debug(f"[SCM WATCH] Could not query service status: {e}")
+            return False
+        finally:
+            try:
+                win32service.CloseServiceHandle(service)
+            except Exception:
+                pass
+
+        return state in (win32service.SERVICE_STOP_PENDING,
+                         win32service.SERVICE_STOPPED)
+
+    def start_scm_stop_watcher(self):
+        """Watch the SCM for a stop this process was never told about.
+
+        NSSM's graceful stop is a console Control-C it can only deliver if it
+        manages to attach to the application's console; when that fails the
+        agent is terminated with no signal at all, which is how a machine came
+        to sit on the dashboard as online with an eleven-minute-old heartbeat.
+        The SCM's STOP_PENDING is set the moment the stop control is accepted
+        and cannot be missed, so it is polled here as a second trigger.
+
+        Runs on its own daemon thread — never on the main loop, which must not
+        block — and exits as soon as it has handed off to graceful_shutdown().
+        """
+        def _watch():
+            failures = 0
+            while self.is_alive:
+                try:
+                    if self._query_scm_stop_requested():
+                        logging.warning(
+                            "[SCM WATCH] Service is stopping and no shutdown "
+                            "signal reached us — flushing presence now"
+                        )
+                        self.graceful_shutdown('scm_stop')
+                        return
+                    failures = 0
+                except Exception as e:
+                    failures += 1
+                    logging.debug(f"[SCM WATCH] Poll failed ({failures}): {e}")
+                    # A watcher that cannot read the SCM is useless and must not
+                    # spin forever logging about it; the console handler is
+                    # still in place either way.
+                    if failures >= 10:
+                        logging.warning(
+                            "[SCM WATCH] Giving up after 10 consecutive failures"
+                        )
+                        return
+                time.sleep(SCM_STOP_POLL_INTERVAL)
+
+        thread = threading.Thread(
+            target=_watch, name='owlette-scm-stop-watch', daemon=True)
+        thread.start()
+        logging.info(
+            f"SCM stop watcher started (polling every {SCM_STOP_POLL_INTERVAL}s)")
+        return thread
 
     def _update_health_state(self, status: str, error_code: str, message: str):
         """
@@ -955,47 +1189,21 @@ class OwletteService(win32serviceutil.ServiceFramework):
         caller_frame = inspect.currentframe().f_back
         caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_lineno}" if caller_frame else "unknown"
         logging.warning(f"=== SERVICE STOP REQUESTED === (called from {caller_info})")
-        logging.info("Service stop requested - setting machine offline in Firebase...")
-        self.is_alive = False
 
-        # Log Agent Stopped event to Firestore BEFORE stopping client
-        firebase_connected = self.firebase_client and self.firebase_client.is_connected()
-        logging.info(f"SvcStop - Firebase client available: {self.firebase_client is not None}, connected: {firebase_connected}")
+        # One shutdown path for every trigger: this, the console control handler
+        # under NSSM, and the SCM stop watcher. It flushes presence, logs
+        # agent_stopped, records the clean external stop and writes the final
+        # status file — once, whichever of them gets here first.
+        self.graceful_shutdown('svc_stop')
 
-        if firebase_connected:
-            try:
-                # Note: agent_stopped is logged by signal handler in owlette_runner.py
-                # (most reliable - always executes even if service is killed quickly)
-                # No need to log here to avoid duplicate events
-                logging.info("SvcStop - agent_stopped will be logged by signal handler")
-                # Give Firebase a moment to flush any pending writes
-                time.sleep(0.5)
-            except Exception as log_err:
-                logging.error(f"SvcStop - Failed to log agent_stopped event: {log_err}")
-                logging.exception("Full traceback:")
-        else:
-            logging.warning("SvcStop - Firebase client not available - cannot log agent_stopped event")
-
-        # Stop Firebase client (this sets machine offline)
-        if self.firebase_client:
-            try:
-                self.firebase_client.stop()
-                logging.info("[OK] Firebase client stopped and machine set to offline")
-            except Exception as e:
-                logging.error(f"[ERROR] Error stopping Firebase client: {e}")
-
-        # Close any open owlette windows (GUI, prompts, etc.)
+        # Close any open owlette windows (GUI, prompts, etc.). The desktop app
+        # is not one of them and is deliberately left running — see the note
+        # above _is_tray_alive().
         self.close_owlette_windows()
 
-        self.terminate_tray_icon()
         self.terminate_cortex()
 
-        # Write final status (service stopped) for tray icon
-        self._write_service_status(running=False)
-
         win32event.SetEvent(self.hWaitStop)
-
-        logging.info("=== SERVICE STOP COMPLETE ===")
 
     # While service runs
     def SvcDoRun(self):
@@ -1153,17 +1361,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # Note: Gmail and Slack notifications removed - use Firebase for centralized monitoring
     
-    # Terminate the tray icon process if it exists
-    def terminate_tray_icon(self):
-        if self.tray_icon_pid:
-            try:
-                psutil.Process(self.tray_icon_pid).terminate()
-            except psutil.NoSuchProcess:
-                logging.error("No such process to terminate.")
-            except psutil.AccessDenied:
-                logging.error("Access denied while trying to terminate the process.")
-            except Exception as e:
-                logging.error(f"An unexpected error occurred while terminating the process: {e}")
+    # The service used to terminate the tray icon on the way out. It no longer
+    # does: the desktop app owns its own lifetime (it is a single instance, it
+    # can be started from the user's startup shortcut, and its footer is where
+    # an operator starts a stopped service from). Killing it on shutdown left a
+    # machine with a stopped service and no UI to start it again — which is
+    # exactly what the leave-site flow ran into on 2026-08-13.
 
     def _is_tray_alive(self):
         """Check whether the desktop app (which supplies the tray icon) is running.
@@ -1875,15 +2078,22 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # Found it again after an absence — let the next disappearance warn.
         self._desktop_exe_missing_logged = False
 
-        command_line = ' '.join([f'"{exe_path}"'] + list(args))
+        # Launched detached rather than as our own child: NSSM stops this
+        # service by terminating the whole process tree below the program it
+        # started, which used to take the operator's UI down with it — the tray
+        # icon included, leaving no way to start the service back up. See
+        # shared_utils.build_detached_launch_command for the mechanism.
+        command_line = shared_utils.build_detached_launch_command(exe_path, args)
         description = f"desktop app ({' '.join(args) if args else 'no args'})"
         pid = self._launch_command_as_user(command_line, description)
         if pid is None:
             return False
 
-        if shared_utils.DESKTOP_TRAY_ARG in args:
-            self.tray_icon_pid = pid
-        logging.info(f"Launched {description} as PID {pid}")
+        # The pid above belongs to the cmd.exe that hands off, not to the app,
+        # so nothing is recorded here. _is_tray_alive() adopts the real pid from
+        # tmp/tray.pid on the next check — the same marker that already covered
+        # an app started by the user's startup shortcut.
+        logging.info(f"Launched {description} (detached)")
         return True
 
     def execute_in_user_session(self, job_type, code, timeout=30, trusted=False):
@@ -6523,18 +6733,15 @@ with open(out_path, 'wb') as f:
                 # Register config update callback
                 self.firebase_client.register_config_update_callback(self.handle_config_update)
 
+                # Before the config sync, not after: the sync routinely takes
+                # 15 seconds, and until this runs the status file still says
+                # disconnected — which the tray paints as a red badge on a
+                # machine that has been connected since its constructor ran.
+                self._wire_connection_status_listener()
+
                 # Sync config: pull from Firestore (source of truth), or seed if new machine
                 sync_result = self.firebase_client.sync_config_on_startup()
                 logging.info(f"Config sync on startup: {sync_result}")
-
-                # Wire state listener BEFORE start() so the CONNECTED event
-                # writes the status file immediately (tray polls every 1s)
-                def _on_connection_change(event):
-                    try:
-                        self._write_service_status()
-                    except Exception:
-                        pass
-                self.firebase_client.connection_manager.add_state_listener(_on_connection_change)
 
                 # Wire health callback
                 self.firebase_client.connection_manager.set_health_callback(
@@ -6994,6 +7201,19 @@ with open(out_path, 'wb') as f:
             # This ensures machine is marked offline even when running in NSSM mode
             logging.warning("=== MAIN LOOP EXITING - PERFORMING CLEANUP ===")
 
+            # An operator stop is normally handled before the loop unwinds —
+            # graceful_shutdown() runs on the console handler's thread or the
+            # SCM watcher's, because NSSM starts terminating processes ~4.5s
+            # after the stop control and the loop cannot be relied on to get
+            # here inside that. When it did run, presence is already flushed and
+            # agent_stopped already logged; repeating either would double-log
+            # the event and re-run the client teardown.
+            already_shut_down = getattr(self, '_shutdown_trigger', None) is not None
+            if already_shut_down:
+                logging.info(
+                    f"Cleanup: shutdown already performed by {self._shutdown_trigger}"
+                )
+
             # Log Agent Stopped event to Firestore
             firebase_connected = self.firebase_client and self.firebase_client.is_connected()
             logging.info(f"Firebase client available: {self.firebase_client is not None}, connected: {firebase_connected}")
@@ -7014,7 +7234,7 @@ with open(out_path, 'wb') as f:
             # alone — otherwise every restart flaps the dashboard. A genuine
             # operator stop or shutdown (exit 0) still marks the machine offline.
             intentional_restart = bool(getattr(self, '_restart_exit_code', 0))
-            if self.firebase_client:
+            if self.firebase_client and not already_shut_down:
                 try:
                     logging.info(
                         "Stopping Firebase client for restart (presence left online)..."
@@ -7037,12 +7257,9 @@ with open(out_path, 'wb') as f:
             except Exception as e:
                 logging.error(f"Error closing windows: {e}")
 
-            # Terminate tray icon
-            try:
-                self.terminate_tray_icon()
-                logging.info("[OK] Tray icon terminated")
-            except Exception as e:
-                logging.error(f"Error terminating tray icon: {e}")
+            # The desktop app is deliberately left running — see the note above
+            # _is_tray_alive(). It survives a service stop now, which is the
+            # only way the operator can start the service again from its footer.
 
             logging.info("Service cleanup complete - exiting")
 

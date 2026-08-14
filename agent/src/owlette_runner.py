@@ -19,7 +19,16 @@ import shared_utils
 _service_instance = None
 
 def signal_handler(signum, frame):
-    """Handle Ctrl+C and other termination signals from NSSM"""
+    """Handle Ctrl+C and other termination signals from NSSM.
+
+    NSSM delivers this by attaching to the application's console and generating
+    a Control-C event, then terminates the process tree ~4.5s later whether or
+    not the event was ever delivered. It is therefore best-effort, and on
+    2026-08-13 it silently was not delivered at all: the machine was terminated
+    without flushing presence and sat on the dashboard as online. The real work
+    lives in OwletteService.graceful_shutdown(), which the SCM stop watcher
+    calls as well — whichever notices the stop first does it, exactly once.
+    """
     global _service_instance
 
     # Log to both logger and stderr for visibility
@@ -38,48 +47,15 @@ def signal_handler(signum, frame):
         print("[SIGNAL HANDLER] ERROR: _service_instance is None", file=sys.stderr, flush=True)
         sys.exit(0)
 
-    # CRITICAL: NSSM kills the process ~4 seconds after this signal
-    # The main loop can't exit fast enough to hit the finally block
-    # So we MUST log agent_stopped HERE before we're killed
-    if _service_instance.firebase_client:
-        try:
-            import shared_utils
-            version = shared_utils.get_app_version()
-            logging.info("[SIGNAL HANDLER] Logging agent_stopped event to Firestore")
-            _service_instance.firebase_client.log_event(
-                action='agent_stopped',
-                level='info',
-                details=f'owlette agent v{version} shutting down gracefully'
-            )
-            logging.info("[SIGNAL HANDLER] agent_stopped event logged successfully")
-            print("[SIGNAL HANDLER] agent_stopped logged", file=sys.stderr, flush=True)
-        except Exception as e:
-            logging.error(f"[SIGNAL HANDLER] Failed to log agent_stopped: {e}")
-            print(f"[SIGNAL HANDLER] Failed to log agent_stopped: {e}", file=sys.stderr, flush=True)
-
-        # Mark the session as cleanly stopped — but only if no Owlette intent
-        # was already set (e.g. by _handle_reboot_machine moments earlier).
-        # set_intent_if_none is compare-and-set: it will not overwrite an
-        # existing owlette_reboot/owlette_shutdown intent.
-        try:
-            import session_state
-            session_state.set_intent_if_none("external_clean")
-        except Exception as e:
-            logging.debug(f"[SIGNAL HANDLER] session_state.set_intent_if_none failed: {e}")
-
-        # Stop Firebase client now
-        try:
-            _service_instance.firebase_client.stop()
-            logging.info("[SIGNAL HANDLER] Firebase client stopped")
-        except Exception as e:
-            logging.error(f"[SIGNAL HANDLER] Error stopping Firebase: {e}")
-    else:
-        logging.warning("[SIGNAL HANDLER] No Firebase client - cannot log agent_stopped")
-
-    # Signal main loop to exit gracefully (if we get time)
-    if hasattr(_service_instance, 'is_alive'):
-        _service_instance.is_alive = False
-        logging.info("[SIGNAL HANDLER] is_alive set to False")
+    try:
+        performed = _service_instance.graceful_shutdown(f'console_{sig_name.lower()}')
+        print(
+            f"[SIGNAL HANDLER] shutdown {'performed' if performed else 'already done'}",
+            file=sys.stderr, flush=True,
+        )
+    except Exception as e:
+        logging.error(f"[SIGNAL HANDLER] graceful_shutdown failed: {e}")
+        print(f"[SIGNAL HANDLER] graceful_shutdown failed: {e}", file=sys.stderr, flush=True)
 
     # Exit immediately - NSSM will kill us anyway
     sys.exit(0)
@@ -216,6 +192,16 @@ if __name__ == '__main__':
             # to fire under NSSM.
             self._last_status_signature = None
             self._last_status_write_time = 0.0
+            # Once-only guard for graceful_shutdown() (mirror
+            # OwletteService.__init__). The console control handler and the SCM
+            # stop watcher both call it for the same stop; without the lock and
+            # the trigger marker they would race the Firestore offline write and
+            # log agent_stopped twice.
+            self._shutdown_lock = threading.Lock()
+            self._shutdown_trigger = None
+            # ConnectionManager the status-file listener is bound to (mirror
+            # OwletteService.__init__), so a Firebase re-init re-wires it.
+            self._connection_status_manager = None
 
             # Initialize Firebase client
             self.firebase_client = None
@@ -289,6 +275,14 @@ if __name__ == '__main__':
         except Exception as e:
             logging.error(f"Failed to write early service status: {e}")
 
+        # The Firebase client reached CONNECTED inside MockService above, before
+        # anything was listening. Wire the listener and publish that state now
+        # rather than leaving the tray's badge red until main() gets here.
+        try:
+            _service_instance._wire_connection_status_listener()
+        except Exception as e:
+            logging.error(f"Failed to wire the connection status listener: {e}")
+
         # NOW register signal handlers (after _service_instance exists)
         signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
         signal.signal(signal.SIGTERM, signal_handler)  # Termination request
@@ -323,6 +317,15 @@ if __name__ == '__main__':
                 logging.warning("win32api not available - Windows control handler not registered")
             except Exception as e:
                 logging.error(f"Failed to register Windows control handler: {e}")
+
+        # The console handler above is the signal NSSM *tries* to send. This is
+        # the one that cannot be missed: the SCM marks the service STOP_PENDING
+        # the moment a stop is accepted, several seconds before NSSM terminates
+        # anything, whether or not the Control-C ever arrives.
+        try:
+            _service_instance.start_scm_stop_watcher()
+        except Exception as e:
+            logging.error(f"Failed to start the SCM stop watcher: {e}")
 
         logging.info("Starting main service loop...")
         _service_instance.main()
