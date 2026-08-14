@@ -12,6 +12,7 @@ Each runbook is self-contained - read the one that matches your situation.
 | "prod is broken right now" | [hotfix-rollback.md](hotfix-rollback.md) |
 | "how do dev and main branches actually relate?" | [dev-to-prod-workflow.md](dev-to-prod-workflow.md) |
 | "I'm turning on Firebase App Check enforcement" | [app-check-rollout.md](app-check-rollout.md) |
+| "I'm enabling talons (the automations cron) for an environment" | [talons.md](talons.md) |
 | "I'm new to the repo and need a setup path" | [/docs/maintainer-quickstart.md](../maintainer-quickstart.md) |
 
 ## release paths

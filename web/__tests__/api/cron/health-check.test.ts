@@ -8,6 +8,7 @@ const machineRefSet = jest.fn().mockResolvedValue(undefined);
 const siteRefSet = jest.fn().mockResolvedValue(undefined);
 const emailSend = jest.fn().mockResolvedValue({ error: null });
 const fireWebhooksMock = jest.fn().mockResolvedValue(undefined);
+const tapTalonMatcherMock = jest.fn();
 const getSiteAlertRecipientsMock = jest.fn();
 
 const mockMachinesGet = jest.fn();
@@ -79,6 +80,13 @@ jest.mock('@/app/api/unsubscribe/route', () => ({
 
 jest.mock('@/lib/webhookSender.server', () => ({
   fireWebhooks: (...args: unknown[]) => fireWebhooksMock(...args),
+}));
+
+// The matcher is exercised in `__tests__/lib/talons/matcher.test.ts`; here only
+// the tap's placement matters, and mocking it keeps the run engine (and the
+// `talons` subcollection it would query) out of this suite's firestore double.
+jest.mock('@/lib/talons/matcher.server', () => ({
+  tapTalonMatcher: (...args: unknown[]) => tapTalonMatcherMock(...args),
 }));
 
 import { GET, classifyMachineHealth, stalePlannedDowntime } from '@/app/api/cron/health-check/route';
@@ -372,6 +380,33 @@ describe('GET /api/cron/health-check', () => {
       },
       { merge: true }
     );
+  });
+
+  it('taps the talon matcher once per not-responding machine (talons 2.3)', async () => {
+    // This cron is the ONLY dispatcher of `machine_offline` — a machine that is
+    // offline cannot report that it is — so a talon subscribed to it can only
+    // ever fire from here, and only for the machines that actually triggered.
+    setSite({
+      name: 'node-pa',
+      health: {
+        offlineAlert: { pendingIds: ['SILENT-1', 'SILENT-2'], pendingUpdatedAt: ts(now - 8 * MIN) },
+      },
+    });
+    mockMachinesGet.mockResolvedValue({
+      size: 3,
+      docs: [alertDoc('SILENT-1'), alertDoc('SILENT-2'), gracefulDoc('GRACEFUL-1')],
+    });
+
+    await GET(request('cron-secret'));
+
+    expect(tapTalonMatcherMock).toHaveBeenCalledTimes(2);
+    for (const machineId of ['SILENT-1', 'SILENT-2']) {
+      expect(tapTalonMatcherMock).toHaveBeenCalledWith(expect.anything(), 'node-pa', {
+        kind: 'event',
+        eventType: 'machine_offline',
+        machineId,
+      });
+    }
   });
 
   it('does NOT email while the pending set is still settling (records pending, no email)', async () => {
@@ -750,6 +785,29 @@ describe('GET /api/cron/health-check', () => {
       expect(getSiteAlertRecipientsMock).not.toHaveBeenCalled();
       // Webhook delivery is wave 2's line to draw, not this one's.
       expect(fireWebhooksMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('still taps the talon matcher for an account whose emails are cut off', async () => {
+      // The tap sits with the webhook fan-out, not the email branch, on purpose:
+      // an operator's own `machine_offline` escalation must not go quiet on the
+      // billing clock that silences owlette's alert emails.
+      setOwnedSite();
+      customerDocs.set('owner-1', {
+        billingState: 'expired',
+        trialEndsAt: now - 60 * DAY,
+        alertEmailsDisabledAt: now - DAY,
+      });
+
+      const body = await (await GET(request('cron-secret'))).json();
+
+      expect(body.alertsSuppressed).toBe(1);
+      expect(emailSend).not.toHaveBeenCalled();
+      expect(tapTalonMatcherMock).toHaveBeenCalledTimes(1);
+      expect(tapTalonMatcherMock).toHaveBeenCalledWith(expect.anything(), 'node-pa', {
+        kind: 'event',
+        eventType: 'machine_offline',
+        machineId: 'INF-RENDER-1',
+      });
     });
 
     it('still emails an expired account inside the 30-day grace (no flag yet)', async () => {

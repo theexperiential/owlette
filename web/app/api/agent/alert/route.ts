@@ -24,6 +24,7 @@ import {
   DISPLAY_EVENT_ROUTING,
   isDisplayEventType,
 } from '@/lib/alerts/displayEventRouting';
+import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
 
 /**
@@ -203,6 +204,14 @@ export const POST = withRateLimit(
       }
 
       const db = getAdminDb();
+
+      // Talon tap, placed HERE rather than after routing: every branch below
+      // returns its own response (display, exe_missing, generic, process,
+      // connection failure), so there is no shared exit a tap could sit on.
+      // Everything above this line is authentication, validation and rate
+      // limiting — a request that reaches this statement is a real, authorized
+      // event from the machine it claims to be. Fire-and-forget by contract.
+      tapTalonMatcher(db, siteId, { kind: 'event', eventType: resolvedEventType, machineId });
 
       // --- Display events (B3.1 + B3.3) ---
       // Routed through `DISPLAY_EVENT_ROUTING`. `suppressAlert === true`

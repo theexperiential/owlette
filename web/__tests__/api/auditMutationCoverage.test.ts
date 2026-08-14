@@ -99,6 +99,9 @@ export const EXEMPT_ROUTES: readonly string[] = [
   'sites/[siteId]/machines/[machineId]/screenshots/finalize',
   // agent-side screenshot pipeline (machine scope): mints a signed PUT url, writes nothing.
   'sites/[siteId]/machines/[machineId]/screenshots/upload-url',
+  // internal-secret ingress called by the onTalonLogEventCreated cloud function; runs
+  // already-authored talons, which audit their own disables from the engine. No operator actor.
+  'talons/internal/match',
   // superadmin template preview send; email only, no persisted state.
   'test-email',
   // self-delete cascade: writes its own blocking `global/audit_log` row inline (see the route header).

@@ -69,15 +69,27 @@ export type TalonOperator = (typeof TALON_OPERATORS)[number];
 /**
  * Closed catalog of events an event trigger can subscribe to.
  *
- * The first three are process/machine lifecycle events; the rest are the
+ * The first five are process/machine lifecycle events; the rest are the
  * `display_*` events registered in `@/lib/alerts/displayEventRouting`
  * (snake_case agent form — the dotted `display.*` names are the webhook wire
  * format, not subscription keys). Adding an event to that routing table means
  * adding it here too, or talons can never fire on it.
+ *
+ * Where each one is dispatched from (verified 2026-08-14 — see
+ * `@/lib/talons/matcher.server`):
+ *   - `process_crash`, `process_start_failed`, `exe_missing` — the agent posts
+ *     them to `/api/agent/alert`.
+ *   - `machine_offline` — synthesized by the health-check cron, never by an
+ *     agent: a machine that is offline cannot report that it is.
+ *   - `process_restarted` and every `display_*` event — the agent writes them
+ *     straight to `sites/{siteId}/logs`, so they reach talons through the
+ *     `onTalonLogEventCreated` firestore trigger rather than an http route.
  */
 export const TALON_EVENT_TYPES = [
   'process_crash',
   'process_start_failed',
+  'process_restarted',
+  'exe_missing',
   'machine_offline',
   'display_monitor_removed',
   'display_apply_failed',

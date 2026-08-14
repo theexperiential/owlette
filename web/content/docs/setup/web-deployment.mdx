@@ -165,6 +165,7 @@ returns 401.
 | `/api/cron/retention` | daily | `X-Cron-Secret` | deletes metrics + logs past 400 days |
 | `/api/cron/billing-trial-lifecycle` | daily | `X-Cron-Secret` | trial expiries, reminder emails, post-expiry alert cutoff |
 | `/api/cron/billing-usage-report` | daily 03:00 UTC | `X-Cron-Secret` | reports machine counts + roost storage overage to Stripe meters |
+| `/api/cron/talons` | every 60s | `X-Cron-Secret` | claims due talons (schedule triggers), missed-fire grace, stale-run recovery |
 | `/api/cortex/escalation` | every 5 min | `Authorization: Bearer` | Cortex autonomous-mode backstop poller |
 
 <Callout type="warning" title={"Two failure modes that are silent"}>

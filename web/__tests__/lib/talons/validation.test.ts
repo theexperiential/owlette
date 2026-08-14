@@ -651,11 +651,16 @@ describe('talon catalogs and limits', () => {
     }
   });
 
-  it('is the lifecycle trio plus the display events, with no duplicates', () => {
+  it('is the five lifecycle events plus the display events, with no duplicates', () => {
     expect([...TALON_EVENT_TYPES].sort()).toEqual(
       [
         'process_crash',
         'process_start_failed',
+        // Both land through the dispatch taps wired in task 2.3 —
+        // `exe_missing` at /api/agent/alert, `process_restarted` through the
+        // `onTalonLogEventCreated` firestore trigger.
+        'process_restarted',
+        'exe_missing',
         'machine_offline',
         ...Object.keys(DISPLAY_EVENT_ROUTING),
       ].sort(),

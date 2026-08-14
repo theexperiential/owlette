@@ -175,7 +175,7 @@ export async function getSiteProcessAlertEmails(siteId: string): Promise<string[
  */
 export async function getSiteAlertRecipients(
   siteId: string,
-  filterPreference?: 'healthAlerts' | 'processAlerts' | 'thresholdAlerts' | 'cortexAlerts' | 'displayAlerts'
+  filterPreference?: 'healthAlerts' | 'processAlerts' | 'thresholdAlerts' | 'cortexAlerts' | 'displayAlerts' | 'talonAlerts'
 ): Promise<SiteRecipient[]> {
   const db = getAdminDb();
   const recipients: SiteRecipient[] = [];

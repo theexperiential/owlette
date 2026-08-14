@@ -35,6 +35,7 @@ export const INSTATUS_COMPONENT_ENV: Record<StatusComponent, string> = {
   agent_registry: 'INSTATUS_COMPONENT_AGENT_REGISTRY_ID',
   webhook_delivery: 'INSTATUS_COMPONENT_WEBHOOK_DELIVERY_ID',
   alert_delivery: 'INSTATUS_COMPONENT_ALERT_DELIVERY_ID',
+  talon_dispatch: 'INSTATUS_COMPONENT_TALON_DISPATCH_ID',
   r2_uploads: 'INSTATUS_COMPONENT_R2_UPLOADS_ID',
   firestore: 'INSTATUS_COMPONENT_FIRESTORE_ID',
   cortex_chat: 'INSTATUS_COMPONENT_CORTEX_CHAT_ID',
@@ -43,7 +44,7 @@ export const INSTATUS_COMPONENT_ENV: Record<StatusComponent, string> = {
 // Components whose Instatus status-page id is OPTIONAL: they still run as health
 // checks and can alert via Sentry, but a missing id must not flip the whole page to
 // "not configured" or block the prod-readiness gate (`check-status-page-ready.mjs`).
-const OPTIONAL_STATUS_PAGE_COMPONENTS: StatusComponent[] = ['alert_delivery'];
+const OPTIONAL_STATUS_PAGE_COMPONENTS: StatusComponent[] = ['alert_delivery', 'talon_dispatch'];
 
 export function getInstatusConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,

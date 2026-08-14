@@ -6,6 +6,7 @@ export const STATUS_COMPONENTS = [
   'agent_registry',
   'webhook_delivery',
   'alert_delivery',
+  'talon_dispatch',
   'r2_uploads',
   'firestore',
   'cortex_chat',
@@ -41,6 +42,11 @@ const FIRESTORE_LATENCY_LIMIT_MS = 500;
 // than this means a digest cron is down (disabled job, stale secret, route error)
 // and alerts are silently piling up undelivered — fail loud.
 const ALERT_DELIVERY_STALE_MS = 15 * 60 * 1000;
+// `/api/cron/talons` claims every due talon each minute and advances `nextRunAt`
+// in the same transaction, so a talon still sitting due this long after its slot
+// means the sweep is not running. Wider than the sweep's own 10-minute
+// missed-fire grace, so a single skipped minute never pages.
+const TALON_DISPATCH_STALE_MS = 15 * 60 * 1000;
 
 function publicBaseUrl(baseUrl?: string): string {
   const configured =
@@ -304,6 +310,49 @@ export async function alertDeliveryHealth(
   }
 }
 
+/**
+ * Detects a stalled talon scheduler. Schedule-triggered talons only fire when
+ * `/api/cron/talons` sweeps them, and that sweep is the ONLY writer of
+ * `nextRunAt` at run time — so a still-due talon is proof the sweep is not
+ * running (a disabled cron-job, a rotated secret, a route error, an index that
+ * never finished building). Nothing else notices: a talon that silently stops
+ * firing looks exactly like a talon nobody configured.
+ */
+export async function talonDispatchHealth(
+  options: HealthCheckOptions = {},
+): Promise<HealthCheckResult> {
+  const started = Date.now();
+  const now = options.now?.() ?? Date.now();
+  const cutoff = new Date(now - TALON_DISPATCH_STALE_MS);
+
+  try {
+    const snapshot = await getAdminDb()
+      .collectionGroup('talons')
+      .where('enabled', '==', true)
+      .where('nextRunAt', '<=', cutoff)
+      .limit(10)
+      .get();
+    const overdue = snapshot.docs.length;
+    const ok = overdue === 0;
+
+    return result('talon_dispatch', started, ok, {
+      metadata: {
+        overdue_talons: overdue,
+        threshold_minutes: TALON_DISPATCH_STALE_MS / 60_000,
+      },
+      ...(ok
+        ? {}
+        : {
+            error:
+              `${overdue} talon(s) unclaimed for >${TALON_DISPATCH_STALE_MS / 60_000}m ` +
+              `— the talon sweep is likely down`,
+          }),
+    });
+  } catch (error) {
+    return result('talon_dispatch', started, false, { error: errorMessage(error) });
+  }
+}
+
 export async function firestoreHealth(): Promise<HealthCheckResult> {
   const started = Date.now();
 
@@ -357,6 +406,7 @@ export async function runStatusHealthChecks(
     agentRegistryHealth(options),
     webhookDeliveryHealth(options),
     alertDeliveryHealth(options),
+    talonDispatchHealth(options),
     r2UploadsHealth(),
     firestoreHealth(),
     cortexChatHealth(),

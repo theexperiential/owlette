@@ -150,6 +150,7 @@ const KNOWN_SYSTEM_ACTOR_NAMES: ReadonlySet<string> = new Set<SystemActorName>([
   'cortex_autonomous',
   'cortex_provisioning',
   'scheduled_cleanup',
+  'talon_runner',
 ]);
 
 /**

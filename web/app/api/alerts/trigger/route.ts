@@ -5,6 +5,7 @@ import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, SEVERITY_COLORS, METRIC_LABELS, escapeHtml, safeEmailSubject } from '@/lib/emailTemplates.server';
 import { fireWebhooks } from '@/lib/webhookSender.server';
+import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
 
 /**
@@ -140,6 +141,12 @@ export async function POST(request: NextRequest) {
         },
       });
     }
+
+    // Talon tap: the only place a threshold breach enters the system, so it is
+    // the only place a threshold talon can be matched. Fire-and-forget by
+    // contract — a talon run can capture a screenshot and call a vision model,
+    // and the cloud function calling us is waiting on this response.
+    tapTalonMatcher(db, siteId, { kind: 'threshold', metric, operator, value, machineId });
 
     console.log(
       `[alerts/trigger] Processed threshold alert: ${ruleName} on ${machineId} ` +

@@ -73,6 +73,10 @@ const INTERNAL_ROUTES = new Set([
   '/api/settings/site-llm-key',
   '/api/cron/health-check',
   '/api/cron/process-alerts',
+  // internal-secret ingress for the `onTalonLogEventCreated` cloud function —
+  // the only path for talon events the agent writes straight to the log
+  // collection. Same posture as /api/alerts/trigger and /api/cortex/autonomous.
+  '/api/talons/internal/match',
   '/api/legal/dmca',
   '/api/setup/generate-token',
   '/api/test-email',

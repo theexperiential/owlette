@@ -1,0 +1,425 @@
+/** @jest-environment node */
+
+import { NextRequest } from 'next/server';
+
+// --- Mocks (declared before importing the route) -----------------------------
+
+const runTalonMock = jest.fn();
+const getSiteTimezoneMock = jest.fn();
+
+/**
+ * Talon documents keyed `${siteId}/${talonId}`. The claim transaction reads and
+ * writes THROUGH this map, so a second sweep over the same (now stale) query
+ * result sees the advanced `nextRunAt` exactly as it would in Firestore.
+ */
+const talonStore = new Map<string, Record<string, unknown>>();
+
+const talonRunAdd = jest.fn();
+const staleRunUpdate = jest.fn();
+const transactionUpdate = jest.fn();
+
+interface TalonRefMock {
+  id: string;
+  key: string;
+  parent: { parent: { id: string } | null };
+}
+
+interface StaleRunDocMock {
+  id: string;
+  data: () => Record<string, unknown>;
+  ref: { update: typeof staleRunUpdate };
+}
+
+let dueRefs: TalonRefMock[] = [];
+let staleRunDocs: StaleRunDocMock[] = [];
+
+const talonQuery = {
+  where: jest.fn(() => talonQuery),
+  orderBy: jest.fn(() => talonQuery),
+  limit: jest.fn(() => talonQuery),
+  get: jest.fn(async () => ({
+    docs: dueRefs.map((ref) => ({ id: ref.id, ref, data: () => talonStore.get(ref.key) })),
+  })),
+};
+
+const talonRunQuery = {
+  where: jest.fn(() => talonRunQuery),
+  limit: jest.fn(() => talonRunQuery),
+  get: jest.fn(async () => ({ docs: staleRunDocs })),
+};
+
+/** Apply a transaction update to the in-memory doc, honouring the delete sentinel. */
+function applyUpdate(key: string, updates: Record<string, unknown>): void {
+  const data = talonStore.get(key);
+  if (!data) return;
+  for (const [field, value] of Object.entries(updates)) {
+    if (value && typeof value === 'object' && (value as { __op?: string }).__op === 'delete') {
+      delete data[field];
+    } else {
+      data[field] = value;
+    }
+  }
+}
+
+const transaction = {
+  get: jest.fn(async (ref: TalonRefMock) => ({
+    exists: talonStore.has(ref.key),
+    data: () => talonStore.get(ref.key),
+  })),
+  update: jest.fn((ref: TalonRefMock, updates: Record<string, unknown>) => {
+    transactionUpdate(ref.key, updates);
+    applyUpdate(ref.key, updates);
+  }),
+};
+
+const mockDb = {
+  collectionGroup: jest.fn((name: string) => {
+    if (name === 'talons') return talonQuery;
+    if (name === 'talon_runs') return talonRunQuery;
+    throw new Error(`unexpected collection group: ${name}`);
+  }),
+  collection: jest.fn((name: string) => {
+    if (name !== 'sites') throw new Error(`unexpected collection: ${name}`);
+    return {
+      doc: jest.fn(() => ({
+        collection: jest.fn((sub: string) => {
+          if (sub !== 'talon_runs') throw new Error(`unexpected subcollection: ${sub}`);
+          return { add: talonRunAdd };
+        }),
+      })),
+    };
+  }),
+  runTransaction: jest.fn(
+    async (callback: (tx: typeof transaction) => Promise<unknown>) => callback(transaction),
+  ),
+};
+
+jest.mock('firebase-admin/firestore', () => ({
+  FieldValue: { delete: jest.fn(() => ({ __op: 'delete' })) },
+  // `@/lib/firestoreTime.server` does `value instanceof Timestamp`, so the
+  // binding has to exist even though the fixtures all use Dates.
+  Timestamp: class Timestamp {},
+}));
+
+jest.mock('@/lib/firebase-admin', () => ({
+  getAdminDb: () => mockDb,
+}));
+
+jest.mock('@/lib/logger', () => ({
+  __esModule: true,
+  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+}));
+
+jest.mock('@/lib/auditLog.server', () => ({
+  generateCorrelationId: () => 'corr-fixed',
+}));
+
+jest.mock('@/lib/talons/engine.server', () => ({
+  runTalon: (...args: unknown[]) => runTalonMock(...args),
+  STALE_RUN_MS: 10 * 60_000,
+}));
+
+jest.mock('@/lib/talons/store.server', () => ({
+  getSiteTimezone: (...args: unknown[]) => getSiteTimezoneMock(...args),
+}));
+
+import { GET } from '@/app/api/cron/talons/route';
+
+// --- Helpers -----------------------------------------------------------------
+
+const MIN = 60_000;
+
+function request(secret?: string) {
+  return new NextRequest('http://localhost/api/cron/talons', {
+    headers: secret ? { 'x-cron-secret': secret } : {},
+  });
+}
+
+/** A 30-minute interval talon, the simplest thing the sweep can claim. */
+function scheduleTalon(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    name: 'restart signage',
+    enabled: true,
+    trigger: { type: 'schedule', intervalMinutes: 30 },
+    condition: { type: 'none' },
+    outputs: [],
+    scope: { machineIds: null },
+    cooldownMinutes: 0,
+    createdBy: 'user-1',
+    createdVia: 'ui',
+    consecutiveFailures: 0,
+    ...overrides,
+  };
+}
+
+/** Seed a talon and return the doc ref the collection-group query hands back. */
+function seedTalon(
+  siteId: string,
+  talonId: string,
+  data: Record<string, unknown>,
+): TalonRefMock {
+  const key = `${siteId}/${talonId}`;
+  talonStore.set(key, { ...data });
+  return { id: talonId, key, parent: { parent: { id: siteId } } };
+}
+
+function staleRunDoc(id: string, startedAt: Date): StaleRunDocMock {
+  return { id, data: () => ({ status: 'running', startedAt }), ref: { update: staleRunUpdate } };
+}
+
+async function sweep(secret = 'cron-secret') {
+  const response = await GET(request(secret));
+  return { status: response.status, body: await response.json() };
+}
+
+// --- Tests -------------------------------------------------------------------
+
+describe('GET /api/cron/talons', () => {
+  const originalSecret = process.env.CRON_SECRET;
+
+  beforeEach(() => {
+    process.env.CRON_SECRET = 'cron-secret';
+    talonStore.clear();
+    dueRefs = [];
+    staleRunDocs = [];
+    runTalonMock.mockReset();
+    runTalonMock.mockResolvedValue([]);
+    getSiteTimezoneMock.mockReset();
+    getSiteTimezoneMock.mockResolvedValue('UTC');
+    talonRunAdd.mockResolvedValue(undefined);
+    staleRunUpdate.mockResolvedValue(undefined);
+  });
+
+  afterAll(() => {
+    process.env.CRON_SECRET = originalSecret;
+  });
+
+  it('rejects a request without the cron secret', async () => {
+    const response = await GET(request());
+
+    expect(response.status).toBe(401);
+    expect(talonQuery.get).not.toHaveBeenCalled();
+    expect(talonRunQuery.get).not.toHaveBeenCalled();
+  });
+
+  it('rejects a request with the wrong cron secret', async () => {
+    const { status } = await sweep('not-the-secret');
+
+    expect(status).toBe(401);
+    expect(talonQuery.get).not.toHaveBeenCalled();
+  });
+
+  it('claims a due talon, advances nextRunAt, and executes it', async () => {
+    const dueAt = new Date(Date.now() - 1 * MIN);
+    dueRefs = [seedTalon('node-pa', 'talon-1', scheduleTalon({ nextRunAt: dueAt }))];
+
+    const { status, body } = await sweep();
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ ok: true, due: 1, executed: 1, missed: 0, deferred: 0 });
+
+    // Re-armed one interval ahead of the sweep instant, inside the claim.
+    const advanced = talonStore.get('node-pa/talon-1')?.nextRunAt as Date;
+    expect(advanced.getTime()).toBeGreaterThan(Date.now() + 29 * MIN);
+
+    expect(runTalonMock).toHaveBeenCalledTimes(1);
+    expect(runTalonMock).toHaveBeenCalledWith(
+      mockDb,
+      expect.objectContaining({ id: 'talon-1', name: 'restart signage' }),
+      { siteId: 'node-pa', triggerSummary: 'schedule' },
+    );
+  });
+
+  it('queries only enabled talons that are already due, oldest first', async () => {
+    await sweep();
+
+    expect(mockDb.collectionGroup).toHaveBeenCalledWith('talons');
+    expect(talonQuery.where).toHaveBeenCalledWith('enabled', '==', true);
+    expect(talonQuery.where).toHaveBeenCalledWith('nextRunAt', '<=', expect.any(Date));
+    expect(talonQuery.orderBy).toHaveBeenCalledWith('nextRunAt', 'asc');
+    expect(talonQuery.limit).toHaveBeenCalledWith(25);
+  });
+
+  it('skips a talon a concurrent sweep already claimed', async () => {
+    dueRefs = [seedTalon('node-pa', 'talon-1', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) }))];
+
+    const first = await sweep();
+    // Same (now stale) query result: the transaction re-read sees the advanced
+    // `nextRunAt` and the loser does nothing at all.
+    const second = await sweep();
+
+    expect(first.body).toMatchObject({ due: 1, executed: 1 });
+    expect(second.body).toMatchObject({ due: 1, executed: 0, missed: 0, deferred: 0 });
+    expect(runTalonMock).toHaveBeenCalledTimes(1);
+    expect(transactionUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips a talon disabled between the query and the claim', async () => {
+    const ref = seedTalon('node-pa', 'talon-1', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) }));
+    dueRefs = [ref];
+    transaction.get.mockImplementationOnce(async () => ({
+      exists: true,
+      data: () => ({ ...talonStore.get(ref.key), enabled: false }),
+    }));
+
+    const { body } = await sweep();
+
+    expect(body).toMatchObject({ due: 1, executed: 0 });
+    expect(runTalonMock).not.toHaveBeenCalled();
+    expect(transactionUpdate).not.toHaveBeenCalled();
+  });
+
+  it('records a missed run without executing when the fire window has passed', async () => {
+    // The sweep was down for 20 minutes. Firing now would be a burst of stale
+    // automations — the one thing the scheduler must never do.
+    dueRefs = [
+      seedTalon(
+        'node-pa',
+        'talon-1',
+        scheduleTalon({ nextRunAt: new Date(Date.now() - 20 * MIN) }),
+      ),
+    ];
+
+    const { body } = await sweep();
+
+    expect(body).toMatchObject({ due: 1, executed: 0, missed: 1 });
+    expect(runTalonMock).not.toHaveBeenCalled();
+    expect(talonRunAdd).toHaveBeenCalledWith(
+      expect.objectContaining({
+        talonId: 'talon-1',
+        talonName: 'restart signage',
+        triggerType: 'schedule',
+        triggerSummary: 'schedule',
+        status: 'missed',
+        error: 'missed_fire_window',
+        outputs: [],
+        startedAt: expect.any(Date),
+        completedAt: expect.any(Date),
+      }),
+    );
+    // Still re-armed, so it fires normally at its next real slot.
+    const advanced = talonStore.get('node-pa/talon-1')?.nextRunAt as Date;
+    expect(advanced.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('fires a talon that is only slightly late', async () => {
+    dueRefs = [
+      seedTalon('node-pa', 'talon-1', scheduleTalon({ nextRunAt: new Date(Date.now() - 9 * MIN) })),
+    ];
+
+    const { body } = await sweep();
+
+    expect(body).toMatchObject({ executed: 1, missed: 0 });
+  });
+
+  it('drops nextRunAt when the trigger is no longer a schedule', async () => {
+    dueRefs = [
+      seedTalon(
+        'node-pa',
+        'talon-1',
+        scheduleTalon({
+          trigger: { type: 'threshold', metric: 'cpu_percent', operator: '>', value: 90 },
+          nextRunAt: new Date(Date.now() - MIN),
+        }),
+      ),
+    ];
+
+    const { body } = await sweep();
+
+    expect(body).toMatchObject({ due: 1, executed: 0, missed: 0 });
+    expect(transactionUpdate).toHaveBeenCalledWith('node-pa/talon-1', {
+      nextRunAt: { __op: 'delete' },
+    });
+    expect(talonStore.get('node-pa/talon-1')?.nextRunAt).toBeUndefined();
+    expect(runTalonMock).not.toHaveBeenCalled();
+  });
+
+  it('closes out runs stuck running past the stale window', async () => {
+    const startedAt = new Date(Date.now() - 30 * MIN);
+    staleRunDocs = [staleRunDoc('run-1', startedAt), staleRunDoc('run-2', startedAt)];
+
+    const { body } = await sweep();
+
+    expect(body.staleRecovered).toBe(2);
+    expect(mockDb.collectionGroup).toHaveBeenCalledWith('talon_runs');
+    expect(talonRunQuery.where).toHaveBeenCalledWith('status', '==', 'running');
+    expect(talonRunQuery.where).toHaveBeenCalledWith('startedAt', '<=', expect.any(Date));
+    expect(staleRunUpdate).toHaveBeenCalledTimes(2);
+    expect(staleRunUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'failed',
+        error: 'stale',
+        completedAt: expect.any(Date),
+        durationMs: expect.any(Number),
+      }),
+    );
+  });
+
+  it('keeps dispatching when the stale-run janitor fails', async () => {
+    // Most likely cause in production: the collection-group index is still
+    // building. Schedules must keep firing regardless.
+    talonRunQuery.get.mockRejectedValueOnce(new Error('index not ready'));
+    dueRefs = [seedTalon('node-pa', 'talon-1', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) }))];
+
+    const { status, body } = await sweep();
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ executed: 1, staleRecovered: 0 });
+  });
+
+  it('defers the remainder once the sweep budget is spent', async () => {
+    dueRefs = [
+      seedTalon('node-pa', 'talon-1', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) })),
+      seedTalon('node-pa', 'talon-2', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) })),
+      seedTalon('node-pa', 'talon-3', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) })),
+    ];
+
+    const base = Date.now();
+    let offset = 0;
+    const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => base + offset);
+    // The first talon burns the whole 50s budget.
+    runTalonMock.mockImplementation(async () => {
+      offset += 60_000;
+      return [];
+    });
+
+    const { body } = await sweep();
+
+    expect(body).toMatchObject({ due: 3, executed: 1, deferred: 2 });
+    expect(runTalonMock).toHaveBeenCalledTimes(1);
+    // The deferred talons keep their original due instant, so the next sweep
+    // claims them.
+    expect((talonStore.get('node-pa/talon-3')?.nextRunAt as Date).getTime()).toBeLessThan(base);
+
+    nowSpy.mockRestore();
+  });
+
+  it('keeps sweeping after one talon throws', async () => {
+    dueRefs = [
+      seedTalon('node-pa', 'talon-1', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) })),
+      seedTalon('node-pa', 'talon-2', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) })),
+    ];
+    runTalonMock.mockRejectedValueOnce(new Error('output exploded'));
+
+    const { status, body } = await sweep();
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ due: 2, executed: 1 });
+    expect(runTalonMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads each site timezone once per sweep', async () => {
+    dueRefs = [
+      seedTalon('node-pa', 'talon-1', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) })),
+      seedTalon('node-pa', 'talon-2', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) })),
+      seedTalon('node-nyc', 'talon-3', scheduleTalon({ nextRunAt: new Date(Date.now() - MIN) })),
+    ];
+
+    await sweep();
+
+    expect(getSiteTimezoneMock).toHaveBeenCalledTimes(2);
+    expect(getSiteTimezoneMock).toHaveBeenCalledWith(mockDb, 'node-pa');
+    expect(getSiteTimezoneMock).toHaveBeenCalledWith(mockDb, 'node-nyc');
+  });
+});

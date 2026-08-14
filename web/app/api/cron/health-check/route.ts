@@ -6,6 +6,7 @@ import { getResend, FROM_EMAIL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, EMAIL_COLORS, emailTimestamp, escapeHtml, safeEmailSubject } from '@/lib/emailTemplates.server';
 import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { fireWebhooks } from '@/lib/webhookSender.server';
+import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
 import {
   alertEmailsDisabled,
@@ -696,6 +697,18 @@ export async function GET(request: NextRequest) {
           },
           { billingCache: webhookBillingCache }
         ).catch(console.error);
+
+        // Talon tap. Deliberately alongside the WEBHOOK fan-out and not the
+        // email branch above: the email is skipped wholesale for a
+        // billing-expired owner, and `machine_offline` talons — which is where
+        // an operator's own escalation lives — must not silently stop firing
+        // on the same clock. This is also the only dispatcher for the event;
+        // an offline machine cannot report that it is offline.
+        tapTalonMatcher(db, plan.siteId, {
+          kind: 'event',
+          eventType: 'machine_offline',
+          machineId: m.machineId,
+        });
       }
     } catch (error) {
       console.error(`[cron/health-check] Failed to send alert for site ${plan.siteId}:`, error);
