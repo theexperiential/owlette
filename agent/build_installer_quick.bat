@@ -61,7 +61,7 @@ xcopy /E /I /Y icons\* build\installer_package\agent\icons\ >nul
 copy /Y scripts\*.bat build\installer_package\scripts\ >nul
 
 :: Re-copy the desktop app if it has been rebuilt since the last full build.
-:: The quick build deliberately does NOT compile it — that is a multi-minute
+:: The quick build deliberately does NOT compile it - that is a multi-minute
 :: cargo build and the whole point of this script is the ~30 second loop. Run
 :: `npx tauri build --no-bundle` in desktop/ yourself, then come back here.
 mkdir build\installer_package\app 2>nul
@@ -75,6 +75,37 @@ if not exist "build\installer_package\app\owlette-desktop.exe" (
     echo   %DESKTOP_EXE%
     echo Run build_installer_full.bat, or build it manually with:
     echo   cd ..\desktop ^&^& npx tauri build --no-bundle
+    echo.
+    pause
+    exit /b 1
+)
+
+:: Rebuild the service host. Unlike the desktop app this is seconds rather than
+:: minutes - one small crate with a single dependency, built incrementally - so
+:: the quick loop keeps it current instead of shipping whatever the last full
+:: build produced.
+mkdir build\installer_package\tools 2>nul
+set "HOST_DIR=%~dp0host"
+if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+where cargo >nul 2>&1
+if not errorlevel 1 (
+    echo Building the service host...
+    pushd "%HOST_DIR%"
+    call cargo build --release
+    if errorlevel 1 (
+        echo ERROR: cargo build failed for the service host
+        popd
+        pause
+        exit /b 1
+    )
+    popd
+    copy /Y "%HOST_DIR%\target\release\owlette-host.exe" build\installer_package\tools\ >nul
+)
+if not exist "build\installer_package\tools\owlette-host.exe" (
+    echo.
+    echo ERROR: No service host in the installer package, and cargo is not on PATH
+    echo to build one. Run build_installer_full.bat, or install the Rust
+    echo toolchain ^(rustup^).
     echo.
     pause
     exit /b 1

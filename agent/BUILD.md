@@ -32,7 +32,7 @@ cd agent
 2. Downloads and extracts embedded Python 3.11
 3. Installs all Python dependencies from `requirements.txt`
 4. Copies agent source code to `build/installer_package/agent/`
-5. Copies tools (NSSM) and scripts
+5. Builds the service host (`agent/host`, `cargo build --release`) and copies it plus the scripts
 6. Compiles Inno Setup installer from `owlette_installer.iss`
 
 **Output:**
@@ -86,7 +86,7 @@ agent/
 │   │   │   ├── config/               # Config templates
 │   │   │   └── icons/                # Application icons
 │   │   ├── tools/
-│   │   │   └── nssm.exe              # Windows service manager
+│   │   │   └── owlette-host.exe      # Windows service host
 │   │   └── scripts/                  # Installation scripts
 │   │
 │   └── installer_output/
@@ -159,7 +159,7 @@ Get-Content C:\Owlette\agent\config\config.json | Select-String "enabled|project
 **Solution:** Make sure no Owlette service or installer is running:
 ```bash
 taskkill /F /IM Owlette-Installer-v2.0.0.exe
-nssm stop OwletteService
+net stop OwletteService
 ```
 
 ### Issue: "File is being used by another process" during Inno Setup compilation
@@ -238,6 +238,6 @@ This deletes all build artifacts. Next build will be a full rebuild (Method 1).
 ## Additional Resources
 
 - [Inno Setup Documentation](https://jrsoftware.org/ishelp/)
-- [NSSM Documentation](https://nssm.cc/usage)
+- [Service host source](host/) - `owlette-host`, the supervisor that replaced NSSM in 3.0.0
 - [Installer Usage Guide](INSTALLER-USAGE.md) - For end users
 - [OAuth Authentication Flow](../docs/oauth-flow.md) - How authentication works

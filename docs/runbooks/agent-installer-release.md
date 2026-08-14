@@ -350,7 +350,7 @@ If omitted, the server computes the checksum.
 - [ ] Step 3 supplies `checksum_sha256` when possible.
 - [ ] MockService and OwletteService constructor state are in parity.
 - [ ] Any new `self.*` attribute is added to both classes.
-- [ ] `agent/src/owlette_runner.py:117` NSSM startup path still works with MockService.
+- [ ] `agent/src/owlette_runner.py` hosted startup path still works with MockService.
 - [ ] `service.log` will be tailed for at least 30 seconds after restart.
 - [ ] No blocking IO was added to the 10-second main service loop at `agent/src/owlette_service.py:6557`.
 - [ ] ConnectionManager backoff remains `BACKOFF_BASE=30s`.
@@ -373,7 +373,7 @@ If omitted, the server computes the checksum.
 2. Confirm the downloaded filename and version.
 3. Pair a controlled Windows test machine using the new installer.
 4. Watch `service.log` for at least 30 seconds after restart.
-5. Look for `AttributeError`, NSSM restart loops, startup failures, connection failures, and update loop failures.
+5. Look for `AttributeError`, crash-loop entries in `logs\service_host.log`, startup failures, connection failures, and update loop failures.
 6. Treat log stability as a release gate because MockService and OwletteService parity has caused repeated crash loops before.
 7. Confirm the dashboard shows the agent online.
 8. Confirm the dashboard shows the released version.

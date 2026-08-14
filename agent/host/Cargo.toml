@@ -1,0 +1,37 @@
+[package]
+name = "owlette-host"
+version = "3.0.0"
+description = "Windows service host for the owlette agent"
+authors = ["The Experiential Company"]
+license = "FSL-1.1-Apache-2.0"
+repository = "https://github.com/theexperiential/owlette"
+edition = "2021"
+rust-version = "1.77.2"
+publish = false
+
+# Standalone on purpose. `build_installer_full.bat` builds this with a plain
+# `cargo build --release` from this directory, and the desktop app next door is
+# standalone for the same reason — neither should be absorbed into a workspace
+# if a root Cargo.toml ever appears.
+[workspace]
+
+[[bin]]
+name = "owlette-host"
+path = "src/main.rs"
+
+[dependencies]
+# The only dependency, and the same crate + version the desktop app already
+# drives the SCM with (desktop/src-tauri/Cargo.toml). Mullvad maintain it; it
+# wraps advapi32's service dispatcher, the control handler, and
+# CreateService/ChangeServiceConfig2 — the three things that cannot be done from
+# std. Everything else the host does (spawning the child, pumping its pipes,
+# rotating logs, timing backoff) is std.
+windows-service = "0.8.1"
+
+[profile.release]
+# A supervisor spends its life asleep; size matters more than speed here, and
+# the installer payload is already large.
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

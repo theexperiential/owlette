@@ -81,7 +81,7 @@ Owlette-Installer-v<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SERVE
    - **No manual credential downloads required!**
 
 5. **Service Installation**
-   - Installs Owlette as a Windows service using NSSM
+   - Registers Owlette as a Windows service hosted by `owlette-host.exe`
    - Configures service to start automatically
    - Starts the service
    - Agent automatically authenticates using stored device-code tokens

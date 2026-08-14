@@ -13,6 +13,7 @@ Two things are being protected here:
 
 import argparse
 import json
+import os
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -139,14 +140,14 @@ class TestJsonProgress:
             return (success, message, site if success else None)
 
         with patch.object(configure_site, 'run_pairing_flow', side_effect=fake_flow), \
-             patch.object(configure_site, '_nssm_service', return_value=True) as nssm, \
+             patch.object(configure_site, '_host_service', return_value=True) as host, \
              patch.object(configure_site.time, 'sleep'):
             code = configure_site.run_json_progress()
 
-        return code, _events(capsys), captured, nssm
+        return code, _events(capsys), captured, host
 
     def test_emits_phrase_then_status_then_authorized(self, capsys):
-        code, events, _kwargs, _nssm = self._run(capsys)
+        code, events, _kwargs, _host = self._run(capsys)
 
         assert code == 0
         assert [event['event'] for event in events] == [
@@ -164,7 +165,7 @@ class TestJsonProgress:
         }
 
     def test_switches_off_every_console_and_clipboard_affordance(self, capsys):
-        _code, _events_, kwargs, _nssm = self._run(capsys)
+        _code, _events_, kwargs, _host = self._run(capsys)
 
         # The desktop app renders the phrase and owns the clipboard; a helper
         # running in the background must not take either.
@@ -174,38 +175,39 @@ class TestJsonProgress:
         assert kwargs['copy_clipboard'] is False
 
     def test_restarts_the_service_so_the_new_site_is_picked_up(self, capsys):
-        _code, events, _kwargs, nssm = self._run(capsys)
+        _code, events, _kwargs, host = self._run(capsys)
 
-        assert [call.args[0] for call in nssm.call_args_list] == ['stop', 'start']
+        assert [call.args[0] for call in host.call_args_list] == ['stop', 'start']
         assert 'restarting the service' in [
             event['value'] for event in events if event['event'] == 'status'
         ]
 
     def test_reports_a_service_it_could_not_restart(self, capsys):
-        # NSSM needs SERVICE_STOP, which a standard user lacks. Pairing still
-        # succeeded, so this is reported rather than raised — the caller turns
-        # it into "restart the service from the tray menu to finish".
+        # Stopping the service needs SERVICE_STOP, which a standard user lacks.
+        # Pairing still succeeded, so this is reported rather than raised — the
+        # caller turns it into "restart the service from the tray menu to
+        # finish".
         def fake_flow(**kwargs):
             kwargs['on_phrase']({'pairPhrase': 'a-b-c'})
             return (True, 'Configuration successful', 'site-abc')
 
-        with patch.object(configure_site, 'run_pairing_flow', side_effect=fake_flow),              patch.object(configure_site, '_nssm_service', return_value=False),              patch.object(configure_site.time, 'sleep'):
+        with patch.object(configure_site, 'run_pairing_flow', side_effect=fake_flow),              patch.object(configure_site, '_host_service', return_value=False),              patch.object(configure_site.time, 'sleep'):
             code = configure_site.run_json_progress()
 
         assert code == 0
         assert _events(capsys)[-1]['value']['serviceRestarted'] is False
 
     def test_a_failure_is_one_error_event_and_no_service_restart(self, capsys):
-        code, events, _kwargs, nssm = self._run(
+        code, events, _kwargs, host = self._run(
             capsys, success=False, message='Pairing phrase expired.', site=None
         )
 
         assert code == 1
         assert events[-1] == {'event': 'error', 'value': 'Pairing phrase expired.'}
-        nssm.assert_not_called()
+        host.assert_not_called()
 
     def test_the_cancel_hook_only_heartbeats_and_never_cancels(self, capsys):
-        _code, _events_, kwargs, _nssm = self._run(capsys)
+        _code, _events_, kwargs, _host = self._run(capsys)
         capsys.readouterr()
 
         heartbeat = kwargs['should_cancel']
@@ -251,14 +253,14 @@ class TestLeaveSite:
              patch.object(configure_site.os.path, 'exists', return_value=not missing_cache), \
              patch.object(configure_site.os, 'remove') as remove, \
              patch.object(configure_site, '_machine_document', return_value=(client, document)), \
-             patch.object(configure_site, '_nssm_service', return_value=stopped) as nssm, \
+             patch.object(configure_site, '_host_service', return_value=stopped) as host, \
              patch.object(configure_site.time, 'sleep'):
             code = configure_site.run_leave_site()
 
-        return code, _events(capsys), saved.get('config'), document, nssm, remove, client
+        return code, _events(capsys), saved.get('config'), document, host, remove, client
 
     def test_disables_cloud_sync_before_anything_else_touches_the_cloud(self, capsys):
-        code, events, config, document, nssm, _remove, _client = self._run(capsys)
+        code, events, config, document, host, _remove, _client = self._run(capsys)
 
         assert code == 0
         assert config['firebase']['enabled'] is False
@@ -270,7 +272,7 @@ class TestLeaveSite:
             'deregistering this machine',
             'restarting the service',
         ]
-        assert [call.args[0] for call in nssm.call_args_list] == ['stop', 'start']
+        assert [call.args[0] for call in host.call_args_list] == ['stop', 'start']
         document.delete.assert_called_once()
 
     def test_addresses_the_site_captured_before_the_config_was_blanked(self, capsys):
@@ -284,7 +286,7 @@ class TestLeaveSite:
              patch.object(configure_site.os.path, 'exists', return_value=False), \
              patch.object(configure_site, '_machine_document',
                           return_value=(MagicMock(), MagicMock())) as resolve, \
-             patch.object(configure_site, '_nssm_service', return_value=True), \
+             patch.object(configure_site, '_host_service', return_value=True), \
              patch.object(configure_site.time, 'sleep'):
             configure_site.run_leave_site()
 
@@ -294,11 +296,11 @@ class TestLeaveSite:
         )
 
     def test_deletes_the_cached_cloud_config(self, capsys):
-        _code, _events_, _config, _document, _nssm, remove, _client = self._run(capsys)
+        _code, _events_, _config, _document, _host, remove, _client = self._run(capsys)
         remove.assert_called_once()
 
     def test_reports_a_failed_deregistration_without_failing_the_leave(self, capsys):
-        code, events, config, _document, nssm, _remove, client = self._run(
+        code, events, config, _document, host, _remove, client = self._run(
             capsys, delete_raises=RuntimeError('403 Forbidden')
         )
 
@@ -310,18 +312,18 @@ class TestLeaveSite:
             'event': 'done',
             'value': {'siteId': 'default_site', 'deregistered': False, 'serviceStopped': True},
         }
-        assert [call.args[0] for call in nssm.call_args_list] == ['stop', 'start']
+        assert [call.args[0] for call in host.call_args_list] == ['stop', 'start']
         client.close.assert_called_once()
 
     def test_records_a_service_that_could_not_be_stopped(self, capsys):
-        _code, events, _config, _document, _nssm, _remove, _client = self._run(capsys, stopped=False)
+        _code, events, _config, _document, _host, _remove, _client = self._run(capsys, stopped=False)
         assert events[-1]['value']['serviceStopped'] is False
 
     def test_an_unpaired_machine_is_refused_before_the_config_is_written(self, capsys):
         config = {'firebase': {'enabled': False, 'site_id': ''}}
         with patch.object(configure_site.shared_utils, 'load_config', return_value=config), \
              patch.object(configure_site.shared_utils, 'save_config') as save, \
-             patch.object(configure_site, '_nssm_service') as nssm:
+             patch.object(configure_site, '_host_service') as host:
             code = configure_site.run_leave_site()
 
         assert code == 1
@@ -329,7 +331,7 @@ class TestLeaveSite:
             {'event': 'error', 'value': 'this machine is not paired with a site'}
         ]
         save.assert_not_called()
-        nssm.assert_not_called()
+        host.assert_not_called()
 
 
 # ─── --report-issue ─────────────────────────────────────────────────────────
@@ -520,40 +522,42 @@ class TestInteractivePathUnchanged:
         ]
 
 
-# ─── nssm helper ────────────────────────────────────────────────────────────
+# ─── service host helper ────────────────────────────────────────────────────
 
 
-class TestNssmHelper:
-    def test_a_missing_nssm_is_not_an_exception(self):
+class TestServiceHostHelper:
+    def test_a_missing_host_is_not_an_exception(self):
         with patch.object(configure_site.os.path, 'exists', return_value=False):
-            assert configure_site._nssm_service('stop') is False
+            assert configure_site._host_service('stop') is False
 
     def test_success_is_a_zero_return_code(self):
         completed = MagicMock()
         completed.returncode = 0
         with patch.object(configure_site.os.path, 'exists', return_value=True), \
              patch.object(configure_site.subprocess, 'run', return_value=completed):
-            assert configure_site._nssm_service('start') is True
+            assert configure_site._host_service('start') is True
 
     def test_a_non_zero_return_code_is_reported_not_raised(self):
         completed = MagicMock()
         completed.returncode = 2
         with patch.object(configure_site.os.path, 'exists', return_value=True), \
              patch.object(configure_site.subprocess, 'run', return_value=completed):
-            assert configure_site._nssm_service('stop') is False
+            assert configure_site._host_service('stop') is False
 
-    def test_a_hung_nssm_is_swallowed(self):
+    def test_a_hung_host_is_swallowed(self):
         with patch.object(configure_site.os.path, 'exists', return_value=True), \
              patch.object(configure_site.subprocess, 'run', side_effect=OSError('timeout')):
-            assert configure_site._nssm_service('stop') is False
+            assert configure_site._host_service('stop') is False
 
-    def test_the_service_is_addressed_by_name_from_the_install_tree(self):
+    def test_the_verb_goes_to_the_host_binary_in_the_install_tree(self):
         completed = MagicMock()
         completed.returncode = 0
         with patch.object(configure_site.os.path, 'exists', return_value=True), \
              patch.object(configure_site.subprocess, 'run', return_value=completed) as run:
-            configure_site._nssm_service('stop')
+            configure_site._host_service('stop')
 
         command = run.call_args.args[0]
-        assert command[0].endswith('nssm.exe')
-        assert command[1:] == ['stop', 'OwletteService']
+        # The host knows which service it hosts, so — unlike nssm — the name is
+        # not passed on the command line.
+        assert command[0].endswith(os.path.join('tools', 'owlette-host.exe'))
+        assert command[1:] == ['stop']

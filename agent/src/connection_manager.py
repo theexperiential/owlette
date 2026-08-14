@@ -493,8 +493,9 @@ class ConnectionManager:
 
         Invoked when _check_self_restart decides the process should exit for
         self-recovery. The callback receives (exit_code: int, snapshot: dict)
-        and is responsible for signalling a clean process exit that NSSM will
-        auto-restart from.
+        and is responsible for signalling a clean process exit that the
+        service host will relaunch from (exit 43 — see
+        agent/host/src/supervisor.rs).
 
         Args:
             callback: Called with (exit_code, diagnostic_snapshot)

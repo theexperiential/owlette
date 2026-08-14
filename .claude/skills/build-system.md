@@ -1,6 +1,6 @@
 # Build & Installer System Guidelines
 
-**Applies To**: Build scripts, Inno Setup, NSSM service config, self-update, version management
+**Applies To**: Build scripts, Inno Setup, the owlette-host service host, self-update, version management
 
 ---
 
@@ -131,10 +131,10 @@ curl -s -X PUT "$BASE_URL/api/installer/upload" \
 
 ### Don't
 - **Never edit `owlette_installer.iss`** without reading `skills/resources/installer-build-system.md` first — the config backup/restore logic, OAuth flow, and silent install behavior are interconnected
-- **Never change the install path** from `C:\ProgramData\Owlette` — NSSM paths, service registration, and the Inno Setup script use this via `{commonappdata}`
+- **Never change the install path** from `C:\ProgramData\Owlette` — service registration, the host's own path resolution (it locates the install root two directories above `tools\owlette-host.exe`), and the Inno Setup script all use this via `{commonappdata}`
 - **Never modify `python311._pth`** without understanding embedded Python import resolution — breaking this kills all imports
 - **Never skip the Defender exclusion** in the installer — LibreHardwareMonitor's WinRing0 driver triggers false positives
-- **Never change NSSM exit behavior** — exit code 0 = don't restart (graceful stop), non-zero = restart (crash recovery). `owlette_runner.py` depends on this.
+- **Never change the child exit-code contract** — 0 = stop the service (graceful stop), 42/43 = relaunch immediately (restart flag, self-restart watchdog), anything else = relaunch with crash-loop backoff. `owlette_runner.py` and `agent/host/src/supervisor.rs` are the two halves of it; changing one without the other silently breaks restarts.
 - **Never drop `AppUserModelID: "app.owlette.desktop"`** from the two `[Icons]` entries that carry it (`{group}\Owlette` and `{userstartup}\Owlette`). Windows silently discards every toast an unpackaged app raises unless a Start-menu shortcut registers its AUMID — the notification API still reports success. The id must stay byte-identical to `tauri.conf.json`'s `identifier` and `startup_link.rs`'s `APP_USER_MODEL_ID`.
 - **Never add the AUMID to a third shortcut, and never rename either of those two.** Windows draws a toast's attribution line from the *name* of a registered shortcut and does not specify which it picks when several share an id — that is why `Owlette Configuration` carries no id and why the startup shortcut is `Owlette.lnk`. Both registrars must be named exactly `Owlette` or notifications get attributed to something else.
 - **Never let the Tauri bundler run** (`tauri build` without `--no-bundle`) — it wants NSIS/WiX and builds an installer that competes with ours.
@@ -146,12 +146,12 @@ curl -s -X PUT "$BASE_URL/api/installer/upload" \
 | File | Purpose | Danger Level |
 |------|---------|-------------|
 | `owlette_installer.iss` | Inno Setup script — install/uninstall/upgrade logic, WebView2 check | High |
-| `build_installer_full.bat` | Downloads Python, pip, deps, NSSM; builds the desktop app; assembles package | Medium |
+| `build_installer_full.bat` | Downloads Python, pip, deps; builds the desktop app and the service host; assembles package | Medium |
 | `build_installer_quick.bat` | Copies source + desktop exe, compiles installer (fast iteration) | Low |
 | `desktop/` | Tauri 2 app — tray icon, config window, reboot prompt (replaced the python UI in 3.0.0) | Medium |
-| `agent/vendor/` | Hash-verified third-party binaries shipped with the build (NSSM zip, WebView2 bootstrapper) | Low |
-| `scripts/install.bat` | NSSM service registration (run during install) | High |
-| `src/owlette_runner.py` | NSSM↔Service bridge, signal handling | High |
+| `agent/vendor/` | Hash-verified third-party binaries shipped with the build (the WebView2 bootstrapper; the NSSM zip went with 3.0.0) | Low |
+| `scripts/install.bat` | Service registration — calls `owlette-host install` (run during install) | High |
+| `src/owlette_runner.py` | Host↔service bridge, SCM stop watcher, exit codes | High |
 | `src/owlette_updater.py` | Self-update: stop → download → silent install → verify | High |
 | `src/configure_site.py` | OAuth registration during install (localhost:8765) | Medium |
 | `src/installer_utils.py` | Remote installer download/execute for deployments | Medium |
@@ -163,16 +163,17 @@ curl -s -X PUT "$BASE_URL/api/installer/upload" \
 
 ```
 Web dashboard sends update_owlette command
-  → owlette_updater.py stops service via NSSM
+  → the installer is launched as a SYSTEM scheduled task (it must outlive the
+    service it is about to stop)
   → Downloads new installer (3 retries, exponential backoff)
   → Validates file (size > 1KB, PE header)
   → Runs: installer.exe /VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS
   → Silent mode skips OAuth (ShouldConfigureSite = false when config exists)
-  → install.bat re-registers service → NSSM starts it
+  → install.bat re-registers the service (`owlette-host install`) and starts it
   → Verifies service running after 10s
 ```
 
-**Safety**: If update fails, old service config remains and NSSM restarts it.
+**Safety**: If the update fails, the old installation is untouched and the service host restarts the agent from whatever is on disk.
 
 ---
 
@@ -206,4 +207,4 @@ The installer handles config preservation:
 
 ## When This Skill Activates
 
-Working on build scripts, installer config, version management, NSSM setup, or self-update code.
+Working on build scripts, installer config, version management, the service host (`agent/host`), or self-update code.

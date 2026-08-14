@@ -14,7 +14,7 @@ This is the canonical first-time path for a senior engineer cloning Owlette for 
 | JDK 21 (Temurin) | 21.x | Firebase emulators in e2e | [web/e2e/README.md](../web/e2e/README.md) |
 | firebase-tools | @13.x | emulators + rules deploy | [web/e2e/README.md](../web/e2e/README.md) |
 | Inno Setup | 6.2.x | installer build | [agent/build_installer_full.bat](../agent/build_installer_full.bat) (set `%ISCC%` or use default path) |
-| NSSM | 2.24 | agent service install | downloaded by build script |
+| Rust toolchain (rustup) | stable | desktop app + `owlette-host` service host | [agent/host](../agent/host) — built by the build script |
 | Playwright Chromium | (matches @playwright/test) | e2e tests | run `npm run e2e:install` in `/web` |
 
 When available, run `/scripts/bootstrap-windows.ps1` to validate your local toolchain before starting maintainer work.

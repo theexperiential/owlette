@@ -49,7 +49,7 @@ A multi-quarter rewrite of project distribution into a content-addressed sync pl
 ## Tech Stack
 
 - **Web** (`web/`): Next.js 16 (App Router, React 19), TypeScript, Tailwind CSS 4, shadcn/ui, Firebase Auth + Firestore
-- **Agent** (`agent/`): Python 3.9+ Windows Service via NSSM, Firestore REST API (not Admin SDK), psutil, pywin32, Inno Setup installer
+- **Agent** (`agent/`): Python 3.9+ hosted as a Windows service by `owlette-host` (`agent/host`, Rust — replaced NSSM in 3.0.0), Firestore REST API (not Admin SDK), psutil, pywin32, Inno Setup installer
 - **Database**: Cloud Firestore (real-time NoSQL), Firebase Auth (Email/Password, Google OAuth, Passkey/WebAuthn)
 - **Package Managers**: Web: npm (not pnpm/yarn) | Agent: pip
 

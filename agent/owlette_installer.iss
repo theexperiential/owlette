@@ -146,7 +146,7 @@ Source: "build\installer_package\app\*"; DestDir: "{app}\app"; Flags: ignorevers
 ; time, so refreshing it is housekeeping, not a security-critical update.
 Source: "vendor\MicrosoftEdgeWebview2Setup.exe"; Flags: dontcopy
 
-; Tools (NSSM)
+; Tools — owlette-host.exe, the Windows service host (replaced NSSM in 3.0.0)
 Source: "build\installer_package\tools\*"; DestDir: "{app}\tools"; Flags: ignoreversion
 
 ; Scripts
@@ -276,6 +276,15 @@ Type: filesandordirs; Name: "{app}\agent\src\icons"
 Type: files; Name: "{app}\scripts\launch_gui.bat"
 Type: files; Name: "{app}\scripts\launch_tray.bat"
 
+; NSSM. 3.0.0 hosts the service in tools\owlette-host.exe instead (see
+; scripts\install.bat), and the registration is migrated during this install by
+; `owlette-host install`. Deleting the binary is what makes the cutover real: a
+; leftover nssm.exe is a 2014 unmaintained service host sitting in an elevated
+; directory that nothing runs and every fleet vulnerability scan still has to
+; account for. [InstallDelete] runs BEFORE the file copy and the service was
+; stopped in InitializeSetup, so nothing holds it open at this point.
+Type: files; Name: "{app}\tools\nssm.exe"
+
 [Icons]
 ; Start Menu shortcuts. Exactly ONE Start-menu entry registers the
 ; AppUserModelID — and every shortcut that does is named "Owlette".
@@ -286,10 +295,15 @@ Type: files; Name: "{app}\scripts\launch_tray.bat"
 ; shortcut it resolves — and with several carrying the same id, which one it
 ; picks is not specified. Stamping only this entry makes the attribution read
 ; "Owlette" deterministically; "Owlette Configuration" needs no id of its own.
-; No arguments = "show me the window" (a forwarded second-instance launch
-; without --tray raises the main window); --tray = tray icon only.
-Name: "{group}\Owlette Configuration"; Filename: "{#MyAppExePath}"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"
-Name: "{group}\Owlette"; Filename: "{#MyAppExePath}"; Parameters: "--tray"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"; AppUserModelID: "{#MyAppUserModelID}"
+; ONE launcher, named after the product, that OPENS THE WINDOW (no arguments =
+; "show me the window"; a forwarded second-instance launch without --tray
+; raises the main window). The old pair — "Owlette" carrying --tray, which
+; visibly does nothing when clicked, beside "Owlette Configuration" for the
+; actual window — confused its first real user within a day of existing. The
+; tray needs no Start-menu launcher: the service and the {userstartup} link own
+; that lifecycle. Upgrades delete the retired "Owlette Configuration" lnk via
+; [InstallDelete] above.
+Name: "{group}\Owlette"; Filename: "{#MyAppExePath}"; IconFilename: "{app}\agent\icons\normal.ico"; WorkingDir: "{app}\app"; AppUserModelID: "{#MyAppUserModelID}"
 Name: "{group}\View Logs"; Filename: "{commonappdata}\Owlette\logs"; IconFilename: "{sys}\shell32.dll"; IconIndex: 4
 Name: "{group}\Edit Configuration"; Filename: "{commonappdata}\Owlette\config\config.json"; IconFilename: "{sys}\shell32.dll"; IconIndex: 70
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
@@ -330,15 +344,26 @@ Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Add-
 ; Note: Tray icon launches automatically on login via startup folder (see [Icons] section above)
 ; No need to launch it here - it will start on next login or can be launched manually from Start Menu
 
+; Open the window after an INTERACTIVE install: the operator just installed an
+; app, and "hunt for a dot under the taskbar chevron" is not a first impression.
+; skipifsilent keeps every silent path dark — bulk /VERYSILENT deploys and the
+; agent's own self-update must never pop a window over a running show. The
+; service has already spawned the tray by now, so single-instance folds this
+; launch into it and simply shows the window.
+Filename: "{#MyAppExePath}"; WorkingDir: "{app}\app"; Description: "open owlette"; Flags: postinstall skipifsilent nowait
+
 [UninstallRun]
 ; Close the desktop app first — it lives in {app}\app and would otherwise hold
 ; its own image open while CurUninstallStepChanged tries to DelTree that folder.
 ; Scoped by exe path (not a bare /IM name kill) for the same reason the install
 ; path is: never touch a same-named process outside this installation.
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-Process -Name owlette-desktop -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '*\Owlette\*' } | Stop-Process -Force -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
-; Stop and remove the Windows service before uninstalling
-Filename: "{app}\tools\nssm.exe"; Parameters: "stop OwletteService"; Flags: runhidden waituntilterminated
-Filename: "{app}\tools\nssm.exe"; Parameters: "remove OwletteService confirm"; Flags: runhidden waituntilterminated
+; Stop and deregister the Windows service before uninstalling. One call: the
+; host waits for the service to reach STOPPED (which is what lets the agent
+; flush `online: false` and log agent_stopped) and only then removes the
+; registration. `uninstall` succeeds on a machine where the service is already
+; gone, so this is safe to run twice.
+Filename: "{app}\tools\owlette-host.exe"; Parameters: "uninstall"; Flags: runhidden waituntilterminated
 ; Remove Windows Defender exclusions (mirror the install set, incl. the .sys driver paths)
 Filename: "powershell.exe"; Parameters: "-ExecutionPolicy Bypass -Command ""Remove-MpPreference -ExclusionPath '{app}\python\Lib\site-packages\WinTmp' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\python.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionProcess '{app}\python\pythonw.exe' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\python.sys' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath '{app}\python\pythonw.sys' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated
 
@@ -735,21 +760,23 @@ begin
     end;
 
     // Stop the service before overwriting files.
-    // Use 'net stop' which is synchronous — it waits for the service to fully stop
-    // (including NSSM killing its child Python process) before returning.
-    // This is critical because 'nssm stop' returns immediately while the Python
-    // process may still be running in Session 0, holding DLL locks.
+    // Use 'net stop' which is synchronous — it waits for the service to fully
+    // stop before returning, and the service host does not report STOPPED until
+    // the agent process it launched is gone. This matters because the python
+    // child holds DLL locks (libcrypto-3.dll and friends) that would otherwise
+    // still be held while Inno Setup copies over them.
     Log('Stopping OwletteService via net stop (synchronous)...');
     Exec('net', 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Log('net stop returned with code: ' + IntToStr(ResultCode));
 
     // Verify the service actually reached the Stopped state before continuing.
     // Without this, a net stop timeout (e.g., service hung on shutdown) leaves
-    // NSSM alive — which would then respawn the python child when our PowerShell
-    // kill pass terminates it (NSSM AppExit=Default Restart from install.bat).
-    // The respawned process re-loads libcrypto-3.dll mid-copy and we end up back
-    // at "DeleteFile failed: code 5". exit 0 = stopped or non-existent (safe to
-    // proceed). exit 1 = still running (must abort).
+    // the supervisor alive — and a live supervisor respawns the python child the
+    // moment our PowerShell kill pass terminates it, because relaunching a child
+    // that exited is the entire job of a service host. The respawned process
+    // re-loads libcrypto-3.dll mid-copy and we end up back at "DeleteFile
+    // failed: code 5". exit 0 = stopped or non-existent (safe to proceed).
+    // exit 1 = still running (must abort).
     Log('Verifying OwletteService reached Stopped state...');
     Exec('powershell.exe',
       '-NoProfile -ExecutionPolicy Bypass -Command ' +
@@ -771,14 +798,23 @@ begin
       Exit;
     end;
     ServiceWasStopped := True;
-
-    // Fallback: also tell NSSM directly in case net stop didn't fully clean up.
-    // Keep the legacy path for upgrades from pre-ProgramData installs where NSSM may still live under C:\Owlette.
-    if FileExists(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe')) then
-      Exec(ExpandConstant('{commonappdata}\Owlette\tools\nssm.exe'), 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode)
-    else if FileExists('C:\Owlette\tools\nssm.exe') then
-      Exec('C:\Owlette\tools\nssm.exe', 'stop OwletteService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
+
+  // Kill any orphaned service host — owlette-host.exe (3.0.0+) or the nssm.exe
+  // it replaced. `net stop` above ends the supervised one, so this is only for a
+  // process that outlived its service registration; it must run BEFORE the
+  // python kill pass below, because a live supervisor's whole job is to relaunch
+  // the child we are about to terminate. It also releases tools\owlette-host.exe
+  // and tools\nssm.exe for the file copy and the [InstallDelete] above.
+  // Scoped by exe path so a same-named process elsewhere is never touched.
+  Log('Killing any orphaned Owlette service host...');
+  Exec('powershell.exe',
+    '-NoProfile -ExecutionPolicy Bypass -Command ' +
+    '"Get-Process -Name owlette-host, nssm -ErrorAction SilentlyContinue | ' +
+    'Where-Object { $_.Path -like ''*\Owlette\*'' } | ' +
+    'Stop-Process -Force -ErrorAction SilentlyContinue"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Log('Service host kill returned: ' + IntToStr(ResultCode));
 
   // Kill ALL Owlette Python processes to release DLL locks before file overwrite.
   // Must run BEFORE Inno Setup's file copy phase — if any python.exe or pythonw.exe

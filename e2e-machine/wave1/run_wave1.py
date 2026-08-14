@@ -196,7 +196,7 @@ def stage2_install(installer, phrase, negative):
 
 def stage3_bootstrap(hostname):
     ok = True
-    # Service auto-starts at install (install.bat nssm start) - poll, don't `net start`.
+    # Service auto-starts at install (install.bat runs `owlette-host start`) - poll, don't `net start`.
     deadline = time.time() + 60
     svc = service_state(SERVICE)
     while svc != "RUNNING" and time.time() < deadline:

@@ -21,7 +21,7 @@ owlette_service.py          Main Windows service (ServiceFramework)
   ├── project_utils.py      Project directory management
   └── registry_utils.py     Windows registry queries (installed software)
 
-owlette_runner.py           NSSM-compatible runner (bridges NSSM → service main loop)
+owlette_runner.py           The process owlette-host supervises (bridges the host → service main loop)
 owlette_updater.py          Self-update bootstrap (stop service → download → silent install)
 configure_site.py           Pairing + join/leave/report-issue/reboot CLI (also the desktop app's back end)
 owlette_scout.py            Process responsiveness checker (sends WM_NULL to window)
@@ -99,7 +99,7 @@ schtasks /Create /TN "OwletteProcess_{id}" /TR "{command}" /SC ONCE /ST 00:00 /R
 schtasks /Run /TN "OwletteProcess_{id}"
 schtasks /Delete /TN "OwletteProcess_{id}" /F
 ```
-**Why**: Processes launched by Task Scheduler run under svchost.exe, NOT under the NSSM job object. This means they survive service restarts. If launched directly via CreateProcessAsUser, NSSM's job object would kill all child processes when the service stops.
+**Why**: Processes launched by Task Scheduler run under svchost.exe, so they are not descendants of the agent at all and survive service restarts unconditionally. This was originally a defence against NSSM's process-tree kill; owlette-host (3.0.0) terminates only the process it launched, but the detachment stays because a managed show must survive anything that walks the tree — a manual `taskkill /T`, a remote-management tool, an operator's Task Manager "end process tree".
 
 **Stage 2 — CreateProcessAsUser (fallback)**:
 Used when schtasks fails (no user logged in, permission issues).

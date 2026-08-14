@@ -12,7 +12,7 @@ Used by the startup classifier in owlette_service.py to distinguish:
   - No-signal restarts                          -> unexpected_reboot warning
                                                    (BSOD, power loss, hard reset)
   - Service-only restarts without intent        -> unexpected_service_restart warning
-                                                   (NSSM auto-restart after crash, kill, OOM)
+                                                   (host relaunch after crash, kill, OOM)
 
 Designed to be importable from any agent context (service main loop, metrics
 thread, signal handler, prompt_restart user-space dialog) — depends only on

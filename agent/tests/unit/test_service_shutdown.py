@@ -6,6 +6,12 @@ Covers the three agent-side halves of the 2026-08-13 14:17 incident:
   the operator's UI down with the service (`build_detached_launch_command`);
 * NSSM's console Control-C never arrived, so nothing flushed `online: false`
   and nothing was logged (`graceful_shutdown` + the SCM stop watcher);
+
+Both NSSM behaviours are gone in 3.0.0 — owlette-host terminates only the
+process it launched, and signals a stop by reporting STOP_PENDING, which is
+exactly what the watcher polls for. These assertions still hold the agent side
+of the contract: they are what stops a future change from going back to relying
+on a signal that may never arrive.
 * the tray's connection badge lagged the real connection by ~25s because the
   status file was only rewritten by the main loop
   (`_wire_connection_status_listener`).
@@ -28,7 +34,8 @@ class TestDetachedLaunchCommand:
             r'C:\ProgramData\Owlette\app\owlette-desktop.exe', ('--tray',))
 
         # `cmd /c start` is the whole point: cmd exits immediately, so by the
-        # time NSSM walks the tree the app has no live parent to be found from.
+        # time anything walks the tree the app has no live parent to be found
+        # from.
         assert command.startswith('cmd.exe /c start ""')
         assert r'"C:\ProgramData\Owlette\app\owlette-desktop.exe"' in command
         assert command.endswith('"--tray"')
@@ -240,10 +247,10 @@ class TestScmStopWatcher:
         assert len(attempts) == 10
         assert service._shutdown_trigger is None
 
-    def test_the_poll_interval_fits_inside_nssm_s_kill_budget(self):
-        # NSSM terminates the tree ~4.5s after the stop control (three 1500 ms
-        # stop methods). A poll slower than that would notice the stop only
-        # after the process was already gone.
+    def test_the_poll_interval_fits_inside_the_hosts_kill_budget(self):
+        # owlette-host terminates the agent CHILD_STOP_GRACE (20s) after the
+        # stop control; NSSM did it at ~4.5s. A poll slower than the budget
+        # would notice the stop only after the process was already gone.
         assert owlette_service.SCM_STOP_POLL_INTERVAL < owlette_service.SCM_STOP_GRACE_SECONDS
         assert owlette_service.SCM_STOP_POLL_INTERVAL <= 0.5
 
@@ -328,7 +335,7 @@ class TestConnectionStatusListener:
 ])
 def test_mockservice_mirrors_every_new_attribute(attribute):
     """owlette_runner.MockService must carry everything OwletteService.__init__
-    sets, or the NSSM path raises AttributeError in production."""
+    sets, or the hosted path raises AttributeError in production."""
     import pathlib
     source = pathlib.Path(owlette_service.__file__).with_name('owlette_runner.py')
     assert f'self.{attribute}' in source.read_text(encoding='utf-8'), (

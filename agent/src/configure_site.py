@@ -643,9 +643,11 @@ def run_oauth_flow(setup_url=None, timeout_seconds=TIMEOUT_SECONDS, show_prompts
 # less often would let the window look stalled.
 _STATUS_HEARTBEAT_SECONDS = 15
 
-# Seconds to wait after asking NSSM to stop the service before assuming it is
-# down, and after starting it before returning. Ported from
-# `owlette_gui.on_leave_site_click`.
+# Settle time after stopping and after starting the service. Ported from
+# `owlette_gui.on_leave_site_click`, where it existed because `nssm stop`
+# returned before its child had died. `owlette-host stop`/`start` are
+# synchronous, so these are now only a margin for Firestore to catch up with the
+# write the agent made on its way out.
 _SERVICE_STOP_SETTLE = 3
 _SERVICE_START_SETTLE = 2
 
@@ -671,38 +673,48 @@ def _emit(event: str, value=None) -> None:
     sys.stdout.flush()
 
 
-def _nssm_path() -> str:
-    """`<install>\\tools\\nssm.exe` — three directories up from this file."""
+def _host_path() -> str:
+    """`<install>\\tools\\owlette-host.exe` — three directories up from this file."""
     src_dir = os.path.dirname(os.path.abspath(__file__))
     install_root = os.path.dirname(os.path.dirname(src_dir))
-    return os.path.join(install_root, 'tools', 'nssm.exe')
+    return os.path.join(install_root, 'tools', 'owlette-host.exe')
 
 
-def _nssm_service(action: str, timeout: int = 10) -> bool:
-    """Run `nssm <action> OwletteService`. True only when NSSM reported success.
+def _host_service(action: str, timeout: int = 60) -> bool:
+    """Run `owlette-host <action>`. True only when the host reported success.
+
+    Replaced `nssm <action> OwletteService` in 3.0.0, when the service host
+    became ours. Two differences the callers rely on:
+
+    * `stop` is synchronous — it waits for the service to reach STOPPED, which
+      is the window the agent uses to flush `online: false` and log
+      agent_stopped. `nssm stop` returned while its child was still alive.
+    * A service that is already in the requested state is a success, because
+      what the caller wants is the state, not the transition.
 
     Never raises: leaving a site must complete even on a machine where the
-    service cannot be controlled from this session (NSSM missing, or no rights),
-    exactly as the GUI teardown behaved. The return value lets the caller tell
-    the operator which half happened.
+    service cannot be controlled from this session (the host binary missing, or
+    no rights — a standard user is not granted SERVICE_STOP), exactly as the GUI
+    teardown behaved. The return value lets the caller tell the operator which
+    half happened.
     """
-    nssm = _nssm_path()
-    if not os.path.exists(nssm):
-        logging.warning(f"NSSM not found at {nssm}; skipping service {action}")
+    host = _host_path()
+    if not os.path.exists(host):
+        logging.warning(f"Service host not found at {host}; skipping service {action}")
         return False
     try:
         completed = subprocess.run(
-            [nssm, action, 'OwletteService'],
+            [host, action],
             check=False,
             capture_output=True,
             timeout=timeout,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
         )
         if completed.returncode != 0:
-            logging.warning(f"nssm {action} returned {completed.returncode}")
+            logging.warning(f"owlette-host {action} returned {completed.returncode}")
         return completed.returncode == 0
     except Exception as e:
-        logging.warning(f"nssm {action} failed: {e}")
+        logging.warning(f"owlette-host {action} failed: {e}")
         return False
 
 
@@ -782,14 +794,14 @@ def run_json_progress(api_base: str = None, timeout_seconds: int = TIMEOUT_SECON
     # restarted before this machine appears on the dashboard — the same thing
     # `owlette_gui._restart_owlette_service` did after a successful join.
     #
-    # NSSM needs SERVICE_STOP on OwletteService, which a standard user does not
+    # Stopping OwletteService needs SERVICE_STOP, which a standard user does not
     # have, so this genuinely fails in the field. The GUI only logged it and left
     # the operator wondering why the machine never showed up; the outcome is
     # reported here so the caller can say what to do instead.
     _emit('status', 'restarting the service')
-    stopped = _nssm_service('stop')
+    stopped = _host_service('stop')
     time.sleep(_SERVICE_STOP_SETTLE)
-    started = _nssm_service('start')
+    started = _host_service('start')
     time.sleep(_SERVICE_START_SETTLE)
 
     _emit('authorized', {'siteId': site_id, 'serviceRestarted': stopped and started})
@@ -837,7 +849,7 @@ def run_leave_site() -> int:
         logging.warning(f"Failed to delete cached config (non-critical): {e}")
 
     _emit('status', 'stopping the service')
-    service_stopped = _nssm_service('stop')
+    service_stopped = _host_service('stop')
     if service_stopped:
         time.sleep(_SERVICE_STOP_SETTLE)
 
@@ -861,7 +873,7 @@ def run_leave_site() -> int:
                 pass
 
     _emit('status', 'restarting the service')
-    _nssm_service('start')
+    _host_service('start')
     time.sleep(_SERVICE_START_SETTLE)
 
     _emit('done', {

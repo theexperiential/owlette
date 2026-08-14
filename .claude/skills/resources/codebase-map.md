@@ -209,7 +209,7 @@ interface UserPreferences { temperatureUnit: 'C' | 'F'; healthAlerts: boolean; p
 | Module | Purpose |
 |--------|---------|
 | `owlette_service.py` | Main Windows service — process monitoring, command handling, metrics |
-| `owlette_runner.py` | NSSM-compatible runner — bridges NSSM → service main loop |
+| `owlette_runner.py` | The process owlette-host supervises — bridges the host → service main loop |
 | `shared_utils.py` | Config management, system metrics, logging, file paths, version |
 
 ### Firebase / Cloud

@@ -1,6 +1,10 @@
 """
-owlette Service Runner - NSSM Compatible
-Runs the service main loop without Windows Service framework
+owlette Service Runner — the process the service host supervises.
+
+Runs the service main loop without the Windows Service framework: the SCM talks
+to owlette-host.exe (agent/host), which launches this script, keeps it alive,
+and reports the service's state. That state is the shutdown signal — see the SCM
+stop watcher below.
 """
 import sys
 import os
@@ -19,15 +23,20 @@ import shared_utils
 _service_instance = None
 
 def signal_handler(signum, frame):
-    """Handle Ctrl+C and other termination signals from NSSM.
+    """Handle Ctrl+C and other termination signals.
 
-    NSSM delivers this by attaching to the application's console and generating
-    a Control-C event, then terminates the process tree ~4.5s later whether or
-    not the event was ever delivered. It is therefore best-effort, and on
-    2026-08-13 it silently was not delivered at all: the machine was terminated
-    without flushing presence and sat on the dashboard as online. The real work
-    lives in OwletteService.graceful_shutdown(), which the SCM stop watcher
-    calls as well — whichever notices the stop first does it, exactly once.
+    NSSM used to deliver a stop this way — by attaching to the application's
+    console and generating a Control-C event, then terminating the process tree
+    ~4.5s later whether or not the event was ever delivered. It was therefore
+    best-effort, and on 2026-08-13 it silently was not delivered at all: the
+    machine was terminated without flushing presence and sat on the dashboard as
+    online. owlette-host does not attempt that trick; it reports STOP_PENDING and
+    waits, which is what the SCM stop watcher below is looking for.
+
+    This handler stays for every other source of a console event — an operator
+    running the runner by hand, a system shutdown, Ctrl+Break — and the real work
+    lives in OwletteService.graceful_shutdown(), which the SCM stop watcher calls
+    as well: whichever notices the stop first does it, exactly once.
     """
     global _service_instance
 
@@ -57,7 +66,7 @@ def signal_handler(signum, frame):
         logging.error(f"[SIGNAL HANDLER] graceful_shutdown failed: {e}")
         print(f"[SIGNAL HANDLER] graceful_shutdown failed: {e}", file=sys.stderr, flush=True)
 
-    # Exit immediately - NSSM will kill us anyway
+    # Exit immediately — the shutdown work is done and the host is waiting.
     sys.exit(0)
 
 # Initialize Firebase and Auth imports
@@ -84,7 +93,7 @@ if __name__ == '__main__':
     sys.excepthook = _handle_unhandled_exception
     threading.excepthook = _handle_thread_exception
 
-    logging.info("Running as NSSM service (not win32serviceutil)")
+    logging.info("Running under owlette-host (not win32serviceutil)")
 
     # Import the OwletteService class just to access its main() method
     from owlette_service import OwletteService
@@ -129,11 +138,11 @@ if __name__ == '__main__':
             self.tray_icon_pid = None
             # Reboot-prompt suppression deadline (mirror OwletteService.__init__);
             # without it reached_max_relaunch_attempts raises AttributeError the
-            # first time a process exceeds its relaunch budget under NSSM.
+            # first time a process exceeds its relaunch budget under the host.
             self._restart_prompt_until = 0.0
             # "desktop app not found" log de-spam flag (mirror
             # OwletteService.__init__); launch_desktop_app_as_user reads it on
-            # the very first tray launch attempt, which happens under NSSM too.
+            # the very first tray launch attempt, which happens here too.
             self._desktop_exe_missing_logged = False
             self.relaunch_attempts = {}
             self.first_start = True
@@ -189,7 +198,7 @@ if __name__ == '__main__':
                 logging.warning(f"Failed to register process-control handlers: {e}")
             # Throttle state for _write_service_status() — OwletteService has
             # a hasattr() guard, but mirror here so the safety net never has
-            # to fire under NSSM.
+            # to fire under the host.
             self._last_status_signature = None
             self._last_status_write_time = 0.0
             # Once-only guard for graceful_shutdown() (mirror
@@ -289,13 +298,13 @@ if __name__ == '__main__':
         signal.signal(signal.SIGBREAK, signal_handler) # Ctrl+Break (Windows)
         logging.info("Signal handlers registered for graceful shutdown")
 
-        # CRITICAL: On Windows, NSSM sends console control events, not POSIX signals
-        # We need to register a Windows console control handler
+        # On Windows a console stop arrives as a console control event, not a
+        # POSIX signal, so register a Windows console control handler too.
         if sys.platform == 'win32':
             try:
                 import win32api
                 def windows_handler(ctrl_type):
-                    """Handle Windows console control events from NSSM"""
+                    """Handle Windows console control events"""
                     ctrl_names = {
                         0: 'CTRL_C_EVENT',
                         1: 'CTRL_BREAK_EVENT',
@@ -318,10 +327,10 @@ if __name__ == '__main__':
             except Exception as e:
                 logging.error(f"Failed to register Windows control handler: {e}")
 
-        # The console handler above is the signal NSSM *tries* to send. This is
-        # the one that cannot be missed: the SCM marks the service STOP_PENDING
-        # the moment a stop is accepted, several seconds before NSSM terminates
-        # anything, whether or not the Control-C ever arrives.
+        # The console handler above covers console events. This is the signal
+        # that cannot be missed: owlette-host reports STOP_PENDING the moment a
+        # stop is accepted and then waits 20s for this process to exit on its
+        # own, so the watcher below always gets there first.
         try:
             _service_instance.start_scm_stop_watcher()
         except Exception as e:
@@ -330,7 +339,8 @@ if __name__ == '__main__':
         logging.info("Starting main service loop...")
         _service_instance.main()
 
-        # Check if service requested a restart (exit code 42 triggers NSSM auto-restart)
+        # Check if service requested a restart (exit code 42/43 — the host
+        # relaunches immediately on either; see agent/host/src/supervisor.rs)
         exit_code = getattr(_service_instance, '_restart_exit_code', 0)
 
         # Cleanup before exiting
@@ -341,8 +351,8 @@ if __name__ == '__main__':
             # fallback for when one of them failed part-way through).
             if hasattr(_service_instance.firebase_client, 'running') and _service_instance.firebase_client.running:
                 try:
-                    # Owlette-initiated restart (42/43) comes straight back under
-                    # NSSM — skip the offline flush so presence doesn't flap.
+                    # Owlette-initiated restart (42/43) comes straight back —
+                    # skip the offline flush so presence doesn't flap.
                     _service_instance.firebase_client.stop(intentional=bool(exit_code))
                     logging.info("Firebase client stopped")
                 except Exception as e:
@@ -351,9 +361,9 @@ if __name__ == '__main__':
                 logging.info("Firebase client already stopped (by signal handler)")
 
         if exit_code:
-            logging.info(f"Service exiting with code {exit_code} for NSSM restart")
+            logging.info(f"Service exiting with code {exit_code} for an immediate host restart")
         else:
-            logging.info("Service stopped cleanly (exit 0 — NSSM will not restart)")
+            logging.info("Service stopped cleanly (exit 0 — the host stops the service)")
         sys.exit(exit_code)
 
     except KeyboardInterrupt:

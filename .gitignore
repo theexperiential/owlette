@@ -112,7 +112,9 @@ agent/installer/
 *.exe
 *.msi
 # ...except the third-party binaries we deliberately vendor so a build never
-# depends on someone else's download host being up (same reason as vendor/nssm).
+# depends on someone else's download host being up. (vendor/nssm-2.24.zip was
+# the other one; 3.0.0 builds the service host from source in agent/host, so
+# there is nothing left to download for it.)
 !agent/vendor/MicrosoftEdgeWebview2Setup.exe
 
 # Configuration files with secrets

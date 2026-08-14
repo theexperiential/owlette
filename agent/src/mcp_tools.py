@@ -126,8 +126,12 @@ _CRITICAL_PROCESSES = frozenset({
     'csrss.exe', 'wininit.exe', 'winlogon.exe', 'services.exe',
     'lsass.exe', 'smss.exe', 'fontdrvhost.exe', 'dwm.exe', 'svchost.exe',
     'spoolsv.exe', 'lsaiso.exe', 'sihost.exe',
-    # Owlette itself:
-    'owlette_service.exe', 'nssm.exe', 'python.exe', 'pythonw.exe',
+    # Owlette itself. `owlette-host.exe` is the service host (it replaced
+    # nssm.exe in 3.0.0); nssm.exe stays on the list because a machine that has
+    # not taken the 3.0.0 upgrade yet is still hosted by it, and killing either
+    # one takes the agent down with it.
+    'owlette_service.exe', 'owlette-host.exe', 'nssm.exe',
+    'python.exe', 'pythonw.exe',
 })
 
 

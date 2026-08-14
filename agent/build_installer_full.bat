@@ -57,7 +57,7 @@ echo.
 :: Step 1: Clean previous builds
 :: ============================================================================
 echo [1/9] Cleaning previous builds...
-:: Keep downloads\ cache intact — only wipe the build output
+:: Keep downloads\ cache intact - only wipe the build output
 if exist "build" (
     rmdir /s /q build 2>nul
 )
@@ -162,7 +162,7 @@ if errorlevel 1 (
 )
 
 :: Drop the Claude CLI that claude-agent-sdk vendors. It is a 242 MB single-file
-:: node bundle — nearly 60%% of the uncompressed payload — and it reappears on
+:: node bundle - nearly 60%% of the uncompressed payload - and it reappears on
 :: every clean pip install, which is why this is scripted rather than a one-off
 :: cleanup. Cortex fetches its own CLI on demand instead (cortex_cli_fetch), so
 :: nothing imports this path at runtime; the SDK only falls back to it when no
@@ -259,78 +259,59 @@ if not exist "%DESKTOP_EXE%" (
 echo Desktop app built OK
 
 :: ============================================================================
-:: Step 7: Acquire NSSM (cached download or local install fallback)
+:: Step 7: Build the service host (Rust)
 :: ============================================================================
-echo [7/9] Acquiring NSSM...
+:: Replaces "acquire NSSM". 3.0.0 hosts OwletteService in our own supervisor
+:: (agent\host) instead of NSSM 2.24 - a 2014 binary, the last stable release
+:: there will ever be, which tree-killed its child's descendants on stop,
+:: ignored its own AppKillProcessTree setting, and delivered a stop only as a
+:: best-effort console Control-C that was silently not delivered in production.
+:: The host is ~320 KB, has one dependency (windows-service, the same crate the
+:: desktop app already drives the SCM with), and is built from source here, so
+:: the build no longer depends on nssm.cc being up either.
+echo [7/9] Building the service host ^(Rust, release^)...
 mkdir build\tools 2>nul
 
-:: Canonical SHA256 for the official nssm-2.24.zip. Cross-verified against
-:: the Chocolatey NSSM 2.24 package metadata (md5 B2EDD0E4..., sha1 BE7B3577...,
-:: sha256 below). The previous pin (923c35e4...) did not match the zip nssm.cc
-:: actually serves and broke every clean build.
-set NSSM_EXPECTED_HASH=727d1e42275c605e0f04aba98095c38a8e1e46def453cdffce42869428aa6743
-
-:: Prefer the vendored, hash-verified zip so the build never depends on
-:: nssm.cc being up (the site is chronically flaky — it served a 197-byte
-:: error page to CI runners). Falls through to download only if the vendored
-:: copy is somehow absent.
-mkdir downloads 2>nul
-if exist "vendor\nssm-2.24.zip" (
-    echo Using vendored NSSM 2.24...
-    copy /Y "vendor\nssm-2.24.zip" downloads\nssm.zip >nul
-    goto :verify_nssm
+set "HOST_DIR=%~dp0host"
+if not exist "%HOST_DIR%\Cargo.toml" (
+    echo ERROR: Service host sources not found at "%HOST_DIR%"
+    pause
+    exit /b 1
 )
 
-:: Use cached zip if present
-if exist "downloads\nssm.zip" goto :verify_nssm
-
-:: Try downloading
-echo Downloading NSSM 2.24 from nssm.cc...
-curl -L --max-time 30 -o downloads\nssm.zip https://nssm.cc/release/nssm-2.24.zip
+:: Step 6 already put rustup's per-user cargo on PATH; repeated here so this
+:: step keeps working if the desktop build above ever moves or is skipped.
+if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+where cargo >nul 2>&1
 if errorlevel 1 (
-    echo WARNING: Download failed, trying local installation...
-    del downloads\nssm.zip 2>nul
-    goto :nssm_local
-)
-:: Reject HTML error pages (a real zip is hundreds of KB)
-for %%F in (downloads\nssm.zip) do if %%~zF LSS 10240 (
-    echo WARNING: Downloaded file too small ^(%%~zF bytes^) - server returned error page
-    del downloads\nssm.zip
-    goto :nssm_local
+    echo ERROR: cargo not found on PATH. Install the Rust toolchain ^(rustup^) first.
+    pause
+    exit /b 1
 )
 
-:verify_nssm
-echo Verifying NSSM download checksum...
-set "NSSM_ACTUAL_HASH="
-for /f "skip=1 tokens=*" %%a in ('certutil -hashfile downloads\nssm.zip SHA256') do (
-    if not defined NSSM_ACTUAL_HASH set "NSSM_ACTUAL_HASH=%%a"
+pushd "%HOST_DIR%"
+call cargo build --release
+if errorlevel 1 (
+    echo ERROR: cargo build failed in "%HOST_DIR%"
+    popd
+    pause
+    exit /b 1
 )
-if /i "%NSSM_ACTUAL_HASH%"=="%NSSM_EXPECTED_HASH%" (
-    set "NSSM_ACTUAL_HASH="
-    goto :extract_nssm
+popd
+
+set "HOST_EXE=%HOST_DIR%\target\release\owlette-host.exe"
+if not exist "%HOST_EXE%" (
+    echo ERROR: cargo reported success but "%HOST_EXE%" is missing
+    pause
+    exit /b 1
 )
-echo WARNING: NSSM download checksum mismatch ^(actual: %NSSM_ACTUAL_HASH%^)
-echo          Falling back to local installation...
-set "NSSM_ACTUAL_HASH="
-del downloads\nssm.zip
-
-:nssm_local
-if exist "%ProgramData%\Owlette\tools\nssm.exe" (
-    echo Using locally installed NSSM from %ProgramData%\Owlette\tools\nssm.exe
-    copy /Y "%ProgramData%\Owlette\tools\nssm.exe" build\tools\ >nul
-    echo NSSM acquired from local installation OK
-    goto :nssm_done
+copy /Y "%HOST_EXE%" build\tools\ >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy "%HOST_EXE%"
+    pause
+    exit /b 1
 )
-echo ERROR: nssm.cc is unavailable and no local NSSM at %ProgramData%\Owlette\tools\nssm.exe
-pause
-exit /b 1
-
-:extract_nssm
-echo Extracting NSSM...
-powershell -Command "Expand-Archive -Path downloads\nssm.zip -DestinationPath build\nssm -Force"
-copy /Y build\nssm\nssm-2.24\win64\nssm.exe build\tools\ >nul
-
-:nssm_done
+echo Service host built OK
 
 :: ============================================================================
 :: Step 8: Create installer package structure
@@ -373,9 +354,16 @@ if exist CLAUDE.md (
 
 :: Note: Config template not needed - configure_site.py creates config in ProgramData during installation
 
-:: Copy NSSM
-echo Copying NSSM...
-copy /Y build\tools\nssm.exe build\installer_package\tools\ >nul
+:: Copy the service host. Lands at {app}\tools\owlette-host.exe on the target -
+:: the slot nssm.exe used to occupy, and the path scripts\install.bat,
+:: configure_site.py and the uninstaller all resolve.
+echo Copying the service host...
+copy /Y build\tools\owlette-host.exe build\installer_package\tools\ >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy the service host into the installer package
+    pause
+    exit /b 1
+)
 
 :: Copy icons
 if exist "icons" (
@@ -383,7 +371,7 @@ if exist "icons" (
     xcopy /E /I /Y icons\* build\installer_package\agent\icons\ >nul
 )
 
-:: Copy the desktop app. Lands at {app}\app\owlette-desktop.exe on the target —
+:: Copy the desktop app. Lands at {app}\app\owlette-desktop.exe on the target -
 :: the exact path shared_utils.get_desktop_exe_path() resolves.
 echo Copying desktop app...
 copy /Y "%DESKTOP_EXE%" build\installer_package\app\ >nul
@@ -394,7 +382,7 @@ if errorlevel 1 (
 )
 
 :: Copy installation scripts. The launch_gui.bat / launch_tray.bat hops are gone
-:: with the python UI — the Start-menu and startup shortcuts now point straight
+:: with the python UI - the Start-menu and startup shortcuts now point straight
 :: at the desktop exe.
 echo Copying installation scripts...
 copy /Y scripts\install.bat build\installer_package\scripts\ >nul

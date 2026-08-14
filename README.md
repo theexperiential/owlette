@@ -129,7 +129,7 @@ npm run dev                               # http://localhost:3000
 | component | technology |
 |-----------|-----------|
 | **dashboard** | Next.js 16, React 19, TypeScript, Tailwind CSS 4, shadcn/ui |
-| **agent** | Python 3.9+, Windows Service (NSSM), psutil, pywin32 |
+| **agent** | Python 3.9+, Windows service hosted by `owlette-host` (Rust), psutil, pywin32 |
 | **desktop app** | Tauri 2 (Rust), React 19, TypeScript, Tailwind CSS 4 |
 | **database** | Cloud Firestore (real-time NoSQL) |
 | **auth** | Firebase Auth, WebAuthn/Passkeys, TOTP 2FA, device code pairing |

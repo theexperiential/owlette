@@ -1156,20 +1156,27 @@ def get_desktop_exe_path():
 def build_detached_launch_command(exe_path, args=()):
     """Command line that launches exe_path *outside* the service's process tree.
 
-    The service runs under NSSM, and NSSM stops a service by walking the process
-    tree of the program it started and terminating every process in it
-    (``Killing PID <n> in process tree of PID <m> because service OwletteService
-    is stopping``). The desktop app is spawned by the service with
+    Through 2.x the service ran under NSSM, which stopped a service by walking
+    the process tree of the program it started and terminating every process in
+    it (``Killing PID <n> in process tree of PID <m> because service
+    OwletteService is stopping``). The desktop app is spawned by the service with
     CreateProcessAsUser, which makes it a child of that program — so every
     operator stop of OwletteService also killed the operator's UI, including the
-    tray icon they need in order to start the service again. NSSM 2.24, which is
-    what ships in tools/, predates the AppKillProcessTree setting, so the
-    behaviour cannot be turned off from the service configuration.
+    tray icon they need in order to start the service again. NSSM 2.24 ignored
+    the AppKillProcessTree=0 the installer set, so it could not be turned off
+    from the service configuration either.
 
     ``cmd.exe /c start`` breaks the link: cmd spawns the app and exits
-    immediately, so by the time NSSM enumerates the tree the app's recorded
+    immediately, so by the time anything enumerates the tree the app's recorded
     parent no longer exists and the walk never reaches it. The empty ``""`` is
     the window title ``start`` would otherwise take the quoted path for.
+
+    owlette-host (3.0.0) terminates only the process it launched and never its
+    descendants, so this detachment is no longer the single thing standing
+    between an operator's stop and their UI. It stays because it is still true
+    of anything else that might walk the tree — a manual ``taskkill /T``, a
+    remote-management tool, a future host — and because losing the desktop app
+    on a service restart is exactly the failure it was written to prevent.
 
     The PID is lost in the handoff — the caller gets cmd's, not the app's — so
     callers must recover it from the marker the app writes for itself

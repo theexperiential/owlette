@@ -136,13 +136,14 @@ If the installer doesn't work, follow these manual steps:
    - Use the device-code pairing installer from the web dashboard (recommended)
    - Or for manual/development setups, run `python src\configure_site.py`
 
-6. **Install service**
+6. **Install service** (elevated)
    ```cmd
-   cd src
-   python owlette_service.py install
-   sc config OwletteService start= delayed-auto
-   python owlette_service.py start
+   scripts\install.bat
    ```
+   The service is hosted by `tools\owlette-host.exe`, which `install.bat`
+   registers, configures and starts. Do **not** use
+   `python owlette_service.py install` — that registers a second, pywin32-hosted
+   `OwletteService` and the two definitions fight over the same name.
 
 ---
 
@@ -195,7 +196,7 @@ build_installer_full.bat
 - Downloads Python 3.11 embedded (~25 MB)
 - Installs all dependencies
 - Copies source files
-- Downloads NSSM service manager
+- Builds the `owlette-host` service host (Rust)
 - Compiles installer with Inno Setup
 
 **Time:** ~5-10 minutes
@@ -224,6 +225,12 @@ build_installer_quick.bat
 
 ## Service Management
 
+The service is hosted by `owlette-host.exe` (source in [`host/`](host/)), which
+replaced NSSM in 3.0.0. It launches `python.exe agent\src\owlette_runner.py`,
+restarts it when it exits 42/43 or crashes, and stops it by reporting
+STOP_PENDING and waiting — it never kills the child's process tree, so managed
+processes and the desktop app survive a service restart.
+
 ### Start/Stop/Restart
 
 ```cmd
@@ -232,30 +239,41 @@ net stop OwletteService
 net start OwletteService  # Restart
 ```
 
+or, equivalently, through the host (waits for the state, and reports it):
+
+```cmd
+tools\owlette-host.exe start
+tools\owlette-host.exe stop
+```
+
 ### Check Status
 
 ```cmd
 sc query OwletteService
+tools\owlette-host.exe status
 ```
+
+`status` also prints the registered image, which is how you confirm a machine has
+migrated off NSSM. Exit code: 0 running, 3 installed but stopped, 4 not
+installed.
 
 ### View Logs
 
-Check `logs/service.log` for service activity:
 ```cmd
-type logs\service.log
+type logs\service.log         :: the agent
+type logs\service_host.log    :: the host: spawns, exit codes, stops, backoff
+type logs\service_stderr.log  :: whatever the agent printed before it died
 ```
 
 ### Uninstall
 
 ```cmd
-uninstall.bat
+scripts\uninstall.bat
 ```
 
-Or manually:
+Or manually (elevated):
 ```cmd
-cd src
-python owlette_service.py stop
-python owlette_service.py remove
+tools\owlette-host.exe uninstall
 ```
 
 ---
