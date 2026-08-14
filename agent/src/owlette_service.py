@@ -567,6 +567,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'enabled': False,
                     'connected': False,
                     'site_id': '',
+                    'site_name': '',
                     'last_heartbeat': 0
                 },
                 'health': self._health_section()
@@ -589,7 +590,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         Creates/updates C:\\ProgramData\\owlette\\tmp\\service_status.json with:
         - Service running state
         - Firebase enabled/connected state
-        - Site ID
+        - Site ID, and the site's display name when it is known
         - Last heartbeat timestamp
         - Service version
         - Health probe results
@@ -628,12 +629,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
             firebase_enabled = shared_utils.read_config(['firebase', 'enabled']) or False
             firebase_connected = False
             site_id = ''
+            site_name = ''
             last_heartbeat = 0
 
             if self.firebase_client:
                 try:
                     firebase_connected = self.firebase_client.is_connected()
                     site_id = self.firebase_client.site_id or ''
+                    # The site's display name, when the client has been able to
+                    # read it. Read straight off the client rather than cached
+                    # here, so a reconnect that picks up a rename reaches the
+                    # next status write with no second copy to keep in step.
+                    site_name = getattr(self.firebase_client, 'site_name', None) or ''
                     # Get last heartbeat time if available
                     if hasattr(self.firebase_client, '_last_heartbeat_time'):
                         last_heartbeat = int(self.firebase_client._last_heartbeat_time)
@@ -652,6 +659,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'enabled': firebase_enabled,
                     'connected': firebase_connected,
                     'site_id': site_id,
+                    'site_name': site_name,
                     'last_heartbeat': last_heartbeat
                 },
                 'health': health_section
@@ -665,6 +673,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 bool(firebase_enabled),
                 bool(firebase_connected),
                 site_id,
+                # In the signature so a site the operator renamed, or a name
+                # that only arrived on the second connection attempt, reaches
+                # the desktop app on the next tick instead of on the refresh
+                # floor half a minute later.
+                site_name,
                 health_section.get('status'),
                 health_section.get('error_code'),
             )

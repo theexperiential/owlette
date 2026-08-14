@@ -201,6 +201,237 @@ class TestErrorHandling:
 
 
 # ---------------------------------------------------------------------------
+# TestSiteNameFromApi — GET /api/agent/site, the path that actually resolves
+# ---------------------------------------------------------------------------
+class TestSiteNameFromApi:
+    """The agent cannot read `sites/{siteId}` — the rules scope it to its own
+    machine subtree — so the display name the desktop footer shows comes from
+    `GET /api/agent/site`, which authenticates on the agent's own bearer token
+    and projects the site's name and nothing else.
+
+    Two invariants are load-bearing here. The API answer must short-circuit the
+    Firestore read (that read only ever 403s, and its `timezone` field would
+    switch schedule evaluation fleet-wide if it ever landed). And an API
+    failure must not latch: the endpoint may simply not be deployed yet at this
+    agent's api_base, and the next connect has to try again.
+    """
+
+    @staticmethod
+    def _response(status=200, payload=None):
+        resp = MagicMock()
+        resp.status_code = status
+        resp.json.return_value = payload if payload is not None else {}
+        return resp
+
+    def test_caches_the_name_from_the_endpoint_and_skips_firestore(
+        self, firebase_client, mock_rest_client
+    ):
+        mock_rest_client.get_document.reset_mock()
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get', return_value=self._response(200, {'name': 'TEC'})) as get:
+            firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_name == 'TEC'
+        get.assert_called_once()
+        assert get.call_args[0][0] == 'https://dev.owlette.app/api/agent/site'
+        assert get.call_args[1]['headers'] == {'Authorization': 'Bearer fake-token'}
+        # The site is carried by the token, so nothing is sent with the request.
+        assert 'params' not in get.call_args[1]
+        # An answer from the API is the whole answer — no site-document read.
+        mock_rest_client.get_document.assert_not_called()
+
+    def test_never_takes_a_timezone_from_the_endpoint(self, firebase_client):
+        # Guard on the deferral: activating site-timezone scheduling is a
+        # decision, not something a widened response body gets to make.
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get',
+                   return_value=self._response(200, {'name': 'TEC', 'timezone': 'America/Los_Angeles'})):
+            firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_name == 'TEC'
+        assert firebase_client.site_timezone is None
+
+    def test_an_unnamed_site_answers_null_and_still_settles_the_question(
+        self, firebase_client, mock_rest_client
+    ):
+        mock_rest_client.get_document.reset_mock()
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get', return_value=self._response(200, {'name': None})):
+            firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_name is None
+        mock_rest_client.get_document.assert_not_called()
+
+    def test_a_non_200_falls_through_to_the_firestore_read(
+        self, firebase_client, mock_rest_client
+    ):
+        mock_rest_client.get_document.reset_mock()
+        mock_rest_client.get_document.return_value = {'name': 'TEC', 'timezone': 'UTC'}
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get', return_value=self._response(404)):
+            firebase_client._fetch_site_metadata()
+
+        mock_rest_client.get_document.assert_called_once_with('sites/test-site')
+        assert firebase_client.site_name == 'TEC'
+
+    def test_a_network_failure_falls_through_without_raising(
+        self, firebase_client, mock_rest_client
+    ):
+        mock_rest_client.get_document.reset_mock()
+        mock_rest_client.get_document.return_value = None
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get', side_effect=OSError('connection reset by peer')):
+            firebase_client._fetch_site_metadata()
+
+        mock_rest_client.get_document.assert_called_once()
+        assert firebase_client.site_name is None
+
+    def test_the_failure_is_warned_once_but_retried_every_time(
+        self, firebase_client, mock_rest_client
+    ):
+        # An undeployed endpoint is a fact about the server, not a permanent
+        # one about this agent — so the attempt repeats while the log does not.
+        mock_rest_client.get_document.return_value = None
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get', return_value=self._response(404)) as get, \
+             patch.object(firebase_client, 'logger') as logger:
+            firebase_client._fetch_site_metadata()
+            firebase_client._fetch_site_metadata()
+            firebase_client._fetch_site_metadata()
+
+        assert get.call_count == 3
+        assert logger.warning.call_count == 1
+
+    def test_recovers_on_a_later_connect_once_the_route_is_deployed(
+        self, firebase_client, mock_rest_client
+    ):
+        mock_rest_client.get_document.return_value = None
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get',
+                   side_effect=[self._response(404), self._response(200, {'name': 'TEC'})]):
+            firebase_client._fetch_site_metadata()
+            assert firebase_client.site_name is None
+            firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_name == 'TEC'
+
+    def test_a_padded_name_is_trimmed(self, firebase_client):
+        with patch('firebase_client.shared_utils.get_api_base_url',
+                   return_value='https://dev.owlette.app/api'), \
+             patch('requests.get', return_value=self._response(200, {'name': '  TEC  '})):
+            firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_name == 'TEC'
+
+
+# ---------------------------------------------------------------------------
+# TestSiteMetadata — the sites/{siteId} read kept for a future rule grant
+# ---------------------------------------------------------------------------
+class TestSiteMetadata:
+    """`_fetch_site_metadata` caches the site's timezone (schedule evaluation)
+    and its display name (what the desktop app shows instead of the site id).
+    Both are optional: every consumer falls back — schedules to machine-local
+    time, the desktop app to the site id — so a site document that cannot be
+    read must leave the client usable, not raise.
+
+    These cover the Firestore fallback, so the API lookup is made to decline
+    throughout; `TestSiteNameFromApi` covers the path it declines from.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _api_declines(self, firebase_client):
+        with patch.object(firebase_client, '_fetch_site_name_from_api', return_value=False):
+            yield
+
+    def test_caches_the_name_and_the_timezone_from_one_read(self, firebase_client, mock_rest_client):
+        mock_rest_client.get_document.reset_mock()
+        mock_rest_client.get_document.return_value = {
+            'name': 'TEC',
+            'timezone': 'America/Los_Angeles',
+        }
+
+        firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_name == 'TEC'
+        assert firebase_client.site_timezone == 'America/Los_Angeles'
+        # One round trip, on the site document itself.
+        mock_rest_client.get_document.assert_called_once_with('sites/test-site')
+
+    def test_an_unnamed_site_leaves_the_name_unset(self, firebase_client, mock_rest_client):
+        # Sites created before the name column, or named with whitespace only:
+        # the consumer needs None, not '', so it falls back to the site id.
+        mock_rest_client.get_document.return_value = {'timezone': 'UTC', 'name': ''}
+
+        firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_name is None
+        assert firebase_client.site_timezone == 'UTC'
+
+    def test_a_missing_site_document_changes_nothing(self, firebase_client, mock_rest_client):
+        firebase_client.site_name = 'TEC'
+        mock_rest_client.get_document.return_value = None
+
+        firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_name == 'TEC'
+
+    def test_a_denial_is_said_once_and_then_stops_being_asked(
+        self, firebase_client, mock_rest_client
+    ):
+        # The live failure mode: the agent's token carries no site-level read
+        # permission, so this 403s on every connection for the life of the
+        # machine. Reconnects must not re-ask — one warning, one attempt — and
+        # it must never raise, or it takes the connect path down with it.
+        mock_rest_client.get_document.reset_mock()
+        mock_rest_client.get_document.side_effect = RuntimeError(
+            '403 Client Error: Forbidden for url: https://firestore.googleapis.com/…')
+
+        with patch.object(firebase_client, 'logger') as logger:
+            firebase_client._fetch_site_metadata()
+            firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_name is None
+        assert firebase_client.site_timezone is None
+        assert logger.warning.call_count == 1
+        assert mock_rest_client.get_document.call_count == 1
+
+    def test_a_transient_failure_is_quiet_and_tried_again(
+        self, firebase_client, mock_rest_client
+    ):
+        # A dropped socket says nothing about permission, so the next connect
+        # asks again — and says nothing about it in the meantime.
+        mock_rest_client.get_document.reset_mock()
+        mock_rest_client.get_document.side_effect = [
+            OSError('connection reset by peer'),
+            {'name': 'TEC'},
+        ]
+
+        with patch.object(firebase_client, 'logger') as logger:
+            firebase_client._fetch_site_metadata()
+            assert firebase_client.site_name is None
+            firebase_client._fetch_site_metadata()
+
+        assert firebase_client.site_name == 'TEC'
+        assert logger.warning.call_count == 0
+        assert logger.debug.call_count == 1
+
+    def test_skips_the_read_when_there_is_no_client(self, firebase_client, mock_rest_client):
+        firebase_client.db = None
+        mock_rest_client.get_document.reset_mock()
+
+        firebase_client._fetch_site_metadata()
+
+        mock_rest_client.get_document.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # TestEnsureDisplayModesCatalogue — A3.2 cache-by-signature guard
 # ---------------------------------------------------------------------------
 class TestEnsureDisplayModesCatalogue:

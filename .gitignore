@@ -95,6 +95,11 @@ agent/tmp/
 # Build artifacts
 node_modules/
 site/
+# `site/` is the generated docs output at the repo root, but the pattern is
+# unanchored and so swallows any directory named `site` at any depth — which
+# silently hid the whole `/api/agent/site` route. Same collision, and same
+# fix, as the `logs/` negations above.
+!web/app/api/agent/site/
 build/
 dist/
 /installer/
