@@ -883,6 +883,36 @@ const PROFILE_LISTENER_LIMIT = 50;
 // offline alerting agree on when a machine is stale.
 const OFFLINE_HEARTBEAT_AGE_SEC = 300;
 
+/**
+ * The single source of truth for "is this machine online".
+ *
+ * Both the snapshot parser and the periodic staleness re-check call this, so
+ * the two can't drift apart — they did, and the dashboard rendered a machine
+ * whose agent had been killed (doc left at `online: true`, heartbeat frozen) as
+ * ONLINE well past the threshold.
+ *
+ * A machine counts as online only when the agent's own flag says so AND the
+ * heartbeat is younger than OFFLINE_HEARTBEAT_AGE_SEC. A missing/unparseable
+ * heartbeat parses to 0, which fails the age check — matching
+ * `classifyMachineHealth` in `app/api/cron/health-check/route.ts`, which
+ * measures the same age from the same zero default. No Firestore write is
+ * needed for either side to reach that verdict.
+ *
+ * @param onlineFlag  raw `online` field off the machine doc (or the currently
+ *                    computed value, when re-checking state we already derived)
+ * @param lastHeartbeatSec  heartbeat in Unix seconds (0 when absent/unparseable)
+ * @param nowSec  current wall clock in Unix seconds
+ */
+export function isMachineOnline(
+  onlineFlag: unknown,
+  lastHeartbeatSec: number,
+  nowSec: number,
+): boolean {
+  if (onlineFlag !== true) return false;
+  if (!Number.isFinite(lastHeartbeatSec)) return false;
+  return nowSec - lastHeartbeatSec < OFFLINE_HEARTBEAT_AGE_SEC;
+}
+
 export function useMachineHardware(siteId: string | null, machineId: string | null) {
   const requestedKey = db && siteId && machineId ? `${siteId}/${machineId}` : null;
   const [state, setState] = useState<{
@@ -1023,12 +1053,10 @@ export function useMachines(siteId: string) {
   // Re-evaluates machine online status every 30 seconds based on lastHeartbeat age
   // This catches machines that went offline without writing online=false (crashes, installer kills, etc.)
   //
-  // IMPORTANT: if `lastHeartbeat === 0` (parser fell through, or doc just
-  // arrived without a heartbeat field), do NOT aggressively flip the machine
-  // offline. Trust `machine.online` from the snapshot listener until we have
-  // a real heartbeat to compare against. Without this guard, any timestamp
-  // shape the parser doesn't recognize causes a flapping online/offline pill
-  // every 30s as this interval fires.
+  // Runs the same `isMachineOnline` predicate the snapshot parser uses, so a
+  // machine can never sit online here under a rule the parser would reject.
+  // (The pill used to flap because the two disagreed on edge cases; sharing one
+  // function is what keeps them honest, not a second set of local guards.)
   useEffect(() => {
     if (machines.length === 0) return;
 
@@ -1038,13 +1066,10 @@ export function useMachines(siteId: string) {
         let hasChanges = false;
 
         const updated = prevMachines.map(machine => {
-          // Skip the staleness check entirely if we have no usable heartbeat —
-          // trust the snapshot's online flag rather than spuriously flipping offline.
-          if (!machine.lastHeartbeat || machine.lastHeartbeat <= 0) {
-            return machine;
-          }
-          const heartbeatAge = now - machine.lastHeartbeat;
-          const shouldBeOnline = (machine.online === true) && (heartbeatAge < OFFLINE_HEARTBEAT_AGE_SEC);
+          // Re-check against the *derived* flag: once staleness has flipped a
+          // machine offline, only a fresh snapshot (a real heartbeat) brings it
+          // back — this tick never resurrects it.
+          const shouldBeOnline = isMachineOnline(machine.online, machine.lastHeartbeat, now);
 
           // If calculated online state differs from current state, update it
           if (machine.online !== shouldBeOnline) {
@@ -1078,15 +1103,16 @@ export function useMachines(siteId: string) {
     const unsubscribe = onSnapshot(
       machinesRef,
       (snapshot) => {
-        // When the snapshot is served from local cache (e.g. on remount after
-        // navigating back to the dashboard), `lastHeartbeat` is whatever was
-        // cached last — wall-clock "now" has advanced but the cached timestamp
-        // hasn't, so the heartbeat-age check below would spuriously flip every
-        // machine to offline for a split second until the server snapshot
-        // arrives. Skip the age check on cached reads and trust `data.online`;
-        // the follow-up server snapshot (ms later) re-applies the full check,
-        // and the 30s interval still catches silent crashes.
-        const isFromCache = snapshot.metadata.fromCache;
+        // NB: the heartbeat-age check below is applied to cache-served
+        // snapshots too. Cached reads (a remount after navigating back to the
+        // dashboard, or a local-write echo) used to be exempted and trusted
+        // `data.online` outright — which painted a green pill on a machine
+        // whose cached heartbeat was already minutes stale, for as long as it
+        // took the 30s interval to correct it. A cached timestamp is a real
+        // observation; if it is older than the threshold the machine is stale
+        // by the only evidence we have, and the server snapshot that follows
+        // (ms later, when connected) re-derives the same verdict from fresher
+        // data.
 
         // Reconcile capped hardware/profile listeners with the current set of
         // machines. The first N IDs are deterministic because the collection is
@@ -1239,19 +1265,13 @@ export function useMachines(siteId: string) {
           const shutdownScheduledAtParsed = parseFirestoreSeconds(data.shutdownScheduledAt);
           const shutdownScheduledAt = shutdownScheduledAtParsed > 0 ? shutdownScheduledAtParsed : undefined;
 
-          // Determine online status: use both boolean flag AND heartbeat timestamp
-          // Machine is online if BOTH conditions are true:
-          // 1. online flag is true
-          // 2. Last heartbeat was within OFFLINE_HEARTBEAT_AGE_SEC (300s)
-          //    Agent sends metrics every 30s (active) or 120s (idle), so 300s
-          //    survives two consecutive missed idle beats and matches the cron
-          //    health-check's OFFLINE_THRESHOLD_MS.
-          // Exception: on cached snapshots the heartbeat age is unreliable, so trust the flag alone.
+          // Determine online status: the agent's own flag AND a heartbeat
+          // younger than OFFLINE_HEARTBEAT_AGE_SEC (300s). The agent sends
+          // metrics every 30s (active) or 120s (idle), so 300s survives two
+          // consecutive missed idle beats and matches the cron health-check's
+          // OFFLINE_THRESHOLD_MS. Shared with the 30s staleness interval above.
           const now = Math.floor(Date.now() / 1000); // Current time in seconds
-          const heartbeatAge = now - lastHeartbeat; // Age in seconds
-          const isOnline = isFromCache
-            ? (data.online === true)
-            : (data.online === true) && (heartbeatAge < OFFLINE_HEARTBEAT_AGE_SEC);
+          const isOnline = isMachineOnline(data.online, lastHeartbeat, now);
 
             // Preserve GPU data if current update has invalid/missing GPU (name is "N/A" or missing)
             const metrics = data.metrics ? {
