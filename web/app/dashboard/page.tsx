@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/lib/toast';
-import { Plus, LayoutGrid, List, ChevronsUpDown, ChevronsDownUp, Square, Copy, Trash2, Download, Monitor, Cog, Settings2, RotateCw, Loader2, CheckCircle2 } from 'lucide-react';
+import { Plus, LayoutGrid, List, ChevronsUpDown, ChevronsDownUp, Square, Copy, Trash2, Download, Monitor, Cog, Settings2, RotateCw, Loader2, CheckCircle2, Clock } from 'lucide-react';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Table, TableBody } from '@/components/ui/table';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
@@ -35,7 +35,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 // (which re-exports Recharts-heavy components like MetricsDetailPanel).
 import { deserializeTabs, initialMetricToState, serializeTabs } from '@/components/charts/metricsTabs';
 import type { MetricType } from '@/components/charts/ChartTooltip';
-import ScheduleEditor from '@/components/ScheduleEditor';
+import ScheduleEditor, { ScheduleBlocksEditor } from '@/components/ScheduleEditor';
+import WeekSummaryBar from '@/components/WeekSummaryBar';
 import { MachineCardView } from './components/MachineCardView';
 import { MachineRow, MachineTableHeader, type DeviceUnion, type ShowDropdownFlags } from './components/MachineListView';
 import { useDevicePrefs } from '@/hooks/useDevicePrefs';
@@ -152,6 +153,19 @@ export default function DashboardPage() {
     launch_mode: 'off',
     schedules: null,
   });
+  // Disclosure for the dialog's schedule section. The schedule is editable in
+  // every launch mode (same rule the desktop app ships): from `off`/`always on`
+  // this is pre-configuring — the windows are written on save and the mode stays
+  // where it was. In `scheduled` the section is pinned open, so this flag only
+  // drives the other two modes.
+  const [scheduleSectionOpen, setScheduleSectionOpen] = useState(false);
+  const scheduleSectionVisible = editProcessForm.launch_mode === 'scheduled' || scheduleSectionOpen;
+  // Prefill with the default windows when the process has none stored — the
+  // summary bar and the editor must show the same thing. Nothing is written to
+  // the form until the user actually edits a block.
+  const scheduleBlocks = editProcessForm.schedules && editProcessForm.schedules.length > 0
+    ? editProcessForm.schedules
+    : DEFAULT_SCHEDULE;
 
   const { machines, loading: machinesLoading, killProcess, setLaunchMode, updateProcess, deleteProcess, createProcess, restartMachine, shutdownMachine, cancelRestart, dismissRestartPending, captureScreenshot, startLiveView, stopLiveView } = useMachines(currentSiteId);
   const { prefs: devicePrefs, setListPref } = useDevicePrefs();
@@ -543,6 +557,7 @@ export default function DashboardPage() {
       launch_mode: process.launch_mode || (process.autolaunch ? 'always' : 'off'),
       schedules: process.schedules || null,
     });
+    setScheduleSectionOpen(false);
     setProcessDialogOpen(true);
   };
 
@@ -565,6 +580,7 @@ export default function DashboardPage() {
       launch_mode: 'off' as LaunchMode,
       schedules: null as ScheduleBlock[] | null,
     });
+    setScheduleSectionOpen(false);
     setProcessDialogOpen(true);
   };
 
@@ -1356,7 +1372,10 @@ export default function DashboardPage() {
                 : 'update process configuration'}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          {/* The form scrolls inside the dialog: with the schedule section open
+              the fields alone can outgrow a laptop viewport, and a Dialog that
+              overflows puts its footer (save/cancel) out of reach. */}
+          <div className="space-y-4 py-4 max-h-[70vh] overflow-y-auto pr-1">
             {/* Name */}
             <div className="space-y-2">
               <Label htmlFor="edit-name" className="text-foreground">name</Label>
@@ -1371,7 +1390,7 @@ export default function DashboardPage() {
             {/* Launch Mode — positioned prominently after name */}
             <div className="space-y-2">
               <Label className="text-foreground text-sm">launch mode</Label>
-              <div className="flex rounded-lg overflow-hidden border border-border">
+              <div className="flex items-stretch rounded-lg overflow-hidden border border-border">
                 {(['off', 'always', 'scheduled'] as const).map((mode) => {
                   const labels = { off: 'off', always: 'always on', scheduled: 'scheduled' };
                   const isActive = editProcessForm.launch_mode === mode;
@@ -1380,44 +1399,6 @@ export default function DashboardPage() {
                     always: isActive ? 'bg-emerald-600 text-white' : '',
                     scheduled: isActive ? 'bg-blue-600 text-white' : '',
                   };
-
-                  if (mode === 'scheduled' && isActive) {
-                    return (
-                      <span key={mode} className="flex items-stretch flex-1 bg-blue-600 text-white">
-                        <button
-                          type="button"
-                          onClick={() => setEditProcessForm({ ...editProcessForm, launch_mode: mode, autolaunch: true })}
-                          className="flex-1 px-3 py-1.5 text-xs font-medium cursor-pointer"
-                        >
-                          {labels[mode]}
-                        </button>
-                        <span className="w-px bg-blue-400/50" />
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setProcessDialogOpen(false);
-                                handleConfigureSchedule(editingMachineId, {
-                                  id: editingProcessId,
-                                  name: editProcessForm.name,
-                                  exe_path: editProcessForm.exe_path,
-                                  schedules: editProcessForm.schedules || null,
-                                  launch_mode: 'scheduled',
-                                } as Process);
-                              }}
-                              className="px-1.5 hover:bg-blue-500 transition-colors cursor-pointer flex items-center"
-                            >
-                              <Settings2 className="h-3.5 w-3.5" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>configure schedule</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </span>
-                    );
-                  }
 
                   return (
                     <button
@@ -1430,6 +1411,30 @@ export default function DashboardPage() {
                     </button>
                   );
                 })}
+                {/* Schedule disclosure — the machine rows' gear affordance: flush
+                    at the end of the segmented control, one hairline between. It
+                    is offered in EVERY mode (the schedule is always editable);
+                    in `scheduled` the section below is pinned open, so the gear
+                    reads as the marker for a section that is already showing.
+                    It never selects a mode — only the segments do that. */}
+                <span className={`w-px ${editProcessForm.launch_mode === 'scheduled' ? 'bg-blue-400/50' : 'bg-border'}`} />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="configure schedule"
+                      aria-expanded={scheduleSectionVisible}
+                      data-testid="process-dialog-configure-schedule"
+                      onClick={() => setScheduleSectionOpen((open) => !open)}
+                      className={`px-2 transition-colors cursor-pointer flex items-center ${editProcessForm.launch_mode === 'scheduled' ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-card text-muted-foreground hover:bg-muted/50'}`}
+                    >
+                      <Settings2 className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>configure schedule</p>
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </div>
 
@@ -1549,6 +1554,39 @@ export default function DashboardPage() {
               </div>
             </div>
 
+            {/* Schedule Configuration — auto-shown in `scheduled` mode, disclosed
+                by the gear in `off` / `always on`. Edits here are saved with the
+                rest of the form and never move the launch mode. */}
+            {scheduleSectionVisible && (
+              <div className="space-y-3 rounded-lg border border-blue-600/30 bg-blue-500/5 p-3" data-testid="process-dialog-schedule-section">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-3.5 w-3.5 text-blue-400" />
+                    <span className="text-xs font-medium text-blue-400">schedule configuration</span>
+                  </div>
+                  {currentSite?.timezone && (
+                    <span className="text-[10px] text-muted-foreground">
+                      times in {currentSite.timezone.replace(/_/g, ' ').split('/').pop()}
+                    </span>
+                  )}
+                </div>
+                {editProcessForm.launch_mode !== 'scheduled' && (
+                  <p className="text-[11px] text-muted-foreground">
+                    saved with the process — switch to scheduled whenever you want these windows to run it
+                  </p>
+                )}
+                <div className="flex justify-center mb-2">
+                  <WeekSummaryBar schedules={scheduleBlocks} tall />
+                </div>
+                <div className="max-h-[200px] overflow-y-auto pr-1">
+                  <ScheduleBlocksEditor
+                    blocks={scheduleBlocks}
+                    onChange={(blocks) => setEditProcessForm({ ...editProcessForm, schedules: blocks })}
+                    compact
+                  />
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter className="flex items-center">
             {processDialogMode === 'edit' && (
