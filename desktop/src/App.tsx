@@ -23,7 +23,7 @@ import { useOwletteConfig } from '@/hooks/useOwletteConfig'
 import { useRestartPrompt } from '@/hooks/useRestartPrompt'
 import { useServiceHealth } from '@/hooks/useServiceHealth'
 import { useSidebarLayout } from '@/hooks/useSidebarLayout'
-import { isPaired, siteIdOf } from '@/lib/serviceHealth'
+import { isPaired, siteNameOf } from '@/lib/serviceHealth'
 import { classifyDrop, toProcessEntry, type ProcessEntryDraft } from '@/lib/dropClassifier'
 import {
   cardBlockedReason,
@@ -104,7 +104,24 @@ function App() {
     hostname().then(setHost, () => setHost(null))
   }, [])
 
-  const siteId = siteIdOf(config.config, health.statusFile)
+  // The webview's native context menu (Back / Refresh / Print / Inspect) is
+  // browser chrome, not this app. Suppress it in built apps everywhere except
+  // editable fields, whose copy/paste menu is genuinely useful. `tauri dev`
+  // keeps the native menu so Inspect stays reachable.
+  useEffect(() => {
+    if (import.meta.env.DEV) return
+    const suppress = (event: MouseEvent) => {
+      const target = event.target as Element | null
+      if (target?.closest('input, textarea, [contenteditable="true"]')) return
+      event.preventDefault()
+    }
+    window.addEventListener('contextmenu', suppress)
+    return () => window.removeEventListener('contextmenu', suppress)
+  }, [])
+
+  // What to call this machine's site anywhere an operator reads it. The id is
+  // still what the logs and the config carry; this is the label.
+  const siteLabel = siteNameOf(config.config, health.statusFile)
 
   /**
    * Whether this machine belongs to a site, and therefore whether the menu
@@ -115,7 +132,10 @@ function App() {
 
   const handleJoined = useCallback(() => {
     // The helper restarts the service; the config watcher picks up the new site
-    // on its own, so there is nothing to reload here.
+    // on its own, so there is nothing to reload here. The site goes unnamed on
+    // purpose: pairing yields an id, and the name only arrives with the
+    // restarted service's first status write a few seconds later — by which
+    // time the footer says it.
     toast.success('this machine joined a site')
   }, [])
 
@@ -531,7 +551,7 @@ function App() {
         />
         <LeaveSiteDialog
           open={menuDialog === 'leave'}
-          siteId={siteId}
+          site={siteLabel}
           onClose={() => setMenuDialog(null)}
           onLeft={handleLeft}
           onHold={health.hold}

@@ -5,6 +5,7 @@ import {
   footerSentence,
   isPaired,
   siteIdOf,
+  siteNameOf,
   type FooterState,
   type ServiceStatusFile,
 } from './serviceHealth'
@@ -129,6 +130,40 @@ describe('site id', () => {
   it('falls back to the status file before giving up', () => {
     expect(siteIdOf({ firebase: {} }, connected)).toBe('default_site')
     expect(siteIdOf(null, null)).toBe('')
+  })
+})
+
+describe('site name', () => {
+  const named: ServiceStatusFile = {
+    ...connected,
+    firebase: { ...connected.firebase, site_name: 'TEC' },
+  }
+
+  it('prefers the name the service published', () => {
+    expect(siteNameOf(joined, named)).toBe('TEC')
+  })
+
+  it('falls back to the id, never to nothing', () => {
+    expect(siteNameOf(joined, connected)).toBe('default_site')
+    expect(siteNameOf(joined, { firebase: { site_id: 'default_site', site_name: '' } })).toBe(
+      'default_site',
+    )
+    expect(siteNameOf(joined, null)).toBe('default_site')
+  })
+
+  it('ignores a name published for a site this machine has left', () => {
+    // config.json is rewritten first on a join or a leave, so between that and
+    // the service's next status write the file still names the old site.
+    // Naming it would be worse than saying nothing about it.
+    expect(siteNameOf({ firebase: { enabled: true, site_id: 'studio' } }, named)).toBe('studio')
+  })
+
+  it('has nothing to say about an unpaired machine', () => {
+    expect(siteNameOf({ firebase: { enabled: false, site_id: '' } }, { firebase: {} })).toBe('')
+  })
+
+  it('trusts the status file before config.json has been read', () => {
+    expect(siteNameOf(null, named)).toBe('TEC')
   })
 })
 

@@ -230,7 +230,10 @@ export function ProcessList({
         </Tooltip>
       </header>
 
-      <div className={cn('min-h-0 flex-1 overflow-y-auto pb-2', collapsed ? 'px-1.5' : 'px-2')}>
+      {/* pt-1: the focus ring sits 3px outside a row (1px outline + 2px
+          offset); without top padding the first row's ring clips against the
+          scroll boundary on keyboard selection. */}
+      <div className={cn('min-h-0 flex-1 overflow-y-auto pt-1 pb-2', collapsed ? 'px-1.5' : 'px-2')}>
         {processes.length === 0 ? (
           // Nothing to say in 48 px that the expanded list does not say better;
           // the add button above is the whole instruction the rail can carry.

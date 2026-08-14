@@ -24,6 +24,14 @@ export interface ServiceStatusFile {
     enabled?: boolean
     connected?: boolean
     site_id?: string
+    /**
+     * The site's display name ("TEC"), as the service last read it from
+     * `sites/{site_id}`. Empty whenever the service has not been able to read
+     * it — an older agent, a machine that has never connected, or a token
+     * without site-level read permission — so it is never the only thing a
+     * surface can say about the site.
+     */
+    site_name?: string
     last_heartbeat?: number
   }
   health?: {
@@ -87,6 +95,30 @@ function firebaseSection(config: OwletteConfig | null): FirebaseSection {
 /** The site this machine belongs to, config first — it is what the service reads. */
 export function siteIdOf(config: OwletteConfig | null, statusFile: ServiceStatusFile | null): string {
   return firebaseSection(config).site_id || statusFile?.firebase?.site_id || ''
+}
+
+/**
+ * What to call this machine's site on screen: its display name when the
+ * service has published one, its id otherwise.
+ *
+ * The id is the truth and stays in every log line, but it is an identifier
+ * ("default_site") where the operator's word for the place is a name ("TEC") —
+ * the same one the dashboard's manage-sites dialog shows. Only the service can
+ * resolve it, so it arrives through `service_status.json`.
+ *
+ * The published name is used only when it describes the site the machine is
+ * actually in. Between a join or a leave and the service's next status write
+ * the two disagree — config.json is rewritten first — and a stale name is worse
+ * than an id: it would name the site this machine just left.
+ */
+export function siteNameOf(
+  config: OwletteConfig | null,
+  statusFile: ServiceStatusFile | null,
+): string {
+  const site = siteIdOf(config, statusFile)
+  const published = statusFile?.firebase
+  if (published?.site_name && published.site_id === site) return published.site_name
+  return site
 }
 
 /**
@@ -176,17 +208,20 @@ export function deriveFooterState({ status, statusFile, config }: FooterInputs):
 export interface FooterSentence {
   /** Muted text before the status word ("TEC-A4D is "). Empty when none. */
   before: string
-  /** Muted text after the status word (" to default_site"). Empty when none. */
+  /** Muted text after the status word (" to TEC"). Empty when none. */
   after: string
 }
 
 /**
  * The muted glue that turns the footer's status word into a sentence:
- * "TEC-A4D is [connected] to default_site". The status word itself keeps its
- * tone colour, so only the words around it are produced here. States that
- * don't fit a sentence fall back to the bare status word, and before the
- * hostname is known the site is appended the old segment way rather than
- * pretending "is connected to" with no subject.
+ * "TEC-A4D is [connected] to TEC". The status word itself keeps its tone
+ * colour, so only the words around it are produced here. States that don't fit
+ * a sentence fall back to the bare status word, and before the hostname is
+ * known the site is appended the old segment way rather than pretending "is
+ * connected to" with no subject.
+ *
+ * `site` is whatever the machine's site should be called on screen — see
+ * {@link siteNameOf}. This function does not care which of the two it got.
  */
 export function footerSentence(state: FooterState, site: string, hostname: string | null): FooterSentence {
   if (!hostname) {

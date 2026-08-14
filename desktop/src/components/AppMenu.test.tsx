@@ -46,6 +46,7 @@ describe('AppMenu', () => {
       'logs',
       'docs',
       'submit bug report',
+      'reload',
     ])
   })
 

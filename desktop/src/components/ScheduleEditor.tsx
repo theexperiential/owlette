@@ -31,11 +31,22 @@ import { BLOCK_COLORS, DEFAULT_SCHEDULE } from '@/lib/scheduleDefaults'
 // ─── Time Picker ─────────────────────────────────────────────────────────────
 
 /**
- * The web reads `userPreferences.timeFormat` off the auth context. There is no
- * account and no preferences store here, so the picker takes the same default
- * the web falls back to when a user has never chosen (`'12h'`).
+ * The web reads `userPreferences.timeFormat` off the auth context — a
+ * per-dashboard-user setting this app cannot inherit, because a machine is
+ * paired, not signed in. The right source for a native app is the operator's
+ * own Windows regional preference, which the webview reports through Intl:
+ * hourCycle h11/h12 means AM/PM, h23/h24 means 24-hour. Evaluated once per
+ * launch — the OS setting is not something that changes under a dialog.
  */
-const USE_24H = false
+const USE_24H = (() => {
+  try {
+    const cycle = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions()
+      .hourCycle
+    return cycle === 'h23' || cycle === 'h24'
+  } catch {
+    return false
+  }
+})()
 
 interface TimePickerProps {
   value: string // "HH:MM" 24-hour format
@@ -214,10 +225,17 @@ export function ScheduleBlocksEditor({ blocks, onChange, compact }: ScheduleBloc
   }
 
   const addBlock = () => {
-    // Find the next unused colorIndex
-    const usedColors = new Set(blocks.map((b) => b.colorIndex ?? -1))
+    // The next unused color — counted the way blocks actually RENDER
+    // (colorIndex ?? position), or a block without an explicit colorIndex
+    // holds a color this set would not see, and the new block ends up
+    // wearing the same one (two blue blocks, indistinguishable week bar).
+    const usedColors = new Set(
+      blocks.map((b, i) => getBlockColorIndex(b, i) % BLOCK_COLORS.length),
+    )
     let nextColor = 0
-    while (usedColors.has(nextColor)) nextColor++
+    while (usedColors.has(nextColor % BLOCK_COLORS.length) && nextColor < BLOCK_COLORS.length)
+      nextColor++
+    nextColor %= BLOCK_COLORS.length
     onChange([
       ...blocks,
       {
@@ -440,35 +458,51 @@ export function ScheduleEditor({ open, schedules, onClose, onSave }: ScheduleEdi
         if (!next) onClose()
       }}
     >
-      <DialogContent className="sm:max-w-lg" data-testid="schedule-editor">
-        <DialogHeader>
+      <DialogContent
+        // Two panes under one height cap, bounded below the titlebar. Left:
+        // what a schedule IS — title, rules, the week at a glance. Right: the
+        // work surface — the blocks, scrolling in place, with the actions
+        // pinned beneath them. Splitting the columns is what buys the blocks
+        // their full-height column instead of a squeezed strip.
+        // The title owns the full first row — the columns begin beside the
+        // description, so the block pane never crowds the close button and the
+        // hierarchy reads title → (rules | work surface).
+        className="h-[min(34rem,calc(100vh-5.5rem))] grid-cols-[minmax(0,5fr)_minmax(0,6fr)] grid-rows-[auto_minmax(0,1fr)] gap-x-6 gap-y-4 sm:max-w-3xl"
+        data-testid="schedule-editor"
+      >
+        <DialogHeader className="col-span-2">
           <DialogTitle>configure schedule</DialogTitle>
-          <DialogDescription>
-            the service runs this process during these windows and stops it outside them. times
-            follow the site&apos;s timezone, or this machine&apos;s local time when it is not paired
-            to one.
-          </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3 rounded-lg border border-blue-600/30 bg-blue-950/10 p-3">
-          <div className="flex items-center gap-2">
-            <Clock className="h-3.5 w-3.5 text-blue-400" />
-            <span className="text-xs font-medium text-blue-400">schedule configuration</span>
-          </div>
-          <div className="mb-2 flex justify-center">
-            <WeekSummaryBar schedules={blocks} tall />
-          </div>
-          <div className="max-h-[50vh] overflow-y-auto pr-1">
-            <ScheduleBlocksEditor blocks={blocks} onChange={setBlocks} compact />
+        <div className="flex min-h-0 flex-col gap-4">
+          <DialogDescription>
+            the service runs this process during these windows and stops it outside them. times
+            follow the site&apos;s timezone, or this machine&apos;s local time when it is not
+            paired to one.
+          </DialogDescription>
+
+          <div className="space-y-3 rounded-lg border border-blue-600/30 bg-blue-950/10 p-3">
+            <div className="flex items-center gap-2">
+              <Clock className="h-3.5 w-3.5 text-blue-400" />
+              <span className="text-xs font-medium text-blue-400">week at a glance</span>
+            </div>
+            <div className="flex justify-center">
+              <WeekSummaryBar schedules={blocks} tall />
+            </div>
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            cancel
-          </Button>
-          <Button onClick={handleSave}>save schedule</Button>
-        </DialogFooter>
+        <div className="flex min-h-0 flex-col gap-3">
+          <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-blue-600/30 bg-blue-950/10 p-3">
+            <ScheduleBlocksEditor blocks={blocks} onChange={setBlocks} compact />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={onClose}>
+              cancel
+            </Button>
+            <Button onClick={handleSave}>save schedule</Button>
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   )

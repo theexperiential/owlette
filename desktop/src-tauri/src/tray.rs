@@ -125,7 +125,8 @@ struct TrayView {
   code: StatusCode,
   /// `service: running` / `service: stopped` / `service: error`.
   service: String,
-  /// `status: connected` / `status: disconnected` / `status: auth_error` / …
+  /// `status: connected to TEC` / `status: disconnected from TEC` /
+  /// `status: auth_error` / …
   status: String,
   /// Human-readable health-probe message, when there is one.
   health: Option<String>,
@@ -572,14 +573,27 @@ fn determine_status(doc: &StatusDoc, service_running: bool) -> Status {
     .and_then(|firebase| firebase.get("site_id"))
     .and_then(Value::as_str)
     .unwrap_or("");
+  // The site's display name, when the service has been able to resolve it.
+  // Same document, same write, so the two can never describe different sites —
+  // unlike the window, which has config.json as a second opinion and has to
+  // reconcile them (`serviceHealth.siteNameOf`).
+  let site_name = firebase
+    .and_then(|firebase| firebase.get("site_name"))
+    .and_then(Value::as_str)
+    .filter(|name| !name.is_empty())
+    .unwrap_or(site_id);
 
   let paired = enabled && !site_id.is_empty();
+  // "connected to TEC" rather than a bare "connected": this row and the tooltip
+  // are the same claim the window footer makes ("TEC-A4D is connected to TEC"),
+  // and an operator comparing the two should read the same sentence. An
+  // unpaired machine names no site because there is none to name.
   let firebase_msg = if !paired {
-    "disabled"
+    "disabled".to_string()
   } else if connected {
-    "connected"
+    format!("connected to {}", truncate(site_name, 40))
   } else {
-    "disconnected"
+    format!("disconnected from {}", truncate(site_name, 40))
   };
 
   let code = if !service_running || !paired {
@@ -964,7 +978,7 @@ mod tests {
     let primed = smoothed(&fresh(healthy), &mut cache);
     assert_eq!(
       determine_status(&primed, RUNNING).status,
-      "status: connected"
+      "status: connected to hq"
     );
     assert!(
       cache.is_some(),
@@ -1020,19 +1034,90 @@ mod tests {
     let status = determine_status(&fresh(data), RUNNING);
     assert_eq!(status.code, StatusCode::Normal);
     assert_eq!(status.service, "service: running");
-    assert_eq!(status.status, "status: connected");
+    // No name published: the id still says which site, and never nothing.
+    assert_eq!(status.status, "status: connected to hq");
     assert!(status.health.is_none());
+  }
+
+  #[test]
+  fn the_site_is_named_the_way_the_operator_names_it() {
+    // The same sentence the window footer builds — "TEC-A4D is connected to
+    // TEC" — so an operator comparing the tooltip with the footer reads one
+    // claim, not two.
+    let data = json!({
+      "service": { "running": true },
+      "firebase": {
+        "enabled": true, "connected": true,
+        "site_id": "default_site", "site_name": "TEC"
+      },
+      "health": { "status": "ok" }
+    });
+    let status = determine_status(&fresh(data), RUNNING);
+    assert_eq!(status.status, "status: connected to TEC");
+  }
+
+  #[test]
+  fn an_empty_site_name_falls_back_to_the_id() {
+    // What an agent that could not read its site document publishes.
+    let data = json!({
+      "service": { "running": true },
+      "firebase": {
+        "enabled": true, "connected": true,
+        "site_id": "default_site", "site_name": ""
+      },
+      "health": { "status": "ok" }
+    });
+    let status = determine_status(&fresh(data), RUNNING);
+    assert_eq!(status.status, "status: connected to default_site");
+  }
+
+  #[test]
+  fn an_absurd_site_name_cannot_run_away_with_the_row() {
+    let data = json!({
+      "service": { "running": true },
+      "firebase": {
+        "enabled": true, "connected": true,
+        "site_id": "hq", "site_name": "x".repeat(200)
+      },
+      "health": { "status": "ok" }
+    });
+    let status = determine_status(&fresh(data), RUNNING);
+    let name = status
+      .status
+      .strip_prefix("status: connected to ")
+      .expect("connected row");
+    assert_eq!(name.chars().count(), 40, "37 plus the ellipsis");
+    assert!(name.ends_with("..."));
   }
 
   #[test]
   fn a_disconnected_cloud_is_a_warning_not_an_error() {
     let data = json!({
       "service": { "running": true },
-      "firebase": { "enabled": true, "connected": false, "site_id": "hq" }
+      "firebase": {
+        "enabled": true, "connected": false,
+        "site_id": "default_site", "site_name": "TEC"
+      }
     });
     let status = determine_status(&fresh(data), RUNNING);
     assert_eq!(status.code, StatusCode::Warning);
-    assert_eq!(status.status, "status: disconnected");
+    // "from", matching the footer's disconnected sentence.
+    assert_eq!(status.status, "status: disconnected from TEC");
+  }
+
+  #[test]
+  fn a_reconnecting_toast_survives_the_site_being_named() {
+    // The toast text is chosen from the status row, so anything appended to it
+    // has to leave the mapping intact.
+    let view = TrayView {
+      code: StatusCode::Warning,
+      service: "service: running".to_string(),
+      status: "status: disconnected from TEC".to_string(),
+      health: None,
+      start_on_login: false,
+    };
+    let (title, _) = degraded_notification(&view);
+    assert_eq!(title, "owlette — reconnecting");
   }
 
   #[test]

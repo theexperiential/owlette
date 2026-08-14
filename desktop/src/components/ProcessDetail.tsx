@@ -353,7 +353,7 @@ export function ProcessDetail({
             placeholder="name of your process"
             // Wide enough for the names entries actually carry, and no wider:
             // the room it gives up is what puts the status on the same line.
-            className="w-full max-w-64 min-w-0 flex-1"
+            className="h-8 w-full max-w-64 min-w-0 flex-1"
             {...field('name')}
           />
 
@@ -388,10 +388,7 @@ export function ProcessDetail({
                   started {formatDistanceToNowStrict(startedAt, { addSuffix: true })}
                 </span>
               </TooltipTrigger>
-              <TooltipContent>
-                launched {format(startedAt, 'eee d MMM, HH:mm:ss')} — the service records when it
-                started this process, not when the status last changed
-              </TooltipContent>
+              <TooltipContent>launched {format(startedAt, 'eee d MMM, HH:mm:ss')}</TooltipContent>
             </Tooltip>
           )}
 
@@ -461,6 +458,7 @@ export function ProcessDetail({
           <div className="flex min-w-0 items-center gap-2">
             <Button
               size="icon"
+              className="size-8"
               variant="outline"
               onClick={() => void browse('exe_path')}
               aria-label="browse for an executable"
@@ -470,7 +468,7 @@ export function ProcessDetail({
             <PathInput
               id="exe_path"
               placeholder="the full path to your executable"
-              className="font-mono text-xs"
+              className="h-8 font-mono text-xs"
               {...field('exe_path')}
             />
           </div>
@@ -488,6 +486,7 @@ export function ProcessDetail({
           <div className="flex min-w-0 items-center gap-2">
             <Button
               size="icon"
+              className="size-8"
               variant="outline"
               onClick={() => void browse('file_path')}
               aria-label="browse for a file"
@@ -497,7 +496,7 @@ export function ProcessDetail({
             <PathInput
               id="file_path"
               placeholder="a file to open, or command line arguments"
-              className="font-mono text-xs"
+              className="h-8 font-mono text-xs"
               {...field('file_path')}
             />
           </div>
@@ -515,6 +514,7 @@ export function ProcessDetail({
           <div className="flex min-w-0 items-center gap-2">
             <Button
               size="icon"
+              className="size-8"
               variant="outline"
               onClick={() => void browse('cwd')}
               aria-label="browse for a working directory"
@@ -524,7 +524,7 @@ export function ProcessDetail({
             <PathInput
               id="cwd"
               placeholder="the working directory for your process"
-              className="font-mono text-xs"
+              className="h-8 font-mono text-xs"
               {...field('cwd')}
             />
           </div>
@@ -574,7 +574,7 @@ export function ProcessDetail({
                 role="radiogroup"
                 aria-labelledby="launch-mode-label"
                 data-testid="launch-mode"
-                className="relative grid w-fit grid-cols-3"
+                className="relative grid h-8 w-fit grid-cols-3"
               >
                 <span
                   aria-hidden
@@ -600,7 +600,7 @@ export function ProcessDetail({
                       // makes the service re-read and re-upload for nothing.
                       onClick={() => !active && onLaunchMode(option.value)}
                       className={cn(
-                        'relative z-10 cursor-pointer px-3 py-1.5 text-xs font-medium transition-colors',
+                        'relative z-10 flex cursor-pointer items-center px-3 text-xs font-medium transition-colors',
                         active
                           ? LAUNCH_MODE_TEXT[option.value]
                           : 'text-muted-foreground hover:bg-muted/50',
@@ -633,7 +633,7 @@ export function ProcessDetail({
                     onClick={() => setEditingSchedule(true)}
                     aria-label="edit schedule"
                     data-testid="edit-schedule"
-                    className="flex cursor-pointer items-center border-l border-border px-2.5 py-1.5 text-muted-foreground transition-colors hover:bg-muted/50"
+                    className="flex cursor-pointer items-center border-l border-border px-2.5 text-muted-foreground transition-colors hover:bg-muted/50"
                   >
                     <Pencil className="size-3.5" />
                   </button>
@@ -682,7 +682,7 @@ export function ProcessDetail({
                 they don&apos;t fight over the gpu
               </TooltipContent>
             </Tooltip>
-            <Input id="time_delay" className="w-20" inputMode="numeric" {...field('time_delay')} />
+            <Input id="time_delay" className="h-8 w-20" inputMode="numeric" {...field('time_delay')} />
 
             <Tooltip>
               <TooltipTrigger asChild>
@@ -697,7 +697,7 @@ export function ProcessDetail({
             </Tooltip>
             <Input
               id="time_to_init"
-              className="w-20"
+              className="h-8 w-20"
               inputMode="numeric"
               {...field('time_to_init')}
             />
@@ -709,12 +709,13 @@ export function ProcessDetail({
                 </Label>
               </TooltipTrigger>
               <TooltipContent>
-                max relaunch attempts before giving up — 0 is unlimited
+                max relaunch attempts before an automatic machine restart is initiated — 0 is
+                unlimited
               </TooltipContent>
             </Tooltip>
             <Input
               id="relaunch_attempts"
-              className="w-20"
+              className="h-8 w-20"
               inputMode="numeric"
               {...field('relaunch_attempts')}
             />
@@ -759,7 +760,7 @@ export function ProcessDetail({
                 value={priorityOf(process)}
                 onValueChange={(value) => onPriority(value as Priority)}
               >
-                <SelectTrigger id="priority" className="w-32" data-testid="priority">
+                <SelectTrigger id="priority" className="h-8 w-32" data-testid="priority">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -786,7 +787,7 @@ export function ProcessDetail({
                 value={visibilityOf(process)}
                 onValueChange={(value) => onVisibility(value as Visibility)}
               >
-                <SelectTrigger id="visibility" className="w-32" data-testid="visibility">
+                <SelectTrigger id="visibility" className="h-8 w-32" data-testid="visibility">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

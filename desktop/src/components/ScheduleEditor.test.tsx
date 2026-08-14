@@ -142,12 +142,14 @@ describe('what gets written', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /add schedule block/ }))
 
-    // Slot 0: the seeded block carries no `colorIndex` at all, so the web's
-    // scan for used slots never sees one — the new block takes the first.
+    // Slot 1: the seeded block carries no `colorIndex`, but it RENDERS slot 0
+    // by position — so the allocator counts 0 as taken and the new block gets
+    // the first color an operator can actually tell apart (the two-blue-blocks
+    // bug, fixed 2026-08-13).
     expect(save()).toStrictEqual([
       ...WEB_AUTHORED_DEFAULT,
       {
-        colorIndex: 0,
+        colorIndex: 1,
         days: ['mon', 'tue', 'wed', 'thu', 'fri'],
         ranges: [{ start: '09:00', stop: '17:00' }],
       },

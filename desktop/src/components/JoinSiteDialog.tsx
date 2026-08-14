@@ -22,7 +22,15 @@ interface JoinSiteDialogProps {
   open: boolean
   /** Closes the dialog. Any run still in flight is cancelled first. */
   onClose: () => void
-  /** Called once pairing succeeds, with the site this machine joined. */
+  /**
+   * Called once pairing succeeds, with the id of the site this machine joined.
+   *
+   * An id, not a label: the pairing response is the only thing this flow
+   * learns, and the site's display name is not known on this machine until the
+   * service has connected to the new site and published it
+   * ({@link import('@/lib/serviceHealth').siteNameOf}). Treat it as a signal
+   * rather than as copy — nothing here should put it on screen.
+   */
   onJoined: (siteId: string) => void
 }
 

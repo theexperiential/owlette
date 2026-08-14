@@ -101,7 +101,7 @@ function open(props: Partial<Parameters<typeof LeaveSiteDialog>[0]> = {}) {
   const release = vi.fn()
   const all = {
     open: true,
-    siteId: 'default_site',
+    site: 'TEC',
     onClose: vi.fn(),
     onLeft: vi.fn(),
     onHold: vi.fn(() => release),
@@ -141,12 +141,26 @@ afterEach(() => {
 })
 
 describe('LeaveSiteDialog', () => {
-  it('asks before doing anything, naming the site', () => {
+  it('asks before doing anything, naming the site as the operator knows it', () => {
     open()
 
-    expect(copy()).toContain('default_site')
+    expect(copy()).toContain('remove this machine from TEC?')
     expect(startAgentRun).not.toHaveBeenCalled()
     expect(serviceStop).not.toHaveBeenCalled()
+  })
+
+  it('names the site by id when no display name has reached this machine', () => {
+    // What `siteNameOf` hands over when the service has not published a name:
+    // the id, so the sentence still says which site it means.
+    open({ site: 'default_site' })
+
+    expect(copy()).toContain('remove this machine from default_site?')
+  })
+
+  it('says "its site" rather than nothing when the site is unknown', () => {
+    open({ site: '' })
+
+    expect(copy()).toContain('remove this machine from its site?')
   })
 
   it('backs out without touching the agent or the service', () => {
@@ -208,7 +222,7 @@ describe('LeaveSiteDialog', () => {
     expect(serviceStart).not.toHaveBeenCalled()
     expect(props.onLeft).not.toHaveBeenCalled()
     expect(copy()).toContain('nothing on this machine changed')
-    expect(copy()).toContain('still paired to default_site')
+    expect(copy()).toContain('still paired to TEC')
     expect(screen.getByTestId('leave-error').textContent).toContain(
       'the administrator prompt was declined',
     )
@@ -273,7 +287,7 @@ describe('LeaveSiteDialog', () => {
     await run.finish({ event: 'done', value: { siteId: 'default_site', deregistered: true } })
 
     expect(props.onLeft).toHaveBeenCalledOnce()
-    expect(copy()).toContain('this machine has left default_site and is no longer monitored.')
+    expect(copy()).toContain('this machine has left TEC and is no longer monitored.')
     expect(props.release).toHaveBeenCalledOnce()
   })
 

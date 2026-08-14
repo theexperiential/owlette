@@ -16,8 +16,20 @@ const healthy: ServiceStatus = {
 
 const connected: ServiceStatusFile = {
   service: { running: true, last_update: 1_786_562_574, version: '3.0.0' },
-  firebase: { enabled: true, connected: true, site_id: 'default_site', last_heartbeat: 0 },
+  firebase: {
+    enabled: true,
+    connected: true,
+    site_id: 'default_site',
+    site_name: 'TEC',
+    last_heartbeat: 0,
+  },
   health: { status: 'ok', error_code: null, error_message: null },
+}
+
+/** What an agent that has not resolved the site's name publishes. */
+const connectedUnnamed: ServiceStatusFile = {
+  ...connected,
+  firebase: { ...connected.firebase, site_name: '' },
 }
 
 const joined = { firebase: { enabled: true, site_id: 'default_site' } } as OwletteConfig
@@ -55,8 +67,15 @@ function joinButton(): HTMLButtonElement | null {
 }
 
 describe('StatusFooter sentence', () => {
-  it('phrases the connected state as a sentence when the host is known', () => {
+  it('names the site the way the operator does', () => {
     setup({ hostname: 'TEC-A4D' })
+    expect(screen.getByTestId('footer-status').textContent).toBe('TEC-A4D is connected to TEC')
+  })
+
+  it('falls back to the site id when the service has published no name', () => {
+    // Never blank, and never wrong: the id is still what this machine is
+    // paired to, and it is what support will ask for.
+    setup({ hostname: 'TEC-A4D', statusFile: connectedUnnamed })
     expect(screen.getByTestId('footer-status').textContent).toBe(
       'TEC-A4D is connected to default_site',
     )
@@ -64,7 +83,7 @@ describe('StatusFooter sentence', () => {
 
   it('falls back to the segment form while the host is unknown', () => {
     setup({ hostname: null })
-    expect(screen.getByTestId('footer-status').textContent).toBe('connected · default_site')
+    expect(screen.getByTestId('footer-status').textContent).toBe('connected · TEC')
   })
 
   it('shows the running service version on the right', () => {

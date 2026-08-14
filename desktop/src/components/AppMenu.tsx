@@ -1,4 +1,4 @@
-import { BookOpen, Bug, FileCog, LogIn, LogOut, Menu, ScrollText } from 'lucide-react'
+import { BookOpen, Bug, FileCog, LogIn, LogOut, Menu, RotateCw, ScrollText } from 'lucide-react'
 import { useCallback } from 'react'
 import { toast } from 'sonner'
 import {
@@ -101,6 +101,16 @@ export function AppMenu({ paired, onJoinSite, onLeaveSite, onReportIssue }: AppM
         <DropdownMenuItem data-testid="menu-report-issue" onSelect={onReportIssue}>
           <Bug aria-hidden className="size-4" />
           submit bug report
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {/*
+          Last resort for a wedged UI. Every pane is a view over the files the
+          service owns, so a reload rebuilds everything from disk truth — the
+          same recovery Slack and VS Code ship, and equally safe here.
+        */}
+        <DropdownMenuItem data-testid="menu-reload" onSelect={() => window.location.reload()}>
+          <RotateCw aria-hidden className="size-4" />
+          reload
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

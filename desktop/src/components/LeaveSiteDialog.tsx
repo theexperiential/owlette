@@ -14,8 +14,15 @@ import { logEvent, serviceStart, serviceStatus, serviceStop } from '@/lib/ipc'
 
 interface LeaveSiteDialogProps {
   open: boolean
-  /** The site this machine currently belongs to, for the confirmation copy. */
-  siteId: string
+  /**
+   * The site this machine currently belongs to, for the confirmation copy —
+   * its display name when the service has published one, its id otherwise
+   * ({@link import('@/lib/serviceHealth').siteNameOf}). Naming the place the
+   * operator recognises is the whole point of the sentence: "remove this
+   * machine from TEC?" is a decision, "remove this machine from default_site?"
+   * is a riddle.
+   */
+  site: string
   onClose: () => void
   onLeft: () => void
   /**
@@ -229,7 +236,13 @@ function failedCopy(failure: Failure, site: string, result: Result): string {
  * The steps are shown as they happen because this stops and starts a service:
  * a window that just froze for fifteen seconds looks broken.
  */
-export function LeaveSiteDialog({ open, siteId, onClose, onLeft, onHold }: LeaveSiteDialogProps) {
+export function LeaveSiteDialog({
+  open,
+  site: siteLabel,
+  onClose,
+  onLeft,
+  onHold,
+}: LeaveSiteDialogProps) {
   const [phase, setPhase] = useState<Phase>('confirm')
   const [status, setStatus] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -245,7 +258,7 @@ export function LeaveSiteDialog({ open, siteId, onClose, onLeft, onHold }: Leave
     setResult({ deregistered: true, serviceDown: false })
   }, [open])
 
-  const site = siteId || 'its site'
+  const site = siteLabel || 'its site'
 
   const leave = useCallback(async () => {
     setPhase('working')

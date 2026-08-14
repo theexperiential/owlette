@@ -6,7 +6,7 @@ import {
   isPaired,
   FOOTER_DOT_CLASS,
   FOOTER_TONE_CLASS,
-  siteIdOf,
+  siteNameOf,
   type ServiceStatusFile,
 } from '@/lib/serviceHealth'
 import type { ServiceStatus } from '@/lib/ipc'
@@ -26,9 +26,9 @@ interface StatusFooterProps {
 
 /**
  * The one line that says whether this machine is being looked after, phrased
- * as a sentence — "TEC-A4D is connected to default_site" — with the status
- * word carrying the tone colour. Right edge: the version of the service that
- * is running, which is the version that matters, not this app's.
+ * as a sentence — "TEC-A4D is connected to TEC" — with the status word
+ * carrying the tone colour. Right edge: the version of the service that is
+ * running, which is the version that matters, not this app's.
  *
  * At most one call to action sits beside the sentence, and it is always the
  * thing the state calls for: `start service` when nothing is supervising this
@@ -47,7 +47,9 @@ export function StatusFooter({
   onJoin,
 }: StatusFooterProps) {
   const state = deriveFooterState({ status, statusFile, config })
-  const site = siteIdOf(config, statusFile)
+  // The site's name when the service knows it, its id until then — the footer
+  // is read by operators who know the place as "TEC", not as "default_site".
+  const site = siteNameOf(config, statusFile)
   const sentence = footerSentence(state, site, hostname ?? null)
   const version = statusFile?.service?.version
 
