@@ -64,6 +64,11 @@ jest.mock('firebase-admin/firestore', () => ({
   },
 }));
 
+const mockEmitMutation = jest.fn();
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
+}));
+
 import {
   createSchedulePreset,
   SchedulePresetValidationError,
@@ -88,6 +93,7 @@ beforeEach(() => {
   updateCalls.length = 0;
   deleteCalls.length = 0;
   docState.clear();
+  mockEmitMutation.mockClear();
 });
 
 describe('createSchedulePreset', () => {
@@ -220,5 +226,77 @@ describe('deleteSchedulePreset', () => {
     await expect(
       deleteSchedulePreset(ctx, 'bad id with spaces'),
     ).rejects.toBeInstanceOf(SchedulePresetValidationError);
+  });
+});
+
+describe('schedule preset audit emission', () => {
+  it('emits preset.create on create', async () => {
+    const result = await createSchedulePreset(ctx, {
+      name: 'Morning shift',
+      blocks: [{ days: ['mon'], ranges: [{ start: '09:00', stop: '17:00' }] }],
+      isBuiltIn: false,
+      order: 0,
+      createdBy: 'uid_alice',
+    });
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        siteId: 'site-a',
+        actor: 'user:uid_alice',
+        targetId: result.presetId,
+        attributes: expect.objectContaining({
+          verb: 'preset.create',
+          family: 'schedule',
+          presetId: result.presetId,
+        }),
+      }),
+    );
+  });
+
+  it('emits preset.update on a custom edit', async () => {
+    docState.set('config/site-a/schedule_presets/sched-custom-1', {
+      exists: true,
+      data: () => ({ name: 'old', isBuiltIn: false }),
+    });
+
+    await updateSchedulePreset(ctx, 'sched-custom-1', { name: 'new name' });
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        targetId: 'sched-custom-1',
+        attributes: expect.objectContaining({
+          verb: 'preset.update',
+          family: 'schedule',
+          isBuiltInOverride: false,
+        }),
+      }),
+    );
+  });
+
+  it('does not emit when the update target is missing', async () => {
+    await expect(
+      updateSchedulePreset(ctx, 'sched-missing-1', { name: 'x' }),
+    ).rejects.toBeInstanceOf(SchedulePresetNotFoundError);
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  it('emits preset.delete on delete', async () => {
+    await deleteSchedulePreset(ctx, 'sched-x-1');
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        targetId: 'sched-x-1',
+        attributes: expect.objectContaining({
+          verb: 'preset.delete',
+          family: 'schedule',
+        }),
+      }),
+    );
   });
 });

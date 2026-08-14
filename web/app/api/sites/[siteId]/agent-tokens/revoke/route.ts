@@ -6,6 +6,8 @@ import { apiError } from '@/lib/apiErrorResponse';
 import logger from '@/lib/logger';
 import { isTokenDead, tokenTimestampToMillis } from '@/lib/agentTokens';
 import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
+import { siteAuditActor } from '@/lib/actions/auditActor.server';
+import { emitMutation } from '@/lib/auditLogClient';
 
 type RouteParams = {
   siteId: string;
@@ -73,6 +75,33 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
     const db = adminDb.value;
     let revokedCount = 0;
 
+    /**
+     * Mutation audit for a completed revoke. `agent_refresh_tokens` doc ids
+     * ARE the refresh-token hash, so the token id is deliberately never
+     * recorded — only the mode, the machine it belonged to, and how many
+     * credentials were destroyed.
+     */
+    const auditActor = siteAuditActor(ctx);
+    const emitRevoked = (
+      mode: 'prune' | 'all' | 'token' | 'machine' | 'machine-latest',
+      count: number,
+      revokedMachineId?: string,
+    ) =>
+      emitMutation({
+        kind: 'site_mutated',
+        siteId,
+        actor: auditActor,
+        targetId: revokedMachineId ?? siteId,
+        attributes: {
+          verb: 'agent_token.revoke',
+          endpoint: 'agent-tokens/revoke',
+          method: 'POST',
+          mode,
+          revokedCount: count,
+          ...(revokedMachineId ? { machineId: revokedMachineId } : {}),
+        },
+      });
+
     if (prune) {
       // Delete only provably-dead docs (superseded past their grace window,
       // or expired). Live tokens — including every agent's current
@@ -90,6 +119,7 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
       revokedCount = await deleteRefsInChunks(db, deadRefs);
 
       logger.info(`Pruned ${revokedCount} dead tokens for site ${siteId}`);
+      emitRevoked('prune', revokedCount);
 
       return NextResponse.json({
         success: true,
@@ -109,6 +139,7 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
       );
 
       logger.info(`Revoked ${revokedCount} tokens for site ${siteId}`);
+      emitRevoked('all', revokedCount);
 
       return NextResponse.json({
         success: true,
@@ -139,6 +170,11 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
       revokedCount = 1;
 
       logger.info(`Revoked token ${tokenId} for site ${siteId}`);
+      emitRevoked(
+        'token',
+        revokedCount,
+        typeof tokenData?.machineId === 'string' ? tokenData.machineId : undefined,
+      );
 
       return NextResponse.json({
         success: true,
@@ -177,6 +213,7 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
         revokedCount = await deleteRefsInChunks(db, pick ? [pick.ref] : []);
 
         logger.info(`Revoked ${revokedCount} current token for machine ${machineId} in site ${siteId}`);
+        emitRevoked('machine-latest', revokedCount, machineId);
 
         return NextResponse.json({
           success: true,
@@ -193,6 +230,7 @@ export const POST = withRateLimit(authorizedSiteHandler<RouteParams>({
       );
 
       logger.info(`Revoked ${revokedCount} tokens for machine ${machineId} in site ${siteId}`);
+      emitRevoked('machine', revokedCount, machineId);
 
       return NextResponse.json({
         success: true,

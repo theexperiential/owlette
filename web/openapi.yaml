@@ -130,6 +130,11 @@ tags:
     description: Manage site-scoped schedule, reboot, distribution, and deployment-template presets.
   - name: Alerts
     description: Manage alert rules.
+  - name: Talons
+    description: |
+      Automations that watch a site and act on it — a trigger (schedule,
+      metric threshold, or event), an optional condition, and one or more
+      outputs (email, webhook, cortex directive, process command).
   - name: Logs
     description: Query activity logs.
   - name: Audit Log
@@ -185,7 +190,7 @@ x-tagGroups:
   - name: cortex
     tags: [Cortex]
   - name: monitoring
-    tags: [Logs, Alerts, Quotas]
+    tags: [Logs, Alerts, Talons, Quotas]
   - name: access & identity
     tags: [Users, Site Members, API Keys]
   - name: platform
@@ -496,6 +501,240 @@ paths:
       responses:
         '200':
           description: Alert rules saved
+
+  /api/sites/{siteId}/talons:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: listTalons
+      tags: [Talons]
+      summary: list the site's talons
+      description: |
+        Returns every talon on the site, ordered by name. Not paginated — a
+        site may hold at most 20 talons. Webhook signing secrets live in a
+        server-only collection and are never returned by any endpoint.
+
+        Requires `TALON_MANAGE`; API keys need `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: The site's talons.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [talons]
+                properties:
+                  talons:
+                    type: array
+                    items: { $ref: '#/components/schemas/Talon' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    post:
+      operationId: createTalon
+      tags: [Talons]
+      summary: create a talon
+      description: |
+        Creates a talon at `sites/{siteId}/talons/{talonId}` and, when the
+        talon has a `webhook` output, mints its signing secret in the same
+        commit. The secret is never returned.
+
+        Pro-only: a `core`-tier site answers `403 tier_insufficient`, and an
+        account whose trial has ended answers `402 trial_expired`. Listing and
+        deleting stay open on `core` so a downgraded site can still audit and
+        remove what it has.
+
+        Additional preconditions, each reported as a problem `code`:
+
+        - `command` outputs may only be authored by a site admin
+          (`403 command_output_forbidden`).
+        - `webhook` output urls are re-checked against private, loopback, and
+          link-local ranges after DNS resolution (`400 invalid_webhook_url`).
+        - a `visual_check` condition or a `cortex` output needs a site-level
+          LLM key, since both call the model with no user in the loop
+          (`400 site_llm_key_required`).
+        - a site already holding 20 talons answers `409 talon_limit_reached`.
+
+        Validation failures (`400 invalid_talon`) carry an RFC 7807 `errors`
+        map plus a `fieldErrors` array of `{ field, code, message }` for
+        inline rendering.
+
+        Requires `TALON_MANAGE`; API keys need `site=<siteId>:write`.
+        Accepts `Idempotency-Key`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TalonInput' }
+      responses:
+        '201':
+          description: Talon created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Talon' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '402': { $ref: '#/components/responses/Problem402' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/talons/{talonId}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/TalonIdPath'
+    get:
+      operationId: getTalon
+      tags: [Talons]
+      summary: fetch a talon
+      description: |
+        Requires `TALON_MANAGE`; API keys need `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: The talon.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Talon' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    patch:
+      operationId: updateTalon
+      tags: [Talons]
+      summary: toggle or replace a talon
+      description: |
+        Two shapes, chosen by the body:
+
+        - `{ "enabled": <bool> }` and nothing else flips the talon on or off.
+          Enabling re-arms `nextRunAt` from now, so a talon that sat disabled
+          for a month does not fire the instant it is switched back on.
+        - anything else replaces the caller-owned fields wholesale and is
+          revalidated exactly like a create — including the `command`-output
+          privilege gate, the webhook-url SSRF check, and the site-LLM-key
+          precondition. Omitted optional fields return to their defaults.
+
+        Run bookkeeping (`lastRunAt`, `lastRunStatus`, `consecutiveFailures`)
+        is never touched by either shape.
+
+        Requires `TALON_MANAGE`; API keys need `site=<siteId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/TalonEnabledPatch'
+                - $ref: '#/components/schemas/TalonInput'
+      responses:
+        '200':
+          description: The updated talon.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Talon' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '402': { $ref: '#/components/responses/Problem402' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    delete:
+      operationId: deleteTalon
+      tags: [Talons]
+      summary: delete a talon
+      description: |
+        Deletes the talon and its webhook signing secret in one commit. Run
+        history in `talon_runs` is kept on purpose — it is an audit surface
+        and outlives the talon it describes, so
+        `GET /api/sites/{siteId}/talons/{talonId}/runs` keeps answering after
+        a delete. A repeat delete answers `404 talon_not_found`.
+
+        Requires `TALON_MANAGE`; API keys need `site=<siteId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '204':
+          description: Talon deleted.
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/talons/{talonId}/runs:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/TalonIdPath'
+      - $ref: '#/components/parameters/PageSizeQuery'
+      - $ref: '#/components/parameters/PageTokenQuery'
+    get:
+      operationId: listTalonRuns
+      tags: [Talons]
+      summary: list a talon's run history
+      description: |
+        Cursor-paginated execution records for one talon, most recent first.
+        The talon does not have to still exist: run records outlive the talon
+        they describe, so a deleted talon returns its history rather than 404.
+
+        Requires `TALON_MANAGE`; API keys need `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: A page of run records.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs, next_page_token]
+                properties:
+                  runs:
+                    type: array
+                    items: { $ref: '#/components/schemas/TalonRun' }
+                  next_page_token:
+                    type: string
+                    description: Empty string when there are no more pages.
+                  nextPageToken:
+                    type: string
+                    description: Compatibility alias for `next_page_token`.
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
 
   /api/sites/{siteId}/machines/{machineId}/screenshots:
     parameters:
@@ -6322,6 +6561,15 @@ components:
         pattern: '^[A-Za-z0-9_-]{1,128}$'
       description: The deployment template ID
 
+    TalonIdPath:
+      name: talonId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_-]{1,128}$'
+      description: The talon ID
+
     RoostIdPath:
       name: roostId
       in: path
@@ -6913,6 +7161,348 @@ components:
               type: string
               format: date-time
               nullable: true
+
+    # talons (automation)
+    TalonScheduleEntry:
+      type: object
+      required: [id, days, time]
+      properties:
+        id:
+          type: string
+          maxLength: 128
+          description: Client-generated row id, stable across edits.
+        days:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum: [mon, tue, wed, thu, fri, sat, sun]
+          description: De-duplicated and re-sorted into canonical week order on save.
+        time:
+          type: string
+          pattern: '^([01]\d|2[0-3]):[0-5]\d$'
+          example: '09:30'
+          description: |
+            24-hour clock time, resolved in the **site's** timezone — one talon
+            can span machines in several zones and its schedule must have one
+            meaning.
+
+    TalonScheduleEntriesTrigger:
+      type: object
+      required: [type, entries]
+      properties:
+        type: { type: string, enum: [schedule] }
+        entries:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { $ref: '#/components/schemas/TalonScheduleEntry' }
+
+    TalonIntervalTrigger:
+      type: object
+      required: [type, intervalMinutes]
+      properties:
+        type: { type: string, enum: [schedule] }
+        intervalMinutes:
+          type: integer
+          minimum: 5
+          maximum: 1440
+          description: |
+            Floor is 5, or 15 when the condition is a `visual_check` (each run
+            costs a screenshot round-trip plus a model call). Anything longer
+            than a day belongs in `entries` as a fixed clock time.
+
+    TalonThresholdTrigger:
+      type: object
+      required: [type, metric, operator, value]
+      properties:
+        type: { type: string, enum: [threshold] }
+        metric:
+          type: string
+          enum:
+            - cpu_percent
+            - memory_percent
+            - disk_percent
+            - gpu_percent
+            - cpu_temp
+            - gpu_temp
+            - network_latency
+            - network_packet_loss
+        operator:
+          type: string
+          enum: ['>', '<', '>=', '<=']
+        value: { type: number }
+
+    TalonEventTrigger:
+      type: object
+      required: [type, eventTypes]
+      properties:
+        type: { type: string, enum: [event] }
+        eventTypes:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum:
+              - process_crash
+              - process_start_failed
+              - machine_offline
+              - display_monitor_removed
+              - display_apply_failed
+              - display_auto_revert_fired
+              - display_sync_lost
+              - display_drift
+              - display_monitor_swapped
+              - display_mosaic_disabled
+              - display_apply_refused_mosaic
+              - display_monitor_added
+              - display_apply_succeeded
+          description: De-duplicated on save.
+
+    TalonTrigger:
+      description: |
+        What makes the talon fire. A `schedule` trigger takes either `entries`
+        (fixed clock times) or `intervalMinutes` — never both.
+      oneOf:
+        - $ref: '#/components/schemas/TalonScheduleEntriesTrigger'
+        - $ref: '#/components/schemas/TalonIntervalTrigger'
+        - $ref: '#/components/schemas/TalonThresholdTrigger'
+        - $ref: '#/components/schemas/TalonEventTrigger'
+
+    TalonCondition:
+      description: |
+        Optional gate between the trigger and the outputs. Defaults to `none`
+        when omitted. A `visual_check` captures a fresh screenshot and asks the
+        vision model whether `expectation` holds, so it requires a site-level
+        LLM key.
+      oneOf:
+        - type: object
+          required: [type]
+          properties:
+            type: { type: string, enum: [none] }
+        - type: object
+          required: [type, expectation]
+          properties:
+            type: { type: string, enum: [visual_check] }
+            expectation:
+              type: string
+              maxLength: 500
+              description: Natural-language statement the screenshot must satisfy.
+            monitor:
+              type: integer
+              minimum: 0
+              maximum: 64
+              description: '0 (default) = all monitors combined, 1 = primary, 2 = second, and so on.'
+
+    TalonOutput:
+      description: |
+        What the talon does when it fires. `command` outputs may only be
+        authored by a site admin; `cortex` outputs require a site-level LLM
+        key; `webhook` urls must be https and must not resolve to a private,
+        loopback, or link-local address.
+      oneOf:
+        - type: object
+          required: [type]
+          properties:
+            type: { type: string, enum: [email] }
+        - type: object
+          required: [type, url]
+          properties:
+            type: { type: string, enum: [webhook] }
+            url:
+              type: string
+              format: uri
+              description: |
+                Signed with a per-talon `whsec_*` secret held server-side. The
+                secret is never returned by any endpoint.
+        - type: object
+          required: [type, directive]
+          properties:
+            type: { type: string, enum: [cortex] }
+            directive: { type: string, maxLength: 1000 }
+        - type: object
+          required: [type, commandType]
+          properties:
+            type: { type: string, enum: [command] }
+            commandType:
+              type: string
+              enum: [restart_process, start_process, stop_process]
+            processId: { type: string, maxLength: 256 }
+            processName: { type: string, maxLength: 256 }
+
+    TalonScope:
+      type: object
+      required: [machineIds]
+      properties:
+        machineIds:
+          type: array
+          nullable: true
+          minItems: 1
+          items: { type: string }
+          description: '`null` — or an omitted `scope` — means every machine in the site.'
+
+    TalonInput:
+      type: object
+      required: [name, trigger, outputs]
+      description: |
+        The caller-owned half of a talon. Server-owned fields
+        (`schemaVersion`, `createdBy`, `createdVia`, `createdAt`, `nextRunAt`,
+        run bookkeeping) are rejected as unknown fields. `PATCH` bodies are
+        full replacements — omitted optional fields return to their defaults.
+      properties:
+        name: { type: string, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        enabled: { type: boolean, default: true }
+        trigger: { $ref: '#/components/schemas/TalonTrigger' }
+        condition: { $ref: '#/components/schemas/TalonCondition' }
+        outputs:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: '#/components/schemas/TalonOutput' }
+        scope: { $ref: '#/components/schemas/TalonScope' }
+        cooldownMinutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+          default: 60
+          description: Minimum gap between runs.
+
+    TalonEnabledPatch:
+      type: object
+      required: [enabled]
+      additionalProperties: false
+      description: |
+        Toggle-only `PATCH` body. Exactly one key: any additional key makes the
+        request a full `TalonInput` update instead.
+      properties:
+        enabled: { type: boolean }
+
+    Talon:
+      allOf:
+        - $ref: '#/components/schemas/TalonInput'
+        - type: object
+          required:
+            - id
+            - schemaVersion
+            - enabled
+            - condition
+            - scope
+            - cooldownMinutes
+            - createdBy
+            - createdVia
+            - consecutiveFailures
+          properties:
+            id: { type: string }
+            schemaVersion: { type: integer, enum: [1] }
+            createdBy:
+              type: string
+              description: uid of the authoring user.
+            createdVia:
+              type: string
+              enum: [ui, cortex]
+            chatId:
+              type: string
+              description: Present when `createdVia` is `cortex` — the chat the talon came from.
+            createdAt:
+              type: string
+              format: date-time
+              nullable: true
+            updatedAt:
+              type: string
+              format: date-time
+              nullable: true
+            nextRunAt:
+              type: string
+              format: date-time
+              nullable: true
+              description: Schedule triggers only — when the scheduler next evaluates the talon.
+            lastRunAt:
+              type: string
+              format: date-time
+              nullable: true
+            lastRunStatus:
+              type: string
+              nullable: true
+              enum: [running, succeeded, failed, skipped, missed]
+            lastRunId:
+              type: string
+              nullable: true
+            consecutiveFailures:
+              type: integer
+              description: Reset to 0 on any successful run; drives auto-disable backoff.
+
+    TalonRun:
+      type: object
+      required: [id, talonId, talonName, status, outputs, manual]
+      properties:
+        id: { type: string }
+        talonId: { type: string }
+        talonName:
+          type: string
+          description: Denormalized so the run list renders without a talon lookup.
+        triggerType:
+          type: string
+          nullable: true
+          enum: [schedule, threshold, event]
+        triggerSummary:
+          type: string
+          nullable: true
+          description: 'Human-readable trigger summary, e.g. `cpu_percent > 90`.'
+        machineId: { type: string, nullable: true }
+        machineName: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [running, succeeded, failed, skipped, missed]
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        durationMs: { type: integer, nullable: true }
+        condition:
+          type: object
+          nullable: true
+          required: [type, verdict]
+          description: Outcome of the condition gate, when the talon had one.
+          properties:
+            type: { type: string, enum: [none, visual_check] }
+            verdict: { type: string, enum: [pass, fail] }
+            confidence:
+              type: number
+              description: Vision-model confidence, 0–1, when the condition produced one.
+            reason: { type: string }
+            screenshotPath: { type: string }
+            screenshotUrl:
+              type: string
+              format: uri
+              description: Short-lived signed read url for `screenshotPath`.
+        outputs:
+          type: array
+          description: Per-output delivery result.
+          items:
+            type: object
+            required: [type, status]
+            properties:
+              type: { type: string, enum: [email, webhook, cortex, command] }
+              status: { type: string, enum: [sent, failed, skipped] }
+              detail: { type: string }
+              httpStatus:
+                type: integer
+                description: Webhook outputs only.
+              error: { type: string }
+        correlationId:
+          type: string
+          nullable: true
+          description: Ties the run to its audit-log entries and downstream commands.
+        chatId: { type: string, nullable: true }
+        error: { type: string, nullable: true }
+        manual:
+          type: boolean
+          description: True when an operator ran the talon on demand rather than the trigger firing.
 
     DeploymentTemplateInput:
       type: object
@@ -8279,6 +8869,8 @@ components:
             - installer_mutated
             - webhook_mutated
             - chat_mutated
+            - billing_mutated
+            - talon_mutated
         actor:
           type: string
           description: Actor identifier such as `user:<uid>` or `apiKey:<keyId>`.
@@ -8340,6 +8932,8 @@ components:
                 - installer_mutated
                 - webhook_mutated
                 - chat_mutated
+                - billing_mutated
+                - talon_mutated
             siteId: { type: string }
             actor: { type: string }
             target:

@@ -340,7 +340,10 @@ describe('DELETE /api/sites/{siteId}/logs', () => {
 
     expect(res.status).toBe(200);
     expect(body.deletedCount).toBe(2);
-    expect(mockClearLogs).toHaveBeenCalledWith({ siteId: SITE }, {});
+    expect(mockClearLogs).toHaveBeenCalledWith(
+      { siteId: SITE, auditActor: 'user:admin-uid' },
+      {},
+    );
   });
 
   it('clears with filters without all=true', async () => {
@@ -363,7 +366,7 @@ describe('DELETE /api/sites/{siteId}/logs', () => {
     expect(res.status).toBe(200);
     expect(body.filters).toEqual({ action: 'process_crash', machineId: 'm1', level: 'error' });
     expect(mockClearLogs).toHaveBeenCalledWith(
-      { siteId: SITE },
+      { siteId: SITE, auditActor: 'user:admin-uid' },
       { action: 'process_crash', machineId: 'm1', level: 'error' },
     );
   });

@@ -6,7 +6,9 @@
  * The `reboot_presets` collection name is a storage contract (legacy spelling).
  */
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import type { SiteHandlerContext } from '@/lib/authorizedHandler.server';
+import { siteAuditActor } from './auditActor.server';
 import { RestartPresetValidationError } from './createRestartPreset.server';
 
 const PRESET_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -32,5 +34,20 @@ export async function deleteRestartPreset(
     .doc(presetId);
 
   await presetRef.delete();
+
+  emitMutation({
+    kind: 'process_mutated',
+    siteId: ctx.siteId,
+    actor: siteAuditActor(ctx),
+    targetId: presetId,
+    attributes: {
+      verb: 'preset.delete',
+      endpoint: 'presets/reboot',
+      method: 'DELETE',
+      family: 'reboot',
+      presetId,
+    },
+  });
+
   return { presetId, siteId: ctx.siteId };
 }

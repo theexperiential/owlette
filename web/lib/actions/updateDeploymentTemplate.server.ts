@@ -10,7 +10,9 @@
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import type { SiteHandlerContext } from '@/lib/authorizedHandler.server';
+import { siteAuditActor } from './auditActor.server';
 import {
   DeploymentTemplateValidationError,
   validateDeploymentTemplateInput,
@@ -82,6 +84,21 @@ export async function updateDeploymentTemplate(
   }
 
   await templateRef.set(payload, { merge: true });
+
+  emitMutation({
+    kind: 'process_mutated',
+    siteId: ctx.siteId,
+    actor: siteAuditActor(ctx),
+    targetId: templateId,
+    attributes: {
+      verb: 'preset.update',
+      endpoint: 'presets/deployment-template',
+      method: 'PATCH',
+      family: 'deployment-template',
+      presetId: templateId,
+      fields: Object.keys(payload).filter((k) => k !== 'updatedAt'),
+    },
+  });
 
   return { templateId, siteId: ctx.siteId };
 }

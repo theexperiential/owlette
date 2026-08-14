@@ -24,6 +24,7 @@ import {
   createDistributionPreset,
   DistributionPresetValidationError,
 } from '@/lib/actions/createDistributionPreset.server';
+import { siteAuditActor } from '@/lib/actions/auditActor.server';
 
 type RouteParams = {
   siteId: string;
@@ -91,7 +92,7 @@ export const POST = authorizedSiteHandler<RouteParams>({
 
     try {
       const result = await createDistributionPreset(
-        { actor: ctx.actor, siteId: ctx.siteId },
+        { actor: ctx.actor, siteId: ctx.siteId, auditActor: siteAuditActor(ctx) },
         {
           name: body.name,
           description: typeof body.description === 'string' ? body.description : undefined,

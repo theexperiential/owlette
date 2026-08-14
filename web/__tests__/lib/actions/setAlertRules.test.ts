@@ -6,7 +6,9 @@
  */
 
 const mockSet = jest.fn().mockResolvedValue(undefined);
-const mockAlertsDoc = { set: mockSet };
+const mockGet = jest.fn().mockResolvedValue({ exists: false, data: () => undefined });
+const mockEmitMutation = jest.fn();
+const mockAlertsDoc = { set: mockSet, get: mockGet };
 const mockSettingsCollection = { doc: jest.fn(() => mockAlertsDoc) };
 const mockSiteDoc = { collection: jest.fn(() => mockSettingsCollection) };
 const mockSitesCollection = { doc: jest.fn(() => mockSiteDoc) };
@@ -18,6 +20,15 @@ jest.mock('@/lib/firebase-admin', () => ({
       return mockSitesCollection;
     }),
   }),
+}));
+
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
+}));
+
+jest.mock('@/lib/logger', () => ({
+  __esModule: true,
+  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
 import type { UserActor } from '@/lib/capabilities';
@@ -33,6 +44,8 @@ const actor: UserActor = {
   role: 'superadmin',
   sites: [],
 };
+
+const AUDIT_ACTOR = 'user:user-superadmin';
 
 const validRule: AlertRuleInput = {
   id: 'rule-1',
@@ -53,7 +66,7 @@ beforeEach(() => {
 describe('setAlertRules', () => {
   it('replaces the rules array with merge semantics', async () => {
     const result = await setAlertRules(
-      { actor, siteId: 'site-a' },
+      { actor, siteId: 'site-a', auditActor: AUDIT_ACTOR },
       { rules: [validRule] },
     );
 
@@ -76,7 +89,7 @@ describe('setAlertRules', () => {
   });
 
   it('accepts an empty rules array', async () => {
-    const result = await setAlertRules({ actor, siteId: 'site-a' }, { rules: [] });
+    const result = await setAlertRules({ actor, siteId: 'site-a', auditActor: AUDIT_ACTOR }, { rules: [] });
 
     expect(result.ruleCount).toBe(0);
     expect(mockSet).toHaveBeenCalledWith({ rules: [] }, { merge: true });
@@ -84,15 +97,66 @@ describe('setAlertRules', () => {
 
   it('rejects invalid site ids and duplicate rule ids', async () => {
     await expect(
-      setAlertRules({ actor, siteId: 'bad site id' }, { rules: [] }),
+      setAlertRules({ actor, siteId: 'bad site id', auditActor: AUDIT_ACTOR }, { rules: [] }),
     ).rejects.toMatchObject({ field: 'siteId' });
 
     await expect(
       setAlertRules(
-        { actor, siteId: 'site-a' },
+        { actor, siteId: 'site-a', auditActor: AUDIT_ACTOR },
         { rules: [{ ...validRule }, { ...validRule }] },
       ),
     ).rejects.toMatchObject({ field: 'rules' });
+  });
+
+  it('emits a site_mutated audit with verb=alert_rules.update and the rule-id diff', async () => {
+    mockGet.mockResolvedValueOnce({
+      exists: true,
+      data: () => ({ rules: [{ id: 'rule-1' }, { id: 'rule-gone' }] }),
+    });
+
+    await setAlertRules(
+      { actor, siteId: 'site-a', auditActor: AUDIT_ACTOR },
+      { rules: [validRule, { ...validRule, id: 'rule-new' }] },
+    );
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith({
+      kind: 'site_mutated',
+      siteId: 'site-a',
+      actor: AUDIT_ACTOR,
+      targetId: 'site-a',
+      attributes: {
+        verb: 'alert_rules.update',
+        endpoint: 'alerts',
+        method: 'PUT',
+        ruleCount: 2,
+        addedRuleIds: ['rule-new'],
+        removedRuleIds: ['rule-gone'],
+      },
+    });
+  });
+
+  it('still emits the audit when the previous rules cannot be read', async () => {
+    mockGet.mockRejectedValueOnce(new Error('read_failed'));
+
+    await setAlertRules(
+      { actor, siteId: 'site-a', auditActor: AUDIT_ACTOR },
+      { rules: [validRule] },
+    );
+
+    // The write must not be affected by an audit-detail read failure.
+    expect(mockSet).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'site_mutated',
+        attributes: {
+          verb: 'alert_rules.update',
+          endpoint: 'alerts',
+          method: 'PUT',
+          ruleCount: 1,
+        },
+      }),
+    );
   });
 
   it.each([
@@ -104,7 +168,7 @@ describe('setAlertRules', () => {
   ])('rejects invalid %s', async (_label, patch) => {
     await expect(
       setAlertRules(
-        { actor, siteId: 'site-a' },
+        { actor, siteId: 'site-a', auditActor: AUDIT_ACTOR },
         { rules: [{ ...validRule, ...patch } as unknown as AlertRuleInput] },
       ),
     ).rejects.toBeInstanceOf(AlertRulesValidationError);

@@ -10,7 +10,9 @@
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import type { SiteHandlerContext } from '@/lib/authorizedHandler.server';
+import { siteAuditActor } from './auditActor.server';
 
 /** Time range within a day. Mirrors web/hooks/useFirestore.ts:TimeRange. */
 export interface TimeRange {
@@ -153,6 +155,21 @@ export async function createSchedulePreset(
   if (input.description !== undefined) payload.description = input.description;
 
   await presetRef.set(payload);
+
+  emitMutation({
+    kind: 'process_mutated',
+    siteId: ctx.siteId,
+    actor: siteAuditActor(ctx),
+    targetId: presetId,
+    attributes: {
+      verb: 'preset.create',
+      endpoint: 'presets/schedule',
+      method: 'POST',
+      family: 'schedule',
+      presetId,
+      isBuiltIn: input.isBuiltIn,
+    },
+  });
 
   return { presetId, siteId: ctx.siteId };
 }
