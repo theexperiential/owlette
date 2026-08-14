@@ -19,6 +19,9 @@ function setup(paired: boolean) {
     onJoinSite: vi.fn(),
     onLeaveSite: vi.fn(),
     onReportIssue: vi.fn(),
+    onRestartService: vi.fn(),
+    startOnLogin: true,
+    onStartOnLoginChange: vi.fn(),
   }
   render(<AppMenu {...props} />)
   // jsdom has no PointerEvent constructor, so the trigger is opened from the
@@ -46,7 +49,8 @@ describe('AppMenu', () => {
       'logs',
       'docs',
       'submit bug report',
-      'reload',
+      'restart service',
+      'reload window',
     ])
   })
 

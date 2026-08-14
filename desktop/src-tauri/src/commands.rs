@@ -54,6 +54,23 @@ pub fn hostname() -> String {
   crate::tray::hostname()
 }
 
+/// Whether the run-on-login startup shortcut exists.
+#[tauri::command(async)]
+pub fn startup_link_enabled() -> bool {
+  crate::startup_link::is_enabled()
+}
+
+/// Create or remove the run-on-login shortcut; returns the resulting state.
+#[tauri::command(async)]
+pub fn set_startup_link(enabled: bool) -> Result<bool, String> {
+  if enabled {
+    crate::startup_link::enable()?;
+  } else {
+    crate::startup_link::disable()?;
+  }
+  Ok(crate::startup_link::is_enabled())
+}
+
 /// Read a JSON file from the owlette tree under the cross-process mutex.
 ///
 /// `path` is relative to the data root (or absolute inside it). A missing file

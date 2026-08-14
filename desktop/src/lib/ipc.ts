@@ -150,6 +150,16 @@ export function hostname(): Promise<string> {
   return invoke<string>('hostname')
 }
 
+/** Whether the run-on-login startup shortcut exists. */
+export function startupLinkEnabled(): Promise<boolean> {
+  return invoke<boolean>('startup_link_enabled')
+}
+
+/** Create or remove the run-on-login shortcut; resolves to the resulting state. */
+export function setStartupLink(enabled: boolean): Promise<boolean> {
+  return invoke<boolean>('set_startup_link', { enabled })
+}
+
 /**
  * Read a JSON file from the owlette tree under the cross-process mutex.
  *

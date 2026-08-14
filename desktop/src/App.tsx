@@ -34,7 +34,7 @@ import {
   type DropCard,
 } from '@/lib/dropQueue'
 import { classifyOptions, tauriFsProbe } from '@/lib/fsProbe'
-import { hostname } from '@/lib/ipc'
+import { hostname, setStartupLink, startupLinkEnabled, writeOwletteJson } from '@/lib/ipc'
 import {
   addProcess,
   applyForm,
@@ -102,6 +102,11 @@ function App() {
 
   useEffect(() => {
     hostname().then(setHost, () => setHost(null))
+  }, [])
+
+  const [startOnLogin, setStartOnLogin] = useState<boolean | null>(null)
+  useEffect(() => {
+    startupLinkEnabled().then(setStartOnLogin, () => setStartOnLogin(null))
   }, [])
 
   // The webview's native context menu (Back / Refresh / Print / Inspect) is
@@ -444,6 +449,20 @@ function App() {
             onJoinSite={() => setMenuDialog('join')}
             onLeaveSite={() => setMenuDialog('leave')}
             onReportIssue={() => setMenuDialog('report')}
+            startOnLogin={startOnLogin}
+            onStartOnLoginChange={(next) => {
+              void setStartupLink(next).then(setStartOnLogin, (cause: unknown) =>
+                toast.error('could not change start on login', { description: message(cause) }),
+              )
+            }}
+            onRestartService={() => {
+              // The service polls for this file each loop and exits 42; the
+              // host relaunches it. No elevation, no dashboard flap.
+              void writeOwletteJson('tmp/restart.flag', {}).then(
+                () => toast.success('restarting the owlette service'),
+                (cause: unknown) => toast.error('could not restart the service', { description: message(cause) }),
+              )
+            }}
           />
           <WindowControls />
         </header>

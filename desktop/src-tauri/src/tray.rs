@@ -299,28 +299,40 @@ fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
         apply(&app, &root, &view);
       }
 
-      // Degraded-state debounce, ported from `monitor_status`: notify once the
-      // state has held for NOTIFY_DELAY, once per episode, and never during the
-      // startup grace period.
-      if view.code == StatusCode::Normal {
-        if degraded_notified && now.duration_since(started) > NOTIFY_GRACE {
-          notify(
-            &app,
-            "owlette — back online",
-            "service running normally.".to_string(),
-          );
+      // Degraded-state debounce, ported from `monitor_status` and then
+      // narrowed (2026-08-14): only the ERROR tier toasts. A Warning — cloud
+      // unreachable while the service runs, which is what every routine
+      // restart looks like for a few seconds — shows in the icon and tooltip
+      // but never notifies; three queued toasts per restart taught us why.
+      // Recovery toasts only close a real Error episode, and only once the
+      // state is genuinely Normal again (not merely upgraded to Warning).
+      match view.code {
+        StatusCode::Normal => {
+          if degraded_notified && now.duration_since(started) > NOTIFY_GRACE {
+            notify(
+              &app,
+              "owlette — back online",
+              "service running normally.".to_string(),
+            );
+          }
+          degraded_since = None;
+          degraded_notified = false;
         }
-        degraded_since = None;
-        degraded_notified = false;
-      } else {
-        let since = *degraded_since.get_or_insert(now);
-        if !degraded_notified
-          && now.duration_since(since) >= NOTIFY_DELAY
-          && now.duration_since(started) > NOTIFY_GRACE
-        {
-          degraded_notified = true;
-          let (title, body) = degraded_notification(&view);
-          notify(&app, title, body);
+        StatusCode::Warning => {
+          // Icon-only tier: Warning time never accrues toward an Error toast,
+          // and an open Error episode stays open until genuinely Normal.
+          degraded_since = None;
+        }
+        StatusCode::Error => {
+          let since = *degraded_since.get_or_insert(now);
+          if !degraded_notified
+            && now.duration_since(since) >= NOTIFY_DELAY
+            && now.duration_since(started) > NOTIFY_GRACE
+          {
+            degraded_notified = true;
+            let (title, body) = degraded_notification(&view);
+            notify(&app, title, body);
+          }
         }
       }
     }

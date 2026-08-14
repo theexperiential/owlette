@@ -409,6 +409,9 @@ export function ProcessList({
               <Button
                 size="icon-sm"
                 variant="ghost"
+                // Quiet chrome, not content: the muted blue-tinted foreground
+                // the other passive icons wear, brightening on hover.
+                className="text-muted-foreground hover:text-foreground"
                 onClick={() => onCollapsedChange(!collapsed)}
                 aria-label={collapsed ? 'expand the process list' : 'collapse the process list'}
                 data-testid={collapsed ? 'expand-sidebar' : 'collapse-sidebar'}

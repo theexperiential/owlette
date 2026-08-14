@@ -1,8 +1,9 @@
-import { BookOpen, Bug, FileCog, LogIn, LogOut, Menu, RotateCw, ScrollText } from 'lucide-react'
+import { BookOpen, Bug, FileCog, LogIn, LogOut, Menu, RotateCcw, RotateCw, ScrollText } from 'lucide-react'
 import { useCallback } from 'react'
 import { toast } from 'sonner'
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -24,6 +25,11 @@ interface AppMenuProps {
   onJoinSite: () => void
   onLeaveSite: () => void
   onReportIssue: () => void
+  /** Ask the service to restart itself (restart.flag — no elevation). */
+  onRestartService: () => void
+  /** Run-on-login state — null until the host answers, hiding the row. */
+  startOnLogin: boolean | null
+  onStartOnLoginChange: (enabled: boolean) => void
 }
 
 /**
@@ -44,7 +50,15 @@ interface AppMenuProps {
  * (`src-tauri/src/shell_open.rs`), which is what `os.startfile` was doing under
  * the legacy items; nothing is spawned from here.
  */
-export function AppMenu({ paired, onJoinSite, onLeaveSite, onReportIssue }: AppMenuProps) {
+export function AppMenu({
+  paired,
+  onJoinSite,
+  onLeaveSite,
+  onReportIssue,
+  onRestartService,
+  startOnLogin,
+  onStartOnLoginChange,
+}: AppMenuProps) {
   const open = useCallback((path: string, what: string) => {
     void openOwlettePath(path).catch((cause: unknown) => {
       toast.error(`could not open ${what}`, {
@@ -103,6 +117,25 @@ export function AppMenu({ paired, onJoinSite, onLeaveSite, onReportIssue }: AppM
           submit bug report
         </DropdownMenuItem>
         <DropdownMenuSeparator />
+        {/* Mirrors the tray's checkbox — same startup_link, same state. */}
+        {startOnLogin !== null && (
+          <DropdownMenuCheckboxItem
+            data-testid="menu-start-on-login"
+            checked={startOnLogin}
+            onCheckedChange={(next) => onStartOnLoginChange(next === true)}
+          >
+            start on login
+          </DropdownMenuCheckboxItem>
+        )}
+        {/*
+          The recovery pair, escalating in scope: restart the service (the same
+          restart.flag the tray's right-click writes — discoverable here for
+          operators who never right-click a tray icon), then reload this UI.
+        */}
+        <DropdownMenuItem data-testid="menu-restart-service" onSelect={onRestartService}>
+          <RotateCcw aria-hidden className="size-4" />
+          restart service
+        </DropdownMenuItem>
         {/*
           Last resort for a wedged UI. Every pane is a view over the files the
           service owns, so a reload rebuilds everything from disk truth — the
@@ -110,7 +143,7 @@ export function AppMenu({ paired, onJoinSite, onLeaveSite, onReportIssue }: AppM
         */}
         <DropdownMenuItem data-testid="menu-reload" onSelect={() => window.location.reload()}>
           <RotateCw aria-hidden className="size-4" />
-          reload
+          reload window
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
