@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProcessDetail } from '@/components/ProcessDetail'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ProcessEntry } from '@/lib/owletteConfig'
+import type { ProcessStatus } from '@/lib/processStatus'
 
 vi.mock('@/lib/pickers', () => ({
   pickExecutable: vi.fn(),
@@ -24,24 +25,36 @@ const base: ProcessEntry = {
   launch_mode: 'off',
 }
 
-function setup(process: ProcessEntry = base) {
+interface Options {
+  status?: ProcessStatus
+  startedAt?: number | null
+  advancedOpen?: boolean
+}
+
+function setup(process: ProcessEntry = base, options: Options = {}) {
   const onSave = vi.fn()
   const onLaunchMode = vi.fn()
   const onSchedules = vi.fn()
+  const onRestart = vi.fn()
+  const onKill = vi.fn()
+  const onAdvancedOpenChange = vi.fn()
 
   function ui(entry: ProcessEntry) {
     return (
       <TooltipProvider>
         <ProcessDetail
           process={entry}
-          status="INACTIVE"
+          status={options.status ?? 'INACTIVE'}
+          startedAt={options.startedAt ?? null}
+          advancedOpen={options.advancedOpen ?? false}
+          onAdvancedOpenChange={onAdvancedOpenChange}
           onSave={onSave}
           onLaunchMode={onLaunchMode}
           onSchedules={onSchedules}
           onPriority={vi.fn()}
           onVisibility={vi.fn()}
-          onRestart={vi.fn()}
-          onKill={vi.fn()}
+          onRestart={onRestart}
+          onKill={onKill}
         />
       </TooltipProvider>
     )
@@ -53,6 +66,9 @@ function setup(process: ProcessEntry = base) {
     onSave,
     onLaunchMode,
     onSchedules,
+    onRestart,
+    onKill,
+    onAdvancedOpenChange,
     rerender: (next: ProcessEntry) => view.rerender(ui(next)),
   }
 }
@@ -355,6 +371,180 @@ describe('schedules', () => {
     expect(screen.queryByTestId('schedule-editor')).toBeNull()
   })
 
+  it('groups the form into what to run, when to run, and recovery', () => {
+    setup()
+
+    // The order an entry is filled in, and the order it is read back in.
+    const labels = [...document.querySelectorAll('.col-span-2')]
+      .map((element) => element.textContent?.trim() ?? '')
+      .filter((text) => text && !text.startsWith('advanced'))
+    expect(labels[0]).toBe('what to run')
+    expect(labels[1]).toBe('when to run')
+    expect(labels[2]).toMatch(/^recovery/)
+
+    // …and every row still shares one label gutter, so the sections do not
+    // break the alignment they were added to.
+    const fieldFor = (label: string) => screen.getByLabelText(label)
+    expect(fieldFor('name').id).toBe('name')
+    expect(fieldFor('delay (sec)').id).toBe('time_delay')
+  })
+})
+
+describe('a launch mode of off', () => {
+  it('dims the recovery fields without taking them away', () => {
+    const { onSave } = setup({ ...base, launch_mode: 'off' })
+
+    const recovery = screen.getByTestId('recovery-fields')
+    expect(recovery.dataset.dimmed).toBe('true')
+    expect(screen.getByText(/applies once a launch mode is set/)).toBeTruthy()
+
+    // Dimmed is a statement about when they apply, not a lock: filling these in
+    // before switching the mode on is how an entry is set up.
+    const attempts = screen.getByLabelText('attempts') as HTMLInputElement
+    expect(attempts.disabled).toBe(false)
+    edit(attempts, '9')
+    expect(onSave).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ relaunch_attempts: '9' }),
+    )
+  })
+
+  it('leaves them at full weight for an entry owlette manages', () => {
+    setup({ ...base, launch_mode: 'always' })
+
+    expect(screen.getByTestId('recovery-fields').dataset.dimmed).toBeUndefined()
+    expect(screen.queryByText(/applies once a launch mode is set/)).toBeNull()
+  })
+})
+
+describe('the status row', () => {
+  it('carries the name, the status and both actions on one line', () => {
+    setup(base, { status: 'RUNNING' })
+
+    const header = screen.getByTestId('detail-header')
+    // The name field used to have a full-width row of its own below this one.
+    expect(header.contains(screen.getByLabelText('name'))).toBe(true)
+    expect(header.contains(screen.getByTestId('detail-status'))).toBe(true)
+    expect(header.contains(screen.getByRole('button', { name: 'restart process' }))).toBe(true)
+    expect(header.contains(screen.getByRole('button', { name: 'kill process' }))).toBe(true)
+    expect(screen.getByTestId('detail-status').textContent).toBe('running')
+  })
+
+  it('keeps the name field a full member of the auto-saving form', () => {
+    // Moving it into the header moved markup, not behaviour: the whole
+    // auto-save suite above addresses this same field through its label, and
+    // this is the assertion that it is still the header's copy doing the work.
+    const { onSave } = setup()
+    const name = screen.getByLabelText('name') as HTMLInputElement
+
+    expect(screen.getByTestId('detail-header').contains(name)).toBe(true)
+    expect(screen.getAllByLabelText('name')).toHaveLength(1)
+
+    edit(name, 'media player')
+    expect(onSave).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ name: 'media player' }))
+  })
+
+  it('asks the caller for a restart and a kill', () => {
+    const { onRestart, onKill } = setup(base, { status: 'RUNNING' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'restart process' }))
+    fireEvent.click(screen.getByRole('button', { name: 'kill process' }))
+
+    expect(onRestart).toHaveBeenCalledOnce()
+    expect(onKill).toHaveBeenCalledOnce()
+  })
+
+  it('disables kill when there is nothing running to kill', () => {
+    const { onKill } = setup(base, { status: 'STOPPED' })
+
+    const kill = screen.getByRole('button', { name: 'kill process' }) as HTMLButtonElement
+    expect(kill.disabled).toBe(true)
+    fireEvent.click(kill)
+    expect(onKill).not.toHaveBeenCalled()
+
+    // Restart stays offered: it is launch-mode aware, so on a managed entry it
+    // is how the operator asks for the process back.
+    expect(
+      (screen.getByRole('button', { name: 'restart process' }) as HTMLButtonElement).disabled,
+    ).toBe(false)
+  })
+
+  it('offers kill for every status that has a live generation behind it', () => {
+    for (const status of ['RUNNING', 'LAUNCHING', 'RESTARTING'] as const) {
+      const { unmount } = render(
+        <TooltipProvider>
+          <ProcessDetail
+            process={base}
+            status={status}
+            onSave={vi.fn()}
+            onLaunchMode={vi.fn()}
+            onSchedules={vi.fn()}
+            onPriority={vi.fn()}
+            onVisibility={vi.fn()}
+            onRestart={vi.fn()}
+            onKill={vi.fn()}
+          />
+        </TooltipProvider>,
+      )
+      expect(
+        (screen.getByRole('button', { name: 'kill process' }) as HTMLButtonElement).disabled,
+      ).toBe(false)
+      unmount()
+    }
+  })
+
+  it('says when a running process was started', () => {
+    const started = Date.now() - 2 * 60 * 60 * 1000
+    setup(base, { status: 'RUNNING', startedAt: started })
+
+    const since = screen.getByTestId('detail-started')
+    expect(since.textContent).toBe('started 2 hours ago')
+    expect(since.dataset.startedAt).toBe(String(started))
+  })
+
+  it('says nothing about time when the file has none to give', () => {
+    setup(base, { status: 'RUNNING', startedAt: null })
+
+    expect(screen.queryByTestId('detail-started')).toBeNull()
+  })
+
+  it('does not claim a launch time describes a status it does not', () => {
+    // `timestamp` is written once, when the process is launched, and left alone
+    // by every status change after it — so beside `killed` it would be a
+    // "started" that is not when this state began.
+    setup(base, { status: 'KILLED', startedAt: Date.now() - 60_000 })
+
+    expect(screen.queryByTestId('detail-started')).toBeNull()
+  })
+})
+
+describe('the advanced disclosure', () => {
+  it('folds priority and visibility away by default', () => {
+    setup()
+
+    expect(screen.getByTestId('advanced-toggle')).toBeTruthy()
+    expect(screen.queryByTestId('priority')).toBeNull()
+    expect(screen.queryByTestId('visibility')).toBeNull()
+  })
+
+  it('shows them when it is open', () => {
+    setup(base, { advancedOpen: true })
+
+    expect(screen.getByTestId('priority')).toBeTruthy()
+    expect(screen.getByTestId('visibility')).toBeTruthy()
+  })
+
+  it('hands the open state to the caller, which outlives this pane', () => {
+    // The pane is remounted for every process, so an operator comparing two
+    // entries would have the disclosure shut itself on the second.
+    const { onAdvancedOpenChange } = setup()
+
+    fireEvent.click(screen.getByTestId('advanced-toggle'))
+
+    expect(onAdvancedOpenChange).toHaveBeenCalledExactlyOnceWith(true)
+  })
+})
+
+describe('schedule notes', () => {
   it('updates the note as soon as the saved schedule lands on disk', () => {
     const { rerender } = setup({ ...base, launch_mode: 'scheduled' })
 

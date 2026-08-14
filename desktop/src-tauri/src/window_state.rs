@@ -38,6 +38,7 @@ pub const LAYOUT_FILE: &str = "layout.json";
 const KEY_WINDOW: &str = "window";
 const KEY_SIDEBAR: &str = "sidebar";
 const KEY_WIDTH: &str = "width";
+const KEY_COLLAPSED: &str = "collapsed";
 
 /// The window minimums declared in `tauri.conf.json`. Restoring anything below
 /// them would be corrected by the window manager on the first paint, so they are
@@ -142,8 +143,37 @@ fn read_document(path: &Path) -> Map<String, Value> {
 
 /// Replace one section, preserving every key this build does not know about.
 fn write_section(path: &Path, key: &str, section: Value) -> io::Result<()> {
+  write_document(path, |document| {
+    document.insert(key.to_string(), section);
+  })
+}
+
+/// Set one key inside a section, leaving the rest of that section alone.
+///
+/// The sidebar section holds two independent settings — how wide it is and
+/// whether it is collapsed — written by two different gestures. Replacing the
+/// whole section for either would drop the other.
+fn write_section_key(path: &Path, section: &str, key: &str, value: Value) -> io::Result<()> {
+  write_document(path, |document| {
+    match document.get_mut(section) {
+      Some(Value::Object(existing)) => {
+        existing.insert(key.to_string(), value);
+      }
+      // Absent, or something that is not an object because the file was edited
+      // by hand: start the section over rather than trying to merge into it.
+      _ => {
+        let mut fresh = Map::new();
+        fresh.insert(key.to_string(), value);
+        document.insert(section.to_string(), Value::Object(fresh));
+      }
+    }
+  })
+}
+
+/// Read the document, let `edit` change it, and write it back atomically.
+fn write_document(path: &Path, edit: impl FnOnce(&mut Map<String, Value>)) -> io::Result<()> {
   let mut document = read_document(path);
-  document.insert(key.to_string(), section);
+  edit(&mut document);
 
   if let Some(parent) = path.parent() {
     fs::create_dir_all(parent)?;
@@ -183,15 +213,31 @@ pub fn load_sidebar_width(path: &Path) -> Option<f64> {
     .map(clamp_sidebar_width)
 }
 
+/// Whether the sidebar was left collapsed to its icon rail. Absent means no.
+pub fn load_sidebar_collapsed(path: &Path) -> bool {
+  read_document(path)
+    .get(KEY_SIDEBAR)
+    .and_then(|sidebar| sidebar.get(KEY_COLLAPSED))
+    .and_then(Value::as_bool)
+    .unwrap_or(false)
+}
+
 pub fn save_window(path: &Path, layout: WindowLayout) -> io::Result<()> {
   let value = serde_json::to_value(layout).map_err(io::Error::other)?;
   write_section(path, KEY_WINDOW, value)
 }
 
 pub fn save_sidebar_width(path: &Path, width: f64) -> io::Result<()> {
-  let mut section = Map::new();
-  section.insert(KEY_WIDTH.to_string(), clamp_sidebar_width(width).into());
-  write_section(path, KEY_SIDEBAR, Value::Object(section))
+  write_section_key(
+    path,
+    KEY_SIDEBAR,
+    KEY_WIDTH,
+    clamp_sidebar_width(width).into(),
+  )
+}
+
+pub fn save_sidebar_collapsed(path: &Path, collapsed: bool) -> io::Result<()> {
+  write_section_key(path, KEY_SIDEBAR, KEY_COLLAPSED, collapsed.into())
 }
 
 // ─── managed state ──────────────────────────────────────────────────────────
@@ -290,6 +336,22 @@ impl LayoutState {
     save_sidebar_width(path, clamped)
       .map(|()| clamped)
       .map_err(|error| format!("could not save the sidebar width: {error}"))
+  }
+
+  /// Whether the sidebar should open collapsed to its icon rail.
+  pub fn sidebar_collapsed(&self) -> bool {
+    self.path().map(load_sidebar_collapsed).unwrap_or(false)
+  }
+
+  /// Store whether the sidebar is collapsed, returning what was kept.
+  pub fn set_sidebar_collapsed(&self, collapsed: bool) -> Result<bool, String> {
+    let Some(path) = self.path() else {
+      return Ok(collapsed);
+    };
+    let _guard = self.file.lock();
+    save_sidebar_collapsed(path, collapsed)
+      .map(|()| collapsed)
+      .map_err(|error| format!("could not save the sidebar state: {error}"))
   }
 }
 
@@ -600,6 +662,74 @@ mod tests {
   }
 
   #[test]
+  fn the_two_sidebar_settings_do_not_overwrite_each_other() {
+    let scratch = Scratch::new("sidebar-pair");
+    let path = scratch.file();
+
+    // The width is written by a drag and the collapsed flag by the rail toggle,
+    // and the two arrive in whatever order the operator produces them. Either
+    // one replacing the whole section would forget the other.
+    save_sidebar_width(&path, 340.0).expect("width");
+    save_sidebar_collapsed(&path, true).expect("collapsed");
+    assert_eq!(load_sidebar_width(&path), Some(340.0));
+    assert!(load_sidebar_collapsed(&path));
+
+    save_sidebar_width(&path, 260.0).expect("width again");
+    assert!(
+      load_sidebar_collapsed(&path),
+      "collapsed survived a width write"
+    );
+
+    save_sidebar_collapsed(&path, false).expect("expanded");
+    assert_eq!(
+      load_sidebar_width(&path),
+      Some(260.0),
+      "the width survived a collapse write"
+    );
+    assert!(!load_sidebar_collapsed(&path));
+  }
+
+  #[test]
+  fn a_sidebar_section_that_is_not_an_object_is_started_over() {
+    let scratch = Scratch::new("sidebar-junk");
+    let path = scratch.file();
+    fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+
+    fs::write(
+      &path,
+      r#"{"sidebar":"wide","window":{"width":1200,"height":800}}"#,
+    )
+    .expect("seed");
+    assert!(!load_sidebar_collapsed(&path));
+
+    save_sidebar_collapsed(&path, true).expect("collapsed");
+    assert!(load_sidebar_collapsed(&path));
+    // …and the section it replaced was the only thing it touched.
+    assert_eq!(
+      load_window(&path),
+      Some(WindowLayout::new(1200.0, 800.0, false))
+    );
+  }
+
+  #[test]
+  fn a_collapsed_flag_that_is_not_a_boolean_reads_as_expanded() {
+    let scratch = Scratch::new("collapsed-junk");
+    let path = scratch.file();
+    fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+
+    for junk in [
+      "",
+      "{",
+      r#"{"sidebar":{}}"#,
+      r#"{"sidebar":{"collapsed":"yes"}}"#,
+      r#"{"sidebar":{"collapsed":1}}"#,
+    ] {
+      fs::write(&path, junk).expect("seed");
+      assert!(!load_sidebar_collapsed(&path), "from {junk}");
+    }
+  }
+
+  #[test]
   fn a_write_leaves_no_scratch_file_behind() {
     let scratch = Scratch::new("temps");
     let path = scratch.file();
@@ -642,6 +772,8 @@ mod tests {
     let state = LayoutState::new(None, WindowLayout::new(1060.0, 640.0, false));
     assert_eq!(state.sidebar_width(), DEFAULT_SIDEBAR_WIDTH);
     assert_eq!(state.set_sidebar_width(5000.0), Ok(MAX_SIDEBAR_WIDTH));
+    assert!(!state.sidebar_collapsed());
+    assert_eq!(state.set_sidebar_collapsed(true), Ok(true));
     state.persist();
   }
 
@@ -655,8 +787,11 @@ mod tests {
     state.persist();
     assert_eq!(state.set_sidebar_width(360.0), Ok(360.0));
 
+    assert_eq!(state.set_sidebar_collapsed(true), Ok(true));
+
     let reopened = LayoutState::new(Some(path.clone()), WindowLayout::new(1060.0, 640.0, false));
     assert_eq!(reopened.sidebar_width(), 360.0);
+    assert!(reopened.sidebar_collapsed());
     assert_eq!(
       load_window(&path),
       Some(WindowLayout::new(1440.0, 900.0, false))

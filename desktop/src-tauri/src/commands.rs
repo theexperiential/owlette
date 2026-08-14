@@ -17,6 +17,7 @@ use serde_json::Value;
 use tauri::{AppHandle, State};
 
 use crate::agent_cli::{self, Runs};
+use crate::exe_icon;
 use crate::json_io::{self, WriteOutcome};
 use crate::paths::{self, SERVICE_STATUS_REL};
 use crate::process_ctl::{self, TerminateOutcome, DEFAULT_GRACEFUL_TIMEOUT};
@@ -123,6 +124,44 @@ pub fn agent_cli_cancel(runs: State<'_, Runs>, run: String) -> Result<bool, Stri
   agent_cli::cancel(&runs, &run)
 }
 
+/// Longest frontend log line kept. A step label is a few dozen characters and
+/// an error message a few hundred; past this it is a runaway stack trace, and
+/// truncating keeps one bad run from filling the operator's log file.
+const MAX_LOG_MESSAGE_BYTES: usize = 4096;
+
+/// Record a line from the frontend in the app's log file.
+///
+/// A release build has no console and no devtools, so a multi-step flow that
+/// went wrong on a machine in another building leaves nothing behind unless it
+/// says so here. The leave-site teardown is the case that proved it: it stopped
+/// the service, the app died mid-sequence, and the only evidence of how far it
+/// had got was that nothing had been written.
+///
+/// Anything unrecognised in `level` is recorded at info — a mislabelled line is
+/// worth more than a dropped one.
+#[tauri::command(async)]
+pub fn log_event(level: String, message: String) {
+  let message = truncate_on_boundary(&message, MAX_LOG_MESSAGE_BYTES);
+  match level.as_str() {
+    "error" => log::error!("[ui] {message}"),
+    "warn" => log::warn!("[ui] {message}"),
+    "debug" => log::debug!("[ui] {message}"),
+    _ => log::info!("[ui] {message}"),
+  }
+}
+
+/// Cut `text` to at most `limit` bytes without splitting a character.
+fn truncate_on_boundary(text: &str, limit: usize) -> &str {
+  if text.len() <= limit {
+    return text;
+  }
+  let mut end = limit;
+  while end > 0 && !text.is_char_boundary(end) {
+    end -= 1;
+  }
+  &text[..end]
+}
+
 /// Open a file or folder inside the owlette tree with its default handler.
 #[tauri::command(async)]
 pub fn open_owlette_path(path: String) -> Result<(), String> {
@@ -133,6 +172,17 @@ pub fn open_owlette_path(path: String) -> Result<(), String> {
 #[tauri::command(async)]
 pub fn open_external_url(url: String) -> Result<(), String> {
   shell_open::open_url(&url)
+}
+
+/// The icon Windows draws for `path`, as a base64 PNG.
+///
+/// `None` covers every ordinary way there is no icon to give — the path is
+/// blank, the file is gone, the target has none — because the list draws a
+/// fallback glyph for all of them. An `Err` is a Win32 call that failed, which
+/// the frontend also falls back on but which is worth having in the log.
+#[tauri::command(async)]
+pub fn exe_icon(path: String) -> Result<Option<String>, String> {
+  exe_icon::icon_base64(&path)
 }
 
 /// Width the process-list sidebar should open at, in logical pixels.
@@ -151,4 +201,57 @@ pub fn sidebar_width(layout: State<'_, LayoutState>) -> f64 {
 #[tauri::command(async)]
 pub fn set_sidebar_width(layout: State<'_, LayoutState>, width: f64) -> Result<f64, String> {
   layout.set_sidebar_width(width)
+}
+
+/// Whether the process list should open collapsed to its icon rail.
+#[tauri::command(async)]
+pub fn sidebar_collapsed(layout: State<'_, LayoutState>) -> bool {
+  layout.sidebar_collapsed()
+}
+
+/// Remember whether the process list is collapsed.
+///
+/// Stored beside the width rather than instead of it, so expanding again lands
+/// on the width the operator had dragged to before they collapsed it.
+#[tauri::command(async)]
+pub fn set_sidebar_collapsed(
+  layout: State<'_, LayoutState>,
+  collapsed: bool,
+) -> Result<bool, String> {
+  layout.set_sidebar_collapsed(collapsed)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn a_short_message_is_kept_whole() {
+    assert_eq!(
+      truncate_on_boundary("stopping the service", 4096),
+      "stopping the service"
+    );
+    assert_eq!(truncate_on_boundary("", 4096), "");
+  }
+
+  #[test]
+  fn a_long_message_is_cut_to_the_limit() {
+    let long = "x".repeat(MAX_LOG_MESSAGE_BYTES * 2);
+    assert_eq!(
+      truncate_on_boundary(&long, MAX_LOG_MESSAGE_BYTES).len(),
+      MAX_LOG_MESSAGE_BYTES
+    );
+  }
+
+  #[test]
+  fn a_cut_never_lands_inside_a_character() {
+    // A python traceback arrives in whatever the console codepage produced, so
+    // a multi-byte character straddling the limit is not hypothetical.
+    let text = "é".repeat(64);
+    for limit in 0..text.len() {
+      let cut = truncate_on_boundary(&text, limit);
+      assert!(cut.len() <= limit);
+      assert!(text.starts_with(cut));
+    }
+  }
 }

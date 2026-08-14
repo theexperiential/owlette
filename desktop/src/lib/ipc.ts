@@ -228,6 +228,57 @@ export function setSidebarWidth(width: number): Promise<number> {
   return invoke<number>('set_sidebar_width', { width })
 }
 
+/** Whether the process list should open collapsed to its icon rail. */
+export function sidebarCollapsed(): Promise<boolean> {
+  return invoke<boolean>('sidebar_collapsed')
+}
+
+/**
+ * Remember whether the process list is collapsed.
+ *
+ * Stored beside the width, not instead of it: expanding again lands on the
+ * width that was dragged to before the collapse.
+ */
+export function setSidebarCollapsed(collapsed: boolean): Promise<boolean> {
+  return invoke<boolean>('set_sidebar_collapsed', { collapsed })
+}
+
+/**
+ * The icon Windows draws for an executable, as a `data:` URL ready for an
+ * `<img>`, or null when there is not one.
+ *
+ * Resolves rather than rejects for every ordinary miss — a blank path, a file
+ * that is not there, a target with no icon — because the list draws the same
+ * fallback glyph for all of them. A host-side failure rejects; callers treat
+ * that as a miss too.
+ *
+ * The host caches by path and modified time, so calling this per row on every
+ * render costs a hash lookup after the first extraction.
+ */
+export async function exeIcon(path: string): Promise<string | null> {
+  const encoded = await invoke<string | null>('exe_icon', { path })
+  return encoded ? `data:image/png;base64,${encoded}` : null
+}
+
+/** Severity accepted by {@link logEvent}; anything else is recorded as info. */
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+/**
+ * Write a line into the app's own log file
+ * (`%LOCALAPPDATA%\app.owlette.desktop\logs\owlette-desktop.log`).
+ *
+ * A release build has no console and no devtools, so anything a multi-step flow
+ * does not say here is unrecoverable after the fact — and the flows worth
+ * logging are exactly the ones that can take the app down mid-sequence, like a
+ * teardown that stops the owlette service.
+ *
+ * Never rejects. A step that failed to be logged must not become a step that
+ * failed, so the promise resolves even when the host call does not.
+ */
+export function logEvent(level: LogLevel, message: string): Promise<void> {
+  return invoke<void>('log_event', { level, message }).catch(() => undefined)
+}
+
 /**
  * Is owlette supervising this machine right now?
  *

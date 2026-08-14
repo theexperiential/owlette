@@ -100,6 +100,39 @@ export function statusForProcess(states: AppStates, processId: string): ProcessS
 }
 
 /**
+ * The statuses whose pid generation is the one running right now.
+ *
+ * Everything else describes a generation that has ended (`KILLED`, `STOPPED`,
+ * `LAUNCH_FAILED`), one that never began (`QUEUED`), or an entry owlette is not
+ * managing (`INACTIVE`) — none of which there is a live process to act on.
+ */
+const LIVE_STATUSES: readonly ProcessStatus[] = ['RUNNING', 'LAUNCHING', 'RESTARTING']
+
+/** Whether there is a process behind this status to stop. */
+export function isLive(status: ProcessStatus): boolean {
+  return LIVE_STATUSES.includes(status)
+}
+
+/**
+ * When the newest generation of this entry was *launched*, in unix
+ * milliseconds, or null when the service has never recorded one.
+ *
+ * This is the only time the seam carries, and it is worth being exact about
+ * what it means: the service stamps `timestamp` once, when it starts the
+ * process (`owlette_service.py:2380-2403`), and never touches it again — status
+ * changes are written without it (`shared_utils.update_process_status_in_json`).
+ * So it is a launch time, not the moment the current status began, and the only
+ * statuses it describes honestly are the ones {@link isLive} accepts: for those,
+ * the process has been up since this instant. Presenting it beside `killed` or
+ * `stopped` would be a claim the file cannot support.
+ */
+export function launchedAtForProcess(states: AppStates, processId: string): number | null {
+  const [newest] = entriesFor(states, processId).sort(byRecency)
+  const timestamp = newest?.[1].timestamp
+  return typeof timestamp === 'number' && timestamp > 0 ? timestamp * 1000 : null
+}
+
+/**
  * The pid to act on for a kill or restart.
  *
  * Mirrors `owlette_gui.get_os_pid_by_process_id`: a RUNNING generation wins

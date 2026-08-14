@@ -11,10 +11,12 @@ vi.mock('@/lib/agentCli', () => ({
 const serviceStatus = vi.fn()
 const serviceStart = vi.fn()
 const serviceStop = vi.fn()
+const logEvent = vi.fn((_level: string, _message: string) => Promise.resolve())
 vi.mock('@/lib/ipc', () => ({
   serviceStatus: () => serviceStatus(),
   serviceStart: () => serviceStart(),
   serviceStop: () => serviceStop(),
+  logEvent: (level: string, message: string) => logEvent(level, message),
 }))
 
 const { LeaveSiteDialog } = await import('./LeaveSiteDialog')
@@ -121,11 +123,17 @@ function copy(): string {
   return screen.getByTestId('leave-site-dialog').textContent ?? ''
 }
 
+/** Every line the dialog wrote to the host log, in order. */
+function logLines(): string[] {
+  return logEvent.mock.calls.map(([, message]) => message)
+}
+
 beforeEach(() => {
   startAgentRun.mockReset()
   serviceStatus.mockReset()
   serviceStart.mockReset()
   serviceStop.mockReset()
+  logEvent.mockClear()
 })
 
 afterEach(() => {
@@ -333,6 +341,75 @@ describe('LeaveSiteDialog', () => {
     await run.exit(1, 'ImportError: no module named auth_manager')
 
     expect(screen.getByTestId('leave-error').textContent).toContain('ImportError')
+  })
+
+  describe('the host log', () => {
+    it('records every step of a teardown that worked', async () => {
+      // The 2026-08-13 leave stopped the service and then went silent, and the
+      // app's own log had nothing between "window opened" and the next launch.
+      // Each step announces itself before it runs, so a sequence that dies
+      // half-way says which half.
+      fakeService()
+      const run = fakeRun()
+      open()
+
+      await startLeave()
+      await run.finish({ event: 'done', value: { siteId: 'default_site', deregistered: true } })
+
+      const lines = logLines()
+      expect(lines[0]).toBe('leave-site: started')
+      expect(lines).toContainEqual('leave-site: requesting the service stop')
+      expect(lines).toContainEqual('leave-site: service stopped')
+      expect(lines).toContainEqual('leave-site: spawning the leave helper')
+      expect(lines).toContainEqual('leave-site: helper finished, deregistered=true')
+      expect(lines).toContainEqual('leave-site: starting the service again')
+      expect(lines).toContainEqual('leave-site: service running again')
+      expect(lines.at(-1)).toBe('leave-site: done')
+    })
+
+    it('says the stop is what failed, and that nothing was changed', async () => {
+      fakeService()
+      serviceStop.mockRejectedValue(new Error('elevation was declined'))
+      fakeRun()
+      open()
+
+      await startLeave()
+
+      const lines = logLines()
+      expect(lines).toContainEqual(
+        'leave-site: stop failed: elevation was declined — nothing was changed',
+      )
+      // The teardown must not have been reached.
+      expect(lines).not.toContainEqual('leave-site: spawning the leave helper')
+      expect(logEvent).toHaveBeenCalledWith('error', expect.stringContaining('stop failed'))
+    })
+
+    it('records the helper progress lines it is showing the operator', async () => {
+      fakeService()
+      const run = fakeRun()
+      open()
+
+      await startLeave()
+      run.emit({ event: 'status', value: 'deleting the machine document' })
+      await run.finish({ event: 'done', value: { siteId: 'default_site', deregistered: false } })
+
+      expect(logLines()).toContainEqual('leave-site: helper: deleting the machine document')
+      expect(logLines()).toContainEqual('leave-site: helper finished, deregistered=false')
+    })
+
+    it('is never the reason a step fails', async () => {
+      // A log write that rejects must not become a teardown that failed.
+      logEvent.mockImplementation(() => Promise.reject(new Error('log file locked')))
+      fakeService()
+      const run = fakeRun()
+      open()
+
+      await startLeave()
+      await run.finish({ event: 'done', value: { siteId: 'default_site', deregistered: true } })
+
+      expect(copy()).toContain('no longer monitored')
+      logEvent.mockImplementation(() => Promise.resolve())
+    })
   })
 
   it('does not wait forever for a helper that speaks and then wedges', async () => {

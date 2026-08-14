@@ -1,8 +1,10 @@
 mod agent_cli;
 mod commands;
+mod exe_icon;
 mod json_io;
 mod paths;
 mod pid_file;
+mod png;
 mod process_ctl;
 mod service_ctl;
 mod shell_open;
@@ -93,8 +95,12 @@ pub fn run() {
       commands::agent_cli_cancel,
       commands::open_owlette_path,
       commands::open_external_url,
+      commands::log_event,
+      commands::exe_icon,
       commands::sidebar_width,
       commands::set_sidebar_width,
+      commands::sidebar_collapsed,
+      commands::set_sidebar_collapsed,
     ])
     .setup(|app| {
       // Registered in both profiles. A release build is `windows_subsystem =

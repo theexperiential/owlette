@@ -4,11 +4,20 @@
 //! icon that survives with no window on screen, so the semantics here are ported
 //! from pystray rather than reinvented:
 //!
-//! * **Status** comes from `tmp/service_status.json`, read without the JSON
-//!   mutex exactly like `owlette_tray.read_service_status` (:234-293), and a
-//!   file older than 120 s means the service is not writing, whatever the SCM
-//!   says. A read that fails mid-rename falls back to the last good document for
-//!   60 s so the icon does not flicker on every service write.
+//! * **Status** comes from the SCM's view of `OwletteService` plus
+//!   `tmp/service_status.json`, read without the JSON mutex exactly like
+//!   `owlette_tray.read_service_status` (:234-293). A file older than 120 s
+//!   means the service is not publishing, and the SCM outranks the file in
+//!   both directions.
+//!
+//!   What the operator *reads* — the tooltip and the four status rows — is
+//!   always live, and derives from those two inputs with the same semantics as
+//!   the window footer's `serviceHealth.deriveFooterState`. What the operator
+//!   *sees* — the icon's error flash and the toasts — keeps the 60 s last-good
+//!   fallback and the debounces below, whose purpose is not to flap on a read
+//!   that caught the service renaming the file. Mixing the two is how the
+//!   tooltip came to say "service: running / status: connected" while the
+//!   footer, on the same screen, said "service not running on TEC-A4D".
 //! * **Icon** encodes that status: amber when connected, dim when the cloud is
 //!   unreachable, and a red flash at 800 ms when the service is stopped or a
 //!   health probe failed (`owlette_tray._start_flash`, :46-76).
@@ -252,17 +261,28 @@ fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
     if last_poll.map_or(true, |at| now.duration_since(at) >= POLL_INTERVAL) {
       last_poll = Some(now);
 
-      let status_data = read_status_file(&root, &mut cached_status);
-      let status = determine_status(status_data.as_ref(), || {
-        service_ctl::status(&root.join(SERVICE_STATUS_REL))
-          .map(|status| status.running)
-          .unwrap_or(false)
-      });
+      // Asked every poll rather than only when the document is missing: it is
+      // the one input that cannot be out of date, and the text below is not
+      // allowed to contradict it.
+      let scm_running = service_ctl::status(&root.join(SERVICE_STATUS_REL))
+        .map(|status| status.running)
+        .unwrap_or(false);
+
+      let live = read_status_doc(&root);
+      // Two evaluations of the same rules over two documents, because the two
+      // halves of the tray answer to different masters. What the operator reads
+      // must be live: the tooltip and the status rows are the same claim the
+      // window footer makes and have to agree with it. What the operator sees
+      // — the icon's error flash, and the toasts — keeps the smoothing, whose
+      // whole purpose is to not flap on a read that caught a rename.
+      let text = determine_status(&live, scm_running);
+      let signal = determine_status(&smoothed(&live, &mut cached_status), scm_running);
+
       let view = TrayView {
-        code: status.code,
-        service: status.service,
-        status: status.status,
-        health: status.health,
+        code: signal.code,
+        service: text.service,
+        status: text.status,
+        health: text.health,
         start_on_login: startup_link::is_enabled(),
       };
 
@@ -392,23 +412,34 @@ struct Status {
   health: Option<String>,
 }
 
+/// What `tmp/service_status.json` had to say, and whether it is worth believing.
+///
+/// The three failure shapes were collapsed into one `None` before, which is how
+/// a service that had stopped publishing came to read as "starting" forever.
+#[derive(Clone, Debug, PartialEq)]
+enum StatusDoc {
+  /// A document written within the freshness window.
+  Fresh(Value),
+  /// The file exists but has not been rewritten for over 120 s. The service
+  /// refreshes it on a 30 s throttle, so nothing is publishing.
+  Stale,
+  /// No file at all — the service has not written one yet this run.
+  Missing,
+  /// The file could not be parsed. Almost always a read that caught the
+  /// service renaming over it, and gone by the next tick.
+  Unreadable,
+}
+
 /// Read `tmp/service_status.json` outside the JSON mutex, mirroring
 /// `owlette_tray.read_service_status`.
-///
-/// A file older than 120 s reads as absent — the service refreshes it on a 30 s
-/// throttle, so anything older means nothing is writing it. A transient failure
-/// (the service renaming over the file as we read) reuses the last good document
-/// for [`STATUS_CACHE_TTL`] rather than reporting a fake "starting".
-fn read_status_file(root: &Path, cache: &mut Option<(Value, Instant)>) -> Option<Value> {
+fn read_status_doc(root: &Path) -> StatusDoc {
   let path = root.join(SERVICE_STATUS_REL);
   let info = service_ctl::status_file_info(&path, SystemTime::now());
   if !info.exists {
-    *cache = None;
-    return None;
+    return StatusDoc::Missing;
   }
   if info.stale {
-    *cache = None;
-    return None;
+    return StatusDoc::Stale;
   }
 
   match fs::read_to_string(&path).ok().and_then(|text| {
@@ -416,46 +447,88 @@ fn read_status_file(root: &Path, cache: &mut Option<(Value, Instant)>) -> Option
       .map_err(|error| log::debug!("torn read of {}: {error}", path.display()))
       .ok()
   }) {
-    Some(value) => {
-      *cache = Some((value.clone(), Instant::now()));
-      Some(value)
-    }
-    None => match cache {
-      Some((value, at)) if at.elapsed() < STATUS_CACHE_TTL => Some(value.clone()),
-      _ => {
-        *cache = None;
-        None
-      }
-    },
+    Some(value) => StatusDoc::Fresh(value),
+    None => StatusDoc::Unreadable,
   }
 }
 
-/// Map a status document onto the icon state and the two menu lines.
+/// The same document, with a torn read papered over by the last good one.
 ///
-/// A direct port of `owlette_tray.determine_status` (:296-350), kept pure so the
-/// precedence rules are testable: a failed health probe outranks everything, a
-/// stopped service outranks the cloud state, and firebase being switched off
-/// counts as an error because nothing is being monitored.
+/// This is the only place [`STATUS_CACHE_TTL`] is still allowed to matter, and
+/// only the icon and the toasts may use the result: smoothing a sub-second
+/// re-read is worth it to keep the icon from flashing, but the same smoothing
+/// applied to the tooltip is what let it claim a connected service while the
+/// window footer — reading the SCM directly — said the service was not running.
+fn smoothed(doc: &StatusDoc, cache: &mut Option<(Value, Instant)>) -> StatusDoc {
+  match doc {
+    StatusDoc::Fresh(value) => {
+      *cache = Some((value.clone(), Instant::now()));
+      doc.clone()
+    }
+    StatusDoc::Unreadable => match cache {
+      Some((value, at)) if at.elapsed() < STATUS_CACHE_TTL => StatusDoc::Fresh(value.clone()),
+      _ => {
+        *cache = None;
+        StatusDoc::Unreadable
+      }
+    },
+    // A missing or stale file is a verdict, not a failed read; there is nothing
+    // to smooth and holding on to the old document would only delay it.
+    _ => {
+      *cache = None;
+      doc.clone()
+    }
+  }
+}
+
+/// Map the SCM state and a status document onto the icon state and menu lines.
 ///
-/// `service_running` is only consulted when there is no status document, which
-/// is the one case where the SCM is the sole source of truth.
-fn determine_status(status_data: Option<&Value>, service_running: impl FnOnce() -> bool) -> Status {
-  let Some(data) = status_data else {
-    return if service_running() {
-      Status {
+/// Ported from `owlette_tray.determine_status` (:296-350) and then corrected on
+/// one point of policy: the SCM is consulted *first*, on every evaluation, not
+/// only when the document is missing. The old order let the document speak for
+/// a service it could not see, so a service that was terminated without writing
+/// its shutdown status kept the tray saying "service: running / status:
+/// connected" for the whole two-minute freshness window while the window footer
+/// said "service not running on <host>". They now answer the same question the
+/// same way — `serviceHealth.deriveFooterState` checks `isServiceDown` before
+/// anything else, and so does this.
+///
+/// After that the original precedence stands: a failed health probe outranks
+/// everything, a stopped service outranks the cloud state, and firebase being
+/// switched off counts as an error because nothing is being monitored.
+fn determine_status(doc: &StatusDoc, service_running: bool) -> Status {
+  // The SCM's verdict outranks the file's, in both directions.
+  if !service_running {
+    return Status {
+      code: StatusCode::Error,
+      service: "service: stopped".to_string(),
+      status: "status: unknown".to_string(),
+      health: None,
+    };
+  }
+
+  let data = match doc {
+    StatusDoc::Fresh(data) => data,
+    // Running by the SCM, but nothing has been published for over two minutes:
+    // the same "running but wedged" the footer reports rather than a service
+    // that is merely slow to start.
+    StatusDoc::Stale => {
+      return Status {
+        code: StatusCode::Error,
+        service: "service: running".to_string(),
+        status: "status: not responding".to_string(),
+        health: None,
+      }
+    }
+    // No file yet this run — the service really is starting.
+    StatusDoc::Missing | StatusDoc::Unreadable => {
+      return Status {
         code: StatusCode::Warning,
         service: "service: running".to_string(),
         status: "status: starting".to_string(),
         health: None,
       }
-    } else {
-      Status {
-        code: StatusCode::Error,
-        service: "service: stopped".to_string(),
-        status: "status: unknown".to_string(),
-        health: None,
-      }
-    };
+    }
   };
 
   let health = data.get("health");
@@ -808,8 +881,13 @@ mod tests {
   use super::*;
   use serde_json::json;
 
-  fn never_asked() -> bool {
-    panic!("the SCM must not be queried when a status document is available");
+  /// The SCM says the service is up, which is the precondition for the document
+  /// being consulted at all.
+  const RUNNING: bool = true;
+  const STOPPED: bool = false;
+
+  fn fresh(value: Value) -> StatusDoc {
+    StatusDoc::Fresh(value)
   }
 
   #[test]
@@ -822,13 +900,114 @@ mod tests {
 
   #[test]
   fn a_missing_status_document_falls_back_to_the_scm() {
-    let stopped = determine_status(None, || false);
+    let stopped = determine_status(&StatusDoc::Missing, STOPPED);
     assert_eq!(stopped.code, StatusCode::Error);
     assert_eq!(stopped.service, "service: stopped");
 
-    let starting = determine_status(None, || true);
+    let starting = determine_status(&StatusDoc::Missing, RUNNING);
     assert_eq!(starting.code, StatusCode::Warning);
     assert_eq!(starting.status, "status: starting");
+  }
+
+  #[test]
+  fn a_stopped_service_is_reported_stopped_however_healthy_the_document_looks() {
+    // The 2026-08-13 regression: the agent was terminated without writing its
+    // shutdown status, so a perfectly healthy document sat there for the whole
+    // two-minute freshness window. The footer read the SCM and said "service
+    // not running on TEC-A4D"; the tooltip read the file and said the opposite.
+    let healthy = json!({
+      "service": { "running": true },
+      "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
+      "health": { "status": "ok" }
+    });
+
+    let status = determine_status(&fresh(healthy), STOPPED);
+
+    assert_eq!(status.service, "service: stopped");
+    assert_eq!(status.status, "status: unknown");
+    assert_eq!(status.code, StatusCode::Error);
+    assert!(status.health.is_none());
+  }
+
+  #[test]
+  fn a_stopped_service_outranks_even_a_failed_health_probe() {
+    // deriveFooterState checks isServiceDown before it looks at health, and the
+    // two surfaces have to answer the same question the same way.
+    let data = json!({
+      "service": { "running": true },
+      "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
+      "health": { "status": "error", "error_code": "auth_error", "error_message": "no token" }
+    });
+
+    let status = determine_status(&fresh(data), STOPPED);
+
+    assert_eq!(status.service, "service: stopped");
+    assert!(
+      status.health.is_none(),
+      "no health row for a service that is not running"
+    );
+  }
+
+  #[test]
+  fn the_text_is_live_even_while_the_icon_is_still_smoothed() {
+    // The policy split, stated as a test: the cached document may keep the icon
+    // steady across a torn read, and must never put words in the tooltip about
+    // a service the SCM says is stopped.
+    let mut cache = None;
+    let healthy = json!({
+      "service": { "running": true },
+      "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
+      "health": { "status": "ok" }
+    });
+
+    // A good read while everything is up primes the cache.
+    let primed = smoothed(&fresh(healthy), &mut cache);
+    assert_eq!(
+      determine_status(&primed, RUNNING).status,
+      "status: connected"
+    );
+    assert!(
+      cache.is_some(),
+      "a good read should be remembered for the icon"
+    );
+
+    // The service is stopped and the next read is torn. The icon path still has
+    // its cached document — and both halves must now say stopped anyway.
+    let live = StatusDoc::Unreadable;
+    let icon_doc = smoothed(&live, &mut cache);
+    assert!(
+      matches!(icon_doc, StatusDoc::Fresh(_)),
+      "the icon keeps its smoothing"
+    );
+
+    let text = determine_status(&live, STOPPED);
+    assert_eq!(text.service, "service: stopped");
+    assert_eq!(text.status, "status: unknown");
+  }
+
+  #[test]
+  fn a_service_that_stopped_publishing_is_not_reported_as_starting() {
+    // "starting" is for a service with no file yet. A file that has gone stale
+    // means the service is wedged, which is what the footer calls out, and
+    // saying "starting" about it for the rest of the machine's uptime is the
+    // smoothing this fix removes.
+    let stale = determine_status(&StatusDoc::Stale, RUNNING);
+    assert_eq!(stale.code, StatusCode::Error);
+    assert_eq!(stale.service, "service: running");
+    assert_eq!(stale.status, "status: not responding");
+  }
+
+  #[test]
+  fn a_stale_document_is_never_smoothed_over() {
+    // Staleness is a verdict, not a failed read — holding the last good
+    // document would only delay it.
+    let mut cache = None;
+    let healthy = json!({ "service": { "running": true } });
+    smoothed(&fresh(healthy), &mut cache);
+    assert!(cache.is_some());
+
+    assert_eq!(smoothed(&StatusDoc::Stale, &mut cache), StatusDoc::Stale);
+    assert!(cache.is_none(), "the cache must be dropped, not consulted");
   }
 
   #[test]
@@ -838,7 +1017,7 @@ mod tests {
       "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
       "health": { "status": "ok" }
     });
-    let status = determine_status(Some(&data), never_asked);
+    let status = determine_status(&fresh(data), RUNNING);
     assert_eq!(status.code, StatusCode::Normal);
     assert_eq!(status.service, "service: running");
     assert_eq!(status.status, "status: connected");
@@ -851,7 +1030,7 @@ mod tests {
       "service": { "running": true },
       "firebase": { "enabled": true, "connected": false, "site_id": "hq" }
     });
-    let status = determine_status(Some(&data), never_asked);
+    let status = determine_status(&fresh(data), RUNNING);
     assert_eq!(status.code, StatusCode::Warning);
     assert_eq!(status.status, "status: disconnected");
   }
@@ -862,7 +1041,7 @@ mod tests {
       "service": { "running": true },
       "firebase": { "enabled": true, "connected": true, "site_id": "" }
     });
-    let status = determine_status(Some(&data), never_asked);
+    let status = determine_status(&fresh(data), RUNNING);
     assert_eq!(status.code, StatusCode::Error);
     assert_eq!(status.status, "status: disabled");
   }
@@ -874,7 +1053,7 @@ mod tests {
       "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
       "health": { "status": "error", "error_code": "auth_error", "error_message": "no token" }
     });
-    let status = determine_status(Some(&data), never_asked);
+    let status = determine_status(&fresh(data), RUNNING);
     assert_eq!(status.code, StatusCode::Error);
     assert_eq!(status.service, "service: error");
     assert_eq!(status.status, "status: auth_error");
@@ -889,7 +1068,7 @@ mod tests {
       "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
       "health": { "status": "error", "error_code": "config_error", "error_message": message }
     });
-    let status = determine_status(Some(&data), never_asked);
+    let status = determine_status(&fresh(data), RUNNING);
     let row = status.health.expect("health row");
     assert_eq!(row.chars().count(), 62, "two leading spaces plus 60");
     assert!(row.ends_with("..."));
@@ -916,30 +1095,35 @@ mod tests {
   }
 
   #[test]
-  fn a_stale_status_file_reads_as_absent() {
+  fn the_three_ways_a_status_read_can_fail_stay_distinguishable() {
+    // Collapsing these into one "absent" is what made a service that had
+    // stopped publishing indistinguishable from one that had not started yet.
     let dir = std::env::temp_dir().join(format!("owlette-tray-status-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("tmp")).expect("scratch");
 
-    let mut cache = None;
-    assert!(
-      read_status_file(&dir, &mut cache).is_none(),
-      "a missing file must not read as a status"
-    );
+    assert_eq!(read_status_doc(&dir), StatusDoc::Missing);
 
     fs::write(
       dir.join(SERVICE_STATUS_REL),
       r#"{"service":{"running":true}}"#,
     )
     .expect("seed");
-    assert!(read_status_file(&dir, &mut cache).is_some());
+    assert!(matches!(read_status_doc(&dir), StatusDoc::Fresh(_)));
 
-    // A torn read rides on the cached document rather than reporting nothing.
     fs::write(dir.join(SERVICE_STATUS_REL), "{\"service\":").expect("tear");
-    assert!(
-      read_status_file(&dir, &mut cache).is_some(),
-      "a torn read should fall back to the cached document"
+    assert_eq!(read_status_doc(&dir), StatusDoc::Unreadable);
+
+    // ...and a torn read still rides on the cached document for the icon.
+    let mut cache = None;
+    smoothed(
+      &fresh(json!({ "service": { "running": true } })),
+      &mut cache,
     );
+    assert!(matches!(
+      smoothed(&read_status_doc(&dir), &mut cache),
+      StatusDoc::Fresh(_)
+    ));
 
     let _ = fs::remove_dir_all(&dir);
   }

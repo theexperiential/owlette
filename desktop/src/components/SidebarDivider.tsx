@@ -1,19 +1,27 @@
 import { useRef, useState } from 'react'
 import {
+  layoutForDrag,
+  layoutForKey,
+  sidebarColumnWidth,
   SIDEBAR_MAX_WIDTH,
-  SIDEBAR_MIN_WIDTH,
-  widthForDrag,
-  widthForKey,
+  SIDEBAR_RAIL_WIDTH,
+  type SidebarLayout,
 } from '@/lib/sidebarWidth'
 import { cn } from '@/lib/utils'
 
 interface SidebarDividerProps {
-  /** Current sidebar width, in logical pixels. */
-  width: number
+  /** Current sidebar layout: collapsed or not, and how wide when not. */
+  layout: SidebarLayout
   /** Called continuously while dragging — cheap, local state only. */
-  onWidth: (width: number) => void
+  onLayout: (layout: SidebarLayout) => void
   /** Called once when the gesture ends, to persist what was landed on. */
   onCommit?: () => void
+  /**
+   * Fires when a pointer drag starts and ends. The aside animates its width
+   * for toggle/keyboard collapses but must NOT while a drag is tracking the
+   * pointer — an eased width fighting the cursor reads as lag.
+   */
+  onDraggingChange?: (dragging: boolean) => void
   className?: string
 }
 
@@ -26,12 +34,19 @@ interface SidebarDividerProps {
  * control until it is useful. The grab area is nine pixels wide even though the
  * line is one: a 1 px hit target is a game, not an affordance.
  *
- * Dragged to the far left, the sidebar parks at its minimum rather than
- * disappearing. That is the collapse gesture — there is no second control to
- * find, and a list that is still 200 px wide is still a list.
+ * Dragged far enough left the sidebar collapses to its icon rail rather than
+ * disappearing, and dragging back out restores the width it had. That is the
+ * collapse gesture; the rail's own toggle is the same state reached by a click,
+ * for operators who never think to drag a border.
  */
-export function SidebarDivider({ width, onWidth, onCommit, className }: SidebarDividerProps) {
-  const drag = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null)
+export function SidebarDivider({
+  layout,
+  onLayout,
+  onCommit,
+  onDraggingChange,
+  className,
+}: SidebarDividerProps) {
+  const drag = useRef<{ pointerId: number; startX: number; start: SidebarLayout } | null>(null)
   const [dragging, setDragging] = useState(false)
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -41,19 +56,20 @@ export function SidebarDivider({ width, onWidth, onCommit, className }: SidebarD
     drag.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
-      startWidth: width,
+      start: layout,
     }
     // Capture keeps the moves coming while the pointer is over the webview's
     // other panes — and over the detail pane's inputs, which would otherwise
     // swallow them.
     event.currentTarget.setPointerCapture(event.pointerId)
     setDragging(true)
+    onDraggingChange?.(true)
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLDivElement>) {
     const state = drag.current
     if (!state || state.pointerId !== event.pointerId) return
-    onWidth(widthForDrag(state.startWidth, event.clientX - state.startX))
+    onLayout(layoutForDrag(state.start, event.clientX - state.startX))
   }
 
   /** Ends the gesture — on release, and on a cancel the OS decides to send. */
@@ -62,28 +78,30 @@ export function SidebarDivider({ width, onWidth, onCommit, className }: SidebarD
     if (!state || state.pointerId !== event.pointerId) return
     drag.current = null
     setDragging(false)
+    onDraggingChange?.(false)
     // Pointer capture is released implicitly after this event, as it is in the
     // process list's own drag.
     onCommit?.()
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    const next = widthForKey(width, event.key, event.shiftKey)
+    const next = layoutForKey(layout, event.key, event.shiftKey)
     if (next === null) return
     event.preventDefault()
-    onWidth(next)
+    onLayout(next)
   }
 
   return (
     <div
       // The window-splitter pattern: a focusable separator carrying the range it
       // moves through, so the width is legible to a screen reader and to the
-      // keyboard without a visible label.
+      // keyboard without a visible label. The rail is the bottom of that range —
+      // the one width below the minimum the column is allowed to take.
       role="separator"
       aria-orientation="vertical"
       aria-label="resize the process list"
-      aria-valuenow={width}
-      aria-valuemin={SIDEBAR_MIN_WIDTH}
+      aria-valuenow={sidebarColumnWidth(layout)}
+      aria-valuemin={SIDEBAR_RAIL_WIDTH}
       aria-valuemax={SIDEBAR_MAX_WIDTH}
       tabIndex={0}
       data-testid="sidebar-divider"

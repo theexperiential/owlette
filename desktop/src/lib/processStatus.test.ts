@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isLive,
+  launchedAtForProcess,
   livePidForProcess,
   markKilled,
   markRestarting,
@@ -133,6 +135,47 @@ describe('picking a pid to act on', () => {
 
   it('has nothing to offer when the entry owns no pids', () => {
     expect(livePidForProcess({}, 'a')).toBeNull()
+  })
+})
+
+describe('whether there is a process to act on', () => {
+  it('accepts the three statuses that describe a live generation', () => {
+    expect(PROCESS_STATUSES.filter(isLive)).toEqual(['RUNNING', 'LAUNCHING', 'RESTARTING'])
+  })
+
+  it('refuses the ones that describe a generation that ended or never began', () => {
+    for (const status of ['QUEUED', 'LAUNCH_FAILED', 'KILLED', 'STOPPED', 'INACTIVE'] as const) {
+      expect(isLive(status)).toBe(false)
+    }
+  })
+})
+
+describe('when the live generation was launched', () => {
+  it('reads the newest generation’s launch time, in milliseconds', () => {
+    const states: AppStates = {
+      '100': { id: 'a', status: 'STOPPED', timestamp: 1_786_562_000 },
+      '400': { id: 'a', status: 'RUNNING', timestamp: 1_786_562_574 },
+    }
+
+    expect(launchedAtForProcess(states, 'a')).toBe(1_786_562_574_000)
+  })
+
+  it('has nothing for an entry the service has never launched', () => {
+    expect(launchedAtForProcess({}, 'a')).toBeNull()
+    // The service writes a status without a timestamp when it adopts a process
+    // it did not start.
+    expect(launchedAtForProcess({ '100': { id: 'a', status: 'RUNNING' } }, 'a')).toBeNull()
+    expect(
+      launchedAtForProcess({ '100': { id: 'a', status: 'RUNNING', timestamp: 0 } }, 'a'),
+    ).toBeNull()
+  })
+
+  it('ignores a timestamp that is not a number', () => {
+    const states = {
+      '100': { id: 'a', status: 'RUNNING', timestamp: '1786562574' },
+    } as unknown as AppStates
+
+    expect(launchedAtForProcess(states, 'a')).toBeNull()
   })
 })
 

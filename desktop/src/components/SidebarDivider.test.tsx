@@ -2,7 +2,12 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { SidebarDivider } from '@/components/SidebarDivider'
-import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from '@/lib/sidebarWidth'
+import {
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  SIDEBAR_RAIL_WIDTH,
+  type SidebarLayout,
+} from '@/lib/sidebarWidth'
 
 /**
  * jsdom has no `PointerEvent`, so testing-library builds a bare `Event` whose
@@ -21,17 +26,18 @@ function pointer(
 }
 
 /** The divider is controlled; this is the state that owns it in the app. */
-function Harness({ initial, onCommit }: { initial: number; onCommit: () => void }) {
-  const [width, setWidth] = useState(initial)
+function Harness({ initial, onCommit }: { initial: SidebarLayout; onCommit: () => void }) {
+  const [layout, setLayout] = useState(initial)
   return (
     <>
-      <SidebarDivider width={width} onWidth={setWidth} onCommit={onCommit} />
-      <span data-testid="width">{width}</span>
+      <SidebarDivider layout={layout} onLayout={setLayout} onCommit={onCommit} />
+      <span data-testid="width">{layout.width}</span>
+      <span data-testid="collapsed">{String(layout.collapsed)}</span>
     </>
   )
 }
 
-function setup(initial = 288) {
+function setup(initial: SidebarLayout = { collapsed: false, width: 288 }) {
   const onCommit = vi.fn()
   render(<Harness initial={initial} onCommit={onCommit} />)
 
@@ -44,18 +50,20 @@ function setup(initial = 288) {
     divider,
     onCommit,
     width: () => Number(screen.getByTestId('width').textContent),
+    collapsed: () => screen.getByTestId('collapsed').textContent === 'true',
   }
 }
 
 describe('SidebarDivider', () => {
   it('publishes the range it moves through', () => {
-    const { divider } = setup(288)
+    const { divider } = setup()
 
     expect(divider.getAttribute('role')).toBe('separator')
     expect(divider.getAttribute('aria-orientation')).toBe('vertical')
     expect(divider.getAttribute('aria-label')).toBe('resize the process list')
     expect(divider.getAttribute('aria-valuenow')).toBe('288')
-    expect(divider.getAttribute('aria-valuemin')).toBe(String(SIDEBAR_MIN_WIDTH))
+    // The rail is the bottom of the range, not the minimum column width.
+    expect(divider.getAttribute('aria-valuemin')).toBe(String(SIDEBAR_RAIL_WIDTH))
     expect(divider.getAttribute('aria-valuemax')).toBe(String(SIDEBAR_MAX_WIDTH))
     expect(divider.tabIndex).toBe(0)
     expect(divider.className).toContain('cursor-col-resize')
@@ -64,8 +72,13 @@ describe('SidebarDivider', () => {
     expect(divider.className).toContain('w-px')
   })
 
+  it('reports the rail width while the list is collapsed', () => {
+    const { divider } = setup({ collapsed: true, width: 352 })
+    expect(divider.getAttribute('aria-valuenow')).toBe(String(SIDEBAR_RAIL_WIDTH))
+  })
+
   it('follows the pointer, measuring from where the drag started', () => {
-    const { divider, width } = setup(288)
+    const { divider, width } = setup()
 
     pointer(divider, 'pointerdown', { clientX: 300 })
     pointer(divider, 'pointermove', { clientX: 340 })
@@ -76,23 +89,36 @@ describe('SidebarDivider', () => {
     expect(width()).toBe(248)
   })
 
-  it('parks at the minimum instead of collapsing, and stops at the maximum', () => {
-    const { divider, width } = setup(288)
+  it('stops at the maximum and collapses past the minimum', () => {
+    const { divider, width, collapsed } = setup()
 
     pointer(divider, 'pointerdown', { clientX: 300 })
-    pointer(divider, 'pointermove', { clientX: -2000 })
-    expect(width()).toBe(SIDEBAR_MIN_WIDTH)
-
     pointer(divider, 'pointermove', { clientX: 2000 })
     expect(width()).toBe(SIDEBAR_MAX_WIDTH)
 
-    // …and coming back from the overshoot lands where the pointer actually is.
+    // Dragging well left snaps to the rail, keeping the width to come back to.
+    pointer(divider, 'pointermove', { clientX: -2000 })
+    expect(collapsed()).toBe(true)
+    expect(width()).toBe(288)
+
+    // …and coming back out inside the same gesture expands again.
     pointer(divider, 'pointermove', { clientX: 320 })
+    expect(collapsed()).toBe(false)
     expect(width()).toBe(308)
   })
 
+  it('holds at the minimum before the collapse threshold', () => {
+    const { divider, width, collapsed } = setup()
+
+    pointer(divider, 'pointerdown', { clientX: 300 })
+    // 288 → 160: below the minimum, above the threshold.
+    pointer(divider, 'pointermove', { clientX: 172 })
+    expect(collapsed()).toBe(false)
+    expect(width()).toBe(SIDEBAR_MIN_WIDTH)
+  })
+
   it('commits once when the gesture ends, not once per move', () => {
-    const { divider, onCommit } = setup(288)
+    const { divider, onCommit } = setup()
 
     pointer(divider, 'pointerdown', { clientX: 300 })
     pointer(divider, 'pointermove', { clientX: 310 })
@@ -105,7 +131,7 @@ describe('SidebarDivider', () => {
   })
 
   it('marks itself while dragging and lets go on a cancel', () => {
-    const { divider, onCommit } = setup(288)
+    const { divider, onCommit } = setup()
 
     pointer(divider, 'pointerdown', { clientX: 300 })
     expect(divider.dataset.dragging).toBe('true')
@@ -120,7 +146,7 @@ describe('SidebarDivider', () => {
   })
 
   it('ignores a non-primary button and a foreign pointer', () => {
-    const { divider, width } = setup(288)
+    const { divider, width } = setup()
 
     pointer(divider, 'pointerdown', { clientX: 300, button: 2 })
     pointer(divider, 'pointermove', { clientX: 400 })
@@ -133,19 +159,25 @@ describe('SidebarDivider', () => {
   })
 
   it('resizes from the keyboard and swallows only the keys it uses', () => {
-    const { divider, width, onCommit } = setup(288)
+    const { divider, width, collapsed, onCommit } = setup()
 
     fireEvent.keyDown(divider, { key: 'ArrowRight' })
     expect(width()).toBe(296)
     fireEvent.keyDown(divider, { key: 'ArrowLeft', shiftKey: true })
     expect(width()).toBe(264)
-    fireEvent.keyDown(divider, { key: 'Home' })
-    expect(width()).toBe(SIDEBAR_MIN_WIDTH)
     fireEvent.keyDown(divider, { key: 'End' })
     expect(width()).toBe(SIDEBAR_MAX_WIDTH)
 
-    const unhandled = fireEvent.keyDown(divider, { key: 'ArrowUp' })
+    // Home is the far left, which is now the rail rather than a narrow column.
+    fireEvent.keyDown(divider, { key: 'Home' })
+    expect(collapsed()).toBe(true)
     expect(width()).toBe(SIDEBAR_MAX_WIDTH)
+
+    fireEvent.keyDown(divider, { key: 'ArrowRight' })
+    expect(collapsed()).toBe(false)
+    expect(width()).toBe(SIDEBAR_MAX_WIDTH)
+
+    const unhandled = fireEvent.keyDown(divider, { key: 'ArrowUp' })
     expect(unhandled).toBe(true) // not preventDefault()ed — someone else may want it
 
     fireEvent.keyUp(divider, { key: 'End' })

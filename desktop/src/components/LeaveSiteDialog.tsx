@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { startAgentRun } from '@/lib/agentCli'
-import { serviceStart, serviceStatus, serviceStop } from '@/lib/ipc'
+import { logEvent, serviceStart, serviceStatus, serviceStop } from '@/lib/ipc'
 
 interface LeaveSiteDialogProps {
   open: boolean
@@ -71,6 +71,20 @@ const HELPER_SERVICE_STATUSES = new Set(['stopping the service', 'restarting the
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Record one step of the teardown in the app's log file.
+ *
+ * This sequence stops the service the app is watching, and on 2026-08-13 that
+ * turned out to kill the app itself part-way through: the service was stopped,
+ * nothing else ran, and the only record of how far it had got was a log that
+ * stopped mid-flow with no explanation. Every step therefore announces itself
+ * before it runs and reports how it ended, so the next time a leave stops
+ * half-way the log says exactly which half.
+ */
+function leaveLog(step: string, level: 'info' | 'warn' | 'error' = 'info'): void {
+  void logEvent(level, `leave-site: ${step}`)
 }
 
 /** The host's elevation failure, in words that name what the operator saw. */
@@ -240,20 +254,28 @@ export function LeaveSiteDialog({ open, siteId, onClose, onLeft, onHold }: Leave
     setResult({ deregistered: true, serviceDown: false })
 
     const release = onHold()
+    leaveLog('started')
     try {
       // 1. Stop the service, elevating if this session cannot. Everything
       //    after this point changes the machine; nothing before it does.
       let stopped = false
       try {
         const before = await serviceStatus()
+        leaveLog(`service before the stop: ${before.state} (installed=${before.installed})`)
         if (before.installed && (before.running || before.state === 'start_pending')) {
-          await serviceStop()
+          leaveLog('requesting the service stop')
+          const outcome = await serviceStop()
+          leaveLog(`stop requested via ${outcome.method}, waiting for the scm`)
           if (!(await waitForService('stopped', STOP_TIMEOUT_MS))) {
             throw new Error('the service was still running after 45 seconds')
           }
           stopped = true
+          leaveLog('service stopped')
+        } else {
+          leaveLog('service was already down, nothing to stop')
         }
       } catch (cause) {
+        leaveLog(`stop failed: ${message(cause)} — nothing was changed`, 'error')
         setFailure('stop')
         setError(stopReason(message(cause)))
         setPhase('failed')
@@ -266,12 +288,22 @@ export function LeaveSiteDialog({ open, siteId, onClose, onLeft, onHold }: Leave
       //    failed, rather than thrown — the service is stopped at this point
       //    and step 3 has to run whatever happened here.
       setStatus('leaving the site')
+      leaveLog('spawning the leave helper')
       let outcome: HelperOutcome
       try {
-        outcome = await runLeaveHelper(setStatus)
+        outcome = await runLeaveHelper((status) => {
+          leaveLog(`helper: ${status}`)
+          setStatus(status)
+        })
       } catch (cause) {
         outcome = { ok: false, deregistered: false, error: message(cause) }
       }
+      leaveLog(
+        outcome.ok
+          ? `helper finished, deregistered=${outcome.deregistered}`
+          : `helper failed: ${outcome.error}`,
+        outcome.ok ? 'info' : 'error',
+      )
 
       // 3. Put the service back exactly as it was found, whichever way the
       //    teardown went — a machine with no supervisor is worse than one that
@@ -279,9 +311,14 @@ export function LeaveSiteDialog({ open, siteId, onClose, onLeft, onHold }: Leave
       let serviceDown = false
       if (stopped) {
         setStatus('starting the owlette service')
+        leaveLog('starting the service again')
         serviceDown = !(await serviceStart()
           .then(() => waitForService('running', START_TIMEOUT_MS))
           .catch(() => false))
+        leaveLog(
+          serviceDown ? 'the service did not come back up' : 'service running again',
+          serviceDown ? 'error' : 'info',
+        )
       }
 
       setResult({ deregistered: outcome.deregistered, serviceDown })
@@ -292,6 +329,7 @@ export function LeaveSiteDialog({ open, siteId, onClose, onLeft, onHold }: Leave
         return
       }
 
+      leaveLog('done')
       setPhase('left')
       onLeft()
     } finally {

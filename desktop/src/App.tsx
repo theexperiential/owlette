@@ -22,7 +22,7 @@ import { useFileDrop } from '@/hooks/useFileDrop'
 import { useOwletteConfig } from '@/hooks/useOwletteConfig'
 import { useRestartPrompt } from '@/hooks/useRestartPrompt'
 import { useServiceHealth } from '@/hooks/useServiceHealth'
-import { useSidebarWidth } from '@/hooks/useSidebarWidth'
+import { useSidebarLayout } from '@/hooks/useSidebarLayout'
 import { isPaired, siteIdOf } from '@/lib/serviceHealth'
 import { classifyDrop, toProcessEntry, type ProcessEntryDraft } from '@/lib/dropClassifier'
 import {
@@ -59,7 +59,7 @@ import {
   type ScheduleBlock,
   type Visibility,
 } from '@/lib/owletteConfig'
-import { livePidForProcess, statusForProcess } from '@/lib/processStatus'
+import { launchedAtForProcess, livePidForProcess, statusForProcess } from '@/lib/processStatus'
 import { NoLiveInstanceError, stopProcess, type StopMode } from '@/lib/processControl'
 
 function message(error: unknown): string {
@@ -85,13 +85,20 @@ function App() {
   const appStates = useAppStates()
   const health = useServiceHealth()
   const restartPrompt = useRestartPrompt()
-  const sidebar = useSidebarWidth()
+  const sidebar = useSidebarLayout()
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const [dropped, setDropped] = useState<DropCard[]>([])
   const [menuDialog, setMenuDialog] = useState<'join' | 'leave' | 'report' | null>(null)
   const [host, setHost] = useState<string | null>(null)
+  const [sidebarDragging, setSidebarDragging] = useState(false)
+  // Whether the detail pane's advanced fields are folded away. Owned here, not
+  // in the pane: the pane is remounted for every process (`key={selected.id}`),
+  // so an operator who opened it to compare two entries would have it shut
+  // itself on the second one. Deliberately not persisted — it is a reading
+  // position within a session, not a preference about the machine.
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   useEffect(() => {
     hostname().then(setHost, () => setHost(null))
@@ -401,7 +408,13 @@ function App() {
         */}
         <header
           data-tauri-drag-region
-          className="flex h-10 shrink-0 select-none items-center gap-2.5 border-b pl-4"
+          data-titlebar
+          // relative z-[60] lifts the titlebar above dialog overlays (z-50), and
+          // pointer-events-auto re-enables it under the pointer-events:none that
+          // Radix puts on <body> while a modal is open — so the window can be
+          // moved with a dialog up. DialogContent exempts [data-titlebar] from
+          // its outside-dismiss for the same reason.
+          className="pointer-events-auto relative z-[60] flex h-10 shrink-0 select-none items-center gap-2.5 border-b pl-4"
         >
           <OwletteEye size={18} className="pointer-events-none" />
           <span className="pointer-events-none text-sm font-medium tracking-tight">owlette</span>
@@ -431,7 +444,16 @@ function App() {
             The divider carries the border the aside used to draw — one line,
             not two.
           */}
-          <aside className="min-w-0 shrink-0" style={{ width: sidebar.width }}>
+          <aside
+            className={
+              // Eased slide for toggle/keyboard collapse — but never while a
+              // drag is tracking the pointer, where easing reads as lag.
+              sidebarDragging
+                ? 'min-w-0 shrink-0'
+                : 'min-w-0 shrink-0 transition-[width] duration-200 ease-out motion-reduce:transition-none'
+            }
+            style={{ width: sidebar.columnWidth }}
+          >
             <ProcessList
               processes={processes}
               states={appStates.states}
@@ -441,10 +463,17 @@ function App() {
               onAction={handleAction}
               onReorder={handleReorder}
               dragOver={dragOver}
+              collapsed={sidebar.collapsed}
+              onCollapsedChange={sidebar.setCollapsed}
             />
           </aside>
 
-          <SidebarDivider width={sidebar.width} onWidth={sidebar.set} onCommit={sidebar.commit} />
+          <SidebarDivider
+            layout={{ collapsed: sidebar.collapsed, width: sidebar.width }}
+            onLayout={sidebar.set}
+            onCommit={sidebar.commit}
+            onDraggingChange={setSidebarDragging}
+          />
 
           <section className="min-w-0 flex-1">
             {selected ? (
@@ -452,6 +481,9 @@ function App() {
                 key={selected.id}
                 process={selected}
                 status={statusForProcess(appStates.states, selected.id)}
+                startedAt={launchedAtForProcess(appStates.states, selected.id)}
+                advancedOpen={advancedOpen}
+                onAdvancedOpenChange={setAdvancedOpen}
                 onSave={handleSaveForm}
                 onLaunchMode={handleLaunchMode}
                 onSchedules={(schedules: ScheduleBlock[]) =>

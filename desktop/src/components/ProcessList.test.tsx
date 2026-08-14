@@ -1,14 +1,24 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProcessList } from '@/components/ProcessList'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { resetExeIconCache } from '@/hooks/useExeIcon'
 import type { ProcessEntry } from '@/lib/owletteConfig'
 import type { AppStates } from '@/lib/processStatus'
 import { isRowDragging } from '@/lib/rowDrag'
 
+/** Only TouchDesigner has an icon here; the other two exercise the fallback. */
+const exeIcon = vi.fn(async (path: string) =>
+  path.toLowerCase().includes('touchdesigner') ? 'data:image/png;base64,TOUCH' : null,
+)
+
+vi.mock('@/lib/ipc', () => ({
+  exeIcon: (path: string) => exeIcon(path),
+}))
+
 const processes: ProcessEntry[] = [
-  { id: 'a', name: 'touch' },
-  { id: 'b', name: 'node.js' },
+  { id: 'a', name: 'touch', exe_path: 'C:/Program Files/Derivative/bin/TouchDesigner.exe' },
+  { id: 'b', name: 'node.js', exe_path: 'C:/tools/node.exe' },
   { id: 'c', name: '' },
 ]
 
@@ -20,13 +30,14 @@ const states: AppStates = {
 function setup(
   selectedId: string | null = null,
   entries = processes,
-  options: { dragOver?: boolean } = {},
+  options: { dragOver?: boolean; collapsed?: boolean } = {},
 ) {
   const handlers = {
     onSelect: vi.fn(),
     onAdd: vi.fn(),
     onAction: vi.fn(),
     onReorder: vi.fn(),
+    onCollapsedChange: vi.fn(),
   }
 
   render(
@@ -36,6 +47,7 @@ function setup(
         states={states}
         selectedId={selectedId}
         dragOver={options.dragOver}
+        collapsed={options.collapsed}
         {...handlers}
       />
     </TooltipProvider>,
@@ -43,6 +55,13 @@ function setup(
 
   return handlers
 }
+
+beforeEach(() => {
+  // The icon cache is module-level, so one test's answers would otherwise be
+  // the next one's first paint.
+  resetExeIconCache()
+  exeIcon.mockClear()
+})
 
 function rows() {
   return screen.getAllByTestId('process-row')
@@ -186,6 +205,175 @@ describe('process list', () => {
     setup(null, [])
 
     expect(screen.queryByTestId('process-list-drop-hint')).toBeNull()
+  })
+})
+
+describe('exe icons', () => {
+  it('asks the host once per entry that has an exe', async () => {
+    setup()
+
+    // The nameless third entry has no exe to ask about.
+    expect(exeIcon.mock.calls.map(([path]) => path)).toEqual([
+      'C:/Program Files/Derivative/bin/TouchDesigner.exe',
+      'C:/tools/node.exe',
+    ])
+
+    const icons = await screen.findAllByTestId('process-icon')
+    expect(icons).toHaveLength(1)
+    expect(icons[0].getAttribute('src')).toBe('data:image/png;base64,TOUCH')
+  })
+
+  it('draws the fallback glyph for an entry with no icon, in the same box', async () => {
+    setup()
+    await screen.findAllByTestId('process-icon')
+
+    const fallbacks = screen.getAllByTestId('process-icon-fallback')
+    // node.exe answered null, and the nameless entry has no exe at all.
+    expect(fallbacks).toHaveLength(2)
+    // Same box as the image it stands in for, so an icon arriving late moves
+    // nothing beside it.
+    expect(fallbacks[0].getAttribute('class')).toContain('size-4')
+    expect(screen.getAllByTestId('process-icon')[0].getAttribute('class')).toContain('size-4')
+  })
+
+  it('puts the icon between the status dot and the name', async () => {
+    setup()
+    const icon = (await screen.findAllByTestId('process-icon'))[0]
+
+    const row = icon.closest('[data-testid="process-row"]')
+    const children = [...(row?.children ?? [])]
+    expect(children.indexOf(icon)).toBe(2) // grip, dot, icon, name
+    expect(children[3]?.textContent).toBe('touch')
+  })
+
+  it('shares one host call between rows pointing at the same exe', async () => {
+    setup(null, [
+      { id: 'a', name: 'one', exe_path: 'C:/tools/node.exe' },
+      { id: 'b', name: 'two', exe_path: 'C:/tools/node.exe' },
+    ])
+    await screen.findAllByTestId('process-icon-fallback')
+
+    expect(exeIcon).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('the collapsed rail', () => {
+  it('keeps the add button and drops the heading', () => {
+    setup(null, processes, { collapsed: true })
+
+    expect(screen.getByTestId('process-list').dataset.collapsed).toBe('true')
+    expect(screen.getByRole('button', { name: 'add process' })).toBeTruthy()
+    expect(screen.queryByText('processes')).toBeNull()
+  })
+
+  it('shows one icon per entry, with the status dot in its corner', async () => {
+    setup(null, processes, { collapsed: true })
+    await screen.findAllByTestId('process-icon')
+
+    const dots = screen.getAllByTestId('rail-status-dot')
+    expect(dots).toHaveLength(3)
+    // Same statuses as the expanded list draws, in the same colours.
+    expect(dots[0].className).toContain('bg-green-500')
+    expect(dots[1].className).toContain('bg-red-500')
+    expect(dots[0].className).toContain('absolute')
+  })
+
+  it('names each row, since the rail has nowhere to print one', () => {
+    setup(null, processes, { collapsed: true })
+
+    expect(rows().map((row) => row.getAttribute('aria-label'))).toEqual([
+      'touch',
+      'node.js',
+      'untitled process',
+    ])
+  })
+
+  it('still selects, reorders and opens the context menu', () => {
+    const { onSelect, onReorder } = setup(null, processes, { collapsed: true })
+
+    fireEvent.click(rows()[1])
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith('b')
+
+    dragRow(0, 110)
+    expect(onReorder).toHaveBeenCalledExactlyOnceWith('a', 2)
+
+    fireEvent.contextMenu(rows()[2])
+    expect(screen.getByRole('menuitem', { name: 'delete' })).toBeTruthy()
+  })
+
+  it('drops the copy that has nowhere to go at 48 px', () => {
+    setup(null, processes, { collapsed: true })
+
+    expect(screen.queryByTestId('process-list-drop-hint')).toBeNull()
+  })
+
+  it('says nothing at all when an empty list is collapsed', () => {
+    setup(null, [], { collapsed: true })
+
+    expect(screen.queryByTestId('process-list-empty')).toBeNull()
+    expect(screen.queryByTestId('process-list-drop-hint')).toBeNull()
+    expect(screen.getByRole('button', { name: 'add process' })).toBeTruthy()
+  })
+
+  it('offers a way back out, pinned below the icons', () => {
+    const { onCollapsedChange } = setup(null, processes, { collapsed: true })
+
+    const expand = screen.getByTestId('expand-sidebar')
+    expect(expand.getAttribute('aria-label')).toBe('expand the process list')
+    fireEvent.click(expand)
+
+    expect(onCollapsedChange).toHaveBeenCalledExactlyOnceWith(false)
+    // The rail has no collapse control — it is already collapsed.
+    expect(screen.queryByTestId('collapse-sidebar')).toBeNull()
+  })
+})
+
+describe('the collapse toggle', () => {
+  /** The row the toggle lives in: the last child of the list column. */
+  function footer() {
+    const list = screen.getByTestId('process-list')
+    return list.lastElementChild as HTMLElement
+  }
+
+  it('sits at the bottom of the column, right-aligned while expanded', () => {
+    const { onCollapsedChange } = setup()
+
+    const collapse = screen.getByTestId('collapse-sidebar')
+    expect(collapse.getAttribute('aria-label')).toBe('collapse the process list')
+    // Below the list, not in the header beside `+`.
+    expect(footer().contains(collapse)).toBe(true)
+    expect(footer().className).toContain('justify-end')
+    expect(screen.getByRole('button', { name: 'add process' }).closest('header')).toBeTruthy()
+
+    fireEvent.click(collapse)
+    expect(onCollapsedChange).toHaveBeenCalledExactlyOnceWith(true)
+    expect(screen.queryByTestId('expand-sidebar')).toBeNull()
+  })
+
+  it('sits in the same corner of the rail, which at 48 px is the middle', () => {
+    setup(null, processes, { collapsed: true })
+
+    expect(footer().contains(screen.getByTestId('expand-sidebar'))).toBe(true)
+    expect(footer().className).toContain('justify-center')
+  })
+
+  it('is left out entirely when the caller does not offer collapsing', () => {
+    render(
+      <TooltipProvider>
+        <ProcessList
+          processes={processes}
+          states={states}
+          selectedId={null}
+          onSelect={vi.fn()}
+          onAdd={vi.fn()}
+          onAction={vi.fn()}
+          onReorder={vi.fn()}
+        />
+      </TooltipProvider>,
+    )
+
+    expect(screen.queryByTestId('collapse-sidebar')).toBeNull()
+    expect(screen.queryByTestId('expand-sidebar')).toBeNull()
   })
 })
 
