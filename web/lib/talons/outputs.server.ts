@@ -46,8 +46,11 @@ import { ENV_LABEL, FROM_EMAIL, getResend, isProduction } from '@/lib/resendClie
 import { detectPlatform, formatForPlatform, type WebhookPayload } from '@/lib/webhookSender.server';
 import { signPayload } from '@/lib/webhookSignature';
 import { validateWebhookUrl } from '@/lib/webhookUrl';
+import { runCortexOutput } from './cortexOutput.server';
+import type { StoredTalon } from './store.server';
 import type {
   TalonCommandOutput,
+  TalonCortexOutput,
   TalonOutput,
   TalonRunCondition,
   TalonRunOutput,
@@ -71,6 +74,12 @@ export interface TalonOutputContext {
   siteLabel: string;
   /** Bare site name, for the webhook payload's `site.name`. */
   siteName: string;
+  /**
+   * The talon being executed. Carried whole for the `cortex` output, which
+   * re-resolves `createdBy`'s site access at fire time rather than trusting the
+   * privileges the talon was authored with.
+   */
+  talon: StoredTalon;
   talonId: string;
   talonName: string;
   /** Human-readable, lowercase trigger description, e.g. `cpu_percent > 90`. */
@@ -116,7 +125,7 @@ export async function executeTalonOutput(
       case 'command':
         return await executeCommandOutput(ctx, output);
       case 'cortex':
-        return executeCortexOutput();
+        return await executeCortexOutput(ctx, output);
     }
   } catch (error) {
     // Belt and braces: an executor that throws anyway must still produce a
@@ -534,11 +543,35 @@ function foldCommandAttempts(attempts: CommandAttempt[]): TalonRunOutput {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Handing a directive to hoot needs a headless turn runner that wave 3 builds.
- * Recording a deliberate `skipped` — rather than half-wiring a chat that never
- * gets read, or silently dropping the output — keeps the run record honest
- * about what a talon with this output actually did.
+ * Hand the directive to a headless assistant turn. `detail` is the chat the
+ * turn is running in — the engine lifts it onto the run document, so the run
+ * list can link straight to the conversation the talon produced.
+ *
+ * `sent` means the turn was DISPATCHED, not that it finished: the runner is
+ * detached and outlives this call by design (see `cortexOutput.server.ts`).
  */
-function executeCortexOutput(): TalonRunOutput {
-  return { type: 'cortex', status: 'skipped', detail: 'hoot_output_pending_wave_3' };
+async function executeCortexOutput(
+  ctx: TalonOutputContext,
+  output: TalonCortexOutput,
+): Promise<TalonRunOutput> {
+  const result = await runCortexOutput(ctx.db, {
+    siteId: ctx.siteId,
+    talon: ctx.talon,
+    runId: ctx.runId,
+    correlationId: ctx.correlationId,
+    directive: output.directive,
+    triggerSummary: ctx.triggerSummary,
+    ...(ctx.machineId ? { machineId: ctx.machineId } : {}),
+    ...(ctx.machineName ? { machineName: ctx.machineName } : {}),
+    ...(ctx.condition ? { condition: ctx.condition } : {}),
+  });
+
+  return result.status === 'sent'
+    ? { type: 'cortex', status: 'sent', detail: result.chatId }
+    : {
+        type: 'cortex',
+        status: 'failed',
+        detail: result.detail,
+        ...(result.error ? { error: result.error } : {}),
+      };
 }

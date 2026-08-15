@@ -31,6 +31,9 @@ import {
   resolveLlmConfig,
   isMachineOnline,
   isCortexEnabled,
+  executeServerSideTool,
+  SERVER_SIDE_TOOLS,
+  type BuildExecutableToolsOptions,
 } from '@/lib/cortex-utils.server';
 import {
   dispatchToolCallAsSystem,
@@ -90,13 +93,32 @@ function emitCortexEventMetric(
 }
 
 /**
+ * Tools an unattended investigator must never call.
+ *
+ * Authoring a talon or flipping its enabled state changes standing fleet
+ * automation policy, which outlives the incident being investigated — that
+ * stays a human decision even when the tier ceiling would otherwise allow it.
+ * Read-only talon tools (e.g. `list_talons`) are deliberately NOT excluded.
+ * Matched by name so the policy holds regardless of whether the tools are
+ * present in the registry.
+ */
+const AUTONOMOUS_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
+  'create_talon',
+  'set_talon_enabled',
+]);
+
+/**
  * Build executable tools for autonomous mode (single machine, no streaming).
  *
- * security-boundary-migration wave 3.12 — every dispatch flows through
+ * security-boundary-migration wave 3.12 — every agent dispatch flows through
  * `invokeAsSystem` (via `dispatchToolCallAsSystem` /
  * `dispatchExistingCommandAsSystem`) so the cortex_autonomous actor's
- * audit rows + system rate-limit bucket are honored. Tool implementations
- * themselves still live on the agent — only the dispatch layer changed.
+ * audit rows + system rate-limit bucket are honored. Those tool
+ * implementations live on the agent — only the dispatch layer changed.
+ *
+ * `SERVER_SIDE_TOOLS` are the exception: they have no handler in
+ * agent/src/mcp_tools.py, so they run here on the web server (same system
+ * identity, `systemActor: 'cortex_autonomous'`).
  *
  * Separate from the shared buildExecutableTools to avoid the `tool()` import issue
  * with generateText vs streamText — they use the same tool() helper.
@@ -110,18 +132,32 @@ function buildAutonomousTools(
   toolDefs: McpToolDefinition[]
 ) {
   const dispatchCtx = { db, siteId, machineId, chatId, eventId };
+  // No chatId/userId: an autonomous run has no session behind it, so
+  // server-side mutations are audited as `system:cortex_autonomous`.
+  const serverSideOptions: BuildExecutableToolsOptions = { systemActor: 'cortex_autonomous' };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: Record<string, any> = {};
 
   for (const def of toolDefs) {
     const toolName = def.name;
+    if (AUTONOMOUS_EXCLUDED_TOOLS.has(toolName)) continue;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     tools[toolName] = tool<any, any>({
       description: def.description,
       inputSchema: jsonSchema(def.parameters as Record<string, unknown>),
       execute: async (params) => {
+        if (SERVER_SIDE_TOOLS.has(toolName)) {
+          return executeServerSideTool(
+            db,
+            siteId,
+            [machineId],
+            toolName,
+            params as Record<string, unknown>,
+            serverSideOptions,
+          );
+        }
         const existingCmd = EXISTING_COMMAND_MAPPINGS[toolName];
         if (existingCmd) {
           return dispatchExistingCommandAsSystem(

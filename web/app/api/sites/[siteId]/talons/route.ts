@@ -53,10 +53,18 @@ const PROBLEM_TITLE_BY_CODE: Readonly<Record<TalonStoreErrorCode, string>> = {
   invalid_webhook_url: 'webhook url rejected',
   site_llm_key_required: 'site llm key required',
   talon_not_found: 'not found',
+  pro_required: 'pro plan required',
 };
 
 const PROBLEM_TYPE_BY_STATUS: Readonly<Record<number, string>> = {
   400: ProblemType.ValidationFailed,
+  // The store's `pro_required` carries the billing gate's own status: 402 when
+  // the account is locked out, 403 when the site is core-tier. POST re-checks
+  // `requirePro` before the store runs, so this row only matters if that
+  // pre-check is ever removed — but a 402 rendered as "validation failed"
+  // would be actively wrong, so the table stays total over the statuses the
+  // store can raise.
+  402: ProblemType.TrialExpired,
   403: ProblemType.Forbidden,
   404: ProblemType.NotFound,
   409: ProblemType.Conflict,

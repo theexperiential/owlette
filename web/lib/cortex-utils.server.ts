@@ -18,16 +18,29 @@ import { createProcess, ActionInputError, type ActionContext } from '@/lib/actio
 import { updateProcess } from '@/lib/actions/updateProcess.server';
 import { deleteProcess } from '@/lib/actions/deleteProcess.server';
 import { ProcessConfigError, type PublicProcessConfig } from '@/lib/processConfig.server';
-import type { Actor, Role } from '@/lib/capabilities';
+import { Capability, hasCapability, type Actor, type Role, type SystemActorName } from '@/lib/capabilities';
+import { timestampToIso } from '@/lib/firestoreTime.server';
+import type { TalonStoreContext } from '@/lib/talons/store.server';
 
-/** Tools that are executed server-side (query Firestore directly, not relayed to agent). */
-const SERVER_SIDE_TOOLS = new Set([
+/**
+ * Tools that are executed server-side (query Firestore directly, not relayed to agent).
+ *
+ * CROSS-SIDE CONTRACT: none of these have a handler in the agent's dispatch
+ * map (agent/src/mcp_tools.py `handlers`), so relaying one to a machine
+ * returns `{'error': 'Unknown tool: …'}`. Every caller that builds executable
+ * tools must branch on this set before falling through to an agent dispatch.
+ */
+export const SERVER_SIDE_TOOLS: ReadonlySet<string> = new Set([
   'get_site_logs',
   'get_system_presets',
   'deploy_software',
   'update_process',
   'add_process',
   'delete_process',
+  // Talons are site-level records, not machine state — they are never relayed.
+  'create_talon',
+  'list_talons',
+  'set_talon_enabled',
 ]);
 
 export const COMMAND_POLL_INTERVAL_MS = 1500;
@@ -81,6 +94,22 @@ export interface BuildExecutableToolsOptions {
   userId?: string;
   userRole?: string | null;
   /**
+   * Attributes server-side tool executions to an unattended system actor
+   * instead of a user. Set by the autonomous Cortex path
+   * (`cortex_autonomous`), which has no session behind it. When present it
+   * takes precedence over `userId` / `userRole` so the audit row reads
+   * `system:<name>` rather than inventing a phantom user.
+   */
+  systemActor?: SystemActorName;
+  /**
+   * The chat this tool loop belongs to. `buildExecutableTools` fills this in
+   * from its own positional `chatId` when the caller leaves it unset, so
+   * server-side tools that record provenance (talon creation stamps
+   * `createdVia: 'cortex'` + `chatId`) can attribute their writes to a
+   * conversation. Agent-relayed tools take the positional value directly.
+   */
+  chatId?: string;
+  /**
    * Whether tier-3 tools require in-chat approval. Defaults to true. When the
    * per-site flag (`getCortexRequireTier3Approval`) is off, tier-3 tools
    * auto-run on the server-side / site-wide paths too — not just local Cortex —
@@ -117,6 +146,17 @@ function actionContextForCortex(
   siteId: string,
   options: BuildExecutableToolsOptions,
 ): ActionContext {
+  // Unattended callers carry no user identity — attribute the mutation to the
+  // system actor so the audit trail matches the actor the dispatch layer uses
+  // (see lib/cortex/dispatch.server.ts `actionContextFor`).
+  if (options.systemActor) {
+    return {
+      siteId,
+      actor: { type: 'system', name: options.systemActor, siteId },
+      auditActor: `system:${options.systemActor}`,
+    };
+  }
+
   const userId = options.userId || 'unknown';
   const actor: Actor = {
     type: 'user',
@@ -1170,10 +1210,196 @@ async function executeDeleteProcessTool(
   });
 }
 
+/* -------------------------------------------------------------------------- */
+/*  talon tools                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The talon store is loaded at call time rather than imported at the top.
+ *
+ * `@/lib/talons/store.server` imports `resolveLlmConfig` from this module, so
+ * a static import here would make the two circular. Deferring it also keeps
+ * every importer of this file — the chat routes, `cortexStream`, the turn
+ * runner — from dragging the store, the schedule maths and the billing gate
+ * into their module graph merely to build a tool table.
+ */
+type TalonStoreModule = typeof import('@/lib/talons/store.server');
+
+function loadTalonStore(): Promise<TalonStoreModule> {
+  return import('@/lib/talons/store.server');
+}
+
+/**
+ * Trusted store context for a talon authored from a chat.
+ *
+ * The actor and the audit actor are the HUMAN driving the conversation — a
+ * talon is never authored by a system actor — so the store's command-output
+ * privilege gate resolves against the operator's own role and the audit row
+ * names them. `via` + `chatId` record which conversation it came out of.
+ */
+function talonStoreContextForCortex(
+  siteId: string,
+  options: BuildExecutableToolsOptions,
+): TalonStoreContext {
+  const { actor, auditActor } = actionContextForCortex(siteId, options);
+  return {
+    siteId,
+    actor,
+    auditActor,
+    via: 'cortex',
+    ...(options.chatId ? { chatId: options.chatId } : {}),
+  };
+}
+
+function hasCommandOutput(params: Record<string, unknown>): boolean {
+  return (
+    Array.isArray(params.outputs) &&
+    params.outputs.some((output) => isRecord(output) && output.type === 'command')
+  );
+}
+
+/**
+ * Render a store rejection as a tool result instead of letting it throw. A
+ * thrown error takes the whole turn down; a result lets the assistant explain
+ * what was wrong and propose a corrected talon.
+ */
+function talonErrorResult(store: TalonStoreModule, error: unknown): ProcessToolResult {
+  if (error instanceof store.TalonStoreError) {
+    return {
+      ok: false,
+      error: error.code,
+      detail: error.message,
+      status: error.status,
+      ...(error.fieldErrors ? { field_errors: error.fieldErrors } : {}),
+    };
+  }
+  return {
+    ok: false,
+    error: 'internal_error',
+    detail: error instanceof Error ? error.message : 'unknown error',
+  };
+}
+
+async function executeCreateTalonTool(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  params: Record<string, unknown>,
+  options: BuildExecutableToolsOptions,
+): Promise<unknown> {
+  const ctx = talonStoreContextForCortex(siteId, options);
+
+  // A `command` output queues process control on real machines, so authoring
+  // one takes the same privilege as issuing that command by hand
+  // (`MACHINE_EXEC_COMMAND` — site admins and superadmins). The store enforces
+  // this too, against this same actor; refusing here costs no reads and hands
+  // the model something it can offer an alternative for.
+  if (hasCommandOutput(params) && !hasCapability(ctx.actor, Capability.MACHINE_EXEC_COMMAND, siteId)) {
+    return {
+      ok: false,
+      error: 'command_output_forbidden',
+      detail:
+        'only site admins can give a talon a command output — an email, webhook, or hoot directive output is available instead.',
+      status: 403,
+    };
+  }
+
+  const store = await loadTalonStore();
+  try {
+    // `params` goes to the validator as-is: the tool schema mirrors its input
+    // shape, and unknown top-level fields must keep being rejected so a model
+    // can never stamp a server-owned field onto the document.
+    const talon = await store.createTalon(db, ctx, params);
+    return {
+      ok: true,
+      talon_id: talon.id,
+      name: talon.name,
+      enabled: talon.enabled,
+      next_run_at: timestampToIso(talon.nextRunAt),
+      message: `created talon "${talon.name}"${talon.enabled ? '' : ', left disabled'}.`,
+    };
+  } catch (error) {
+    return talonErrorResult(store, error);
+  }
+}
+
+async function executeListTalonsTool(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+): Promise<unknown> {
+  const store = await loadTalonStore();
+  try {
+    const talons = await store.listTalons(db, siteId);
+    return {
+      ok: true,
+      count: talons.length,
+      talons: talons.map((talon) => ({
+        talon_id: talon.id,
+        name: talon.name,
+        enabled: talon.enabled,
+        // The normalized trigger object rather than a prose summary: it is
+        // already one short object, and the exact metric / interval / event
+        // values are what the model needs to answer follow-up questions.
+        trigger: talon.trigger,
+        outputs: talon.outputs.map((output) => output.type),
+        last_run_status: talon.lastRunStatus ?? null,
+        last_run_at: timestampToIso(talon.lastRunAt),
+        next_run_at: timestampToIso(talon.nextRunAt),
+      })),
+    };
+  } catch (error) {
+    return talonErrorResult(store, error);
+  }
+}
+
+async function executeSetTalonEnabledTool(
+  db: FirebaseFirestore.Firestore,
+  siteId: string,
+  params: Record<string, unknown>,
+  options: BuildExecutableToolsOptions,
+): Promise<unknown> {
+  const talonId = typeof params.talon_id === 'string' ? params.talon_id.trim() : '';
+  if (!talonId) {
+    return {
+      ok: false,
+      error: 'missing_talon_id',
+      detail: 'talon_id is required — call list_talons to look it up.',
+      status: 400,
+    };
+  }
+  if (typeof params.enabled !== 'boolean') {
+    return {
+      ok: false,
+      error: 'invalid_enabled',
+      detail: 'enabled must be true or false.',
+      status: 400,
+    };
+  }
+
+  const store = await loadTalonStore();
+  try {
+    const talon = await store.setTalonEnabled(
+      db,
+      talonStoreContextForCortex(siteId, options),
+      talonId,
+      params.enabled,
+    );
+    return {
+      ok: true,
+      talon_id: talon.id,
+      name: talon.name,
+      enabled: talon.enabled,
+      next_run_at: timestampToIso(talon.nextRunAt),
+      message: `${talon.enabled ? 'enabled' : 'disabled'} talon "${talon.name}".`,
+    };
+  } catch (error) {
+    return talonErrorResult(store, error);
+  }
+}
+
 /**
  * Execute a server-side tool (not relayed to agent).
  */
-async function executeServerSideTool(
+export async function executeServerSideTool(
   db: FirebaseFirestore.Firestore,
   siteId: string,
   machineIds: string[],
@@ -1194,6 +1420,12 @@ async function executeServerSideTool(
       return executeAddProcessTool(siteId, machineIds, params, options);
     case 'delete_process':
       return executeDeleteProcessTool(db, siteId, machineIds, params, options);
+    case 'create_talon':
+      return executeCreateTalonTool(db, siteId, params, options);
+    case 'list_talons':
+      return executeListTalonsTool(db, siteId);
+    case 'set_talon_enabled':
+      return executeSetTalonEnabledTool(db, siteId, params, options);
     default:
       return { error: `Unknown server-side tool: ${toolName}` };
   }
@@ -1213,6 +1445,15 @@ export function buildExecutableTools(
   onlineMachines: string[] = [],
   options: BuildExecutableToolsOptions = {},
 ) {
+  // Server-side tools only ever see `options`, so the positional chatId — the
+  // conversation these tools belong to — has to be folded into it. An explicit
+  // `options.chatId` still wins, so a caller can attribute a tool loop to a
+  // different chat than the one it streams into.
+  const serverSideOptions: BuildExecutableToolsOptions = {
+    ...options,
+    chatId: options.chatId ?? chatId,
+  };
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tools: Record<string, any> = {};
 
@@ -1259,7 +1500,7 @@ export function buildExecutableTools(
             targetMachineIds,
             toolName,
             params as Record<string, unknown>,
-            options,
+            serverSideOptions,
           );
         }
 

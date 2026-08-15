@@ -315,6 +315,48 @@ const processConfigFields: McpToolDefinition['parameters']['properties'] = {
   },
 };
 
+/**
+ * One entry of a talon's `outputs` array, as JSON Schema.
+ *
+ * Field names are the talon wire names (`commandType`, `directive`) — this is
+ * handed straight to `validateTalonInput`, which rejects unknown top-level
+ * fields, so the tool schema and the validator must agree exactly. Declared
+ * out here because `McpToolDefinition` only types `items` as `unknown`; the
+ * nested shape lives in the data, not the type.
+ */
+const talonOutputItemSchema = {
+  type: 'object',
+  properties: {
+    type: {
+      type: 'string',
+      enum: ['email', 'webhook', 'cortex', 'command'],
+      description: 'email = notify the site alert recipients; webhook = POST the run payload; cortex = hand a directive to hoot; command = queue process control on the machines in scope.',
+    },
+    url: {
+      type: 'string',
+      description: 'webhook outputs only — an https URL. Private, loopback, and link-local addresses are rejected.',
+    },
+    directive: {
+      type: 'string',
+      description: 'cortex outputs only — what hoot should do when the talon fires, 1000 characters or fewer.',
+    },
+    commandType: {
+      type: 'string',
+      enum: ['restart_process', 'start_process', 'stop_process'],
+      description: 'command outputs only — which process command to queue.',
+    },
+    processName: {
+      type: 'string',
+      description: 'command outputs only — the configured process name to act on.',
+    },
+    processId: {
+      type: 'string',
+      description: 'command outputs only — the configured process id, when you already have it.',
+    },
+  },
+  required: ['type'],
+};
+
 const tier2Tools: McpToolDefinition[] = [
   {
     name: 'restart_process',
@@ -896,6 +938,98 @@ const tier2Tools: McpToolDefinition[] = [
         },
       },
       required: ['message'],
+    },
+  },
+  {
+    name: 'create_talon',
+    description: `Create a talon on this site. A talon is a saved automation: a trigger fires, an optional condition gates it, and one or more outputs run.
+
+CRITICAL — CONFIRM BEFORE CALLING:
+Never call this from a vague request. First state back the exact talon you intend to create — trigger, condition, every output, which machines it covers, and the cooldown — and wait for the operator to confirm. A talon runs unattended against real machines; do not guess any part of it.
+
+TRIGGER (exactly one form):
+- clock times: {"type":"schedule","entries":[{"id":"e1","days":["mon","wed"],"time":"09:00"}]} — 24-hour HH:MM in the site's timezone, up to 50 entries.
+- interval: {"type":"schedule","intervalMinutes":30} — 5 to 1440 minutes, but 15 minutes minimum when the condition is a visual_check. "entries" and "intervalMinutes" are mutually exclusive.
+- threshold: {"type":"threshold","metric":"cpu_percent","operator":">","value":90} — metrics: cpu_percent, memory_percent, disk_percent, gpu_percent, cpu_temp, gpu_temp, network_latency, network_packet_loss. Operators: >, <, >=, <=.
+- event: {"type":"event","eventTypes":["process_crash","machine_offline"]} — also process_start_failed, process_restarted, exe_missing, and the display_* events (display_monitor_removed, display_apply_failed, display_drift, ...).
+
+CONDITION (optional, defaults to {"type":"none"}):
+- {"type":"visual_check","expectation":"the lobby wall is playing the loop, not showing a desktop","monitor":0} — captures a fresh screenshot and asks a vision model whether the expectation holds. monitor 0 = all displays combined, 1 = primary. Needs a site-level LLM key.
+
+OUTPUTS (1 to 5, run in order): email (notify the site's alert recipients), webhook (POST the run payload to an https URL), cortex (hand a directive to hoot to carry out — the wire value stays "cortex"), command (restart_process / start_process / stop_process against the machines in scope; site admins only).
+
+SCOPE: omit "scope" to cover every machine in the site. To target specific machines pass {"machineIds":["<id>",...]} using ids you already hold from the site context or that the operator gave you — never invent, guess, or derive a machine id, and never pass a display name in place of an id. If you do not have the id, ask.
+
+COPY STYLE: "name" and "description" are shown in the dashboard, which is all lowercase — write them lowercase (e.g. "restart td when the wall goes black").
+
+LIMITS: 20 talons per site. name 80 characters or fewer, description 500 or fewer. cooldownMinutes 0-1440 (default 60) is the minimum gap between runs.`,
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Short lowercase name shown in the dashboard, 80 characters or fewer.',
+        },
+        description: {
+          type: 'string',
+          description: 'Optional lowercase note about what the talon is for, 500 characters or fewer.',
+        },
+        trigger: {
+          type: 'object',
+          description: 'What makes the talon fire. One of the four shapes in the tool description (schedule entries, schedule interval, threshold, event).',
+        },
+        condition: {
+          type: 'object',
+          description: 'Optional gate evaluated after the trigger fires: {"type":"none"} (default) or {"type":"visual_check","expectation":"...","monitor":0}.',
+        },
+        outputs: {
+          type: 'array',
+          description: 'What the talon does when it fires — 1 to 5 entries, executed in order.',
+          items: talonOutputItemSchema,
+        },
+        scope: {
+          type: 'object',
+          description: 'Which machines the talon covers: {"machineIds":["..."]}, or omit entirely for every machine in the site.',
+        },
+        cooldownMinutes: {
+          type: 'number',
+          description: 'Minimum minutes between runs, 0 to 1440 (default 60).',
+        },
+        enabled: {
+          type: 'boolean',
+          description: 'Whether the talon is armed as soon as it is created (default true).',
+        },
+      },
+      required: ['name', 'trigger', 'outputs'],
+    },
+  },
+  {
+    name: 'list_talons',
+    description: 'List the talons on this site: id, name, whether it is enabled, its trigger, its output types, and how its last run went. Call this before set_talon_enabled to get the talon id, and before create_talon so you do not duplicate a talon that already exists.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'set_talon_enabled',
+    description: 'Arm or disarm an existing talon. Enabling re-arms its schedule from now, so a talon that sat disabled for a while does not fire the moment it comes back. Disabling leaves the talon in place — it does not delete it. Get talon_id from list_talons; never guess it.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        talon_id: {
+          type: 'string',
+          description: 'The talon id, as returned by list_talons or create_talon.',
+        },
+        enabled: {
+          type: 'boolean',
+          description: 'true to arm the talon, false to disarm it.',
+        },
+      },
+      required: ['talon_id', 'enabled'],
     },
   },
 ];

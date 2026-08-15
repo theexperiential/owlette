@@ -109,7 +109,7 @@ export interface StartTurnParams {
   access: SiteAccessLevel;
   /** Prior turn's recovery index: `toolCallId → machineId → { commandId }`. */
   priorToolCommands?: Record<string, Record<string, { commandId: string }>> | null;
-  source?: 'user' | 'followup';
+  source?: 'user' | 'followup' | 'talon';
 }
 
 function errorText(error: unknown): string {

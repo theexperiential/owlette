@@ -29,6 +29,7 @@
 import { randomBytes } from 'node:crypto';
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { emitMutation } from '@/lib/auditLogClient';
+import { requirePro } from '@/lib/billingGate.server';
 import { Capability, hasCapability, type Actor } from '@/lib/capabilities';
 import { resolveLlmConfig } from '@/lib/cortex-utils.server';
 import logger from '@/lib/logger';
@@ -83,7 +84,8 @@ export type TalonStoreErrorCode =
   | 'command_output_forbidden'
   | 'invalid_webhook_url'
   | 'site_llm_key_required'
-  | 'talon_not_found';
+  | 'talon_not_found'
+  | 'pro_required';
 
 /**
  * Store rejection carrying the HTTP status the route should return. Mirrors
@@ -183,6 +185,36 @@ function validateOrThrow(input: unknown): ValidatedTalonInput {
   const [first, ...rest] = result.errors;
   const summary = rest.length > 0 ? `${first.message} (+${rest.length} more)` : first.message;
   throw new TalonStoreError(400, 'invalid_talon', summary, result.errors);
+}
+
+/**
+ * Talons are a pro-tier feature.
+ *
+ * The gate lives here, not only in `POST /api/sites/{siteId}/talons`, because
+ * the cortex tool path calls `createTalon` directly and would otherwise mint
+ * talons for a core-tier or locked-out site. The route keeps its own
+ * pre-check so the http layer can answer before it parses a body; the second
+ * call costs one more billing-snapshot read on a path that already does
+ * several reads.
+ *
+ * Only creation is gated, matching the route: a downgraded site must still be
+ * able to list, disable, and delete the talons it already has.
+ */
+async function assertProTier(siteId: string): Promise<void> {
+  try {
+    await requirePro(siteId);
+  } catch (error) {
+    // `requirePro` throws `ApiAuthError` — 402 when the account is locked out,
+    // 403 when the site is core-tier, 404 when the site is gone. Carry the
+    // status through so the response keeps its meaning, and re-code it as
+    // `pro_required` so callers have a single code to branch on.
+    const status = (error as { status?: unknown } | null)?.status;
+    throw new TalonStoreError(
+      typeof status === 'number' ? status : 403,
+      'pro_required',
+      error instanceof Error ? error.message : 'talons require a pro subscription.',
+    );
+  }
 }
 
 /**
@@ -315,6 +347,8 @@ export async function createTalon(
   ctx: TalonStoreContext,
   input: unknown,
 ): Promise<StoredTalon> {
+  await assertProTier(ctx.siteId);
+
   const value = validateOrThrow(input);
   assertCommandOutputsAllowed(ctx, value.outputs);
 

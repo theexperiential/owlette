@@ -26,6 +26,7 @@ const mockGetResend = jest.fn();
 const mockValidateWebhookUrl = jest.fn();
 const mockWebhookDeliveryPausedBy = jest.fn();
 const mockAlertEmailsDisabled = jest.fn();
+const mockRunCortexOutput = jest.fn();
 const mockFetch = jest.fn();
 
 let correlationCounter = 0;
@@ -110,6 +111,13 @@ jest.mock('@/lib/cortex-utils.server', () => ({
   resolveLlmConfig: jest.fn(),
   COMMAND_POLL_INTERVAL_MS: 0,
   COMMAND_TIMEOUT_MS: 30000,
+}));
+// The hoot output owns a detached turn runner of its own (access re-resolution,
+// chat creation, turn lock, tee cancel) — all pinned in `cortexOutput.test.ts`.
+// Here it is mocked at the module boundary so these tests stay about the engine.
+jest.mock('@/lib/talons/cortexOutput.server', () => ({
+  __esModule: true,
+  runCortexOutput: (...args: unknown[]) => mockRunCortexOutput(...args),
 }));
 jest.mock('@/lib/logger', () => ({
   __esModule: true,
@@ -337,6 +345,7 @@ beforeEach(() => {
   // `*Once` values survive into the next test unless they are reset.
   mockDispatchAndAwait.mockReset();
   mockEvaluateVisualCheck.mockReset();
+  mockRunCortexOutput.mockResolvedValue({ status: 'sent', chatId: 'talon_1755172800000_r1' });
   mockGetResend.mockReturnValue(null);
   mockGetSiteAlertRecipients.mockResolvedValue([]);
   mockAlertEmailsDisabled.mockReturnValue(false);
@@ -577,15 +586,73 @@ describe('outputs', () => {
       status: 'sent',
       httpStatus: 202,
     });
-    // Wave 3 wires the headless hoot turn; until then the output is an honest skip.
+    // The hoot output reports the chat its headless turn was dispatched into.
     expect(outputByType(outputs, 'cortex')).toEqual({
       type: 'cortex',
-      status: 'skipped',
-      detail: 'hoot_output_pending_wave_3',
+      status: 'sent',
+      detail: 'talon_1755172800000_r1',
     });
     // Benign skips do not fail the run.
     expect(summaries[0].status).toBe('succeeded');
     expect(runDocs()[0].outputs).toEqual(outputs);
+  });
+
+  it('hands the hoot output the talon, the run, and the trigger summary', async () => {
+    const talon = seedTalon('t1', {
+      trigger: { type: 'threshold', metric: 'cpu_percent', operator: '>', value: 90 },
+      outputs: [{ type: 'cortex', directive: 'investigate the black screen' }],
+    });
+    seedMachine('m1', true, 'LOBBY-01');
+
+    const summaries = await runTalon(db, talon, { siteId: SITE, machineId: 'm1', now: NOW });
+
+    expect(mockRunCortexOutput).toHaveBeenCalledWith(db, {
+      siteId: SITE,
+      talon,
+      runId: summaries[0].runId,
+      correlationId: 'corr-1',
+      directive: 'investigate the black screen',
+      triggerSummary: 'cpu_percent > 90',
+      machineId: 'm1',
+      machineName: 'LOBBY-01',
+    });
+  });
+
+  it('stamps the hoot chat onto the run document', async () => {
+    const talon = seedTalon('t1', {
+      outputs: [{ type: 'cortex', directive: 'investigate the black screen' }],
+    });
+    mockRunCortexOutput.mockResolvedValue({ status: 'sent', chatId: 'talon_42_run-a' });
+
+    await runTalon(db, talon, { siteId: SITE, now: NOW });
+
+    expect(runDocs()[0].chatId).toBe('talon_42_run-a');
+  });
+
+  it('leaves the run chatId alone when the hoot turn could not be dispatched', async () => {
+    // A failed hoot output's `detail` is a reason, not a chat id — stamping it
+    // would put a dead link on the run.
+    const talon = seedTalon('t1', {
+      createdVia: 'cortex',
+      chatId: 'authoring-chat',
+      outputs: [{ type: 'cortex', directive: 'investigate the black screen' }],
+    });
+    mockRunCortexOutput.mockResolvedValue({
+      status: 'failed',
+      detail: 'creator_access_revoked',
+      error: 'You do not have access to this site',
+    });
+
+    const summaries = await runTalon(db, talon, { siteId: SITE, now: NOW });
+
+    expect(outputByType(summaries[0].outputs, 'cortex')).toEqual({
+      type: 'cortex',
+      status: 'failed',
+      detail: 'creator_access_revoked',
+      error: 'You do not have access to this site',
+    });
+    expect(summaries[0].status).toBe('failed');
+    expect(runDocs()[0].chatId).toBe('authoring-chat');
   });
 
   it('signs the webhook delivery and re-validates the url at send time', async () => {

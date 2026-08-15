@@ -508,6 +508,7 @@ async function executeRun(
       siteId: env.siteId,
       siteLabel: env.siteLabel,
       siteName: env.siteName,
+      talon,
       talonId: talon.id,
       talonName: talon.name,
       triggerSummary: env.triggerSummary,
@@ -535,10 +536,17 @@ async function executeRun(
     ? 'failed'
     : 'succeeded';
 
+  // A hoot output opens a fresh chat per run and reports it as its `detail`.
+  // That conversation is what an operator wants to open FROM this run, so it
+  // takes the run's `chatId` over the talon's authoring chat, which is a
+  // property of the talon and is already on the talon document.
+  const hootChatId = findHootChatId(outputs);
+
   await ref.update({
     status,
     outputs,
     ...(condition ? { condition } : {}),
+    ...(hootChatId ? { chatId: hootChatId } : {}),
     completedAt: env.now,
     durationMs: Date.now() - startedMs,
   });
@@ -585,6 +593,21 @@ async function finalizeConditionError(
 
   await writeRunLog(env, talon, status, machine, detail);
   return { runId: ref.id, status, machineId: machine?.id, outputs: [], error: detail };
+}
+
+/**
+ * The chat a `cortex` output dispatched its turn into, if one landed. Only a
+ * `sent` entry carries a chat id — a failed hoot output's `detail` is a failure
+ * reason, and stamping that on the run as a chat id would produce a dead link.
+ *
+ * `outputs` may legitimately hold more than one cortex entry (nothing makes
+ * output types unique), and each one opens its own chat. The run doc has a
+ * single `chatId`, so the first dispatched chat is the one it points at; the
+ * rest are still fully recorded in `outputs[].detail`.
+ */
+function findHootChatId(outputs: TalonRunOutput[]): string | undefined {
+  const hoot = outputs.find((output) => output.type === 'cortex' && output.status === 'sent');
+  return hoot?.detail;
 }
 
 function summarizeOutputs(outputs: TalonRunOutput[]): string {
