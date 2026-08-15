@@ -45,6 +45,7 @@ const mockAuthValue = {
     thresholdAlerts: true,
     cortexAlerts: true,
     displayAlerts: true,
+    talonAlerts: true,
     alertCcEmails: [],
   },
   updateUserProfile: jest.fn(),

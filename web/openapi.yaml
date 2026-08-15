@@ -736,6 +736,53 @@ paths:
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
+  /api/sites/{siteId}/talons/{talonId}/test:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/TalonIdPath'
+    post:
+      operationId: runTalon
+      tags: [Talons]
+      summary: run a talon on demand
+      description: |
+        Runs the talon immediately, exactly as a trigger fire would — condition
+        gate first, then the outputs — and answers with one summary per machine
+        the talon's scope resolved to. The full records are readable from
+        `GET /api/sites/{siteId}/talons/{talonId}/runs`.
+
+        Two things differ from a triggered run: the cooldown is bypassed, and
+        every recorded run carries `manual: true`. Overlap is still prevented —
+        when another execution already holds the talon's slot, the response
+        carries a `skipped` summary instead of starting a second live run.
+
+        Not idempotent: calling twice runs the talon twice. Unlike creation it
+        is not pro-gated, so a downgraded site can still exercise the talons it
+        already has, exactly as the scheduler does.
+
+        Requires `TALON_MANAGE`; API keys need `site=<siteId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: The runs this fire recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [runs]
+                properties:
+                  runs:
+                    type: array
+                    items: { $ref: '#/components/schemas/TalonRunSummary' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
   /api/sites/{siteId}/machines/{machineId}/screenshots:
     parameters:
       - name: siteId
@@ -7503,6 +7550,55 @@ components:
         manual:
           type: boolean
           description: True when an operator ran the talon on demand rather than the trigger firing.
+
+    TalonRunSummary:
+      type: object
+      required: [runId, status, outputs]
+      description: |
+        What one execution did, returned by the manual-run endpoint. A
+        condensed view of the run record — fetch the run history for the
+        denormalized trigger, machine, and timing fields.
+      properties:
+        runId: { type: string }
+        status:
+          type: string
+          enum: [running, succeeded, failed, skipped, missed]
+        machineId:
+          type: string
+          description: Present when the run targeted a single machine.
+        outputs:
+          type: array
+          description: Per-output delivery result.
+          items:
+            type: object
+            required: [type, status]
+            properties:
+              type: { type: string, enum: [email, webhook, cortex, command] }
+              status: { type: string, enum: [sent, failed, skipped] }
+              detail: { type: string }
+              httpStatus:
+                type: integer
+                description: Webhook outputs only.
+              error: { type: string }
+        condition:
+          type: object
+          required: [type, verdict]
+          description: Outcome of the condition gate, when the talon had one.
+          properties:
+            type: { type: string, enum: [none, visual_check] }
+            verdict: { type: string, enum: [pass, fail] }
+            confidence:
+              type: number
+              description: Vision-model confidence, 0–1, when the condition produced one.
+            reason: { type: string }
+            screenshotPath: { type: string }
+            screenshotUrl:
+              type: string
+              format: uri
+              description: Short-lived signed read url for `screenshotPath`.
+        error:
+          type: string
+          description: Skip reason or failure detail, mirroring the run record's `error`.
 
     DeploymentTemplateInput:
       type: object

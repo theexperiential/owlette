@@ -51,6 +51,14 @@ export const TALON_EXPECTATION_MAX_LENGTH = 500;
 export const TALON_MAX_COOLDOWN_MINUTES = 1440;
 export const DEFAULT_TALON_COOLDOWN_MINUTES = 60;
 
+/** Matches `capture_screenshot`: 0 = all monitors combined, 1 = primary. */
+const MIN_MONITOR_INDEX = 0;
+const MAX_MONITOR_INDEX = 64;
+/** Defensive bound on a command output's process target. */
+const PROCESS_TARGET_MAX_LENGTH = 256;
+/** Schedule entry ids are minted by the editor, never typed. */
+const SCHEDULE_ENTRY_ID_MAX_LENGTH = 128;
+
 /** 24-hour `HH:MM`, the format `ScheduleEditor` reads and writes. */
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -69,6 +77,11 @@ export interface TalonFieldError {
   /** Dotted/indexed path to the offending field, e.g. `outputs[1].url`. */
   field: string;
   code: 'invalid_body' | 'missing_field' | 'invalid_field' | 'unknown_field' | 'out_of_range';
+  /**
+   * Plain human copy, rendered verbatim next to the offending control by the
+   * editor and returned verbatim in problem+json `fieldErrors`. It never names
+   * the path — `field` above carries that, and it is what callers bind on.
+   */
   message: string;
 }
 
@@ -116,6 +129,27 @@ class ErrorBag {
 }
 
 /**
+ * Copy for a bounded string field. Each variant is the whole message — the
+ * helpers never compose prose around it, so nothing can leak a path in.
+ */
+interface StringCopy {
+  /** Absent, blank, or the wrong type. */
+  missing: string;
+  /** Longer than the bound. */
+  tooLong: string;
+}
+
+/** The same contract as `StringCopy`, for a bounded integer field. */
+interface IntegerCopy {
+  /** Missing, non-numeric, or fractional. */
+  notInteger: string;
+  /** Below the floor. */
+  tooLow: string;
+  /** Above the ceiling. */
+  tooHigh: string;
+}
+
+/**
  * Reads a required, non-empty, length-bounded string. Returns the trimmed
  * value, or `null` when it recorded an error.
  */
@@ -124,22 +158,25 @@ function readBoundedString(
   value: unknown,
   field: string,
   maxLength: number,
+  copy: StringCopy,
 ): string | null {
   if (value === undefined || value === null) {
-    bag.add(field, 'missing_field', `\`${field}\` is required.`);
+    bag.add(field, 'missing_field', copy.missing);
     return null;
   }
+  // A non-string reads to the user as "you have not given me one yet", so it
+  // shares the missing copy — only the code distinguishes them.
   if (typeof value !== 'string') {
-    bag.add(field, 'invalid_field', `\`${field}\` must be a string.`);
+    bag.add(field, 'invalid_field', copy.missing);
     return null;
   }
   const trimmed = value.trim();
   if (trimmed.length === 0) {
-    bag.add(field, 'missing_field', `\`${field}\` is required.`);
+    bag.add(field, 'missing_field', copy.missing);
     return null;
   }
   if (trimmed.length > maxLength) {
-    bag.add(field, 'invalid_field', `\`${field}\` must be ${maxLength} characters or fewer.`);
+    bag.add(field, 'invalid_field', copy.tooLong);
     return null;
   }
   return trimmed;
@@ -152,13 +189,18 @@ function readBoundedInteger(
   field: string,
   min: number,
   max: number,
+  copy: IntegerCopy,
 ): number | null {
   if (typeof value !== 'number' || !Number.isInteger(value)) {
-    bag.add(field, 'invalid_field', `\`${field}\` must be an integer.`);
+    bag.add(field, 'invalid_field', copy.notInteger);
     return null;
   }
-  if (value < min || value > max) {
-    bag.add(field, 'out_of_range', `\`${field}\` must be between ${min} and ${max}.`);
+  if (value < min) {
+    bag.add(field, 'out_of_range', copy.tooLow);
+    return null;
+  }
+  if (value > max) {
+    bag.add(field, 'out_of_range', copy.tooHigh);
     return null;
   }
   return value;
@@ -166,18 +208,14 @@ function readBoundedInteger(
 
 function validateDays(bag: ErrorBag, value: unknown, field: string): DayKey[] | null {
   if (!Array.isArray(value) || value.length === 0) {
-    bag.add(field, 'invalid_field', `\`${field}\` must be a non-empty array of day keys.`);
+    bag.add(field, 'invalid_field', 'pick at least one day');
     return null;
   }
   const seen = new Set<DayKey>();
   let valid = true;
   for (const [index, day] of value.entries()) {
     if (typeof day !== 'string' || !DAY_KEYS.includes(day as DayKey)) {
-      bag.add(
-        `${field}[${index}]`,
-        'invalid_field',
-        `\`${field}[${index}]\` must be one of: ${DAY_KEYS.join(', ')}.`,
-      );
+      bag.add(`${field}[${index}]`, 'invalid_field', 'one of these days is not a day of the week');
       valid = false;
       continue;
     }
@@ -189,21 +227,24 @@ function validateDays(bag: ErrorBag, value: unknown, field: string): DayKey[] | 
   return DAY_KEYS.filter((day) => seen.has(day));
 }
 
+/**
+ * A schedule entry the editor did not mint. Ids are generated, so a malformed
+ * one is not something the user can fix in place — the honest instruction is
+ * to drop the row.
+ */
+const BROKEN_SCHEDULE_ENTRY = 'something is off with this time — remove it and add it again';
+
 function validateScheduleEntries(
   bag: ErrorBag,
   value: unknown,
   field: string,
 ): TalonScheduleEntry[] | null {
   if (!Array.isArray(value) || value.length === 0) {
-    bag.add(field, 'invalid_field', `\`${field}\` must be a non-empty array.`);
+    bag.add(field, 'invalid_field', 'add at least one time');
     return null;
   }
   if (value.length > TALON_MAX_SCHEDULE_ENTRIES) {
-    bag.add(
-      field,
-      'out_of_range',
-      `\`${field}\` must contain ${TALON_MAX_SCHEDULE_ENTRIES} entries or fewer.`,
-    );
+    bag.add(field, 'out_of_range', `add ${TALON_MAX_SCHEDULE_ENTRIES} times or fewer`);
     return null;
   }
 
@@ -212,17 +253,20 @@ function validateScheduleEntries(
   for (const [index, entry] of value.entries()) {
     const path = `${field}[${index}]`;
     if (!isPlainObject(entry)) {
-      bag.add(path, 'invalid_field', `\`${path}\` must be an object.`);
+      bag.add(path, 'invalid_field', BROKEN_SCHEDULE_ENTRY);
       valid = false;
       continue;
     }
 
-    const id = readBoundedString(bag, entry.id, `${path}.id`, 128);
+    const id = readBoundedString(bag, entry.id, `${path}.id`, SCHEDULE_ENTRY_ID_MAX_LENGTH, {
+      missing: BROKEN_SCHEDULE_ENTRY,
+      tooLong: BROKEN_SCHEDULE_ENTRY,
+    });
     const days = validateDays(bag, entry.days, `${path}.days`);
 
     let time: string | null = null;
     if (typeof entry.time !== 'string' || !TIME_PATTERN.test(entry.time)) {
-      bag.add(`${path}.time`, 'invalid_field', `\`${path}.time\` must be a 24-hour HH:MM time.`);
+      bag.add(`${path}.time`, 'invalid_field', 'enter a time like 09:30 or 21:00');
     } else {
       time = entry.time;
     }
@@ -243,11 +287,11 @@ function validateTrigger(
   condition: TalonCondition | null,
 ): TalonTrigger | null {
   if (value === undefined || value === null) {
-    bag.add('trigger', 'missing_field', '`trigger` is required.');
+    bag.add('trigger', 'missing_field', 'choose what makes this talon fire');
     return null;
   }
   if (!isPlainObject(value)) {
-    bag.add('trigger', 'invalid_field', '`trigger` must be an object.');
+    bag.add('trigger', 'invalid_field', 'choose what makes this talon fire');
     return null;
   }
 
@@ -259,16 +303,12 @@ function validateTrigger(
         bag.add(
           'trigger',
           'invalid_field',
-          'A schedule trigger takes either `entries` or `intervalMinutes`, not both.',
+          'a schedule runs at set times or on an interval, not both',
         );
         return null;
       }
       if (!hasEntries && !hasInterval) {
-        bag.add(
-          'trigger',
-          'missing_field',
-          'A schedule trigger requires either `entries` or `intervalMinutes`.',
-        );
+        bag.add('trigger', 'missing_field', 'add at least one time, or set an interval');
         return null;
       }
 
@@ -280,16 +320,23 @@ function validateTrigger(
       // A visual check costs a screenshot round-trip plus a model call per
       // run, so it carries a wider interval floor than a plain schedule. The
       // condition is validated first precisely so this floor can be applied.
-      const minInterval =
-        condition?.type === 'visual_check'
-          ? TALON_MIN_INTERVAL_MINUTES_VISUAL_CHECK
-          : TALON_MIN_INTERVAL_MINUTES;
+      const isVisualCheck = condition?.type === 'visual_check';
+      const minInterval = isVisualCheck
+        ? TALON_MIN_INTERVAL_MINUTES_VISUAL_CHECK
+        : TALON_MIN_INTERVAL_MINUTES;
       const intervalMinutes = readBoundedInteger(
         bag,
         value.intervalMinutes,
         'trigger.intervalMinutes',
         minInterval,
         TALON_MAX_INTERVAL_MINUTES,
+        {
+          notInteger: 'enter a whole number of minutes',
+          tooLow: isVisualCheck
+            ? `visual checks run at most every ${TALON_MIN_INTERVAL_MINUTES_VISUAL_CHECK} minutes`
+            : `runs at most every ${TALON_MIN_INTERVAL_MINUTES} minutes`,
+          tooHigh: 'runs at least once a day — use set times for anything less often',
+        },
       );
       return intervalMinutes === null ? null : { type: 'schedule', intervalMinutes };
     }
@@ -297,26 +344,18 @@ function validateTrigger(
     case 'threshold': {
       let valid = true;
       if (typeof value.metric !== 'string' || !TALON_METRICS.includes(value.metric as TalonMetric)) {
-        bag.add(
-          'trigger.metric',
-          'invalid_field',
-          `\`trigger.metric\` must be one of: ${TALON_METRICS.join(', ')}.`,
-        );
+        bag.add('trigger.metric', 'invalid_field', 'choose a metric to watch');
         valid = false;
       }
       if (
         typeof value.operator !== 'string' ||
         !TALON_OPERATORS.includes(value.operator as TalonOperator)
       ) {
-        bag.add(
-          'trigger.operator',
-          'invalid_field',
-          `\`trigger.operator\` must be one of: ${TALON_OPERATORS.join(', ')}.`,
-        );
+        bag.add('trigger.operator', 'invalid_field', 'choose how to compare the metric');
         valid = false;
       }
       if (typeof value.value !== 'number' || !Number.isFinite(value.value)) {
-        bag.add('trigger.value', 'invalid_field', '`trigger.value` must be a finite number.');
+        bag.add('trigger.value', 'invalid_field', 'enter a number to compare against');
         valid = false;
       }
       if (!valid) return null;
@@ -330,7 +369,7 @@ function validateTrigger(
 
     case 'event': {
       if (!Array.isArray(value.eventTypes) || value.eventTypes.length === 0) {
-        bag.add('trigger.eventTypes', 'invalid_field', '`trigger.eventTypes` must be a non-empty array.');
+        bag.add('trigger.eventTypes', 'invalid_field', 'pick at least one event');
         return null;
       }
       const seen = new Set<TalonEventType>();
@@ -340,11 +379,7 @@ function validateTrigger(
           typeof eventType !== 'string' ||
           !TALON_EVENT_TYPES.includes(eventType as TalonEventType)
         ) {
-          bag.add(
-            `trigger.eventTypes[${index}]`,
-            'invalid_field',
-            `\`trigger.eventTypes[${index}]\` must be one of: ${TALON_EVENT_TYPES.join(', ')}.`,
-          );
+          bag.add(`trigger.eventTypes[${index}]`, 'invalid_field', 'one of these events is not valid');
           valid = false;
           continue;
         }
@@ -358,11 +393,7 @@ function validateTrigger(
     }
 
     default:
-      bag.add(
-        'trigger.type',
-        'invalid_field',
-        '`trigger.type` must be one of: schedule, threshold, event.',
-      );
+      bag.add('trigger.type', 'invalid_field', 'choose a trigger type');
       return null;
   }
 }
@@ -370,7 +401,7 @@ function validateTrigger(
 function validateCondition(bag: ErrorBag, value: unknown): TalonCondition | null {
   if (value === undefined || value === null) return { type: 'none' };
   if (!isPlainObject(value)) {
-    bag.add('condition', 'invalid_field', '`condition` must be an object.');
+    bag.add('condition', 'invalid_field', 'choose a condition');
     return null;
   }
 
@@ -384,12 +415,23 @@ function validateCondition(bag: ErrorBag, value: unknown): TalonCondition | null
         value.expectation,
         'condition.expectation',
         TALON_EXPECTATION_MAX_LENGTH,
+        {
+          missing: 'describe what the screen should show',
+          tooLong: `keep this to ${TALON_EXPECTATION_MAX_LENGTH} characters or fewer`,
+        },
       );
 
       let monitor: number | undefined;
       if (value.monitor !== undefined && value.monitor !== null) {
-        // Matches `capture_screenshot`: 0 = all monitors combined, 1 = primary.
-        const parsed = readBoundedInteger(bag, value.monitor, 'condition.monitor', 0, 64);
+        const outOfRange = `monitor must be between ${MIN_MONITOR_INDEX} and ${MAX_MONITOR_INDEX}`;
+        const parsed = readBoundedInteger(
+          bag,
+          value.monitor,
+          'condition.monitor',
+          MIN_MONITOR_INDEX,
+          MAX_MONITOR_INDEX,
+          { notInteger: 'enter a whole monitor number', tooLow: outOfRange, tooHigh: outOfRange },
+        );
         if (parsed === null) return null;
         monitor = parsed;
       }
@@ -401,14 +443,26 @@ function validateCondition(bag: ErrorBag, value: unknown): TalonCondition | null
     }
 
     default:
-      bag.add('condition.type', 'invalid_field', '`condition.type` must be one of: none, visual_check.');
+      bag.add('condition.type', 'invalid_field', 'choose a condition type');
       return null;
   }
 }
 
+/** Per-key copy for a command output's process target. */
+const PROCESS_TARGET_COPY: Readonly<Record<'processId' | 'processName', StringCopy>> = {
+  processId: {
+    missing: 'choose a process',
+    tooLong: 'that process is not one owlette can address',
+  },
+  processName: {
+    missing: 'enter a process name',
+    tooLong: `keep the process name to ${PROCESS_TARGET_MAX_LENGTH} characters or fewer`,
+  },
+};
+
 function validateOutput(bag: ErrorBag, value: unknown, path: string): TalonOutput | null {
   if (!isPlainObject(value)) {
-    bag.add(path, 'invalid_field', `\`${path}\` must be an object.`);
+    bag.add(path, 'invalid_field', 'this output is not valid — remove it and add it again');
     return null;
   }
 
@@ -418,7 +472,7 @@ function validateOutput(bag: ErrorBag, value: unknown, path: string): TalonOutpu
 
     case 'webhook': {
       if (typeof value.url !== 'string' || !isValidHttpsUrl(value.url.trim())) {
-        bag.add(`${path}.url`, 'invalid_field', `\`${path}.url\` must be a valid https URL.`);
+        bag.add(`${path}.url`, 'invalid_field', 'enter a valid https url');
         return null;
       }
       return { type: 'webhook', url: value.url.trim() };
@@ -430,6 +484,10 @@ function validateOutput(bag: ErrorBag, value: unknown, path: string): TalonOutpu
         value.directive,
         `${path}.directive`,
         TALON_DIRECTIVE_MAX_LENGTH,
+        {
+          missing: 'tell hoot what to do when this talon fires',
+          tooLong: `keep this to ${TALON_DIRECTIVE_MAX_LENGTH} characters or fewer`,
+        },
       );
       return directive === null ? null : { type: 'cortex', directive };
     }
@@ -439,11 +497,7 @@ function validateOutput(bag: ErrorBag, value: unknown, path: string): TalonOutpu
         typeof value.commandType !== 'string' ||
         !TALON_COMMAND_TYPES.includes(value.commandType as TalonCommandType)
       ) {
-        bag.add(
-          `${path}.commandType`,
-          'invalid_field',
-          `\`${path}.commandType\` must be one of: ${TALON_COMMAND_TYPES.join(', ')}.`,
-        );
+        bag.add(`${path}.commandType`, 'invalid_field', 'choose a command to run');
         return null;
       }
 
@@ -455,7 +509,13 @@ function validateOutput(bag: ErrorBag, value: unknown, path: string): TalonOutpu
       for (const key of ['processId', 'processName'] as const) {
         const raw = value[key];
         if (raw === undefined || raw === null) continue;
-        const parsed = readBoundedString(bag, raw, `${path}.${key}`, 256);
+        const parsed = readBoundedString(
+          bag,
+          raw,
+          `${path}.${key}`,
+          PROCESS_TARGET_MAX_LENGTH,
+          PROCESS_TARGET_COPY[key],
+        );
         if (parsed === null) {
           valid = false;
           continue;
@@ -466,26 +526,22 @@ function validateOutput(bag: ErrorBag, value: unknown, path: string): TalonOutpu
     }
 
     default:
-      bag.add(
-        `${path}.type`,
-        'invalid_field',
-        `\`${path}.type\` must be one of: email, webhook, cortex, command.`,
-      );
+      bag.add(`${path}.type`, 'invalid_field', 'choose what this output does');
       return null;
   }
 }
 
 function validateOutputs(bag: ErrorBag, value: unknown): TalonOutput[] | null {
   if (!Array.isArray(value)) {
-    bag.add('outputs', 'invalid_field', '`outputs` must be an array.');
+    bag.add('outputs', 'invalid_field', 'add at least one output');
     return null;
   }
-  if (value.length < TALON_MIN_OUTPUTS || value.length > TALON_MAX_OUTPUTS) {
-    bag.add(
-      'outputs',
-      'out_of_range',
-      `\`outputs\` must contain between ${TALON_MIN_OUTPUTS} and ${TALON_MAX_OUTPUTS} entries.`,
-    );
+  if (value.length < TALON_MIN_OUTPUTS) {
+    bag.add('outputs', 'out_of_range', 'add at least one output');
+    return null;
+  }
+  if (value.length > TALON_MAX_OUTPUTS) {
+    bag.add('outputs', 'out_of_range', `use ${TALON_MAX_OUTPUTS} outputs or fewer`);
     return null;
   }
 
@@ -502,22 +558,21 @@ function validateOutputs(bag: ErrorBag, value: unknown): TalonOutput[] | null {
   return valid ? outputs : null;
 }
 
+/** Both the empty-array trap and a malformed scope resolve the same way. */
+const SCOPE_REQUIRED = 'select at least one machine, or switch to all machines';
+
 function validateScope(bag: ErrorBag, value: unknown): TalonScope | null {
   // Omitted scope means the whole site, the same as an explicit null.
   if (value === undefined || value === null) return { machineIds: null };
   if (!isPlainObject(value)) {
-    bag.add('scope', 'invalid_field', '`scope` must be an object.');
+    bag.add('scope', 'invalid_field', SCOPE_REQUIRED);
     return null;
   }
   const machineIds = value.machineIds;
   if (machineIds === undefined || machineIds === null) return { machineIds: null };
 
   if (!Array.isArray(machineIds) || machineIds.length === 0) {
-    bag.add(
-      'scope.machineIds',
-      'invalid_field',
-      '`scope.machineIds` must be a non-empty array of machine ids, or null for every machine in the site.',
-    );
+    bag.add('scope.machineIds', 'invalid_field', SCOPE_REQUIRED);
     return null;
   }
 
@@ -525,11 +580,7 @@ function validateScope(bag: ErrorBag, value: unknown): TalonScope | null {
   let valid = true;
   for (const [index, machineId] of machineIds.entries()) {
     if (typeof machineId !== 'string' || machineId.trim().length === 0) {
-      bag.add(
-        `scope.machineIds[${index}]`,
-        'invalid_field',
-        `\`scope.machineIds[${index}]\` must be a non-empty string.`,
-      );
+      bag.add(`scope.machineIds[${index}]`, 'invalid_field', 'one of these machines is not valid');
       valid = false;
       continue;
     }
@@ -550,29 +601,34 @@ export function validateTalonInput(input: unknown): TalonValidationResult {
   const bag = new ErrorBag();
 
   if (!isPlainObject(input)) {
-    bag.add('talon', 'invalid_body', 'Talon input must be an object.');
+    bag.add('talon', 'invalid_body', 'talon input must be an object');
     return { ok: false, errors: bag.errors };
   }
 
+  // Server-owned fields land here too. The message stays deliberately plain:
+  // this path is reachable only through the API, never through the editor.
   for (const key of Object.keys(input)) {
     if (!ALLOWED_FIELDS.has(key)) {
-      bag.add(key, 'unknown_field', `Field \`${key}\` is not allowed.`);
+      bag.add(key, 'unknown_field', 'this field cannot be set here');
     }
   }
 
-  const name = readBoundedString(bag, input.name, 'name', TALON_NAME_MAX_LENGTH);
+  const name = readBoundedString(bag, input.name, 'name', TALON_NAME_MAX_LENGTH, {
+    missing: 'give this talon a name',
+    tooLong: `keep the name to ${TALON_NAME_MAX_LENGTH} characters or fewer`,
+  });
 
   let description: string | undefined;
   if (input.description !== undefined && input.description !== null) {
     if (typeof input.description !== 'string') {
-      bag.add('description', 'invalid_field', '`description` must be a string.');
+      bag.add('description', 'invalid_field', 'the description must be text');
     } else {
       const trimmed = input.description.trim();
       if (trimmed.length > TALON_DESCRIPTION_MAX_LENGTH) {
         bag.add(
           'description',
           'invalid_field',
-          `\`description\` must be ${TALON_DESCRIPTION_MAX_LENGTH} characters or fewer.`,
+          `keep the description to ${TALON_DESCRIPTION_MAX_LENGTH} characters or fewer`,
         );
       } else if (trimmed.length > 0) {
         description = trimmed;
@@ -583,7 +639,7 @@ export function validateTalonInput(input: unknown): TalonValidationResult {
   let enabled = true;
   if (input.enabled !== undefined) {
     if (typeof input.enabled !== 'boolean') {
-      bag.add('enabled', 'invalid_field', '`enabled` must be a boolean.');
+      bag.add('enabled', 'invalid_field', 'enabled must be true or false');
     } else {
       enabled = input.enabled;
     }
@@ -598,12 +654,18 @@ export function validateTalonInput(input: unknown): TalonValidationResult {
 
   let cooldownMinutes = DEFAULT_TALON_COOLDOWN_MINUTES;
   if (input.cooldownMinutes !== undefined && input.cooldownMinutes !== null) {
+    const outOfRange = `cooldown must be between 0 and ${TALON_MAX_COOLDOWN_MINUTES / 60} hours`;
     const parsed = readBoundedInteger(
       bag,
       input.cooldownMinutes,
       'cooldownMinutes',
       0,
       TALON_MAX_COOLDOWN_MINUTES,
+      {
+        notInteger: 'enter a whole number of minutes',
+        tooLow: outOfRange,
+        tooHigh: outOfRange,
+      },
     );
     if (parsed !== null) cooldownMinutes = parsed;
   }

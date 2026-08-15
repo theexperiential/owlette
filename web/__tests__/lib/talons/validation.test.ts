@@ -196,7 +196,7 @@ describe('validateTalonInput — body and unknown fields', () => {
   it.each([null, undefined, 'talon', 42, [], true])('rejects non-object input %p', (input) => {
     const errors = expectErrors(validateTalonInput(input));
     expect(errors).toEqual([
-      { field: 'talon', code: 'invalid_body', message: 'Talon input must be an object.' },
+      { field: 'talon', code: 'invalid_body', message: 'talon input must be an object' },
     ]);
   });
 
@@ -619,6 +619,168 @@ describe('validateTalonInput — error accumulation', () => {
     const result = validateTalonInput(validTalon({ name: '' }));
     expect(result.ok).toBe(false);
     expect(result).not.toHaveProperty('value');
+  });
+});
+
+/**
+ * Every rejection path this module has, in one list. The message guards below
+ * sweep it — a new rule that ships nerd-speak fails here rather than in front
+ * of a user.
+ */
+const EVERY_REJECTION: unknown[] = [
+  'not an object',
+  {},
+  validTalon({ name: '', description: 'x'.repeat(501), enabled: 'yes', cooldownMinutes: 9999, nope: 1 }),
+  validTalon({ name: 7 }),
+  validTalon({ name: 'x'.repeat(TALON_NAME_MAX_LENGTH + 1) }),
+  validTalon({ description: 42 }),
+  validTalon({ trigger: undefined }),
+  validTalon({ trigger: 'schedule' }),
+  validTalon({ trigger: { type: 'nope' } }),
+  validTalon({ trigger: { type: 'schedule' } }),
+  validTalon({ trigger: { type: 'schedule', entries: SCHEDULE_ENTRIES_TRIGGER.entries, intervalMinutes: 30 } }),
+  validTalon({ trigger: { type: 'schedule', entries: [] } }),
+  validTalon({ trigger: { type: 'schedule', entries: ['nope'] } }),
+  validTalon({ trigger: { type: 'schedule', entries: [{ days: ['funday'], time: '9:00' }] } }),
+  validTalon({ trigger: { type: 'schedule', entries: [{ id: 'x'.repeat(129), days: [], time: '03:00' }] } }),
+  validTalon({
+    trigger: {
+      type: 'schedule',
+      entries: Array.from({ length: TALON_MAX_SCHEDULE_ENTRIES + 1 }, (_, i) => ({
+        id: `e${i}`,
+        days: ['mon'],
+        time: '01:00',
+      })),
+    },
+  }),
+  validTalon({ trigger: { type: 'schedule', intervalMinutes: '30' } }),
+  validTalon({ trigger: { type: 'schedule', intervalMinutes: TALON_MIN_INTERVAL_MINUTES - 1 } }),
+  validTalon({ trigger: { type: 'schedule', intervalMinutes: TALON_MAX_INTERVAL_MINUTES + 1 } }),
+  validTalon({
+    trigger: { type: 'schedule', intervalMinutes: TALON_MIN_INTERVAL_MINUTES },
+    condition: { type: 'visual_check', expectation: 'the wall shows the loop' },
+  }),
+  validTalon({ trigger: { type: 'threshold', metric: 'nope', operator: '==', value: 'high' } }),
+  validTalon({ trigger: { type: 'event', eventTypes: [] } }),
+  validTalon({ trigger: { type: 'event', eventTypes: ['nope'] } }),
+  validTalon({ condition: 'none' }),
+  validTalon({ condition: { type: 'ocr' } }),
+  validTalon({ condition: { type: 'visual_check' } }),
+  validTalon({ condition: { type: 'visual_check', expectation: 'x'.repeat(TALON_EXPECTATION_MAX_LENGTH + 1) } }),
+  validTalon({ condition: { type: 'visual_check', expectation: 'ok', monitor: -1 } }),
+  validTalon({ condition: { type: 'visual_check', expectation: 'ok', monitor: 65 } }),
+  validTalon({ condition: { type: 'visual_check', expectation: 'ok', monitor: 1.5 } }),
+  validTalon({ outputs: 'nope' }),
+  validTalon({ outputs: [] }),
+  validTalon({ outputs: Array.from({ length: TALON_MAX_OUTPUTS + 1 }, () => ({ type: 'email' })) }),
+  validTalon({ outputs: ['nope'] }),
+  validTalon({ outputs: [{ type: 'sms' }] }),
+  validTalon({ outputs: [{ type: 'webhook', url: 'http://hooks.example.com/talon' }] }),
+  validTalon({ outputs: [{ type: 'cortex', directive: '' }] }),
+  validTalon({ outputs: [{ type: 'cortex', directive: 'x'.repeat(TALON_DIRECTIVE_MAX_LENGTH + 1) }] }),
+  validTalon({ outputs: [{ type: 'command', commandType: 'reboot_machine' }] }),
+  validTalon({ outputs: [{ type: 'command', commandType: 'stop_process', processName: 42 }] }),
+  validTalon({ outputs: [{ type: 'command', commandType: 'stop_process', processId: 'x'.repeat(257) }] }),
+  validTalon({ outputs: [{ type: 'command', commandType: 'stop_process', processName: 'x'.repeat(257) }] }),
+  validTalon({ scope: ['m1'] }),
+  validTalon({ scope: { machineIds: [] } }),
+  validTalon({ scope: { machineIds: ['  '] } }),
+  validTalon({ cooldownMinutes: -1 }),
+  validTalon({ cooldownMinutes: TALON_MAX_COOLDOWN_MINUTES + 1 }),
+  validTalon({ cooldownMinutes: 1.5 }),
+];
+
+describe('validateTalonInput — human-readable messages', () => {
+  it('never leaks a field path, backtick, or index notation into a message', () => {
+    for (const input of EVERY_REJECTION) {
+      for (const { field, message } of expectErrors(validateTalonInput(input))) {
+        // The offending value is reported alongside so a failure names the rule.
+        expect({ field, message, readable: !/[`[\]]/.test(message) }).toEqual({
+          field,
+          message,
+          readable: true,
+        });
+      }
+    }
+  });
+
+  it('writes every message in the lowercase voice of the rest of the ui', () => {
+    for (const input of EVERY_REJECTION) {
+      for (const { field, message } of expectErrors(validateTalonInput(input))) {
+        expect({ field, message, lowercase: /^[a-z]/.test(message) }).toEqual({
+          field,
+          message,
+          lowercase: true,
+        });
+      }
+    }
+  });
+
+  it.each<[unknown, string, string]>([
+    [validTalon({ name: '' }), 'name', 'give this talon a name'],
+    [
+      validTalon({ outputs: [{ type: 'cortex', directive: '' }] }),
+      'outputs[0].directive',
+      'tell hoot what to do when this talon fires',
+    ],
+    [
+      validTalon({ outputs: [{ type: 'webhook', url: 'http://nope.example.com' }] }),
+      'outputs[0].url',
+      'enter a valid https url',
+    ],
+    [validTalon({ outputs: [] }), 'outputs', 'add at least one output'],
+    [
+      validTalon({ trigger: { type: 'schedule', entries: [] } }),
+      'trigger.entries',
+      'add at least one time',
+    ],
+    [
+      validTalon({ trigger: { type: 'event', eventTypes: [] } }),
+      'trigger.eventTypes',
+      'pick at least one event',
+    ],
+    [
+      validTalon({ trigger: { type: 'schedule', intervalMinutes: 4 } }),
+      'trigger.intervalMinutes',
+      'runs at most every 5 minutes',
+    ],
+    [
+      validTalon({
+        trigger: { type: 'schedule', intervalMinutes: 14 },
+        condition: { type: 'visual_check', expectation: 'the wall shows the loop' },
+      }),
+      'trigger.intervalMinutes',
+      'visual checks run at most every 15 minutes',
+    ],
+    [
+      validTalon({ condition: { type: 'visual_check', expectation: '' } }),
+      'condition.expectation',
+      'describe what the screen should show',
+    ],
+    [
+      validTalon({ scope: { machineIds: [] } }),
+      'scope.machineIds',
+      'select at least one machine, or switch to all machines',
+    ],
+    [
+      validTalon({ cooldownMinutes: TALON_MAX_COOLDOWN_MINUTES + 1 }),
+      'cooldownMinutes',
+      'cooldown must be between 0 and 24 hours',
+    ],
+  ])('speaks plainly for %#', (input, field, message) => {
+    expect(errorFor(validateTalonInput(input), field)?.message).toBe(message);
+  });
+
+  it('keeps the structured field path for programmatic binding', () => {
+    const result = validateTalonInput(
+      validTalon({ outputs: [{ type: 'email' }, { type: 'webhook', url: 'nope' }] }),
+    );
+    // The path lives here, not in the prose the user reads.
+    expect(errorFor(result, 'outputs[1].url')).toEqual({
+      field: 'outputs[1].url',
+      code: 'invalid_field',
+      message: 'enter a valid https url',
+    });
   });
 });
 

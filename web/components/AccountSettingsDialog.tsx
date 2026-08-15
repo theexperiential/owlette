@@ -56,7 +56,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[
   { id: 'profile', label: 'profile', icon: User },
   { id: 'preferences', label: 'preferences', icon: Bell },
   { id: 'alerts', label: 'alerts', icon: Bell },
-  { id: 'cortex', label: 'cortex', icon: Brain },
+  { id: 'cortex', label: 'hoot', icon: Brain },
   { id: 'security', label: 'security', icon: Shield },
   { id: 'api', label: 'api', icon: Code },
   { id: 'billing', label: 'billing', icon: CreditCard },
@@ -93,6 +93,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [thresholdAlerts, setThresholdAlerts] = useState(true);
   const [cortexAlerts, setCortexAlerts] = useState(true);
   const [displayAlerts, setDisplayAlerts] = useState(true);
+  const [talonAlerts, setTalonAlerts] = useState(true);
   const [alertCcEmails, setAlertCcEmails] = useState<string[]>([]);
   const [newCcEmail, setNewCcEmail] = useState('');
   const [ccEmailError, setCcEmailError] = useState('');
@@ -193,6 +194,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setThresholdAlerts(userPreferences.thresholdAlerts);
       setCortexAlerts(userPreferences.cortexAlerts);
       setDisplayAlerts(userPreferences.displayAlerts);
+      setTalonAlerts(userPreferences.talonAlerts);
       setAlertCcEmails(userPreferences.alertCcEmails || []);
       setNewCcEmail('');
       setCcEmailError('');
@@ -361,9 +363,10 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         || thresholdAlerts !== userPreferences.thresholdAlerts
         || cortexAlerts !== userPreferences.cortexAlerts
         || displayAlerts !== userPreferences.displayAlerts
+        || talonAlerts !== userPreferences.talonAlerts
         || JSON.stringify(alertCcEmails) !== JSON.stringify(userPreferences.alertCcEmails || []);
       if (prefsChanged) {
-        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, timeDisplayMode, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts, displayAlerts, alertCcEmails });
+        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, timeDisplayMode, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts, displayAlerts, talonAlerts, alertCcEmails });
       }
       if (showPasswordSection && (currentPassword || newPassword || confirmPassword)) {
         if (!validatePassword()) {
@@ -684,7 +687,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
 
                   <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
                     <div className="space-y-0.5">
-                      <Label htmlFor="cortexAlerts" className="text-white">cortex escalation alerts</Label>
+                      <Label htmlFor="cortexAlerts" className="text-white">hoot escalation alerts</Label>
                       <p className="text-xs text-muted-foreground">receive email alerts when automated diagnostics can&apos;t resolve an issue</p>
                     </div>
                     <Switch
@@ -704,6 +707,19 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       id="displayAlerts"
                       checked={displayAlerts}
                       onCheckedChange={setDisplayAlerts}
+                      disabled={loading}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
+                    <div className="space-y-0.5">
+                      <Label htmlFor="talonAlerts" className="text-white">talon alerts</Label>
+                      <p className="text-xs text-muted-foreground">emails when a talon fires or fails</p>
+                    </div>
+                    <Switch
+                      id="talonAlerts"
+                      checked={talonAlerts}
+                      onCheckedChange={setTalonAlerts}
                       disabled={loading}
                     />
                   </div>
@@ -807,7 +823,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                 <div className="space-y-5">
                   <div>
                     <h3 className="text-base font-medium text-white flex items-center gap-2">
-                      cortex
+                      hoot
                       {llmConfigured && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-900/30 text-green-400 flex items-center gap-1 font-normal">
                           <Check className="h-3 w-3" /> connected

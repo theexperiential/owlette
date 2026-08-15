@@ -385,12 +385,12 @@ describe('POST /api/sites/{siteId}/talons', () => {
 
   it('maps a validation rejection to 400 with field errors', async () => {
     mockCreateTalon.mockRejectedValue(
-      new TalonStoreError(400, 'invalid_talon', '`name` is required. (+1 more)', [
-        { field: 'name', code: 'missing_field', message: '`name` is required.' },
+      new TalonStoreError(400, 'invalid_talon', 'give this talon a name (+1 more)', [
+        { field: 'name', code: 'missing_field', message: 'give this talon a name' },
         {
           field: 'outputs[0].url',
           code: 'invalid_field',
-          message: '`outputs[0].url` must be a valid https URL.',
+          message: 'enter a valid https url',
         },
       ]),
     );
@@ -414,8 +414,8 @@ describe('POST /api/sites/{siteId}/talons', () => {
     expect(body.code).toBe('invalid_talon');
     expect(body.title).toBe('validation failed');
     expect(body.errors).toEqual({
-      'body.name': ['`name` is required.'],
-      'body.outputs[0].url': ['`outputs[0].url` must be a valid https URL.'],
+      'body.name': ['give this talon a name'],
+      'body.outputs[0].url': ['enter a valid https url'],
     });
     expect(body.fieldErrors).toHaveLength(2);
   });

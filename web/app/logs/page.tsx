@@ -134,6 +134,10 @@ const ACTION_TYPES = [
   { value: 'deployment_failed', label: 'deployment failed' },
   { value: 'deployment_cancelled', label: 'deployment cancelled' },
   { value: 'scheduled_reboot', label: 'scheduled restart' },
+  { value: 'talon_triggered', label: 'talon triggered' },
+  { value: 'talon_succeeded', label: 'talon succeeded' },
+  { value: 'talon_failed', label: 'talon failed' },
+  { value: 'talon_skipped', label: 'talon skipped' },
 ];
 
 // Level badges styling

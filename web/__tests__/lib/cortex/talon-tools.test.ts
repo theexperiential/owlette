@@ -286,7 +286,7 @@ describe('create_talon', () => {
       {
         field: 'trigger.intervalMinutes',
         code: 'out_of_range',
-        message: '`trigger.intervalMinutes` must be between 5 and 1440.',
+        message: 'runs at most every 5 minutes',
       },
     ];
     mockCreateTalon.mockRejectedValue(

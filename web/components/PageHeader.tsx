@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { UserAvatar } from '@/components/UserAvatar';
-import { ArrowRight, ChevronDown, Settings, LogOut, Shield, Check, Crown, LayoutDashboard, Brain, Rocket, FolderSync, ScrollText, CircleHelp, Bug, BookOpen, Menu, X } from 'lucide-react';
+import { ArrowRight, ChevronDown, Settings, LogOut, Shield, Check, Crown, LayoutDashboard, Brain, Zap, Rocket, FolderSync, ScrollText, CircleHelp, Bug, BookOpen, Menu, X } from 'lucide-react';
 import { getUserShortName } from '@/lib/userUtils';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { ReportBugDialog } from '@/components/ReportBugDialog';
@@ -35,22 +35,28 @@ const NAV_ITEMS = [
     description: 'monitor machines and manage processes',
   },
   {
-    name: 'cortex',
+    name: 'hoot',
     href: '/cortex',
     icon: Brain,
-    description: 'ask your machines any question',
+    description: 'ask hoot about your machines',
   },
   {
-    name: 'deploy',
-    href: '/deployments',
-    icon: Rocket,
-    description: 'install software across machines',
+    name: 'talons',
+    href: '/talons',
+    icon: Zap,
+    description: 'automate checks and responses',
   },
   {
     name: 'roost',
     href: '/roosts',
     icon: FolderSync,
     description: 'sync project files to your machines',
+  },
+  {
+    name: 'deploy',
+    href: '/deployments',
+    icon: Rocket,
+    description: 'install software across machines',
   },
   {
     name: 'logs',
@@ -71,7 +77,7 @@ interface Site {
 }
 
 interface PageHeaderProps {
-  currentPage: 'Dashboard' | 'Deploy' | 'Roost' | 'Logs' | 'Cortex' | 'API Keys' | 'Webhooks' | 'dashboard' | 'deploy' | 'roost' | 'logs' | 'cortex' | 'api keys' | 'webhooks';
+  currentPage: 'Dashboard' | 'Deploy' | 'Roost' | 'Logs' | 'Hoot' | 'Talons' | 'API Keys' | 'Webhooks' | 'dashboard' | 'deploy' | 'roost' | 'logs' | 'hoot' | 'talons' | 'api keys' | 'webhooks';
   sites?: Site[];
   currentSiteId?: string;
   onSiteChange?: (siteId: string) => void;
