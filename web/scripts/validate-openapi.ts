@@ -54,12 +54,6 @@ const INTERNAL_ROUTES = new Set([
   '/api/billing/snapshot',
   '/api/cron/billing-trial-lifecycle',
   '/api/cron/billing-usage-report',
-  // superadmin billing ops (tasks 4.1 / 4.2) — dashboard-only, behind
-  // `authorizedPlatformHandler`. Never public: documenting an override that
-  // rewrites any account's trial clock would only advertise it.
-  '/api/admin/billing/customers',
-  '/api/admin/billing/customers/{uid}',
-  '/api/admin/billing/overview',
   '/api/bug-report',
   // hoot internals. The `/api/cortex/*` twins are the published back-compat
   // aliases kept by the hoot rename (thin re-export route files) — they are

@@ -174,7 +174,7 @@ Check this list before diagnosing anything as broken. As of the wave-3 landing:
 | **Crons not registered on cron-job.org** | both billing routes exist and never fire |
 | **Backfill scripts not run** | `scripts/backfill-customers.mjs` and `scripts/backfill-stripe-customers.mjs` have not been executed in any environment. Accounts that predate wave 0.1 therefore have **no `customers/{uid}` doc at all**, which resolves to `trialing` indefinitely — the fail-open path, not the `null` sentinel |
 | ~~New signups already carry a live trial clock~~ **RESOLVED 2026-08-01** | `bootstrapUser` now mints the `null` sentinel until `config/billing.goLiveAt` exists and has passed — a pre-go-live signup can never resolve `expired`. Post-go-live signups self-start their 14-day clock; task 5.3 stamps everyone minted before |
-| ~~No admin billing override~~ **RESOLVED 2026-08-01** (task 4.1 landed) | `/admin/customers` UI + `POST /api/admin/billing/customers/{uid}` — see "trial extension / comp" below |
+| **No admin billing override** (removed 2026-08-15) | the `/admin/billing` + `/admin/customers` pages and `/api/admin/billing/*` were deleted pending a centralized licensing/billing platform shared across systems. Extensions and comps are Firestore-console + Stripe-dashboard operations until it lands — see "trial extension / comp" below |
 | **Roost storage metering not wired** | `sites/{siteId}/roost/quota.usedBytes` is not populated from the object store, so overage always measures 0 and always reports 0 to Stripe |
 | **No 110% overage cap** | `functions/src/lib/quotaLogic.ts` hard-stops uploads at **100%** of the included allowance (`402 quota_exceeded` / `quota_would_exceed`). Overage cannot currently accrue through the admission path at all |
 | ~~Webhook *delivery* is not billing-gated~~ **RESOLVED 2026-08-01** (task 2.6 landed) | both dispatch paths now pause on `expired` / `canceled`: `fireWebhooks()` (`web/lib/webhookSender.server.ts` → `web/lib/billing/webhookDelivery.server.ts`) and the scheduled retry pump (`functions/src/webhookDispatch.ts` → `functions/src/lib/billingLogic.ts`). Nothing is sent, queued, or recorded as a failure — subscriptions cannot drift toward the 10-strike auto-disable while an account waits to convert. Both gates fail **open** on a read error and resolve live, so conversion restores delivery on the next event with no redeploy. Tier is deliberately not consulted: a core account is paid up, and creation is where pro-only is enforced |
@@ -256,28 +256,27 @@ ordering matters more than completeness: resending only the most recent
 
 ### 3. trial extension / comp
 
-**Use the admin UI** (task 4.1, landed): `/admin/customers` (superadmin-only) — search the account,
-then row actions for **extend trial**, **set tier (comp)**, and **force-expire**, each behind a
-confirm dialog. API equivalent: `POST /api/admin/billing/customers/{uid}`. Every operation is
-audit-logged (`billing_mutated` in the platform audit tenant) and rewrites `billingState` through
-the resolver in a transaction.
+**There is no admin override surface.** The `/admin/customers` UI and
+`POST /api/admin/billing/customers/{uid}` were removed on 2026-08-15, pending a centralized
+licensing/billing platform shared across systems — re-adding a one-app override panel now would only
+have to be unbuilt again. (Recover the deleted implementation with
+`git log --diff-filter=D -- web/app/admin/customers/page.tsx`.) Until the shared platform lands,
+extensions and comps are hand-edits on `customers/{uid}` in the Firestore console:
 
-What the override does for you (so you don't hand-fix):
+- **Extend a trial** — write `trialEndsAt` as `max(current end, now) + N days`, so "+7 days" on a
+  long-lapsed account still grants seven usable days. Clear any `trialEmails.*` reminder marker
+  whose recomputed milestone is back in the future (else the re-extended account never gets its new
+  day-13 warning), and clear `alertEmailsDisabledAt` when the 30-day grace no longer applies. Never
+  write `trialEndsAt: null` — that is the reserved pre-go-live sentinel (task 5.3 stamps a real
+  clock over it), and imposing a deadline on an unbounded trial needs an explicit date instead.
+- **Comp a tier** — write `subscriptionTier` plus provenance
+  (`compedTier`/`compedAt`/`compedBy`/`compNote`) so a later real Stripe subscription automatically
+  falsifies the comp claim.
+- **Force-expire** — move the clock into the past. If a live Stripe subscription exists it still
+  wins (state stays `active`) — cancel in Stripe for those.
 
-- **Extend trial** anchors at `max(current end, now)` — "+7 days" on a long-lapsed account grants
-  seven usable days. It also clears any `trialEmails.*` reminder markers whose recomputed milestone
-  is back in the future (the re-extended account gets its new day-13 warning) and clears
-  `alertEmailsDisabledAt` when the 30-day grace no longer applies. A relative extension on the
-  `null` pre-go-live sentinel is refused (it would impose a deadline on an unbounded trial); set an
-  explicit date instead.
-- **Comp** writes `subscriptionTier` plus provenance (`compedTier`/`compedAt`/`compedBy`/`compNote`)
-  so a later real Stripe subscription automatically falsifies the comp claim.
-- **Force-expire** moves the clock; if a live Stripe subscription exists the subscription still wins
-  (state stays `active`) and the response says so — cancel in Stripe for those.
-
-The change takes effect **immediately** — every gate resolves state per request. Direct Firestore
-console edits remain possible in an emergency but leave no audit trail; if you must, never set
-`trialEndsAt: null` (reserved pre-go-live sentinel — task 5.3 stamps a real clock over it), and log
+The change takes effect **immediately** — every gate resolves state per request. Console edits leave
+no audit trail (`billing_mutated` remains a registered audit kind, but nothing emits it now), so log
 the edit in a support ticket.
 
 ### 4. refunds
@@ -462,15 +461,16 @@ The script's planning layer is pure and unit-tested at
 ## support faq
 
 **How do I comp an account?**
-`/admin/customers` → the account → **set tier** (writes `subscriptionTier` plus
-`compedTier`/`compedAt`/`compedBy`/`compNote` provenance, audit-logged). Effective immediately. A
-later real Stripe subscription automatically supersedes the comp.
+Firestore console → `customers/{uid}` → write `subscriptionTier` plus the
+`compedTier`/`compedAt`/`compedBy`/`compNote` provenance. Effective immediately. A later real Stripe
+subscription automatically supersedes the comp. (The admin UI that did this was removed on
+2026-08-15 — see "trial extension / comp".)
 
 **How do I un-expire an account?**
-`/admin/customers` → **extend trial** (anchors at `max(current end, now)`, re-arms reminder emails,
-clears the alert mute when applicable — audit-logged). Access returns on the next request. If the
-account has a Stripe subscription, the subscription outranks the trial clock — fix it in Stripe
-instead.
+Firestore console → `customers/{uid}` → push `trialEndsAt` forward from `max(current end, now)`, and
+clear any `trialEmails.*` marker whose milestone is now back in the future. Access returns on the
+next request. If the account has a Stripe subscription, the subscription outranks the trial clock —
+fix it in Stripe instead.
 
 If they are simply paying, the honest path is to have them choose a plan: checkout works from an
 expired state exactly as it does from a trialing one, and it is what stamps site tiers correctly.
