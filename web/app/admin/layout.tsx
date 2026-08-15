@@ -210,12 +210,21 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}>
           {/* Resize handle — lg+ expanded only. Keyboard: arrows nudge 16px,
-              double-click resets to the default width. */}
+              double-click resets to the default width.
+
+              A *focusable* separator is a window-splitter widget, not decoration,
+              so ARIA requires aria-valuenow on it (axe `aria-required-attr`,
+              critical — it failed the a11y route smoke without it). The hook
+              clamps on set, so the reported value is always within the declared
+              range. Don't drop these when editing the handle. */}
           {!collapsed && (
             <div
               role="separator"
               aria-orientation="vertical"
               aria-label="resize sidebar"
+              aria-valuenow={sidebarWidth}
+              aria-valuemin={SIDEBAR_MIN_W}
+              aria-valuemax={SIDEBAR_MAX_W}
               tabIndex={0}
               onPointerDown={onResizeStart}
               onPointerMove={onResizeMove}
