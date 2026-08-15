@@ -61,11 +61,27 @@ const INTERNAL_ROUTES = new Set([
   '/api/admin/billing/customers/{uid}',
   '/api/admin/billing/overview',
   '/api/bug-report',
+  // hoot internals. The `/api/cortex/*` twins are the published back-compat
+  // aliases kept by the hoot rename (thin re-export route files) — they are
+  // undocumented for the same reason their canonical paths are.
+  '/api/hoot',
+  '/api/hoot/autonomous',
+  '/api/hoot/cancel-tool',
+  '/api/hoot/categorize',
+  '/api/hoot/escalation',
+  '/api/hoot/provision-key',
+  '/api/hoot/stop',
   '/api/cortex',
   '/api/cortex/autonomous',
+  '/api/cortex/cancel-tool',
   '/api/cortex/categorize',
   '/api/cortex/escalation',
   '/api/cortex/provision-key',
+  '/api/cortex/stop',
+  // site-admin-only hoot policy toggle (session surface, no api-key scope) plus
+  // its back-compat alias.
+  '/api/sites/{siteId}/hoot-settings',
+  '/api/sites/{siteId}/cortex-settings',
   '/api/cron/display-alerts',
   '/api/cron/status-ping',
   '/api/settings/llm-key',
@@ -75,7 +91,7 @@ const INTERNAL_ROUTES = new Set([
   '/api/cron/process-alerts',
   // internal-secret ingress for the `onTalonLogEventCreated` cloud function —
   // the only path for talon events the agent writes straight to the log
-  // collection. Same posture as /api/alerts/trigger and /api/cortex/autonomous.
+  // collection. Same posture as /api/alerts/trigger and /api/hoot/autonomous.
   '/api/talons/internal/match',
   '/api/legal/dmca',
   '/api/setup/generate-token',

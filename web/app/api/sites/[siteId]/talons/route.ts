@@ -79,7 +79,7 @@ const PROBLEM_TYPE_BY_STATUS: Readonly<Record<number, string>> = {
  * authorized — never from the request body.
  *
  * `via: 'ui'` is hardcoded: these are the dashboard/public-api routes. The
- * cortex tool path builds its own context with `via: 'cortex'` and the
+ * hoot tool path builds its own context with `via: 'cortex'` and the
  * originating `chatId`.
  */
 export function talonStoreContext(

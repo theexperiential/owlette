@@ -18,7 +18,7 @@
  *
  * The helper composes the existing primitives from `helpers/seed.ts`
  * (sites, machines, roosts, version history) rather than reinventing
- * them. Cortex chat conversations, alert rules, schedule presets, and the
+ * them. Hoot chat conversations, alert rules, schedule presets, and the
  * per-frame storyboard state are written inline because no existing
  * helper exposed exactly those shapes.
  *
@@ -86,7 +86,7 @@ export async function seedScreenshotFixtures(
     case 'deploy-roost-rolling':
       return seedDeployRoostRolling();
     case 'diagnose-cortex-chat':
-      return seedDiagnoseCortexChat();
+      return seedDiagnoseHootChat();
     case 'display-layout-editor':
       return seedDisplayLayoutEditor();
     case 'automate-schedule-editor':
@@ -1015,13 +1015,13 @@ async function seedDeployRoostRolling(): Promise<ScreenshotFixture> {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Cortex chat with a realistic incident-investigation conversation.
+ * Hoot chat with a realistic incident-investigation conversation.
  *
- * NOTE: relies on the cortex chat UI surfaces. The cortex regression
- * spec (`web/e2e/specs/cortex/cortex.spec.ts`) renders the same
+ * NOTE: relies on the hoot chat UI surfaces. The hoot regression
+ * spec (`web/e2e/specs/hoot/hoot.spec.ts`) renders the same
  * collection (`chats/...`) so the surface is known to exist.
  */
-async function seedDiagnoseCortexChat(): Promise<ScreenshotFixture> {
+async function seedDiagnoseHootChat(): Promise<ScreenshotFixture> {
   const siteId = 'site-A';
   const machineId = 'media-server-stage';
   const userId = TEST_USERS.admin.uid;
@@ -1032,7 +1032,7 @@ async function seedDiagnoseCortexChat(): Promise<ScreenshotFixture> {
   }, 5);
 
   const db = getAdminDb();
-  // User's LLM key bypass — without it the cortex page shows a no-key gate.
+  // User's LLM key bypass — without it the hoot page shows a no-key gate.
   await db.collection('users').doc(userId).collection('settings').doc('llm').set({
     provider: 'openai',
     model: 'gpt-4o-mini',

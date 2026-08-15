@@ -28,7 +28,7 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { ExecuteMachineCommandError } from '@/lib/actions/executeMachineCommand.server';
-import { resolveLlmConfig } from '@/lib/cortex-utils.server';
+import { resolveLlmConfig } from '@/lib/hoot-utils.server';
 import { dispatchAndAwait } from '@/lib/jobs/talonRunner.server';
 import { createModel } from '@/lib/llm';
 import logger from '@/lib/logger';

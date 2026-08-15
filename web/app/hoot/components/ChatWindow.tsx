@@ -1,0 +1,425 @@
+'use client';
+
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { type UIMessage } from 'ai';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { ArrowUp, Brain, X, Pencil } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserAvatar } from '@/components/UserAvatar';
+import { ToolCallCard } from './ToolCallCard';
+import { CopyButton } from './CopyButton';
+import { SynapticIndicator } from './SynapticIndicator';
+import { getRandomSuggestions } from '../data/suggestedQuestions';
+import { YOU_TRANSLATIONS } from '@/lib/dashboardConstants';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+
+function pickYouTranslation(messageId: string) {
+  let hash = 0;
+  for (let i = 0; i < messageId.length; i++) hash = (hash * 31 + messageId.charCodeAt(i)) | 0;
+  return YOU_TRANSLATIONS[Math.abs(hash) % YOU_TRANSLATIONS.length];
+}
+
+interface ChatWindowProps {
+  messages: UIMessage[];
+  isLoading: boolean;
+  hasApiKey?: boolean | null;
+  onOpenSettings?: () => void;
+  /** Approve/deny a pending tier-3 tool call by its approvalId. */
+  onToolApproval?: (approvalId: string, approved: boolean) => void;
+  /** Edit a prior user message and re-send, branching from that point. */
+  onEditMessage?: (messageId: string, newText: string) => void;
+  /** Where tool calls run, shown in the approval prompt (machine / "all machines"). */
+  approvalTargetLabel?: string;
+  /** Dispatched agent commands keyed by toolCallId → machineId → { commandId } — the cancel index. */
+  toolCommands?: Record<string, Record<string, { commandId: string }>>;
+  /** Cancel a running tool by its toolCallId (fans out to every machine it dispatched to). */
+  onCancelTool?: (toolCallId: string) => void;
+  /**
+   * toolCallIds with a cancel request in flight. Pending state lives in
+   * HootChatView (next to the async cancel handler); this window only
+   * derives a per-card boolean from it.
+   */
+  cancelPendingCommandIds?: Set<string>;
+  /** The active turn's runner died (server restarted) — show the interrupted notice. */
+  turnStale?: boolean;
+}
+
+export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage, approvalTargetLabel, toolCommands, onCancelTool, cancelPendingCommandIds, turnStale }: ChatWindowProps) {
+  const { user } = useAuth();
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isUserScrolledUp = useRef(false);
+  const [expandedImage, setExpandedImage] = useState<string | null>(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const suggestions = useMemo(() => getRandomSuggestions(4), []);
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditText('');
+  };
+
+  const saveEdit = (messageId: string) => {
+    const text = editText.trim();
+    if (!text) return;
+    onEditMessage?.(messageId, text);
+    cancelEdit();
+  };
+
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    // "Near bottom" = within 100px of the bottom edge
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
+    isUserScrolledUp.current = !nearBottom;
+    setShowScrollTop(el.scrollTop > 200);
+  };
+
+  const scrollToTop = () => {
+    topRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    if (!isUserScrolledUp.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, isLoading]);
+
+  // Close lightbox on Escape
+  useEffect(() => {
+    if (!expandedImage) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpandedImage(null);
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [expandedImage]);
+
+  if (messages.length === 0) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center max-w-md px-4">
+          <Brain className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
+          <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-2">hoot</h2>
+          <p className="text-sm text-muted-foreground">
+            debug, diagnose, and manage your remote machines.
+            i can run commands, check configs, and investigate issues you can&apos;t see from the dashboard.
+          </p>
+
+          <div className="mt-4 grid grid-cols-2 gap-2">
+              {suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.text}
+                  className="text-xs text-left px-3 py-2 rounded-md border border-border bg-secondary hover:bg-accent transition-colors text-muted-foreground cursor-pointer"
+                  onClick={() => {
+                    const input = document.querySelector<HTMLTextAreaElement>('[data-chat-input]');
+                    if (input) {
+                      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLTextAreaElement.prototype,
+                        'value'
+                      )?.set;
+                      nativeInputValueSetter?.call(input, suggestion.text);
+                      input.dispatchEvent(new Event('input', { bubbles: true }));
+                      input.focus();
+                    }
+                  }}
+                >
+                  {suggestion.text}
+                </button>
+              ))}
+            </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative flex-1 min-h-0 flex flex-col">
+      {/* Scroll to top button */}
+      <button
+        type="button"
+        onClick={scrollToTop}
+        aria-label="Back to top"
+        className={`absolute top-3 right-4 z-10 flex items-center justify-center h-8 min-w-8 px-2 rounded-full border border-border bg-background/80 backdrop-blur text-muted-foreground hover:text-foreground hover:bg-accent shadow-sm cursor-pointer transition-opacity duration-200 overflow-hidden group/scrolltop ${
+          showScrollTop ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}
+      >
+        <ArrowUp className="h-4 w-4 flex-shrink-0" />
+        <span className="max-w-0 group-hover/scrolltop:max-w-[120px] group-hover/scrolltop:ml-1.5 overflow-hidden whitespace-nowrap text-xs transition-[max-width,margin] duration-200">
+          back to top
+        </span>
+      </button>
+
+      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+      <div ref={topRef} />
+
+      {/* Lightbox overlay */}
+      {expandedImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 cursor-pointer"
+          onClick={() => setExpandedImage(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setExpandedImage(null)}
+            className="absolute top-4 right-4 h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors cursor-pointer"
+          >
+            <X className="h-5 w-5 text-white" />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={expandedImage}
+            alt="Expanded image"
+            className="max-w-[90vw] max-h-[90vh] rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+
+      {messages.map((message) => {
+        const isUser = message.role === 'user';
+        const isEditing = isUser && editingId === message.id;
+        return (
+        <div key={message.id} className="max-w-3xl mx-auto">
+          <div className={`group flex gap-3 ${isUser ? 'justify-end' : ''}`}>
+            {/* Hoot: avatar + rail column on the left */}
+            {!isUser && (
+              <div className="flex-shrink-0 flex flex-col items-center">
+                <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
+                  <Brain className="h-4 w-4 text-foreground" />
+                </div>
+                <div className="mt-1 flex-1 w-0.5 bg-accent-cyan/25" />
+              </div>
+            )}
+
+            {/* Content */}
+            <div className={`min-w-0 ${isUser ? 'max-w-[75%]' : 'flex-1'}`}>
+              <div className={`flex items-center gap-2 h-7 text-sm font-semibold text-foreground mb-1 ${isUser ? 'justify-end' : ''}`}>
+                {(() => {
+                  const fullText = message.parts
+                    .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+                    .map((p) => p.text)
+                    .join('\n\n')
+                    .trim();
+                  const copyBtn = fullText.length > 0 ? (
+                    <CopyButton
+                      value={fullText}
+                      className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-cyan focus-visible:outline-offset-2 rounded-sm transition-opacity"
+                    />
+                  ) : null;
+                  // Edit pencil — user messages only, hidden while streaming or
+                  // already editing. Branches the conversation on save.
+                  const editBtn = isUser && onEditMessage && !isLoading && !isEditing ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => { setEditText(fullText); setEditingId(message.id); }}
+                          aria-label="edit message"
+                          className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-cyan focus-visible:outline-offset-2 rounded-sm transition-opacity text-muted-foreground hover:text-foreground cursor-pointer"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>edit &amp; resend</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null;
+                  const label = isUser ? (() => {
+                    const t = pickYouTranslation(message.id);
+                    return (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="cursor-help">{t.text}</span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>you ({t.language})</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })() : <span>hoot</span>;
+                  return isUser ? <>{editBtn}{copyBtn}{label}</> : <>{label}{copyBtn}</>;
+                })()}
+              </div>
+
+              {isEditing ? (
+                <div className="flex flex-col gap-2">
+                  <textarea
+                    autoFocus
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        saveEdit(message.id);
+                      } else if (e.key === 'Escape') {
+                        cancelEdit();
+                      }
+                    }}
+                    rows={2}
+                    className="w-full resize-none rounded-lg border border-border bg-secondary px-3 py-2 text-sm leading-normal text-foreground text-left focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 focus:border-accent-cyan"
+                  />
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      className="text-xs px-3 py-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors cursor-pointer"
+                    >
+                      cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => saveEdit(message.id)}
+                      disabled={!editText.trim()}
+                      className="text-xs px-3 py-1.5 rounded-md bg-accent-cyan text-gray-900 font-medium hover:bg-accent-cyan/90 disabled:opacity-50 transition-colors cursor-pointer"
+                    >
+                      save &amp; resend
+                    </button>
+                  </div>
+                </div>
+              ) : (
+              <div className={isUser ? 'opacity-80 text-right' : ''}>
+              {/* Render parts (text + images + tool calls) */}
+              {message.parts.map((part, i) => {
+              if (part.type === 'text') {
+                return (
+                  <div
+                    key={i}
+                    className="hoot-markdown text-sm text-foreground prose prose-invert prose-sm max-w-none prose-code:before:content-none prose-code:after:content-none"
+                  >
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {part.text}
+                    </ReactMarkdown>
+                  </div>
+                );
+              }
+
+              if (part.type === 'file') {
+                const filePart = part as { type: 'file'; mediaType?: string; url?: string };
+                if (filePart.mediaType?.startsWith('image/') && filePart.url) {
+                  return (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      key={i}
+                      src={filePart.url}
+                      alt="Pasted image"
+                      className={`max-w-sm rounded-lg border border-border my-1 cursor-pointer hover:opacity-90 transition-opacity${isUser ? ' ml-auto' : ''}`}
+                      loading="lazy"
+                      onClick={() => setExpandedImage(filePart.url!)}
+                    />
+                  );
+                }
+                return null;
+              }
+
+              if (part.type.startsWith('tool-') || part.type === 'dynamic-tool') {
+                // v6: static tool parts have type 'tool-{name}', dynamic ones have type 'dynamic-tool' with toolName
+                const toolPart = part as {
+                  type: string; toolName?: string; toolCallId?: string;
+                  args?: unknown; input?: unknown; output?: unknown; errorText?: string; state?: string;
+                  approval?: { id: string; approved?: boolean };
+                };
+                const toolName = toolPart.type === 'dynamic-tool'
+                  ? (toolPart.toolName || 'unknown')
+                  : toolPart.type.slice(5); // strip 'tool-' prefix
+                const args = (toolPart.args || toolPart.input || {}) as Record<string, unknown>;
+                const state = toolPart.state;
+                // 'output-error' carries the message in `errorText` (not `output`);
+                // surface it as an { error } result so the card renders the failed state.
+                const result = state === 'output-error'
+                  ? { error: toolPart.errorText || 'tool execution failed' }
+                  : toolPart.output;
+                const hasResult = state === 'output-available' || state === 'output-error' || state === 'result' || toolPart.output !== undefined;
+
+                // Tier-3 approval gate (AI SDK human-in-the-loop):
+                //   approval-requested            → show approve/deny
+                //   approval-responded (denied) / output-denied → declined
+                //   approval-responded (approved) → resuming → loading until output
+                const awaitingApproval = state === 'approval-requested';
+                const denied = state === 'output-denied'
+                  || (state === 'approval-responded' && toolPart.approval?.approved === false);
+                const approvalId = toolPart.approval?.id;
+                const running = !hasResult && !awaitingApproval && !denied;
+
+                // Cancel is only offered for a running tool that has actually
+                // dispatched at least one agent command (its toolCallId is
+                // present in toolCommands with ≥1 machine entry). Server-side
+                // tools and not-yet-dispatched calls have no cancel affordance.
+                // The cancel fans out to every machine the call targeted, so it
+                // is keyed by the toolCallId (not a single commandId).
+                const toolCallId = running ? toolPart.toolCallId : undefined;
+                const cancellable = Boolean(
+                  toolCallId && Object.keys(toolCommands?.[toolCallId] ?? {}).length > 0,
+                );
+
+                return (
+                  <ToolCallCard
+                    key={i}
+                    toolName={toolName}
+                    args={args}
+                    result={hasResult ? result : undefined}
+                    isLoading={running}
+                    approvalState={awaitingApproval ? 'requested' : denied ? 'denied' : undefined}
+                    approvalTargetLabel={approvalTargetLabel}
+                    onApprove={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, true) : undefined}
+                    onDeny={awaitingApproval && approvalId ? () => onToolApproval?.(approvalId, false) : undefined}
+                    onCancel={cancellable && toolCallId && onCancelTool ? () => onCancelTool(toolCallId) : undefined}
+                    cancelPending={cancellable && toolCallId ? cancelPendingCommandIds?.has(toolCallId) : undefined}
+                  />
+                );
+              }
+
+              return null;
+              })}
+              </div>
+              )}
+            </div>
+
+            {/* User: avatar + rail column on the right */}
+            {isUser && (
+              <div className="flex-shrink-0 flex flex-col items-center">
+                <UserAvatar user={user} size="sm" />
+                <div className="mt-1 flex-1 w-0.5 bg-muted-foreground/25" />
+              </div>
+            )}
+          </div>
+        </div>
+        );
+      })}
+
+      {/* Interrupted-turn notice — the turn runner died (server restarted)
+          mid-turn; the next send repairs history and recovers tool results. */}
+      {turnStale && (
+        <div className="max-w-3xl mx-auto">
+          <p className="text-xs text-muted-foreground border-l-2 border-border pl-3">
+            this turn was interrupted (server restarted) — send a message to continue; completed tool results will be recovered.
+          </p>
+        </div>
+      )}
+
+      {/* Loading indicator */}
+      {isLoading && messages[messages.length - 1]?.role === 'user' && (
+        <div className="max-w-3xl mx-auto">
+          <div className="flex items-center gap-3 border-l-2 pl-3 border-accent-cyan/40">
+            <div className="flex-shrink-0">
+              <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
+                <Brain className="h-4 w-4 text-foreground" />
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <SynapticIndicator />
+              thinking...
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div ref={bottomRef} />
+      </div>
+    </div>
+  );
+}

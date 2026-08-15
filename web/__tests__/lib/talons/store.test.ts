@@ -27,7 +27,7 @@ jest.mock('firebase-admin/firestore', () => ({
 jest.mock('@/lib/auditLogClient', () => ({
   emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
 }));
-jest.mock('@/lib/cortex-utils.server', () => ({
+jest.mock('@/lib/hoot-utils.server', () => ({
   resolveLlmConfig: (...args: unknown[]) => mockResolveLlmConfig(...args),
 }));
 jest.mock('@/lib/webhookUrl', () => ({
@@ -493,7 +493,7 @@ describe('createTalon', () => {
 
   it('requires a usable site llm key for a visual_check condition', async () => {
     mockResolveLlmConfig.mockRejectedValue(
-      new Error('No site-level LLM API key configured. Autonomous cortex requires a site-level key.'),
+      new Error('No site-level LLM API key configured. Autonomous hoot requires a site-level key.'),
     );
 
     await expectStoreError(
@@ -512,7 +512,7 @@ describe('createTalon', () => {
     expect(fake.docs.size).toBe(0);
   });
 
-  it('requires a usable site llm key for a cortex output', async () => {
+  it('requires a usable site llm key for a hoot output', async () => {
     mockResolveLlmConfig.mockRejectedValue(new Error('Failed to decrypt site-level LLM API key.'));
 
     await expectStoreError(
@@ -551,7 +551,7 @@ describe('createTalon', () => {
     });
   });
 
-  it('records the cortex provenance when cortex authors the talon', async () => {
+  it('records the hoot provenance when hoot authors the talon', async () => {
     const created = await createTalon(
       db,
       ctxFor(ADMIN, { via: 'cortex', chatId: 'chat-7', auditActor: 'cortex:user_admin-uid' }),
@@ -564,7 +564,7 @@ describe('createTalon', () => {
   });
 
   // The pro gate lives in the store, not only in the API route, because the
-  // cortex tool path calls createTalon directly (talons wave 3, task 3.1).
+  // hoot tool path calls createTalon directly (talons wave 3, task 3.1).
   it('gates creation on the pro tier and writes nothing when the gate fails', async () => {
     mockRequirePro.mockRejectedValue(
       Object.assign(new Error('this feature requires the pro tier.'), { status: 403 }),
@@ -726,7 +726,7 @@ describe('updateTalon', () => {
     expect(storedTalon('t1').outputs).toEqual([{ type: 'email' }]);
   });
 
-  it('refuses an edit that adds a cortex output without a site llm key', async () => {
+  it('refuses an edit that adds a hoot output without a site llm key', async () => {
     seedTalon('t1');
     mockResolveLlmConfig.mockRejectedValue(new Error('No site-level LLM API key configured.'));
 

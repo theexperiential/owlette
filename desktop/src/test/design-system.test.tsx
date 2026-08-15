@@ -81,7 +81,7 @@ describe('globals.css port', () => {
 
   it('leaves out the web-only blocks that were stripped during the port', () => {
     for (const stripped of [
-      '.cortex-markdown',
+      '.hoot-markdown',
       '.machines-grid',
       '.site-row-cv',
       '@keyframes hero-enter',

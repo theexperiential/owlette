@@ -387,12 +387,12 @@ export async function r2UploadsHealth(): Promise<HealthCheckResult> {
   });
 }
 
-export async function cortexChatHealth(): Promise<HealthCheckResult> {
+export async function hootChatHealth(): Promise<HealthCheckResult> {
   const started = Date.now();
   return result('cortex_chat', started, true, {
     metadata: {
       placeholder: true,
-      reason: 'cortex SSE success-rate signal is not instrumented yet',
+      reason: 'hoot SSE success-rate signal is not instrumented yet',
     },
   });
 }
@@ -409,6 +409,6 @@ export async function runStatusHealthChecks(
     talonDispatchHealth(options),
     r2UploadsHealth(),
     firestoreHealth(),
-    cortexChatHealth(),
+    hootChatHealth(),
   ]);
 }

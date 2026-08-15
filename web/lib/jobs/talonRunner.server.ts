@@ -15,14 +15,14 @@
  *     not this file
  *
  * **Why this lives under `web/lib/jobs/`.** `invokeAsSystem` may only be
- * imported from `web/lib/cortex/**`, `web/lib/jobs/**`, or tests — enforced by
+ * imported from `web/lib/hoot/**`, `web/lib/jobs/**`, or tests — enforced by
  * the `no-restricted-imports` eslint rule in `web/eslint.config.mjs` and again
  * at ci time by `scripts/check-system-invoker-callers.mjs`. The talon engine,
  * its output executors, and the visual-check evaluator all live under
  * `web/lib/talons/` and call into this module rather than importing the invoker
  * themselves, which keeps the allowlist a boundary rather than a formality.
  *
- * Modelled on `@/lib/cortex/dispatch.server` — same privileged-write /
+ * Modelled on `@/lib/hoot/dispatch.server` — same privileged-write /
  * unprivileged-poll split, same non-terminal `running` marker handling.
  */
 
@@ -36,7 +36,7 @@ import {
 import {
   COMMAND_POLL_INTERVAL_MS,
   COMMAND_TIMEOUT_MS,
-} from '@/lib/cortex-utils.server';
+} from '@/lib/hoot-utils.server';
 
 /* -------------------------------------------------------------------------- */
 /*  types                                                                     */
@@ -161,7 +161,7 @@ export async function dispatchTalonCommand(
  * `agent/src/firebase_client.py` `_mark_command_running`). Running entries are
  * NON-terminal: skip them and keep polling, and never delete them — the agent's
  * terminal write overwrites the marker. Mirrors `pollForResult` in
- * `@/lib/cortex/dispatch.server` and `cortex-utils.server.ts`.
+ * `@/lib/hoot/dispatch.server` and `hoot-utils.server.ts`.
  */
 export async function pollTalonCommandResult(
   db: Firestore,

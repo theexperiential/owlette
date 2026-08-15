@@ -78,9 +78,9 @@ export const EXEMPT_ROUTES: readonly string[] = [
   // CLI polls for its own pairing result; token-flow state, no operator actor.
   'cli/device-code/poll',
   // internal-secret endpoint (CORTEX_INTERNAL_SECRET) invoked by the alert path; no user actor.
-  'cortex/autonomous',
+  'hoot/autonomous',
   // internal-secret + cron-secret escalation notifier; no user actor.
-  'cortex/escalation',
+  'hoot/escalation',
   // public DMCA § 512(c)(3) notice intake; touches no fleet, account, or security state.
   'legal/dmca',
   // login-time TOTP / backup-code verification (+ optional device-trust cookie); the sign-in ceremony.
@@ -133,13 +133,13 @@ export const KNOWN_GAPS: readonly string[] = [
   // operator (session) mints an owk_* api key with caller-chosen scopes; POST /api/keys is audited, this path is not.
   'cli/device-code/authorize',
   // chat turn: creates turn state and relays tool calls that can reach the fleet.
-  'cortex',
+  'hoot',
   // writes an LLM-generated title/category onto the caller's conversation (a rename, per the chat_mutated taxonomy).
-  'cortex/categorize',
+  'hoot/categorize',
   // queues a machine command that installs an LLM api key into the agent's config.
-  'cortex/provision-key',
+  'hoot/provision-key',
   // cancels an in-flight turn (writes the stream doc terminal state).
-  'cortex/stop',
+  'hoot/stop',
   // stores a pending TOTP secret against the account; `mfa/disable` is audited, enrollment is not.
   'mfa/setup',
   // enables MFA on the account and persists the encrypted secret + backup codes.

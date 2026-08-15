@@ -660,8 +660,8 @@ export async function requirePlatformAuthAndScope(
 }
 
 /**
- * site-scoped Cortex conversation auth + scope check. used by
- * `/api/cortex/conversations/*`.
+ * site-scoped Hoot conversation auth + scope check. used by
+ * `/api/hoot/conversations/*`.
  *
  * - session/id-token callers: must have site access; scope check is bypassed.
  * - api-key callers: must satisfy `chat=<siteId>:<permission>`. wildcard id

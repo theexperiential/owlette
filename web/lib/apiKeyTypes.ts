@@ -4,7 +4,7 @@ export type ApiKeyResource =
   | 'site'
   | 'machine'
   // api-sprint additions:
-  | 'chat' // site-scoped cortex conversations
+  | 'chat' // site-scoped hoot conversations
   | 'deploy' // site-scoped classic-installer deploys (distinct from the `deploy` permission on roosts)
   | 'process' // machine-scoped process management
   | 'user' // platform-wide user administration (superadmin)
@@ -108,8 +108,8 @@ export const SCOPE_PRESET_KEYS: readonly ApiKeyScopePreset[] = [
 
 /** Human-readable descriptions of each preset, shared across every scope picker. */
 export const SCOPE_PRESET_DESCRIPTIONS: Record<ApiKeyScopePreset, string> = {
-  readonly: 'read access to roosts, sites, machines, and cortex chats — no mutations',
-  publisher: 'read + write — can upload chunks, publish versions, and use cortex chats',
+  readonly: 'read access to roosts, sites, machines, and hoot chats — no mutations',
+  publisher: 'read + write — can upload chunks, publish versions, and use hoot chats',
   operator: 'read, write, deploy, rollback — full day-to-day operations',
   admin: 'full access including admin permissions',
 };

@@ -26,6 +26,7 @@ import {
 } from '@/lib/alerts/displayEventRouting';
 import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { hootInternalSecret } from '@/lib/hootInternalSecret';
 
 /**
  * POST /api/agent/alert
@@ -404,12 +405,12 @@ export const POST = withRateLimit(
           process: { name: resolvedProcessName, error: resolvedErrorMessage || '' },
         }).catch(console.error);
 
-        // Trigger autonomous Cortex investigation immediately (non-blocking)
-        const localCortexRunning = await isLocalCortexRunning(db, siteId, machineId);
-        if (localCortexRunning) {
-          console.log(`[agent/alert] Local Cortex is running on ${machineId} — skipping server-side investigation`);
+        // Trigger autonomous Hoot investigation immediately (non-blocking)
+        const localHootRunning = await isLocalHootRunning(db, siteId, machineId);
+        if (localHootRunning) {
+          console.log(`[agent/alert] Local Hoot is running on ${machineId} — skipping server-side investigation`);
         } else {
-          triggerAutonomousCortex(db, {
+          triggerAutonomousHoot(db, {
             siteId,
             machineId,
             machineName: machineId,
@@ -417,7 +418,7 @@ export const POST = withRateLimit(
             processName: resolvedProcessName,
             errorMessage: resolvedErrorMessage || '',
             agentVersion,
-          }).catch(err => console.error('[agent/alert] Cortex trigger failed:', err));
+          }).catch(err => console.error('[agent/alert] Hoot trigger failed:', err));
         }
 
         return NextResponse.json({ success: true, queued: true });
@@ -490,9 +491,9 @@ export const POST = withRateLimit(
 );
 
 /**
- * Check if local Cortex is running on a machine (fresh heartbeat within 30s).
+ * Check if local Hoot is running on a machine (fresh heartbeat within 30s).
  */
-async function isLocalCortexRunning(
+async function isLocalHootRunning(
   db: FirebaseFirestore.Firestore,
   siteId: string,
   machineId: string,
@@ -507,10 +508,12 @@ async function isLocalCortexRunning(
 
     if (!machineDoc.exists) return false;
 
-    const cortexStatus = machineDoc.data()?.cortexStatus;
-    if (!cortexStatus?.online) return false;
+    // Wire field: machines/{id}.cortexStatus.{online,lastHeartbeat} — written by
+    // the agent, so the stored name keeps its legacy spelling.
+    const hootStatus = machineDoc.data()?.cortexStatus;
+    if (!hootStatus?.online) return false;
 
-    const lastHeartbeat = cortexStatus.lastHeartbeat;
+    const lastHeartbeat = hootStatus.lastHeartbeat;
     if (!lastHeartbeat) return false;
 
     const heartbeatTime = lastHeartbeat.toDate
@@ -524,10 +527,10 @@ async function isLocalCortexRunning(
 }
 
 /**
- * Trigger autonomous Cortex investigation for a process event.
+ * Trigger autonomous Hoot investigation for a process event.
  * Checks if autonomous mode is enabled, then fires a non-blocking internal request.
  */
-async function triggerAutonomousCortex(
+async function triggerAutonomousHoot(
   db: FirebaseFirestore.Firestore,
   params: {
     siteId: string;
@@ -539,7 +542,7 @@ async function triggerAutonomousCortex(
     agentVersion: string;
   }
 ) {
-  const secret = process.env.CORTEX_INTERNAL_SECRET;
+  const secret = hootInternalSecret();
   if (!secret) return; // Not configured — autonomous mode unavailable
 
   // Quick check: is autonomous mode enabled for this site?
@@ -550,14 +553,14 @@ async function triggerAutonomousCortex(
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://owlette.app';
 
   // Fire and forget — don't await the response
-  fetch(`${baseUrl}/api/cortex/autonomous`, {
+  fetch(`${baseUrl}/api/hoot/autonomous`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-cortex-secret': secret,
     },
     body: JSON.stringify(params),
-  }).catch(err => console.error('[agent/alert] Autonomous Cortex request failed:', err));
+  }).catch(err => console.error('[agent/alert] Autonomous Hoot request failed:', err));
 }
 
 /**

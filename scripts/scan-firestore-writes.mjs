@@ -120,11 +120,11 @@ const PREFERENCE_ALLOWLIST = [
     rationale: 'user-self preferences merge (preferences, lastSiteId, lastMachineIds)',
   },
   {
-    // cortex chat history — per-user owned by the chat author. lives outside
+    // hoot chat history — per-user owned by the chat author. lives outside
     // the security-boundary lockdown scope; chat data is bounded by user uid
     // in firestore rules and is not a control-plane action.
     firestorePathPattern: /^chats\/[^/]+$/,
-    rationale: 'per-user cortex chat history — user-owned, no control-plane impact',
+    rationale: 'per-user hoot chat history — user-owned, no control-plane impact',
   },
 ];
 
@@ -271,7 +271,7 @@ const CONTROL_PLANE_RULES = [
     route: 'POST|DELETE /api/admin/installers[/{version}|/set-latest]',
   },
 
-  // ---- useCortex.ts ----
+  // ---- useHoot.ts ----
   // chat history is per-user data, allowlisted as preference (see PREFERENCE_ALLOWLIST).
   // any non-chat write here would be control-plane — none currently exist.
 
@@ -289,11 +289,11 @@ const CONTROL_PLANE_RULES = [
     route: 'PUT /api/admin/alerts',
   },
 
-  // ---- CortexPowerToggle.tsx ----
+  // ---- HootPowerToggle.tsx ----
   {
-    file: /^web\/app\/cortex\/components\/CortexPowerToggle\.tsx$/,
+    file: /^web\/app\/hoot\/components\/HootPowerToggle\.tsx$/,
     capability: 'MACHINE_CONFIG_WRITE',
-    route: 'PATCH /api/sites/{siteId}/machines/{machineId}/cortex-enabled',
+    route: 'PATCH /api/sites/{siteId}/machines/{machineId}/hoot-enabled',
   },
 
   // ---- logs/page.tsx ----

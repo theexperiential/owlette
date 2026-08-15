@@ -282,7 +282,7 @@ unlayered**, so they outrank Tailwind's utilities layer and a stray
 them in a layer and don't reorder them.
 
 Blocks dropped during the port because they belong to web-only surfaces:
-`.cortex-markdown`, `.machines-grid` / `.site-row-cv` (list virtualisation), and
+`.hoot-markdown`, `.machines-grid` / `.site-row-cv` (list virtualisation), and
 the `.hero-*` entrance keyframes (plus their now-orphaned
 `prefers-reduced-motion` overrides).
 

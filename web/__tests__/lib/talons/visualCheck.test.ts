@@ -35,7 +35,7 @@ jest.mock('@/lib/jobs/talonRunner.server', () => ({
   dispatchTalonCommand: jest.fn(),
   pollTalonCommandResult: jest.fn(),
 }));
-jest.mock('@/lib/cortex-utils.server', () => ({
+jest.mock('@/lib/hoot-utils.server', () => ({
   __esModule: true,
   resolveLlmConfig: (...args: unknown[]) => mockResolveLlmConfig(...args),
   COMMAND_POLL_INTERVAL_MS: 0,
@@ -319,7 +319,7 @@ describe('verdict failures', () => {
   it('reports a missing site llm key as verdict_error', async () => {
     mockDispatchAndAwait.mockResolvedValue(captureEntry());
     mockResolveLlmConfig.mockRejectedValue(
-      new Error('No site-level LLM API key configured. Autonomous cortex requires a site-level key.'),
+      new Error('No site-level LLM API key configured. Autonomous hoot requires a site-level key.'),
     );
 
     const error = await expectVisualCheckError(

@@ -29,7 +29,7 @@ import {
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'cortex' | 'security' | 'api' | 'billing' | 'danger';
+type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'hoot' | 'security' | 'api' | 'billing' | 'danger';
 
 const AVAILABLE_MODELS: Record<'anthropic' | 'openai', { id: string; name: string }[]> = {
   anthropic: [
@@ -56,7 +56,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[
   { id: 'profile', label: 'profile', icon: User },
   { id: 'preferences', label: 'preferences', icon: Bell },
   { id: 'alerts', label: 'alerts', icon: Bell },
-  { id: 'cortex', label: 'hoot', icon: Brain },
+  { id: 'hoot', label: 'hoot', icon: Brain },
   { id: 'security', label: 'security', icon: Shield },
   { id: 'api', label: 'api', icon: Code },
   { id: 'billing', label: 'billing', icon: CreditCard },
@@ -91,7 +91,9 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [healthAlerts, setHealthAlerts] = useState(true);
   const [processAlerts, setProcessAlerts] = useState(true);
   const [thresholdAlerts, setThresholdAlerts] = useState(true);
-  const [cortexAlerts, setCortexAlerts] = useState(true);
+  // Firestore keeps the legacy field name `cortexAlerts` (see web/lib/hoot/WIRE_NAMES.md);
+  // the local state carries the product name and is mapped at the wire boundary.
+  const [hootAlerts, setHootAlerts] = useState(true);
   const [displayAlerts, setDisplayAlerts] = useState(true);
   const [talonAlerts, setTalonAlerts] = useState(true);
   const [alertCcEmails, setAlertCcEmails] = useState<string[]>([]);
@@ -192,7 +194,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setHealthAlerts(userPreferences.healthAlerts);
       setProcessAlerts(userPreferences.processAlerts);
       setThresholdAlerts(userPreferences.thresholdAlerts);
-      setCortexAlerts(userPreferences.cortexAlerts);
+      setHootAlerts(userPreferences.cortexAlerts);
       setDisplayAlerts(userPreferences.displayAlerts);
       setTalonAlerts(userPreferences.talonAlerts);
       setAlertCcEmails(userPreferences.alertCcEmails || []);
@@ -361,12 +363,12 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         || healthAlerts !== userPreferences.healthAlerts
         || processAlerts !== userPreferences.processAlerts
         || thresholdAlerts !== userPreferences.thresholdAlerts
-        || cortexAlerts !== userPreferences.cortexAlerts
+        || hootAlerts !== userPreferences.cortexAlerts
         || displayAlerts !== userPreferences.displayAlerts
         || talonAlerts !== userPreferences.talonAlerts
         || JSON.stringify(alertCcEmails) !== JSON.stringify(userPreferences.alertCcEmails || []);
       if (prefsChanged) {
-        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, timeDisplayMode, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts, displayAlerts, talonAlerts, alertCcEmails });
+        await updateUserPreferences({ temperatureUnit, timezone, timeFormat, timeDisplayMode, healthAlerts, processAlerts, thresholdAlerts, cortexAlerts: hootAlerts, displayAlerts, talonAlerts, alertCcEmails });
       }
       if (showPasswordSection && (currentPassword || newPassword || confirmPassword)) {
         if (!validatePassword()) {
@@ -687,13 +689,13 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
 
                   <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
                     <div className="space-y-0.5">
-                      <Label htmlFor="cortexAlerts" className="text-white">hoot escalation alerts</Label>
+                      <Label htmlFor="hootAlerts" className="text-white">hoot escalation alerts</Label>
                       <p className="text-xs text-muted-foreground">receive email alerts when automated diagnostics can&apos;t resolve an issue</p>
                     </div>
                     <Switch
-                      id="cortexAlerts"
-                      checked={cortexAlerts}
-                      onCheckedChange={setCortexAlerts}
+                      id="hootAlerts"
+                      checked={hootAlerts}
+                      onCheckedChange={setHootAlerts}
                       disabled={loading}
                     />
                   </div>
@@ -818,8 +820,8 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                 </div>
               )}
 
-              {/* ─── Cortex ─── */}
-              {activeSection === 'cortex' && (
+              {/* ─── Hoot ─── */}
+              {activeSection === 'hoot' && (
                 <div className="space-y-5">
                   <div>
                     <h3 className="text-base font-medium text-white flex items-center gap-2">

@@ -236,7 +236,7 @@ export function TalonRunRow({ run }: TalonRunRowProps) {
         <Tooltip>
           <TooltipTrigger asChild>
             <Link
-              href={`/cortex/${encodeURIComponent(run.chatId)}`}
+              href={`/hoot/${encodeURIComponent(run.chatId)}`}
               className="flex flex-shrink-0 items-center gap-1 text-accent-cyan hover:underline"
             >
               <MessageSquare className="h-3 w-3" />

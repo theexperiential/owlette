@@ -10,7 +10,7 @@
  * webfonts settled — so callers must NOT also call `stabilize`.
  *
  * Empty views cannot overflow, so every content-driven route is seeded with
- * real rows first (machines, log events, cortex chats, roosts, an api key, a
+ * real rows first (machines, log events, hoot chats, roosts, an api key, a
  * webhook) via the existing helpers. A route asserted against a bare empty
  * state would be a green test that proves nothing.
  *
@@ -36,7 +36,7 @@ import {
 } from '../../helpers/seed';
 import {
   dedicatedUser,
-  seedCortexFixture,
+  seedHootFixture,
   seedDedicatedUser,
   seedLogEvents,
 } from '../../helpers/coverageSeed';
@@ -207,16 +207,16 @@ test.describe('mobile responsive acceptance — authenticated routes', () => {
     await assertNoHorizontalOverflow(page);
   });
 
-  // Task 3.3 owns /cortex, but the route does not overflow the DOCUMENT at 390px
+  // Task 3.3 owns /hoot, but the route does not overflow the DOCUMENT at 390px
   // today (this gate's measurement — see helpers/mobile.ts). If 3.3 is chasing an
   // inner-pane scroller, that needs its own assertion; this one asserts live so
   // 3.3 can't regress the document width.
-  test('/cortex does not scroll horizontally', async ({ page }) => {
-    await seedCortexFixture({ userId: TEST_USERS.admin.uid });
-    await page.goto('/cortex');
+  test('/hoot does not scroll horizontally', async ({ page }) => {
+    await seedHootFixture({ userId: TEST_USERS.admin.uid });
+    await page.goto('/hoot');
     // The seeded conversations live behind a collapsed sidebar at this width,
     // so anchor on the always-mounted composer + target selector instead.
-    await expect(page.getByLabel(/cortex target/i)).toBeVisible();
+    await expect(page.getByLabel(/hoot target/i)).toBeVisible();
     await expect(page.getByPlaceholder(/ask about this machine/i)).toBeVisible();
     await assertNoHorizontalOverflow(page);
   });

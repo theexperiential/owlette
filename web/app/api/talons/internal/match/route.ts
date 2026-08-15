@@ -17,7 +17,7 @@
  *
  * Not public, and not in `openapi.yaml`: it is registered in the
  * `INTERNAL_ROUTES` set of `scripts/validate-openapi.ts` alongside
- * `/api/cortex/autonomous` and `/api/alerts/trigger`.
+ * `/api/hoot/autonomous` and `/api/alerts/trigger`.
  *
  * Unlike the in-process taps this one AWAITS the matcher. The host here is not
  * a user-facing request whose latency matters — it is a cloud function with
@@ -34,6 +34,7 @@ import { NextResponse } from 'next/server';
 
 import { problem, problemFromError, problemValidation, ProblemType } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { hootInternalSecret } from '@/lib/hootInternalSecret';
 import { matchAndRunTalons } from '@/lib/talons/matcher.server';
 import { TALON_EVENT_TYPES, type TalonEventType } from '@/lib/talons/types';
 
@@ -91,7 +92,7 @@ async function readBody(
 
 export async function POST(request: NextRequest) {
   try {
-    const expected = process.env.CORTEX_INTERNAL_SECRET;
+    const expected = hootInternalSecret();
     if (!expected) {
       // Misconfiguration, not a rejection: without the secret this route cannot
       // authenticate anyone, and a 401 would send the caller hunting for a

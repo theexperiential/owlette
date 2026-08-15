@@ -7,6 +7,7 @@ import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, SEVERITY
 import { fireWebhooks } from '@/lib/webhookSender.server';
 import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { hootInternalSecret } from '@/lib/hootInternalSecret';
 
 /**
  * POST /api/alerts/trigger
@@ -14,7 +15,8 @@ import { apiError } from '@/lib/apiErrorResponse';
  * Internal endpoint called by the Cloud Function when a threshold alert rule
  * is breached. Sends email and/or webhook notifications.
  *
- * Authentication: x-internal-secret header matching CORTEX_INTERNAL_SECRET.
+ * Authentication: x-internal-secret header matching the hoot internal secret
+ * (deployed env var: CORTEX_INTERNAL_SECRET — see lib/hootInternalSecret.ts).
  *
  * Request body:
  * - siteId: string
@@ -31,7 +33,7 @@ export async function POST(request: NextRequest) {
   try {
     // Verify internal secret
     const secret = request.headers.get('x-internal-secret');
-    const expectedSecret = process.env.CORTEX_INTERNAL_SECRET;
+    const expectedSecret = hootInternalSecret();
 
     if (!expectedSecret || secret !== expectedSecret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -6,7 +6,7 @@
  * validation, site ownership transfer, api-key revocation, command sweep,
  * `users/{uid}.deletedAt` write). This action core re-exports the cascade
  * via the shared action-core call shape so callers (the route shim, future
- * cortex tools, scheduled jobs) all use the same entry point.
+ * hoot tools, scheduled jobs) all use the same entry point.
  *
  * Capability: `USER_DELETE` — wrapper-enforced (superadmin only).
  *

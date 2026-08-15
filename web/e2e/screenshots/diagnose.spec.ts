@@ -4,13 +4,13 @@
  * Output: `web/public/landing-screens/preview-diagnose.png`
  * Used by: the landing page diagnose capability card (wired up by wave 4.5).
  *
- * Drives the cortex chat into the `diagnose-cortex-chat` scenario: a seeded
+ * Drives the hoot chat into the `diagnose-cortex-chat` scenario: a seeded
  * conversation against `media-server-stage` showing a realistic incident
  * Q&A (crash diagnosis + recurrence prediction). The fixture also seeds the
- * user's LLM key bypass so the cortex page renders the chat surface
+ * user's LLM key bypass so the hoot page renders the chat surface
  * instead of the no-key gate.
  *
- * Cortex's page doesn't accept a conversation id via URL params, so we
+ * Hoot's page doesn't accept a conversation id via URL params, so we
  * click the seeded conversation in the sidebar to open it (its title is
  * deterministic — "03:14 incident — media-server-stage").
  */
@@ -35,7 +35,7 @@ test('diagnose capability card preview', async ({ page }) => {
     // timestamps render deterministically.
     await page.clock.install({ time: FIXED_NOW_MS });
 
-    await page.goto('/cortex');
+    await page.goto('/hoot');
 
     // Find the seeded conversation in the sidebar and click it to load
     // its persisted message history into the chat window.

@@ -28,8 +28,8 @@ const capabilities: { label: string; detail: string; expanded: string; preview: 
   },
   {
     label: 'diagnose',
-    detail: 'ask cortex why a process crashed, what driver is installed, or which machine just dropped offline.',
-    expanded: 'cortex turns plain-english questions into real diagnostic actions across your fleet. bring your own openai or anthropic key.',
+    detail: 'ask hoot why a process crashed, what driver is installed, or which machine just dropped offline.',
+    expanded: 'hoot turns plain-english questions into real diagnostic actions across your fleet. bring your own openai or anthropic key.',
     preview: '/landing-screens/preview-diagnose.png',
     icon: Brain,
   },

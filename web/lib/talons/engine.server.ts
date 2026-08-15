@@ -605,7 +605,7 @@ async function finalizeConditionError(
  * `sent` entry carries a chat id — a failed hoot output's `detail` is a failure
  * reason, and stamping that on the run as a chat id would produce a dead link.
  *
- * `outputs` may legitimately hold more than one cortex entry (nothing makes
+ * `outputs` may legitimately hold more than one hoot entry (nothing makes
  * output types unique), and each one opens its own chat. The run doc has a
  * single `chatId`, so the first dispatched chat is the one it points at; the
  * rest are still fully recorded in `outputs[].detail`.

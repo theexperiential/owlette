@@ -71,6 +71,20 @@ const nextConfig: NextConfig = {
         destination: '/docs/api',
         permanent: true,
       },
+      // cortex → hoot rename. `/hoot` is the canonical route; these keep
+      // bookmarks, shared conversation links, and anything that still points at
+      // the old path working. The API surface keeps its own back-compat aliases
+      // under `app/api/cortex/*` (see web/lib/hoot/WIRE_NAMES.md).
+      {
+        source: '/cortex',
+        destination: '/hoot',
+        permanent: true,
+      },
+      {
+        source: '/cortex/:chatId',
+        destination: '/hoot/:chatId',
+        permanent: true,
+      },
       {
         source: '/owlette',
         destination: '/docs',

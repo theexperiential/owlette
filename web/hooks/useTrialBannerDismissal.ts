@@ -5,7 +5,7 @@
  *
  * Stored on the shared per-user prefs doc — `users/{uid}/devicePrefs/global`,
  * the same document `useDevicePrefs`, `useDevicePrefFlag`, and
- * `useCortexSidebarPrefs` write to — under `trialBannerDismissedAt`, an epoch
+ * `useHootSidebarPrefs` write to — under `trialBannerDismissedAt`, an epoch
  * milliseconds number. Firestore, never `localStorage`: user state belongs to
  * the account, so dismissing the banner on a laptop must not make it reappear
  * on the desk machine an hour later.

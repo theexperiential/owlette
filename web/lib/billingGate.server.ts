@@ -84,7 +84,7 @@ export {
  *     (`commands/route.ts` splits its POST across both capabilities, so this
  *     set is what draws the line between them).
  *   - `MACHINE_CONFIG_WRITE` — display layout, reboot schedule, process
- *     config, cortex settings.
+ *     config, hoot settings.
  *   - `DEPLOYMENT_MANAGE` — deploy, retry, cancel, uninstall-by-deployment.
  *   - `DISTRIBUTION_MANAGE` — project distribution create / cancel / delete.
  *   - `TALON_MANAGE` — talon create / update / enable. Talons reach machines

@@ -5,7 +5,7 @@
  * hidden, section collapsed, etc.).
  *
  * Stored on the shared per-device prefs doc — `users/{uid}/devicePrefs/global`,
- * the same doc `useDevicePrefs` and `useCortexSidebarPrefs` write to — under
+ * the same doc `useDevicePrefs` and `useHootSidebarPrefs` write to — under
  * the caller-supplied `field`. Hydrated once on mount; afterwards local state
  * is the source of truth and writes are debounced.
  *

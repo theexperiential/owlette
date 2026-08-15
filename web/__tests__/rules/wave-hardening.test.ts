@@ -10,7 +10,7 @@
  *   - users/{uid} CREATE field constraints (role/sites/email/MFA defaults)
  *   - users/{uid} UPDATE allowlist (diff().affectedKeys().hasOnly([...]))
  *   - canAccessSite() deletedAt gating
- *   - cortex/active-chat per-machine agent write
+ *   - hoot/active-chat per-machine agent write
  *   - cortex-events agent create + update/delete denial
  *   - sites/{s}/machines/{m}/logs/{id} per-machine logs agent write
  *
@@ -416,11 +416,11 @@ describe('canAccessSite — deletedAt gating', () => {
 });
 
 /* ---------------------------------------------------------------------- */
-/*  Item 4: cortex/active-chat agent writes                               */
+/*  Item 4: hoot/active-chat agent writes                               */
 /* ---------------------------------------------------------------------- */
 
-describe('cortex/{docId} — per-machine agent writes', () => {
-  test('agent for machine X can write cortex/active-chat on machine X', async () => {
+describe('hoot/{docId} — per-machine agent writes', () => {
+  test('agent for machine X can write hoot/active-chat on machine X', async () => {
     const db = asAgent(SITE_A, MACHINE_X);
     await assertSucceeds(
       setDoc(
@@ -434,7 +434,7 @@ describe('cortex/{docId} — per-machine agent writes', () => {
     );
   });
 
-  test('agent for machine X cannot write cortex/* on machine Y (cross-machine)', async () => {
+  test('agent for machine X cannot write hoot/* on machine Y (cross-machine)', async () => {
     const db = asAgent(SITE_A, MACHINE_X);
     await assertFails(
       setDoc(
@@ -448,7 +448,7 @@ describe('cortex/{docId} — per-machine agent writes', () => {
     );
   });
 
-  test('agent for site A cannot write cortex/* on site B', async () => {
+  test('agent for site A cannot write hoot/* on site B', async () => {
     const db = asAgent(SITE_A, MACHINE_X);
     // SITE_B has its own machine, but the agent's site_id claim is A.
     await seedAsAdmin(async (adminDb) => {
@@ -470,7 +470,7 @@ describe('cortex/{docId} — per-machine agent writes', () => {
 /* ---------------------------------------------------------------------- */
 
 describe('cortex-events/{eventId} — agent create only, update/delete server-only', () => {
-  test('agent CAN create a cortex event in its own site', async () => {
+  test('agent CAN create a hoot event in its own site', async () => {
     const db = asAgent(SITE_A, MACHINE_X);
     await assertSucceeds(
       setDoc(doc(db, 'sites', SITE_A, 'cortex-events', 'evt-1'), {
@@ -481,7 +481,7 @@ describe('cortex-events/{eventId} — agent create only, update/delete server-on
     );
   });
 
-  test('agent in site A CANNOT create a cortex event in site B', async () => {
+  test('agent in site A CANNOT create a hoot event in site B', async () => {
     const db = asAgent(SITE_A, MACHINE_X);
     await assertFails(
       setDoc(doc(db, 'sites', SITE_B, 'cortex-events', 'evt-cross'), {
@@ -492,7 +492,7 @@ describe('cortex-events/{eventId} — agent create only, update/delete server-on
     );
   });
 
-  test('agent CANNOT update an existing cortex event (server-only)', async () => {
+  test('agent CANNOT update an existing hoot event (server-only)', async () => {
     await seedAsAdmin(async (adminDb) => {
       await setDoc(doc(adminDb, 'sites', SITE_A, 'cortex-events', 'evt-existing'), {
         machineId: MACHINE_X,
@@ -509,7 +509,7 @@ describe('cortex-events/{eventId} — agent create only, update/delete server-on
     );
   });
 
-  test('agent CANNOT delete a cortex event (server-only)', async () => {
+  test('agent CANNOT delete a hoot event (server-only)', async () => {
     await seedAsAdmin(async (adminDb) => {
       await setDoc(doc(adminDb, 'sites', SITE_A, 'cortex-events', 'evt-existing'), {
         machineId: MACHINE_X,

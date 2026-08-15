@@ -26,7 +26,7 @@ const mockGetResend = jest.fn();
 const mockValidateWebhookUrl = jest.fn();
 const mockWebhookDeliveryPausedBy = jest.fn();
 const mockAlertEmailsDisabled = jest.fn();
-const mockRunCortexOutput = jest.fn();
+const mockRunHootOutput = jest.fn();
 const mockFetch = jest.fn();
 
 let correlationCounter = 0;
@@ -106,18 +106,18 @@ jest.mock('@/lib/billing/trialLifecycle.server', () => ({
   __esModule: true,
   alertEmailsDisabled: (...args: unknown[]) => mockAlertEmailsDisabled(...args),
 }));
-jest.mock('@/lib/cortex-utils.server', () => ({
+jest.mock('@/lib/hoot-utils.server', () => ({
   __esModule: true,
   resolveLlmConfig: jest.fn(),
   COMMAND_POLL_INTERVAL_MS: 0,
   COMMAND_TIMEOUT_MS: 30000,
 }));
 // The hoot output owns a detached turn runner of its own (access re-resolution,
-// chat creation, turn lock, tee cancel) — all pinned in `cortexOutput.test.ts`.
+// chat creation, turn lock, tee cancel) — all pinned in `hootOutput.test.ts`.
 // Here it is mocked at the module boundary so these tests stay about the engine.
-jest.mock('@/lib/talons/cortexOutput.server', () => ({
+jest.mock('@/lib/talons/hootOutput.server', () => ({
   __esModule: true,
-  runCortexOutput: (...args: unknown[]) => mockRunCortexOutput(...args),
+  runHootOutput: (...args: unknown[]) => mockRunHootOutput(...args),
 }));
 jest.mock('@/lib/logger', () => ({
   __esModule: true,
@@ -345,7 +345,7 @@ beforeEach(() => {
   // `*Once` values survive into the next test unless they are reset.
   mockDispatchAndAwait.mockReset();
   mockEvaluateVisualCheck.mockReset();
-  mockRunCortexOutput.mockResolvedValue({ status: 'sent', chatId: 'talon_1755172800000_r1' });
+  mockRunHootOutput.mockResolvedValue({ status: 'sent', chatId: 'talon_1755172800000_r1' });
   mockGetResend.mockReturnValue(null);
   mockGetSiteAlertRecipients.mockResolvedValue([]);
   mockAlertEmailsDisabled.mockReturnValue(false);
@@ -606,7 +606,7 @@ describe('outputs', () => {
 
     const summaries = await runTalon(db, talon, { siteId: SITE, machineId: 'm1', now: NOW });
 
-    expect(mockRunCortexOutput).toHaveBeenCalledWith(db, {
+    expect(mockRunHootOutput).toHaveBeenCalledWith(db, {
       siteId: SITE,
       talon,
       runId: summaries[0].runId,
@@ -622,7 +622,7 @@ describe('outputs', () => {
     const talon = seedTalon('t1', {
       outputs: [{ type: 'cortex', directive: 'investigate the black screen' }],
     });
-    mockRunCortexOutput.mockResolvedValue({ status: 'sent', chatId: 'talon_42_run-a' });
+    mockRunHootOutput.mockResolvedValue({ status: 'sent', chatId: 'talon_42_run-a' });
 
     await runTalon(db, talon, { siteId: SITE, now: NOW });
 
@@ -637,7 +637,7 @@ describe('outputs', () => {
       chatId: 'authoring-chat',
       outputs: [{ type: 'cortex', directive: 'investigate the black screen' }],
     });
-    mockRunCortexOutput.mockResolvedValue({
+    mockRunHootOutput.mockResolvedValue({
       status: 'failed',
       detail: 'creator_access_revoked',
       error: 'You do not have access to this site',

@@ -237,7 +237,7 @@ describe('default limits', () => {
     }
   });
 
-  it('grants system limits >= user limits for every capability (cortex headroom)', () => {
+  it('grants system limits >= user limits for every capability (hoot headroom)', () => {
     for (const cap of Object.values(Capability)) {
       expect(SYSTEM_LIMITS[cap].perMinute).toBeGreaterThanOrEqual(
         USER_LIMITS[cap].perMinute

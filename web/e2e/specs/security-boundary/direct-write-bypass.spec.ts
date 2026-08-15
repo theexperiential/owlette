@@ -127,7 +127,7 @@ test('live dev rejects direct browser control-plane writes post-lockdown', async
     );
 
     await expectPermissionDenied(
-      'machine cortex toggle direct write denied',
+      'machine hoot toggle direct write denied',
       () =>
         updateDoc(doc(clientDb, 'sites', ids.siteId, 'machines', ids.machineId), {
           cortexEnabled: false,

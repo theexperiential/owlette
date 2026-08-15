@@ -36,7 +36,7 @@ const NAV_ITEMS = [
   },
   {
     name: 'hoot',
-    href: '/cortex',
+    href: '/hoot',
     icon: Brain,
     description: 'ask hoot about your machines',
   },

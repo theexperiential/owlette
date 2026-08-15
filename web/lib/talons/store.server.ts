@@ -1,14 +1,14 @@
 /**
  * Talon store — the one write path for `sites/{siteId}/talons/{talonId}`.
  *
- * Every talon mutation (UI route, cortex tool call, admin tooling) goes
+ * Every talon mutation (UI route, hoot tool call, admin tooling) goes
  * through these functions so that validation, the command-output privilege
  * gate, the SSRF check on webhook outputs, the site-LLM-key precondition,
  * `nextRunAt` stamping and the audit emit can never be sidestepped by adding
  * a new caller.
  *
  * Storage shape: ONE DOCUMENT PER TALON, never an array on a settings doc.
- * Talons are edited concurrently by the dashboard and by cortex; a whole-array
+ * Talons are edited concurrently by the dashboard and by hoot; a whole-array
  * write would silently clobber the other writer's edit. Per-doc writes also
  * let the cron sweep query `enabled == true && nextRunAt <= now` across the
  * `talons` collection group (see the composite index in firestore.indexes.json).
@@ -31,7 +31,7 @@ import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { emitMutation } from '@/lib/auditLogClient';
 import { requirePro } from '@/lib/billingGate.server';
 import { Capability, hasCapability, type Actor } from '@/lib/capabilities';
-import { resolveLlmConfig } from '@/lib/cortex-utils.server';
+import { resolveLlmConfig } from '@/lib/hoot-utils.server';
 import logger from '@/lib/logger';
 import { validateWebhookUrl } from '@/lib/webhookUrl';
 import { computeNextRunAt } from './schedule.server';
@@ -125,7 +125,7 @@ export interface TalonStoreContext {
   auditActor: string;
   /** How the talon is being authored. Persisted as `createdVia` on create. */
   via: TalonCreatedVia;
-  /** Cortex-authored talons only — the chat the talon came from. */
+  /** Hoot-authored talons only — the chat the talon came from. */
   chatId?: string;
   /** Audit `endpoint` attribute. Defaults to the canonical talons path. */
   endpoint?: string;
@@ -191,7 +191,7 @@ function validateOrThrow(input: unknown): ValidatedTalonInput {
  * Talons are a pro-tier feature.
  *
  * The gate lives here, not only in `POST /api/sites/{siteId}/talons`, because
- * the cortex tool path calls `createTalon` directly and would otherwise mint
+ * the hoot tool path calls `createTalon` directly and would otherwise mint
  * talons for a core-tier or locked-out site. The route keeps its own
  * pre-check so the http layer can answer before it parses a body; the second
  * call costs one more billing-snapshot read on a path that already does
@@ -254,7 +254,7 @@ async function assertWebhookUrlsAreSafe(outputs: TalonOutput[]): Promise<void> {
 }
 
 /**
- * Visual-check conditions and cortex outputs both call the model with no user
+ * Visual-check conditions and hoot outputs both call the model with no user
  * in the loop, which requires a site-level key (`autonomous: true` skips the
  * per-user key by design). `resolveLlmConfig` throws when the key is absent or
  * no longer decryptable — catching it here turns "the talon silently fails on

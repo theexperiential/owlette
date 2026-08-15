@@ -31,7 +31,7 @@
  *   6. `agent_refresh_tokens` where
  *      `createdBy == uid`                  — disables the user's agents
  *   7. `chats/{chatId}` where
- *      `userId == uid`                     — Cortex conversation history
+ *      `userId == uid`                     — Hoot conversation history
  *   8. Firebase Storage `users/{uid}/*`    — avatar / user-scoped assets
  *
  * Finally — after the Firestore cascade — the Firebase Auth user is

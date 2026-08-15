@@ -134,7 +134,7 @@ tags:
     description: |
       Automations that watch a site and act on it — a trigger (schedule,
       metric threshold, or event), an optional condition, and one or more
-      outputs (email, webhook, cortex directive, process command).
+      outputs (email, webhook, hoot directive, process command).
   - name: Logs
     description: Query activity logs.
   - name: Audit Log
@@ -154,7 +154,7 @@ tags:
       roost request. See [authentication.md](/docs/api/authentication).
   - name: Installer
     description: Agent installer versions, platform system presets, and TouchDesigner builds.
-  - name: Cortex
+  - name: Hoot
     description: AI-powered chat and tool execution.
   - name: Users
     description: Manage platform users — roles, site assignments, and account provisioning.
@@ -187,8 +187,8 @@ x-tagGroups:
     tags: [Deployments, Presets, Installer]
   - name: roost
     tags: [Roost, Versions, Chunks, Audit Log]
-  - name: cortex
-    tags: [Cortex]
+  - name: hoot
+    tags: [Hoot]
   - name: monitoring
     tags: [Logs, Alerts, Talons, Quotas]
   - name: access & identity
@@ -1380,15 +1380,118 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
 
   # ──────────────────────────────────────────────────────────────────────
-  # Roost (project distribution v2) — content-addressed sync
+  # hoot — AI chat conversations (canonical) + the deprecated /api/cortex aliases
   # ──────────────────────────────────────────────────────────────────────
+  /api/hoot/conversations:
+    get:
+      operationId: listHootConversations
+      tags: [Hoot]
+      summary: List Hoot conversations
+      description: |
+        List Hoot conversations the caller can see. API-key callers are
+        filtered to sites where the key holds `chat=<siteId>:read` or
+        `chat=*:read`. Pass `siteId` to narrow the page to one site.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - name: siteId
+          in: query
+          required: false
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,128}$' }
+        - $ref: '#/components/parameters/PageSizeQuery'
+        - $ref: '#/components/parameters/PageTokenQuery'
+        - name: includeDeleted
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: owner
+          in: query
+          required: false
+          description: Set to `me` to filter to conversations owned by the caller.
+          schema: { type: string, enum: [me] }
+      responses:
+        '200':
+          description: Conversation page
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      conversations:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/HootConversationSummary'
+                      next_page_token: { type: string }
+                      nextPageToken:
+                        type: string
+                        deprecated: true
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '429': { $ref: '#/components/responses/Problem429' }
+    post:
+      operationId: createHootConversation
+      tags: [Hoot]
+      summary: Create a Hoot conversation
+      description: |
+        Create a new Hoot conversation. Provide `machineId` to pin the
+        conversation to one machine, or omit it for site-wide mode. Requires
+        `chat=<siteId>:write` and `Idempotency-Key`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [siteId]
+              properties:
+                siteId: { type: string }
+                machineId: { type: string }
+                title: { type: string, maxLength: 100 }
+                initial_message:
+                  type: object
+                  required: [role, content]
+                  properties:
+                    role: { type: string, enum: [user] }
+                    content: { type: string }
+      responses:
+        '201':
+          description: Conversation created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    $ref: '#/components/schemas/HootConversation'
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '429': { $ref: '#/components/responses/Problem429' }
+
   /api/cortex/conversations:
     get:
+      deprecated: true
       operationId: listCortexConversations
-      tags: [Cortex]
-      summary: List Cortex conversations
+      tags: [Hoot]
+      summary: "[deprecated] List Hoot conversations — use /api/hoot/conversations"
       description: |
-        List Cortex conversations the caller can see. API-key callers are
+        List Hoot conversations the caller can see. API-key callers are
         filtered to sites where the key holds `chat=<siteId>:read` or
         `chat=*:read`. Pass `siteId` to narrow the page to one site.
       security:
@@ -1436,11 +1539,12 @@ paths:
         '403': { $ref: '#/components/responses/Problem403' }
         '429': { $ref: '#/components/responses/Problem429' }
     post:
+      deprecated: true
       operationId: createCortexConversation
-      tags: [Cortex]
-      summary: Create a Cortex conversation
+      tags: [Hoot]
+      summary: "[deprecated] Create a Hoot conversation — use /api/hoot/conversations"
       description: |
-        Create a new Cortex conversation. Provide `machineId` to pin the
+        Create a new Hoot conversation. Provide `machineId` to pin the
         conversation to one machine, or omit it for site-wide mode. Requires
         `chat=<siteId>:write` and `Idempotency-Key`.
       security:
@@ -1484,16 +1588,16 @@ paths:
         '422': { $ref: '#/components/responses/Problem422' }
         '429': { $ref: '#/components/responses/Problem429' }
 
-  /api/cortex/conversations/{conversationId}:
+  /api/hoot/conversations/{conversationId}:
     parameters:
       - name: conversationId
         in: path
         required: true
         schema: { type: string }
     post:
-      operationId: sendCortexConversationMessage
-      tags: [Cortex]
-      summary: Send a Cortex message and stream the reply
+      operationId: sendHootConversationMessage
+      tags: [Hoot]
+      summary: Send a Hoot message and stream the reply
       description: |
         Append one user message and stream the assistant reply. The response is
         `text/plain; charset=utf-8` with `X-Vercel-AI-Data-Stream: v1` and
@@ -1501,7 +1605,7 @@ paths:
 
         Public send accepts only `role` and `content`; create a new
         conversation to change the target machine. API-key callers are capped
-        to read-only Cortex tools during streamed replies.
+        to read-only Hoot tools during streamed replies.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -1532,22 +1636,22 @@ paths:
         '409': { $ref: '#/components/responses/Problem409' }
         '422': { $ref: '#/components/responses/Problem422' }
         '423':
-          description: Cortex disabled on target machine
+          description: Hoot disabled on target machine
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
         '429': { $ref: '#/components/responses/Problem429' }
         '503':
-          description: Cortex or target machine unavailable
+          description: Hoot or target machine unavailable
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
     patch:
-      operationId: renameCortexConversation
-      tags: [Cortex]
-      summary: Rename a Cortex conversation
+      operationId: renameHootConversation
+      tags: [Hoot]
+      summary: Rename a Hoot conversation
       description: |
         Update the conversation title. Other fields are rejected with
         `forbidden_field`. Requires `chat=<siteId>:write`.
@@ -1588,9 +1692,9 @@ paths:
         '409': { $ref: '#/components/responses/Problem409' }
         '422': { $ref: '#/components/responses/Problem422' }
     delete:
-      operationId: deleteCortexConversation
-      tags: [Cortex]
-      summary: Soft-delete a Cortex conversation
+      operationId: deleteHootConversation
+      tags: [Hoot]
+      summary: Soft-delete a Hoot conversation
       description: |
         Soft-delete a conversation. A repeated delete returns 200 with
         `alreadyDeleted: true`.
@@ -1618,6 +1722,146 @@ paths:
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
 
+  /api/cortex/conversations/{conversationId}:
+    parameters:
+      - name: conversationId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      deprecated: true
+      operationId: sendCortexConversationMessage
+      tags: [Hoot]
+      summary: "[deprecated] Send a Hoot message and stream the reply — use /api/hoot/conversations/{conversationId}"
+      description: |
+        Append one user message and stream the assistant reply. The response is
+        `text/plain; charset=utf-8` with `X-Vercel-AI-Data-Stream: v1` and
+        AI-SDK line-prefixed frames (`0:"delta"`, `d:{...}`, `3:"err"`).
+
+        Public send accepts only `role` and `content`; create a new
+        conversation to change the target machine. API-key callers are capped
+        to read-only Hoot tools during streamed replies.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/RequiredIdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role, content]
+              additionalProperties: false
+              properties:
+                role: { type: string, enum: [user] }
+                content: { type: string }
+      responses:
+        '200':
+          description: AI-SDK text stream
+          content:
+            text/plain:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+        '423':
+          description: Hoot disabled on target machine
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '429': { $ref: '#/components/responses/Problem429' }
+        '503':
+          description: Hoot or target machine unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    patch:
+      deprecated: true
+      operationId: renameCortexConversation
+      tags: [Hoot]
+      summary: "[deprecated] Rename a Hoot conversation — use /api/hoot/conversations/{conversationId}"
+      description: |
+        Update the conversation title. Other fields are rejected with
+        `forbidden_field`. Requires `chat=<siteId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              additionalProperties: false
+              properties:
+                title: { type: string, maxLength: 100 }
+      responses:
+        '200':
+          description: Renamed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      conversationId: { type: string }
+                      title: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '422': { $ref: '#/components/responses/Problem422' }
+    delete:
+      deprecated: true
+      operationId: deleteCortexConversation
+      tags: [Hoot]
+      summary: "[deprecated] Soft-delete a Hoot conversation — use /api/hoot/conversations/{conversationId}"
+      description: |
+        Soft-delete a conversation. A repeated delete returns 200 with
+        `alreadyDeleted: true`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      responses:
+        '200':
+          description: Soft-deleted or already deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  data:
+                    type: object
+                    properties:
+                      conversationId: { type: string }
+                      alreadyDeleted: { type: boolean }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Roost (project distribution v2) — content-addressed sync
+  # ──────────────────────────────────────────────────────────────────────
   /api/chunks/check:
     post:
       operationId: checkChunks
@@ -4620,7 +4864,7 @@ paths:
       description: |
         Canonical site-scoped command endpoint. Restricted to an
         operator-safe allowlist covering machine power, screenshots,
-        live view, display topology, process commands, cortex MCP tool
+        live view, display topology, process commands, hoot MCP tool
         calls, and Owlette updates. Requires `machine=<machineId>:write`
         for api-key callers and an idempotency key for all callers;
         session/id-token callers fall through to site membership.
@@ -4986,14 +5230,14 @@ paths:
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
-  /api/sites/{siteId}/machines/{machineId}/cortex-enabled:
+  /api/sites/{siteId}/machines/{machineId}/hoot-enabled:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
       - $ref: '#/components/parameters/MachineIdSitePath'
     patch:
-      operationId: setMachineCortexEnabled
+      operationId: setMachineHootEnabled
       tags: [Machines]
-      summary: toggle Cortex tool dispatch for a machine
+      summary: toggle Hoot tool dispatch for a machine
       description: Requires `machine=<machineId>:write`.
       security:
         - apiKey: []
@@ -5009,7 +5253,38 @@ paths:
               properties:
                 enabled: { type: boolean }
       responses:
-        '200': { description: Cortex flag updated. }
+        '200': { description: Hoot flag updated. }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+  /api/sites/{siteId}/machines/{machineId}/cortex-enabled:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/MachineIdSitePath'
+    patch:
+      deprecated: true
+      operationId: setMachineCortexEnabled
+      tags: [Machines]
+      summary: "[deprecated] toggle Hoot tool dispatch for a machine — use /api/sites/{siteId}/machines/{machineId}/hoot-enabled"
+      description: Requires `machine=<machineId>:write`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        '200': { description: Hoot flag updated. }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
         '403': { $ref: '#/components/responses/Problem403' }
@@ -6920,8 +7195,18 @@ components:
       example:
         error: Description of what went wrong
 
+    HootConversationSummary:
+      description: Metadata for a single hoot conversation, without its message history.
+      allOf:
+        - $ref: '#/components/schemas/CortexConversationSummary'
+
+    HootConversation:
+      description: A hoot conversation including its full message history.
+      allOf:
+        - $ref: '#/components/schemas/CortexConversation'
+
     CortexConversationSummary:
-      description: Metadata for a single Cortex conversation, without its message history.
+      description: Metadata for a single Hoot conversation, without its message history.
       type: object
       properties:
         conversationId: { type: string }
@@ -6935,7 +7220,7 @@ components:
         messageCount: { type: integer }
 
     CortexConversation:
-      description: A Cortex conversation including its full message history.
+      description: A Hoot conversation including its full message history.
       allOf:
         - $ref: '#/components/schemas/CortexConversationSummary'
         - type: object

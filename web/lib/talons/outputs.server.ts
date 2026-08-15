@@ -46,11 +46,11 @@ import { ENV_LABEL, FROM_EMAIL, getResend, isProduction } from '@/lib/resendClie
 import { detectPlatform, formatForPlatform, type WebhookPayload } from '@/lib/webhookSender.server';
 import { signPayload } from '@/lib/webhookSignature';
 import { validateWebhookUrl } from '@/lib/webhookUrl';
-import { runCortexOutput } from './cortexOutput.server';
+import { runHootOutput } from './hootOutput.server';
 import type { StoredTalon } from './store.server';
 import type {
   TalonCommandOutput,
-  TalonCortexOutput,
+  TalonHootOutput,
   TalonOutput,
   TalonRunCondition,
   TalonRunOutput,
@@ -125,7 +125,7 @@ export async function executeTalonOutput(
       case 'command':
         return await executeCommandOutput(ctx, output);
       case 'cortex':
-        return await executeCortexOutput(ctx, output);
+        return await executeHootOutput(ctx, output);
     }
   } catch (error) {
     // Belt and braces: an executor that throws anyway must still produce a
@@ -539,7 +539,7 @@ function foldCommandAttempts(attempts: CommandAttempt[]): TalonRunOutput {
 }
 
 /* -------------------------------------------------------------------------- */
-/*  hoot (cortex)                                                             */
+/*  hoot (hoot)                                                             */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -548,13 +548,13 @@ function foldCommandAttempts(attempts: CommandAttempt[]): TalonRunOutput {
  * list can link straight to the conversation the talon produced.
  *
  * `sent` means the turn was DISPATCHED, not that it finished: the runner is
- * detached and outlives this call by design (see `cortexOutput.server.ts`).
+ * detached and outlives this call by design (see `hootOutput.server.ts`).
  */
-async function executeCortexOutput(
+async function executeHootOutput(
   ctx: TalonOutputContext,
-  output: TalonCortexOutput,
+  output: TalonHootOutput,
 ): Promise<TalonRunOutput> {
-  const result = await runCortexOutput(ctx.db, {
+  const result = await runHootOutput(ctx.db, {
     siteId: ctx.siteId,
     talon: ctx.talon,
     runId: ctx.runId,

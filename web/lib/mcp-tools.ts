@@ -330,7 +330,7 @@ const talonOutputItemSchema = {
     type: {
       type: 'string',
       enum: ['email', 'webhook', 'cortex', 'command'],
-      description: 'email = notify the site alert recipients; webhook = POST the run payload; cortex = hand a directive to hoot; command = queue process control on the machines in scope.',
+      description: 'email = notify the site alert recipients; webhook = POST the run payload; cortex = hand a directive to hoot (the wire value stays "cortex"); command = queue process control on the machines in scope.',
     },
     url: {
       type: 'string',
@@ -338,7 +338,7 @@ const talonOutputItemSchema = {
     },
     directive: {
       type: 'string',
-      description: 'cortex outputs only — what hoot should do when the talon fires, 1000 characters or fewer.',
+      description: 'hoot outputs (type "cortex") only — what hoot should do when the talon fires, 1000 characters or fewer.',
     },
     commandType: {
       type: 'string',

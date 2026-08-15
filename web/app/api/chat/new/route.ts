@@ -1,7 +1,7 @@
 /**
- * POST /api/cortex/conversations — create a Cortex conversation.
+ * POST /api/hoot/conversations — create a Hoot conversation.
  *
- * `/api/chat/new` remains a compatibility alias; `/api/cortex/conversations`
+ * `/api/chat/new` remains a compatibility alias; `/api/hoot/conversations`
  * is the canonical public API path as of public-api Wave 2.9.
  *
  * Required scope: `chat=<siteId>:write`. Idempotent via `Idempotency-Key`.
@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
       const content = im.content;
       if (typeof role !== 'string' || !VALID_ROLES.includes(role as ChatRole)) {
         return problemValidation(
-          'initial_message.role must be `user` for public Cortex conversations',
+          'initial_message.role must be `user` for public Hoot conversations',
           { 'body.initial_message.role': ['invalid role'] },
         );
       }

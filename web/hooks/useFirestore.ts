@@ -280,7 +280,7 @@ export interface Machine {
   online: boolean;
   agent_version?: string;  // Agent version for update detection (e.g., "2.0.0")
   machineTimezone?: string;  // IANA timezone (e.g. "America/Los_Angeles") from agent's tzlocal lookup. Undefined if the agent has not yet deployed the IANA-aware build.
-  cortexEnabled?: boolean;  // User-controlled kill switch for Cortex tool-call delivery. Undefined/true = enabled.
+  cortexEnabled?: boolean;  // User-controlled kill switch for Hoot tool-call delivery. Undefined/true = enabled.
   // The `reboot*` fields below are agent-written wire/storage contracts and keep
   // the legacy spelling on purpose (the UI/code refer to these as "restart").
   rebooting?: boolean;

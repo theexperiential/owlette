@@ -1,14 +1,14 @@
 /**
- * Scene — episode 12, "cortex — manage machines by chat".
+ * Scene — episode 12, "hoot — manage machines by chat".
  *
  * Every beat in this episode is SCREEN capture (no B-ROLL). Beat list with
  * rendered VO durations (voiceover/out/12-cortex/, ffprobe):
- *   b01 what cortex is             ~20.8s  → seeded incident chat at /cortex/<id>
- *   b02 one-time setup             ~21.2s  → account settings → cortex tab
+ *   b01 what hoot is             ~20.8s  → seeded incident chat at /hoot/<id>
+ *   b02 one-time setup             ~21.2s  → account settings → hoot tab
  *   b03 pick what it's talking to  ~16.4s  → MachineSelector at the top of the chat
  *   b04 ask a question             ~23.0s  → scroll the user→assistant turn
  *   b05 ask it to act              ~36.8s  → scroll to the act/tool-call turn
- *   b06 guardrails                 ~30.3s  → per-machine cortex active/inactive toggle
+ *   b06 guardrails                 ~30.3s  → per-machine hoot active/inactive toggle
  *
  * NOTE from the script (b04 + b05): the chat needs a live LLM, so we cannot
  * type a prompt and await a real response. Instead the seeded conversation
@@ -16,7 +16,7 @@
  * scrolls/highlights, it never types into the ChatInput.
  *
  * NOTE from the script (b05): per the product-gap call-out, do NOT script a
- * "cortex pauses to confirm" beat — `requiresConfirmation` is unimplemented
+ * "hoot pauses to confirm" beat — `requiresConfirmation` is unimplemented
  * and tier-3 tools auto-run. We highlight the inline tool-call card the
  * fixture already renders (`tool-checkLogs`) and the VO covers the actual
  * behavior (admin tier + per-machine switch).
@@ -44,7 +44,7 @@ import {
   centerInView,
 } from './video-helpers';
 
-test('episode 12 — cortex — manage machines by chat', async ({ browser }) => {
+test('episode 12 — hoot — manage machines by chat', async ({ browser }) => {
   const ctx = await seedScreenshotFixtures('diagnose-cortex-chat');
   const conversationId = `screenshot-cortex-${ctx.siteId}`;
   try {
@@ -59,8 +59,8 @@ test('episode 12 — cortex — manage machines by chat', async ({ browser }) =>
       '12-cortex',
       { baseURL: E2E_BASE_URL, storageState: roleState('admin').storageState },
       async (page) => {
-        // [b01] what cortex is — settle on the seeded incident chat (~20.8s VO).
-        await openForCapture(page, `/cortex/${conversationId}`);
+        // [b01] what hoot is — settle on the seeded incident chat (~20.8s VO).
+        await openForCapture(page, `/hoot/${conversationId}`);
         // Title + the assistant's "access violation" answer should be visible.
         await expect(
           page.getByText('03:14 incident', { exact: false }).first(),
@@ -68,9 +68,9 @@ test('episode 12 — cortex — manage machines by chat', async ({ browser }) =>
         await expect(
           page.getByText('access violation', { exact: false }),
         ).toBeVisible();
-        await narrate(page, 'b01 cortex chat — settle', 21);
+        await narrate(page, 'b01 hoot chat — settle', 21);
 
-        // [b02] one-time setup — account settings → cortex tab (~21.2s VO).
+        // [b02] one-time setup — account settings → hoot tab (~21.2s VO).
         const userMenuTrigger = page.getByTestId('user-menu-trigger');
         await clickWithCursor(page, userMenuTrigger);
         const accountSettingsItem = page.getByRole('menuitem', { name: /account settings/i });
@@ -79,12 +79,12 @@ test('episode 12 — cortex — manage machines by chat', async ({ browser }) =>
 
         const settingsDialog = page.getByRole('dialog'); // VisuallyHidden DialogTitle
         await expect(settingsDialog).toBeVisible();
-        const cortexTab = settingsDialog.getByRole('button', { name: /^cortex$/i }).first();
-        await clickWithCursor(page, cortexTab);
+        const hootTab = settingsDialog.getByRole('button', { name: /^hoot$/i }).first();
+        await clickWithCursor(page, hootTab);
         // Provider + model + api key fields render.
         await expect(settingsDialog.locator('#llmProvider')).toBeVisible();
         await expect(settingsDialog.locator('#llmApiKey')).toBeVisible();
-        await narrate(page, 'b02 cortex setup tab', 21);
+        await narrate(page, 'b02 hoot setup tab', 21);
 
         // Close the dialog before navigating back to the chat surface.
         await page.keyboard.press('Escape');
@@ -92,7 +92,7 @@ test('episode 12 — cortex — manage machines by chat', async ({ browser }) =>
         await page.waitForTimeout(400);
 
         // [b03] pick what it's talking to — machine selector at the top (~16.4s VO).
-        const machineSelector = page.getByLabel('cortex target');
+        const machineSelector = page.getByLabel('hoot target');
         await centerInView(page, machineSelector);
         await highlight(page, machineSelector, 1800);
         // Open the selector to surface the "All Machines" + per-machine options.
@@ -117,7 +117,7 @@ test('episode 12 — cortex — manage machines by chat', async ({ browser }) =>
         const assistantAnswer = page.getByText('access violation', { exact: false });
         await centerInView(page, assistantAnswer);
         await highlight(page, assistantAnswer, 2200);
-        await narrate(page, 'b04 cortex diagnosis', 11);
+        await narrate(page, 'b04 hoot diagnosis', 11);
         // The inline tool-call card the assistant turn renders.
         const toolCard = page.getByText(/checklogs|checkLogs|matches/i).first(); // VERIFY — ToolCallCard label format
         await centerInView(page, toolCard);
@@ -139,7 +139,7 @@ test('episode 12 — cortex — manage machines by chat', async ({ browser }) =>
         await highlight(page, chatInput, 1800);
         await narrate(page, 'b05 chat input frame', 13);
 
-        // [b06] guardrails — the per-machine cortex on/off toggle (~30.3s VO).
+        // [b06] guardrails — the per-machine hoot on/off toggle (~30.3s VO).
         // The toggle only renders when a SINGLE machine is selected (not site mode).
         // The seeded conversation targets media-server-stage, so switch the
         // selector off "All Machines" and onto that machine to surface it.
@@ -151,11 +151,11 @@ test('episode 12 — cortex — manage machines by chat', async ({ browser }) =>
         await clickWithCursor(page, mediaServerOption);
         await page.waitForTimeout(600);
 
-        const cortexToggle = page.getByRole('button', { name: /cortex (active|inactive)/i });
-        await expect(cortexToggle).toBeVisible();
-        await centerInView(page, cortexToggle);
-        await highlight(page, cortexToggle, 2400);
-        await narrate(page, 'b06 cortex on/off toggle', 30);
+        const hootToggle = page.getByRole('button', { name: /hoot (active|inactive)/i });
+        await expect(hootToggle).toBeVisible();
+        await centerInView(page, hootToggle);
+        await highlight(page, hootToggle, 2400);
+        await narrate(page, 'b06 hoot on/off toggle', 30);
       },
     );
   } finally {

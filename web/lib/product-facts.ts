@@ -24,7 +24,7 @@ export const FEATURES = [
   "real-time CPU, memory, disk, GPU monitoring",
   "remote process management and auto-recovery",
   "silent software deployment across fleets",
-  "AI-powered fleet management with cortex",
+  "AI-powered fleet management with hoot",
   "multi-site organization with role-based access",
   "project file distribution",
   "threshold alerts, email notifications, webhooks",
@@ -53,7 +53,7 @@ export const PRICING: Tier[] = [
 export const GUARDRAILS = [
   "owlette is in beta and free during the beta. paid tiers (core $10/machine/month, pro $50/machine/month) are planned for after beta — don't describe them as currently billed.",
   "owlette is Windows-only: a lightweight Python agent runs on each machine as a Windows service. don't imply native macOS or Linux agents.",
-  "cortex is owlette's built-in assistant for fleet management — a feature of owlette, not a separate product.",
+  "hoot is owlette's built-in assistant for fleet management — a feature of owlette, not a separate product.",
   "owlette is a tridant product (\"a tridant system\"). link tridant.io for the firm behind it.",
   "owlette is an agent plus a cloud dashboard for monitoring, managing, and deploying software across fleets of Windows machines — not only a metrics dashboard.",
 ];

@@ -3,7 +3,7 @@ import { assertNoHorizontalOverflow } from '../../helpers/mobile';
 import { roleState } from '../../helpers/roles';
 import { TEST_USERS, seedMachine } from '../../helpers/seed';
 import {
-  seedCortexFixture,
+  seedHootFixture,
   seedLogEvents,
   seedSystemPreset,
 } from '../../helpers/coverageSeed';
@@ -32,10 +32,10 @@ test.describe('mobile authenticated shells', () => {
     await assertNoHorizontalOverflow(page);
   });
 
-  test('cortex mobile target selector and input render', async ({ page }) => {
-    await seedCortexFixture({ userId: TEST_USERS.admin.uid });
-    await page.goto('/cortex');
-    await expect(page.getByLabel(/cortex target/i)).toBeVisible();
+  test('hoot mobile target selector and input render', async ({ page }) => {
+    await seedHootFixture({ userId: TEST_USERS.admin.uid });
+    await page.goto('/hoot');
+    await expect(page.getByLabel(/hoot target/i)).toBeVisible();
     await expect(page.getByPlaceholder(/ask about this machine/i)).toBeVisible();
     await assertNoHorizontalOverflow(page);
   });

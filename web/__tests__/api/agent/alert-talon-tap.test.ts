@@ -29,7 +29,7 @@ const siteDocRef = {
   get: async () => ({ data: () => ({ name: 'test site' }) }),
   collection: (name: string) => {
     if (name === 'logs') return { add: siteLogsAdd };
-    // `machines` — read by the local-Cortex probe on the process branch.
+    // `machines` — read by the local-Hoot probe on the process branch.
     if (name === 'machines') {
       return { doc: () => ({ get: async () => ({ exists: false, data: () => undefined }) }) };
     }

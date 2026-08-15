@@ -66,7 +66,7 @@ import {
   agentRegistryHealth,
   alertDeliveryHealth,
   apiHealth,
-  cortexChatHealth,
+  hootChatHealth,
   dashboardHealth,
   firestoreHealth,
   r2UploadsHealth,
@@ -359,13 +359,13 @@ describe('status health checks', () => {
     expect(result.error).toBe('read failed');
   });
 
-  it('keeps uninstrumented R2 and Cortex checks explicitly marked as placeholders', async () => {
+  it('keeps uninstrumented R2 and Hoot checks explicitly marked as placeholders', async () => {
     await expect(r2UploadsHealth()).resolves.toMatchObject({
       component: 'r2_uploads',
       ok: true,
       metadata: { placeholder: true },
     });
-    await expect(cortexChatHealth()).resolves.toMatchObject({
+    await expect(hootChatHealth()).resolves.toMatchObject({
       component: 'cortex_chat',
       ok: true,
       metadata: { placeholder: true },

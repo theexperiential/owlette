@@ -204,8 +204,8 @@ export interface TalonWebhookOutput {
   url: string;
 }
 
-/** Hand a directive to cortex to act on. */
-export interface TalonCortexOutput {
+/** Hand a directive to hoot to act on. */
+export interface TalonHootOutput {
   type: 'cortex';
   directive: string;
 }
@@ -221,7 +221,7 @@ export interface TalonCommandOutput {
 export type TalonOutput =
   | TalonEmailOutput
   | TalonWebhookOutput
-  | TalonCortexOutput
+  | TalonHootOutput
   | TalonCommandOutput;
 
 export type TalonOutputType = TalonOutput['type'];
@@ -231,7 +231,7 @@ export interface TalonScope {
   machineIds: string[] | null;
 }
 
-/** How the talon was authored — the UI editor or a cortex conversation. */
+/** How the talon was authored — the UI editor or a hoot conversation. */
 export type TalonCreatedVia = 'ui' | 'cortex';
 
 /**

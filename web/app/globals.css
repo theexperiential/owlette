@@ -467,21 +467,21 @@ input[type="week"] {
   animation: chart-plot-draw 2.4s ease-in-out infinite;
 }
 
-/* Cortex markdown styling */
-.cortex-markdown {
+/* Hoot markdown styling */
+.hoot-markdown {
   line-height: 1.75;
 }
 
-.cortex-markdown p {
+.hoot-markdown p {
   margin: 0.75rem 0;
 }
 
-.cortex-markdown h1, .cortex-markdown h2, .cortex-markdown h3 {
+.hoot-markdown h1, .hoot-markdown h2, .hoot-markdown h3 {
   margin-top: 1.25rem;
   margin-bottom: 0.5rem;
 }
 
-.cortex-markdown pre {
+.hoot-markdown pre {
   background: var(--secondary);
   border-radius: 0.375rem;
   padding: 0.75rem 1rem;
@@ -489,38 +489,38 @@ input[type="week"] {
   overflow-x: auto;
 }
 
-.cortex-markdown code {
+.hoot-markdown code {
   color: var(--accent-cyan);
   font-size: 0.8125rem;
 }
 
-.cortex-markdown ul,
-.cortex-markdown ol {
+.hoot-markdown ul,
+.hoot-markdown ol {
   margin: 0.75rem 0;
   padding-left: 1.25rem;
 }
 
-.cortex-markdown li {
+.hoot-markdown li {
   margin: 0.35rem 0;
 }
 
-.cortex-markdown li + li {
+.hoot-markdown li + li {
   margin-top: 0.25rem;
 }
 
-.cortex-markdown hr {
+.hoot-markdown hr {
   margin: 1rem 0;
   border-color: var(--border);
 }
 
-.cortex-markdown blockquote {
+.hoot-markdown blockquote {
   border-left: 3px solid var(--border);
   padding-left: 0.75rem;
   margin: 0.75rem 0;
   color: var(--muted-foreground);
 }
 
-.cortex-markdown table {
+.hoot-markdown table {
   border-collapse: collapse;
   width: 100%;
   margin: 1rem 0;
@@ -528,7 +528,7 @@ input[type="week"] {
   overflow: hidden;
 }
 
-.cortex-markdown th {
+.hoot-markdown th {
   background: var(--secondary);
   font-weight: 600;
   text-align: left;
@@ -537,26 +537,26 @@ input[type="week"] {
   white-space: nowrap;
 }
 
-.cortex-markdown td {
+.hoot-markdown td {
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
 }
 
-.cortex-markdown tr:nth-child(even) {
+.hoot-markdown tr:nth-child(even) {
   background: var(--secondary);
 }
 
-.cortex-markdown strong {
+.hoot-markdown strong {
   color: var(--foreground);
   font-weight: 600;
 }
 
-.cortex-markdown a {
+.hoot-markdown a {
   color: var(--accent-cyan);
   text-decoration: none;
 }
 
-.cortex-markdown a:hover {
+.hoot-markdown a:hover {
   text-decoration: underline;
 }
 

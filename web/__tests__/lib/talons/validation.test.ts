@@ -566,13 +566,13 @@ describe('validateTalonInput — outputs', () => {
   });
 
   it.each([undefined, '', 'x'.repeat(TALON_DIRECTIVE_MAX_LENGTH + 1)])(
-    'rejects invalid cortex directive %p',
+    'rejects invalid hoot directive %p',
     (directive) => {
       expect(errorFor(withOutputs([{ type: 'cortex', directive }]), 'outputs[0].directive')).toBeDefined();
     },
   );
 
-  it('accepts a cortex directive at the maximum length', () => {
+  it('accepts a hoot directive at the maximum length', () => {
     const directive = 'x'.repeat(TALON_DIRECTIVE_MAX_LENGTH);
     expect(expectOk(withOutputs([{ type: 'cortex', directive }])).outputs[0]).toEqual({
       type: 'cortex',
