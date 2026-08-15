@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { type UIMessage } from 'ai';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowUp, Brain, X, Pencil } from 'lucide-react';
+import { ArrowUp, X, Pencil } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserAvatar } from '@/components/UserAvatar';
 import { ToolCallCard } from './ToolCallCard';
@@ -13,6 +13,7 @@ import { SynapticIndicator } from './SynapticIndicator';
 import { getRandomSuggestions } from '../data/suggestedQuestions';
 import { YOU_TRANSLATIONS } from '@/lib/dashboardConstants';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { HootIcon } from '@/components/icons/HootIcon';
 
 function pickYouTranslation(messageId: string) {
   let hash = 0;
@@ -102,7 +103,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-md px-4">
-          <Brain className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
+          <HootIcon className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground mb-2">hoot</h2>
           <p className="text-sm text-muted-foreground">
             debug, diagnose, and manage your remote machines.
@@ -189,7 +190,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
             {!isUser && (
               <div className="flex-shrink-0 flex flex-col items-center">
                 <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
-                  <Brain className="h-4 w-4 text-foreground" />
+                  <HootIcon className="h-4 w-4 text-foreground" />
                 </div>
                 <div className="mt-1 flex-1 w-0.5 bg-accent-cyan/25" />
               </div>
@@ -407,7 +408,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
           <div className="flex items-center gap-3 border-l-2 pl-3 border-accent-cyan/40">
             <div className="flex-shrink-0">
               <div className="h-7 w-7 rounded-full bg-accent flex items-center justify-center">
-                <Brain className="h-4 w-4 text-foreground" />
+                <HootIcon className="h-4 w-4 text-foreground" />
               </div>
             </div>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">

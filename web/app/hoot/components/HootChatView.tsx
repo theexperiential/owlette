@@ -10,7 +10,7 @@ import { useHootSidebarPrefs } from '@/hooks/useHootSidebarPrefs';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import { Button } from '@/components/ui/button';
-import { Plus, MessageSquare, Trash2, Brain, KeyRound, Check, X, Zap, Search, Loader2, Pencil, ChevronRight, ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen, RotateCw } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, KeyRound, Check, X, Zap, Search, Loader2, Pencil, ChevronRight, ChevronsDownUp, ChevronsUpDown, PanelLeftClose, PanelLeftOpen, RotateCw } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
 import { doc, getDoc } from 'firebase/firestore';
@@ -21,6 +21,9 @@ import { MachineSelector, SITE_TARGET_ID } from './MachineSelector';
 import { HootPowerToggle } from './HootPowerToggle';
 import { HootApprovalToggle } from './HootApprovalToggle';
 import { LoadingWord } from '@/components/LoadingWord';
+import { isUntitledChat } from '@/lib/hoot/untitledChat';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { HootIcon } from '@/components/icons/HootIcon';
 
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -276,7 +279,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
     // Expand the selected conversation's category group if the user had it
     // collapsed, so the row it lives in is actually visible after selecting.
     const convo = conversationsRef.current.find((c) => c.id === conversationId);
-    if (convo && convo.title !== 'new conversation') {
+    if (convo && !isUntitledChat(convo.title)) {
       const label = convo.category || 'General';
       setCollapsedGroups((prev) => {
         if (!prev.has(label)) return prev;
@@ -347,14 +350,14 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
 
   // Skip "new conversation" entries — the API requires a title or first message to categorize
   const uncategorizedIds = chat.conversations
-    .filter((c) => !c.category && c.title !== 'new conversation')
+    .filter((c) => !c.category && !isUntitledChat(c.title))
     .map((c) => c.id);
 
   // Drive the collapse-all/expand-all toggle off the *actual* set of visible
   // group labels so the icon/label and the action never disagree (e.g. one
   // section expanded while the rest are collapsed).
   const visibleGroupLabels = groupConversationsByCategory(
-    chat.conversations.filter((c) => c.title !== 'new conversation'),
+    chat.conversations.filter((c) => !isUntitledChat(c.title)),
   ).map((g) => g.label);
   const allGroupsCollapsed =
     visibleGroupLabels.length > 0 && visibleGroupLabels.every((l) => collapsedGroups.has(l));
@@ -362,7 +365,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
   // Which category the active conversation lives in — used to flag a collapsed
   // section that contains the current chat, so the user knows where it is.
   const activeConvo = chat.conversations.find((c) => c.id === chat.chatId);
-  const activeCategoryLabel = activeConvo && activeConvo.title !== 'new conversation'
+  const activeCategoryLabel = activeConvo && !isUntitledChat(activeConvo.title)
     ? (activeConvo.category || 'General')
     : null;
 
@@ -462,7 +465,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
         {hasApiKey === false && (
           <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/60 backdrop-blur-sm">
             <div className="text-center max-w-md px-4">
-              <Brain className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
+              <HootIcon className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-foreground mb-2">hoot</h3>
               <p className="text-sm text-muted-foreground mb-6">
                 debug, diagnose, and manage your remote machines.
@@ -501,7 +504,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
                   onClick={() => handleNewChat()}
                   variant="ghost"
                   size="icon"
-                  aria-label="new conversation"
+                  aria-label="new hoot"
                   className="h-8 w-8 min-w-8 text-muted-foreground hover:text-foreground"
                 >
                   <Plus className="h-4 w-4" />
@@ -539,7 +542,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
                   className="flex-1 min-w-0 h-8 text-foreground"
                 >
                   <Plus className="h-4 w-4 mr-2 flex-shrink-0" />
-                  <span className="truncate">new conversation</span>
+                  <span className="truncate">new hoot</span>
                 </Button>
                 {!chat.searchQuery && chat.conversations.length > 0 && (
                   <Tooltip>
@@ -612,7 +615,7 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
               <div className="py-1">
                 {/* Unsaved "New conversation" entries always at top */}
                 {chat.conversations
-                  .filter((c) => c.title === 'new conversation')
+                  .filter((c) => isUntitledChat(c.title))
                   .map((convo) => (
                     <ConversationItem
                       key={convo.id}
@@ -624,48 +627,55 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
                     />
                   ))}
                 {groupConversationsByCategory(
-                  chat.conversations.filter((c) => c.title !== 'new conversation')
+                  chat.conversations.filter((c) => !isUntitledChat(c.title))
                 ).map((group) => {
                   const isCollapsed = collapsedGroups.has(group.label);
                   // Highlight the header of whichever group holds the active
                   // conversation — collapsed (where the row is hidden) or expanded.
                   const containsActive = group.label === activeCategoryLabel;
                   return (
-                    <div key={group.label}>
-                      <button
-                        onClick={() => setCollapsedGroups((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(group.label)) next.delete(group.label);
-                          else next.add(group.label);
-                          return next;
-                        })}
-                        className="w-full flex items-center gap-1 px-3 py-2.5 mt-1.5 first:mt-0 cursor-pointer hover:bg-accent/30 transition-colors"
-                      >
-                        <ChevronRight className={`h-3 w-3 transition-transform ${isCollapsed ? '' : 'rotate-90'} ${containsActive ? 'text-accent-cyan' : 'text-muted-foreground/50'}`} />
-                        <span className={`text-xs font-medium uppercase tracking-wider ${containsActive ? 'text-accent-cyan' : 'text-muted-foreground/70'}`}>
-                          {group.label}
-                        </span>
-                        {containsActive && isCollapsed && (
-                          <>
-                            <span className="h-1.5 w-1.5 rounded-full bg-accent-cyan flex-shrink-0" aria-hidden />
-                            <span className="sr-only">contains the current conversation</span>
-                          </>
-                        )}
-                        <span className="text-xs text-muted-foreground/40 ml-auto">
-                          {group.conversations.length}
-                        </span>
-                      </button>
-                      {!isCollapsed && group.conversations.map((convo) => (
-                        <ConversationItem
-                          key={convo.id}
-                          conversation={convo}
-                          isActive={convo.id === chat.chatId}
-                          onClick={() => handleConversationClick(convo.id)}
-                          onDelete={() => handleDeleteChat(convo.id)}
-                          onRename={(title) => chat.renameChat(convo.id, title)}
-                        />
-                      ))}
-                    </div>
+                    <Collapsible
+                      key={group.label}
+                      open={!isCollapsed}
+                      onOpenChange={(open) => setCollapsedGroups((prev) => {
+                        const next = new Set(prev);
+                        if (open) next.delete(group.label);
+                        else next.add(group.label);
+                        return next;
+                      })}
+                    >
+                      <CollapsibleTrigger asChild>
+                        <button
+                          className="w-full flex items-center gap-1 px-3 py-2.5 mt-1.5 first:mt-0 cursor-pointer hover:bg-accent/30 transition-colors"
+                        >
+                          <ChevronRight className={`h-3 w-3 transition-transform ${isCollapsed ? '' : 'rotate-90'} ${containsActive ? 'text-accent-cyan' : 'text-muted-foreground/50'}`} />
+                          <span className={`text-xs font-medium uppercase tracking-wider ${containsActive ? 'text-accent-cyan' : 'text-muted-foreground/70'}`}>
+                            {group.label}
+                          </span>
+                          {containsActive && isCollapsed && (
+                            <>
+                              <span className="h-1.5 w-1.5 rounded-full bg-accent-cyan flex-shrink-0" aria-hidden />
+                              <span className="sr-only">contains the current conversation</span>
+                            </>
+                          )}
+                          <span className="text-xs text-muted-foreground/40 ml-auto">
+                            {group.conversations.length}
+                          </span>
+                        </button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+                        {group.conversations.map((convo) => (
+                          <ConversationItem
+                            key={convo.id}
+                            conversation={convo}
+                            isActive={convo.id === chat.chatId}
+                            onClick={() => handleConversationClick(convo.id)}
+                            onDelete={() => handleDeleteChat(convo.id)}
+                            onRename={(title) => chat.renameChat(convo.id, title)}
+                          />
+                        ))}
+                      </CollapsibleContent>
+                    </Collapsible>
                   );
                 })}
 

@@ -6,10 +6,11 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { UserAvatar } from '@/components/UserAvatar';
-import { ArrowRight, ChevronDown, Settings, LogOut, Shield, Check, Crown, LayoutDashboard, Brain, Zap, Rocket, FolderSync, ScrollText, CircleHelp, Bug, BookOpen, Menu, X } from 'lucide-react';
+import { ArrowRight, ChevronDown, Settings, LogOut, Shield, Check, Crown, LayoutDashboard, Zap, Rocket, FolderSync, ScrollText, CircleHelp, Bug, BookOpen, Menu, X } from 'lucide-react';
 import { getUserShortName } from '@/lib/userUtils';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { ReportBugDialog } from '@/components/ReportBugDialog';
+import { HootIcon } from '@/components/icons/HootIcon';
 
 const MENU_SURFACE = 'border-border bg-secondary/85 backdrop-blur-sm shadow-2xl shadow-black/50 ring-1 ring-white/10';
 
@@ -37,14 +38,14 @@ const NAV_ITEMS = [
   {
     name: 'hoot',
     href: '/hoot',
-    icon: Brain,
+    icon: HootIcon,
     description: 'ask hoot about your machines',
   },
   {
     name: 'talons',
     href: '/talons',
     icon: Zap,
-    description: 'automate checks and responses',
+    description: 'watch schedules, events, and screens — then act',
   },
   {
     name: 'roost',

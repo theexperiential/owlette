@@ -38,6 +38,7 @@ import { type UIMessage, type FileUIPart } from 'ai';
 import { SITE_TARGET_ID } from '@/app/hoot/components/MachineSelector';
 import { uploadChatImage } from '@/lib/chatImageUtils';
 import type { PendingImage } from '@/app/hoot/components/ChatInput';
+import { UNTITLED_CHAT_TITLE } from '@/lib/hoot/untitledChat';
 
 export interface ChatConversation {
   id: string;
@@ -552,7 +553,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
       if (data.siteId !== siteId) return null;
       return {
         id: docSnap.id,
-        title: data.title || 'new conversation',
+        title: data.title || UNTITLED_CHAT_TITLE,
         siteId: data.siteId,
         targetType: data.targetType || 'machine',
         targetMachineId: data.targetMachineId || null,
@@ -629,7 +630,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
     const previousDraftId = draftConvoRef.current?.id;
     const draft: ChatConversation = {
       id: newId,
-      title: 'new conversation',
+      title: UNTITLED_CHAT_TITLE,
       siteId: siteIdRef.current,
       targetType: isSiteMode ? 'site' : 'machine',
       targetMachineId: isSiteMode ? null : effectiveMachineId,
@@ -669,7 +670,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
           if (data && data.siteId === siteId) {
             newConvos.push({
               id: docSnap.id,
-              title: data.title || 'new conversation',
+              title: data.title || UNTITLED_CHAT_TITLE,
               siteId: data.siteId,
               targetType: data.targetType || 'machine',
               targetMachineId: data.targetMachineId || null,
@@ -704,7 +705,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
           if (data) {
             newConvos.push({
               id: docSnap.id,
-              title: data.title || 'new conversation',
+              title: data.title || UNTITLED_CHAT_TITLE,
               siteId: data.siteId,
               targetType: data.targetType || 'machine',
               targetMachineId: data.targetMachineId || null,
@@ -793,7 +794,7 @@ export function useOwletteChat({ siteId, machineId, machineName, onChatPersisted
 
       // Check if this is an unpersisted "new conversation" (no messages sent yet)
       const isEmptyNew = conversations.find(
-        (c) => c.id === conversationId && c.title === 'new conversation'
+        (c) => c.id === conversationId && c.title === UNTITLED_CHAT_TITLE
       );
 
       // Remove from local list immediately (handles both persisted and optimistic entries)

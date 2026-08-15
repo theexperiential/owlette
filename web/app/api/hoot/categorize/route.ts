@@ -22,6 +22,7 @@ import {
   parseChatCategory,
 } from '@/lib/hoot/categorizeChat.server';
 import { getUserIdFromSession, withRateLimit } from '@/lib/withRateLimit';
+import { isUntitledChat } from '@/lib/hoot/untitledChat';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -61,7 +62,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
             // Skip conversations with no meaningful title — need at least
             // a real title (not "new conversation") or a first message to categorize
             const title = data?.title;
-            if (!title || title === 'new conversation') {
+            if (isUntitledChat(title)) {
               // Try to read the first user message as fallback context
               const messagesSnap = await db.collection('chats').doc(chatId)
                 .collection('messages')

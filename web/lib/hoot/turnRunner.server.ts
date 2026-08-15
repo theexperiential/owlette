@@ -82,6 +82,7 @@ import {
   writeSnapshot,
 } from '@/lib/hoot/turnStore.server';
 import { categorizeNewChat } from '@/lib/hoot/categorizeChat.server';
+import { UNTITLED_CHAT_TITLE } from '@/lib/hoot/untitledChat';
 
 /** Sentinel machineId for site-wide mode (mirrors /api/hoot). */
 const SITE_TARGET_ID = '__site__';
@@ -297,7 +298,7 @@ async function persistChatMessages(
 ): Promise<void> {
   const isSiteMode = params.machineId === SITE_TARGET_ID;
   const title = isNewConversation
-    ? firstUserText(messages).slice(0, 100) || 'new conversation'
+    ? firstUserText(messages).slice(0, 100) || UNTITLED_CHAT_TITLE
     : undefined;
 
   // Serialize for Firestore — the JSON round-trip strips nested `undefined`.

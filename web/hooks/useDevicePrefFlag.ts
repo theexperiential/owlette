@@ -105,3 +105,99 @@ export function useDevicePrefFlag(field: string, defaultValue: boolean): DeviceP
   // default value is already the final answer — report ready immediately.
   return { value, setValue, ready: ready || !db || !uid };
 }
+
+export interface DevicePrefNumber {
+  value: number;
+  setValue: (next: number) => void;
+  /** False until the stored value has been read (or determined absent). */
+  ready: boolean;
+}
+
+/**
+ * Numeric sibling of `useDevicePrefFlag` — same doc, same debounce, same
+ * hydration contract — for size/position prefs (sidebar width, panel height).
+ * Values are clamped to [min, max] on both hydrate and set, so a stale or
+ * hand-edited stored value can never render an unusable layout.
+ */
+export function useDevicePrefNumber(
+  field: string,
+  defaultValue: number,
+  min: number,
+  max: number,
+): DevicePrefNumber {
+  const { user } = useAuth();
+  const uid = user?.uid ?? null;
+
+  const clamp = useCallback(
+    (n: number) => Math.min(max, Math.max(min, Math.round(n))),
+    [min, max],
+  );
+
+  const [value, setValueState] = useState(defaultValue);
+  const [ready, setReady] = useState(false);
+
+  const uidRef = useRef<string | null>(uid);
+  const fieldRef = useRef(field);
+  useEffect(() => { uidRef.current = uid; }, [uid]);
+  useEffect(() => { fieldRef.current = field; }, [field]);
+
+  const pendingRef = useRef<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flush = useCallback(() => {
+    const currentUid = uidRef.current;
+    const next = pendingRef.current;
+    pendingRef.current = null;
+    if (!db || !currentUid || next === null) return;
+    setDoc(doc(db, 'users', currentUid, 'devicePrefs', 'global'), { [fieldRef.current]: next }, { merge: true })
+      .catch((err) => console.error(`Failed to persist device pref "${fieldRef.current}":`, err));
+  }, []);
+
+  useEffect(() => {
+    if (!db || !uid) return;
+    let cancelled = false;
+    getDoc(doc(db, 'users', uid, 'devicePrefs', 'global'))
+      .then((snap) => {
+        if (cancelled) return;
+        const stored = snap.exists() ? (snap.data() as Record<string, unknown>)[field] : undefined;
+        if (typeof stored === 'number' && Number.isFinite(stored)) setValueState(clamp(stored));
+        setReady(true);
+      })
+      .catch((err) => {
+        console.error(`Failed to read device pref "${field}":`, err);
+        if (!cancelled) setReady(true);
+      });
+    return () => {
+      cancelled = true;
+      setReady(false);
+      setValueState(defaultValue);
+    };
+  }, [uid, field, defaultValue, clamp]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+        flush();
+      }
+    };
+  }, [flush]);
+
+  const setValue = useCallback(
+    (next: number) => {
+      const clamped = clamp(next);
+      setValueState(clamped);
+      if (!db || !uidRef.current) return;
+      pendingRef.current = clamped;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        flush();
+      }, DEBOUNCE_MS);
+    },
+    [flush, clamp],
+  );
+
+  return { value, setValue, ready: ready || !db || !uid };
+}

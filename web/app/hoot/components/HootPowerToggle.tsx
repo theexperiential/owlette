@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Brain } from 'lucide-react';
+import {} from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import type { Machine } from '@/hooks/useFirestore';
+import { HootIcon } from '@/components/icons/HootIcon';
 
 interface HootPowerToggleProps {
   siteId: string;
@@ -59,7 +60,7 @@ export function HootPowerToggle({ siteId, machine }: HootPowerToggleProps) {
                 : 'border-orange-500/50 bg-orange-500/15 text-orange-400 hover:bg-orange-500/25'
             }`}
           >
-            <Brain className="h-3.5 w-3.5" />
+            <HootIcon className="h-3.5 w-3.5" />
             <span className="text-xs font-medium">{label}</span>
           </button>
         </TooltipTrigger>

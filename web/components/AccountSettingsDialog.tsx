@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Brain, Check, CreditCard, Loader2, User, Bell, BellOff, Trash2, Key, Plus, X, Code } from 'lucide-react';
+import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Check, CreditCard, Loader2, User, Bell, BellOff, Trash2, Key, Plus, X, Code } from 'lucide-react';
 import { BillingTab } from '@/components/BillingTab';
 import { ProTierGate } from '@/components/billing/ProTierGate';
 import { useAccountTier } from '@/hooks/useAccountTier';
@@ -28,6 +28,7 @@ import {
 } from '@/lib/apiKeyTypes';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { HootIcon } from '@/components/icons/HootIcon';
 
 type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'hoot' | 'security' | 'api' | 'billing' | 'danger';
 
@@ -56,7 +57,7 @@ const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[
   { id: 'profile', label: 'profile', icon: User },
   { id: 'preferences', label: 'preferences', icon: Bell },
   { id: 'alerts', label: 'alerts', icon: Bell },
-  { id: 'hoot', label: 'hoot', icon: Brain },
+  { id: 'hoot', label: 'hoot', icon: HootIcon },
   { id: 'security', label: 'security', icon: Shield },
   { id: 'api', label: 'api', icon: Code },
   { id: 'billing', label: 'billing', icon: CreditCard },
