@@ -45,6 +45,39 @@ from firestore_rest_client import FirestoreRestClient, SERVER_TIMESTAMP, DELETE_
 from connection_manager import ConnectionManager, ConnectionState, ConnectionEvent
 
 
+# Display events that `POST /api/agent/alert` knows how to route to email
+# and/or webhook delivery. Mirrors the ten keys of `DISPLAY_EVENT_ROUTING` in
+# `web/lib/alerts/displayEventRouting.ts` (and `TALON_LOG_ACTIONS` in
+# `functions/src/talonLogEvents.ts`, minus `process_restarted`). Duplicated
+# rather than fetched because the agent must route offline; the endpoint
+# re-validates against the real table, so drift here degrades to "the event
+# is log-only", never to a bad write.
+#
+# Deliberately EXCLUDED — display audit actions that exist for the event feed
+# and have no routing entry: `display_auto_restore_fired`,
+# `display_apply_acked`, `display_revert_deferred`,
+# `display_auto_restore_skipped_unfixable`,
+# `display_auto_restore_circuit_breaker_tripped`. Sending those would land in
+# the endpoint's generic-event branch, which writes its own log document —
+# duplicating the event the agent already logged.
+DISPLAY_ALERT_EVENT_TYPES = frozenset({
+    # email + webhook
+    'display_monitor_removed',
+    'display_apply_failed',
+    'display_auto_revert_fired',
+    'display_sync_lost',
+    # webhook only
+    'display_drift',
+    'display_monitor_swapped',
+    'display_mosaic_disabled',
+    'display_apply_refused_mosaic',
+    # in-dashboard only (no delivery, but the endpoint still accepts and
+    # rate-limits them, and the routing table owns that decision — not us)
+    'display_monitor_added',
+    'display_apply_succeeded',
+})
+
+
 def should_emit_progress(
     prev_state: Optional[dict],
     status: str,
@@ -2513,8 +2546,34 @@ class FirebaseClient:
         })
 
     def send_display_alert(self, event_type: str, data: dict):
-        """Backward-compatible wrapper for display alerts."""
-        self.send_alert(event_type, data)
+        """Route a display event to ``POST /api/agent/alert``.
+
+        Callers are the two display-event funnels — ``display_manager._emit_audit``
+        and ``owlette_service._emit_display_event`` — which ALSO write the event
+        to ``sites/{siteId}/logs``. The log write drives the dashboard feed and
+        the talon bridge; this call drives email + webhook delivery. Neither
+        replaces the other.
+
+        Only the event types in ``DISPLAY_ALERT_EVENT_TYPES`` are forwarded.
+        The endpoint's generic-event branch would otherwise write a SECOND log
+        document for the display audit actions that have no routing entry
+        (``display_apply_acked``, ``display_revert_deferred``, …), duplicating
+        them in the dashboard feed.
+
+        Never raises: alert delivery is best-effort and must not break the
+        audit-log path it is bolted onto. ``send_alert`` itself is non-blocking
+        (daemon thread + pending queue drained on reconnect), so this returns
+        immediately and is safe to call from the main service loop.
+        """
+        if event_type not in DISPLAY_ALERT_EVENT_TYPES:
+            self.logger.debug(
+                f"[ALERT] Display event {event_type} has no alert routing; log-only"
+            )
+            return
+        try:
+            self.send_alert(event_type, data)
+        except Exception as e:  # dispatch must never break the audit-log caller
+            self.logger.debug(f"[ALERT] send_display_alert({event_type}) failed: {e}")
 
     def send_alert(self, event_type: str, data: dict):
         """Send a generic agent alert to the web API.

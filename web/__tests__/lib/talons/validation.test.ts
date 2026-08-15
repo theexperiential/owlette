@@ -17,6 +17,7 @@ import {
   TALON_DIRECTIVE_MAX_LENGTH,
   TALON_EXPECTATION_MAX_LENGTH,
   TALON_MAX_COOLDOWN_MINUTES,
+  TALON_MAX_DELAY_MINUTES,
   TALON_MAX_INTERVAL_MINUTES,
   TALON_MAX_OUTPUTS,
   TALON_MAX_SCHEDULE_ENTRIES,
@@ -411,6 +412,71 @@ describe('validateTalonInput — event trigger', () => {
   );
 });
 
+describe('validateTalonInput — event trigger delay', () => {
+  function withDelay(delayMinutes: unknown, type = 'event') {
+    const trigger =
+      type === 'event'
+        ? { type, eventTypes: ['process_restarted'], delayMinutes }
+        : type === 'threshold'
+          ? { type, metric: 'cpu_percent', operator: '>', value: 90, delayMinutes }
+          : { ...SCHEDULE_ENTRIES_TRIGGER, delayMinutes };
+    return validateTalonInput(validTalon({ trigger }));
+  }
+
+  it('accepts a delay and keeps it on the trigger', () => {
+    expect(expectOk(withDelay(3)).trigger).toEqual({
+      type: 'event',
+      eventTypes: ['process_restarted'],
+      delayMinutes: 3,
+    });
+  });
+
+  it('accepts the ceiling', () => {
+    expect(expectOk(withDelay(TALON_MAX_DELAY_MINUTES)).trigger).toEqual({
+      type: 'event',
+      eventTypes: ['process_restarted'],
+      delayMinutes: TALON_MAX_DELAY_MINUTES,
+    });
+  });
+
+  it.each([[undefined], [null], [0]])(
+    'normalizes %p away — "run right now" has one representation',
+    (delayMinutes) => {
+      const trigger = expectOk(withDelay(delayMinutes)).trigger;
+      expect(trigger).toEqual({ type: 'event', eventTypes: ['process_restarted'] });
+      expect(trigger).not.toHaveProperty('delayMinutes');
+    },
+  );
+
+  it.each([[-1], [TALON_MAX_DELAY_MINUTES + 1]])('rejects %p as out of range', (delayMinutes) => {
+    expect(errorFor(withDelay(delayMinutes), 'trigger.delayMinutes')?.code).toBe('out_of_range');
+  });
+
+  it.each([[1.5], ['3'], [Number.NaN], [true]])('rejects a non-integer delay %p', (delayMinutes) => {
+    expect(errorFor(withDelay(delayMinutes), 'trigger.delayMinutes')?.code).toBe('invalid_field');
+  });
+
+  it.each(['schedule', 'threshold'])('rejects a delay on a %s trigger', (type) => {
+    expect(errorFor(withDelay(5, type), 'trigger.delayMinutes')).toEqual({
+      field: 'trigger.delayMinutes',
+      code: 'invalid_field',
+      message: 'this only applies to event triggers',
+    });
+  });
+
+  it('reports a bad delay and a bad event list together', () => {
+    const errors = expectErrors(
+      validateTalonInput(
+        validTalon({ trigger: { type: 'event', eventTypes: ['nope'], delayMinutes: 9000 } }),
+      ),
+    );
+    expect(errors.map((e) => e.field).sort()).toEqual([
+      'trigger.delayMinutes',
+      'trigger.eventTypes[0]',
+    ]);
+  });
+});
+
 describe('validateTalonInput — condition', () => {
   it('rejects an unknown condition type', () => {
     expect(
@@ -663,6 +729,18 @@ const EVERY_REJECTION: unknown[] = [
   validTalon({ trigger: { type: 'threshold', metric: 'nope', operator: '==', value: 'high' } }),
   validTalon({ trigger: { type: 'event', eventTypes: [] } }),
   validTalon({ trigger: { type: 'event', eventTypes: ['nope'] } }),
+  validTalon({
+    trigger: { type: 'event', eventTypes: ['process_crash'], delayMinutes: -1 },
+  }),
+  validTalon({
+    trigger: {
+      type: 'event',
+      eventTypes: ['process_crash'],
+      delayMinutes: TALON_MAX_DELAY_MINUTES + 1,
+    },
+  }),
+  validTalon({ trigger: { type: 'event', eventTypes: ['process_crash'], delayMinutes: 1.5 } }),
+  validTalon({ trigger: { ...SCHEDULE_ENTRIES_TRIGGER, delayMinutes: 5 } }),
   validTalon({ condition: 'none' }),
   validTalon({ condition: { type: 'ocr' } }),
   validTalon({ condition: { type: 'visual_check' } }),
@@ -751,6 +829,22 @@ describe('validateTalonInput — human-readable messages', () => {
       }),
       'trigger.intervalMinutes',
       'visual checks run at most every 15 minutes',
+    ],
+    [
+      validTalon({
+        trigger: {
+          type: 'event',
+          eventTypes: ['process_crash'],
+          delayMinutes: TALON_MAX_DELAY_MINUTES + 1,
+        },
+      }),
+      'trigger.delayMinutes',
+      'the delay must be between 0 and 24 hours',
+    ],
+    [
+      validTalon({ trigger: { ...SCHEDULE_ENTRIES_TRIGGER, delayMinutes: 5 } }),
+      'trigger.delayMinutes',
+      'this only applies to event triggers',
     ],
     [
       validTalon({ condition: { type: 'visual_check', expectation: '' } }),

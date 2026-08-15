@@ -183,8 +183,12 @@ function formatTrigger(trigger: TalonTrigger | null | undefined, use24h: boolean
         ? `${metric.label} ${trigger.operator} ${trigger.value}${metric.unit}`
         : `${trigger.metric} ${trigger.operator} ${trigger.value}`;
     }
-    case 'event':
-      return `on ${trigger.eventTypes.join(', ')}`;
+    case 'event': {
+      // Matches `describeTrigger` in the engine: the wait is part of what the
+      // talon does, so the row says so rather than reading like an instant one.
+      const events = `on ${trigger.eventTypes.join(', ')}`;
+      return trigger.delayMinutes ? `${events} · after ${trigger.delayMinutes} min` : events;
+    }
     default:
       return 'no trigger configured';
   }

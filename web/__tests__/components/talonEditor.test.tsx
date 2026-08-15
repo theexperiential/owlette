@@ -214,6 +214,76 @@ describe('TalonEditorDialog', () => {
     expect(errorTexts()).not.toContain('tell hoot what to do when this talon fires');
   });
 
+  it('offers the delay only on the event trigger, and round-trips it', async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    // The schedule branch the editor opens on has no delay to set.
+    expect(screen.queryByLabelText('then wait')).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId('trigger-type'));
+    await user.click(await screen.findByRole('option', { name: 'when an event happens' }));
+
+    const delay = screen.getByLabelText('then wait');
+    expect(delay).toHaveValue(0);
+    expect(
+      screen.getByText('0 runs right away — give a restarted app time to boot before checking it'),
+    ).toBeInTheDocument();
+
+    await user.clear(delay);
+    await user.type(delay, '3');
+    expect(delay).toHaveValue(3);
+  });
+
+  it('binds an out-of-range delay to the delay input, not a toast', async () => {
+    const fetchSpy = jest.fn();
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    renderEditor();
+
+    // Paste the name (one input event) — per-keystroke typing here pushed the
+    // test past jest's default timeout under full-suite worker contention.
+    // Keystroke realism stays where it's under test: the delay field.
+    await user.click(screen.getByRole('textbox', { name: 'name' }));
+    await user.paste('check the wall after a restart');
+    await user.click(screen.getByTestId('trigger-type'));
+    await user.click(await screen.findByRole('option', { name: 'when an event happens' }));
+    await user.click(screen.getByRole('checkbox', { name: /process_restarted/ }));
+
+    const delay = screen.getByLabelText('then wait');
+    await user.clear(delay);
+    await user.type(delay, '2000');
+    await user.click(screen.getByTestId('talon-editor-save'));
+
+    expect(delay).toHaveAttribute('aria-invalid', 'true');
+    expect(errorTexts()).toEqual(['the delay must be between 0 and 24 hours']);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  }, 15_000);
+
+  it('prefills the delay from an existing talon', () => {
+    renderEditor({
+      talon: {
+        id: 'talon-1',
+        schemaVersion: 1,
+        name: 'check the wall after a restart',
+        enabled: true,
+        trigger: { type: 'event', eventTypes: ['process_restarted'], delayMinutes: 3 },
+        condition: { type: 'none' },
+        outputs: [{ type: 'email' }],
+        scope: { machineIds: null },
+        cooldownMinutes: 30,
+        createdBy: 'user-1',
+        createdVia: 'ui',
+        createdAt: 0,
+        updatedAt: 0,
+        consecutiveFailures: 0,
+      },
+    });
+
+    expect(screen.getByLabelText('then wait')).toHaveValue(3);
+  });
+
   it('prefills from an existing talon in edit mode', () => {
     renderEditor({
       talon: {

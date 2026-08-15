@@ -9,6 +9,12 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ---
 
+## [Unreleased]
+
+### fixed
+
+- **Display alerts actually arrive again.** Display events — a monitor disappearing, a layout apply failing, genlock dropping, resolution drifting — were written to the dashboard event feed but never handed to the alert pipeline, so the emails and webhooks they were supposed to trigger had been silent fleet-wide. The agent now sends them, and the `display alerts` preference, the display digest, and display webhooks work as documented. Requires the new agent; older agents keep logging the events to the dashboard as before.
+
 ## [2.12.21] - 2026-08-12
 
 ### fixed

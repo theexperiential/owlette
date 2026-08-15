@@ -30,7 +30,7 @@ for mod_name, mock_obj in _MOCK_MODULES.items():
 
 try:
     with patch.dict("sys.modules", _patches):
-        from firebase_client import FirebaseClient
+        from firebase_client import FirebaseClient, DISPLAY_ALERT_EVENT_TYPES
         from connection_manager import ConnectionManager, ConnectionState
         from firestore_rest_client import FirestoreRestClient
         from auth_manager import AuthManager
@@ -595,3 +595,69 @@ class TestTerminalCommandStatus:
         )
         client._mark_command_completed.assert_called_once()
         client._mark_command_failed.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestSendDisplayAlert — the display-event funnels hand every audit action to
+# `send_display_alert`; the gate here decides which ones reach the API. Sending
+# an action with no `DISPLAY_EVENT_ROUTING` entry would land in the endpoint's
+# generic-event branch, which writes its own log document — duplicating the
+# event the agent already logged.
+# ---------------------------------------------------------------------------
+class TestSendDisplayAlert:
+    def test_routed_event_is_forwarded(self, firebase_client, monkeypatch):
+        send_alert = MagicMock()
+        monkeypatch.setattr(firebase_client, 'send_alert', send_alert)
+        firebase_client.send_display_alert('display_drift', {'changes': ['refreshHz']})
+        send_alert.assert_called_once_with(
+            'display_drift', {'changes': ['refreshHz']},
+        )
+
+    @pytest.mark.parametrize('event_type', [
+        'display_auto_restore_fired',
+        'display_apply_acked',
+        'display_revert_deferred',
+        'display_auto_restore_skipped_unfixable',
+        'display_auto_restore_circuit_breaker_tripped',
+        'process_crash',
+    ])
+    def test_unrouted_event_is_dropped(self, firebase_client, monkeypatch, event_type):
+        send_alert = MagicMock()
+        monkeypatch.setattr(firebase_client, 'send_alert', send_alert)
+        firebase_client.send_display_alert(event_type, {'x': 1})
+        send_alert.assert_not_called()
+
+    def test_dispatch_failure_is_swallowed(self, firebase_client, monkeypatch):
+        # Callers are audit paths that must never break on alert delivery.
+        monkeypatch.setattr(
+            firebase_client, 'send_alert',
+            MagicMock(side_effect=RuntimeError('cannot start thread')),
+        )
+        firebase_client.send_display_alert('display_sync_lost', {})
+
+    def test_routing_table_parity_with_web(self):
+        """`DISPLAY_ALERT_EVENT_TYPES` mirrors `DISPLAY_EVENT_ROUTING`'s keys.
+
+        The two tables live in different packages and cannot import each
+        other, so drift is only caught here. Drift is not fatal at runtime
+        (an unlisted event degrades to log-only) but it is exactly how the
+        display alerts went dormant in the first place — pin it.
+
+        Skipped when the web tree isn't present (agent checked out alone).
+        """
+        import re
+        from pathlib import Path
+
+        routing = (
+            Path(__file__).resolve().parents[3]
+            / 'web' / 'lib' / 'alerts' / 'displayEventRouting.ts'
+        )
+        if not routing.is_file():
+            pytest.skip(f'web routing table not present at {routing}')
+
+        source = routing.read_text(encoding='utf-8')
+        body = source.split('DISPLAY_EVENT_ROUTING: Record<string, DisplayEventRoute> = {', 1)[-1]
+        web_keys = set(re.findall(r'^  (display_\w+):', body, re.MULTILINE))
+
+        assert web_keys, 'failed to parse DISPLAY_EVENT_ROUTING keys'
+        assert web_keys == set(DISPLAY_ALERT_EVENT_TYPES)

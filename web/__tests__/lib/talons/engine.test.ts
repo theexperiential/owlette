@@ -1224,4 +1224,16 @@ describe('describeTrigger', () => {
       'on process_crash, display_drift',
     );
   });
+
+  it('names the wait on a delayed event trigger', () => {
+    expect(
+      describeTrigger({ type: 'event', eventTypes: ['process_restarted'], delayMinutes: 3 }),
+    ).toBe('on process_restarted · after 3 min');
+  });
+
+  it('says nothing about a delay that normalized away', () => {
+    expect(
+      describeTrigger({ type: 'event', eventTypes: ['process_restarted'], delayMinutes: 0 }),
+    ).toBe('on process_restarted');
+  });
 });

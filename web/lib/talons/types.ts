@@ -145,6 +145,20 @@ export interface TalonThresholdTrigger {
 export interface TalonEventTrigger {
   type: 'event';
   eventTypes: TalonEventType[];
+  /**
+   * Minutes to wait between the event landing and the talon running, 1–1440.
+   *
+   * Absent means "run the moment the event arrives" — the validator normalizes
+   * an explicit 0 away, so no-delay talons all persist identically. Meaningful
+   * on event triggers ONLY: a schedule already carries its own timing, and a
+   * threshold breach is a level, not an edge, so waiting on one would just
+   * re-ask a question the next breach answers.
+   *
+   * A delayed match is not executed inline. The matcher writes a `pending`
+   * deferral into `talon_runs` and `/api/cron/talons` fires it once
+   * `runAfterAt` passes — see {@link TalonRunDoc}.
+   */
+  delayMinutes?: number;
 }
 
 export type TalonTrigger =
@@ -220,7 +234,21 @@ export interface TalonScope {
 /** How the talon was authored — the UI editor or a cortex conversation. */
 export type TalonCreatedVia = 'ui' | 'cortex';
 
-export type TalonRunStatus = 'running' | 'succeeded' | 'failed' | 'skipped' | 'missed';
+/**
+ * `running` → `succeeded` / `failed` / `skipped` is the lifecycle of an
+ * EXECUTION. `pending` → `fired` / `missed` / `skipped` is the lifecycle of a
+ * DEFERRAL — the crumb a delayed event trigger writes while it waits out
+ * `delayMinutes`. Both live in `talon_runs`, and `missed` means the same thing
+ * on either: the window closed before anything ran.
+ */
+export type TalonRunStatus =
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'skipped'
+  | 'missed'
+  | 'pending'
+  | 'fired';
 
 export type TalonOutputStatus = 'sent' | 'failed' | 'skipped';
 
@@ -275,7 +303,23 @@ export interface TalonRunOutput {
   error?: string;
 }
 
-/** `sites/{siteId}/talon_runs/{runId}` */
+/**
+ * `sites/{siteId}/talon_runs/{runId}`
+ *
+ * Two kinds of document share this collection and this shape:
+ *
+ *   - an EXECUTION, written `running` by the engine and finalized in place;
+ *   - a DEFERRAL, written `pending` by the matcher when an event trigger
+ *     carries a `delayMinutes`, and resolved by the sweep once `runAfterAt`
+ *     passes. The four `runAfterAt` / `createdAt` / `firedAt` / `firedRunIds`
+ *     fields below belong to that second kind and are absent on every
+ *     execution.
+ *
+ * A deferral still stamps `startedAt` (equal to `createdAt`): the run history —
+ * `useTalonRuns` and the runs api alike — orders by `startedAt`, and Firestore
+ * excludes documents missing an ordered field, so a crumb without it would be
+ * invisible on the surface it exists to explain.
+ */
 export interface TalonRunDoc {
   talonId: string;
   /** Denormalized so the run list renders without a talon lookup. */
@@ -297,4 +341,12 @@ export interface TalonRunDoc {
   error?: string;
   /** True when an operator ran the talon on demand rather than the trigger firing. */
   manual?: boolean;
+  /** Deferral only — the instant the delay expires and the sweep may fire it. */
+  runAfterAt?: TalonTimestamp;
+  /** Deferral only — when the event landed and the deferral was written. */
+  createdAt?: TalonTimestamp;
+  /** Deferral only — when the sweep claimed it out of `pending`. */
+  firedAt?: TalonTimestamp;
+  /** Deferral only — ids of the runs the fire produced, empty when none were. */
+  firedRunIds?: string[];
 }

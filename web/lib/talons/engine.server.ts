@@ -160,8 +160,13 @@ export function describeTrigger(trigger: TalonTrigger): string {
     }
     case 'threshold':
       return `${trigger.metric} ${trigger.operator} ${trigger.value}`;
-    case 'event':
-      return `on ${trigger.eventTypes.join(', ')}`;
+    case 'event': {
+      const events = `on ${trigger.eventTypes.join(', ')}`;
+      // The wait is half of what this talon does — "on process_restarted" and
+      // "on process_restarted · after 3 min" are different automations, and a
+      // run record that hid the difference would misreport why it fired late.
+      return trigger.delayMinutes ? `${events} · after ${trigger.delayMinutes} min` : events;
+    }
   }
 }
 
@@ -629,6 +634,12 @@ const LOG_ACTION_BY_STATUS: Readonly<
   failed: { action: 'talon_failed', level: 'error' },
   skipped: { action: 'talon_skipped', level: 'warning' },
   missed: { action: 'talon_skipped', level: 'warning' },
+  // Deferral statuses. The engine never writes one — the matcher creates a
+  // deferral and the sweep resolves it, neither through this module — but the
+  // map stays total over `TalonRunStatus` so adding a status is a compile
+  // error here rather than an `undefined` destructure at runtime.
+  pending: { action: 'talon_triggered', level: 'info' },
+  fired: { action: 'talon_triggered', level: 'info' },
 };
 
 /**

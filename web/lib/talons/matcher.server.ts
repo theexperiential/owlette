@@ -35,12 +35,22 @@
  * not turn its host route into a 500. {@link tapTalonMatcher} is therefore
  * fire-and-forget with a terminal catch, and the per-talon loop inside
  * {@link matchAndRunTalons} isolates each talon from its siblings.
+ *
+ * ## Delayed event triggers
+ *
+ * An event trigger may carry a `delayMinutes` — "a process came back up, wait
+ * three minutes for it to finish booting, THEN look at the screen". Those
+ * talons are NOT run here. This module writes a `pending` deferral into
+ * `talon_runs` and returns; `/api/cron/talons` claims it once `runAfterAt`
+ * passes and runs the talon then. The delay is therefore honoured across a
+ * deploy or a process restart, which an in-memory timer would not survive.
  */
 import type { Firestore } from 'firebase-admin/firestore';
+import { generateCorrelationId } from '@/lib/auditLog.server';
 import logger from '@/lib/logger';
 import { runTalon, type TalonRunSummary } from './engine.server';
 import type { StoredTalon } from './store.server';
-import { TALON_EVENT_TYPES, type TalonDoc, type TalonOperator } from './types';
+import { TALON_EVENT_TYPES, type TalonDoc, type TalonOperator, type TalonRunDoc } from './types';
 import { MAX_TALONS_PER_SITE } from './validation';
 
 /** A metric threshold was crossed on one machine. */
@@ -161,6 +171,94 @@ function describeMatch(talon: StoredTalon, event: TalonMatchEvent): string {
 }
 
 /* -------------------------------------------------------------------------- */
+/*  deferral                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The talon's configured wait, in whole minutes, or 0 for "run now".
+ *
+ * Only an event trigger can carry one — `validateTalonInput` rejects
+ * `delayMinutes` on the other two forms — so a threshold breach never defers.
+ * Read defensively because `trigger` is typed off a Firestore document.
+ */
+function eventDelayMinutes(talon: StoredTalon): number {
+  const trigger = talon.trigger;
+  if (!trigger || trigger.type !== 'event') return 0;
+  const delay = trigger.delayMinutes;
+  if (typeof delay !== 'number' || !Number.isFinite(delay) || delay <= 0) return 0;
+  return Math.floor(delay);
+}
+
+/**
+ * Record the intent to run this talon `delayMinutes` from now, and let the
+ * sweep do it.
+ *
+ * ## Coalescing
+ *
+ * A burst of identical events during the wait — a process that crash-loops
+ * eight times while the talon is holding for three minutes — must produce ONE
+ * run, not eight. Before writing, this looks for a `pending` deferral for the
+ * same talon on the same machine and skips if it finds one. The lookup is two
+ * equality filters (`talonId`, `status`), which Firestore serves off its
+ * automatic single-field indexes, with the machine compared in memory: a
+ * site-level deferral has NO `machineId` field, and `where('machineId','==',
+ * null)` does not match a missing field.
+ *
+ * The check is deliberately not transactional. Two events landing in the same
+ * instant can both find nothing and both write, and that is a benign duplicate:
+ * each deferral is claimed exactly once at fire time, and the second fire hits
+ * the talon's cooldown. Serializing every event through a transaction to avoid
+ * a rare extra crumb would be a worse trade on the hot path.
+ *
+ * A coalesced event is silent by design — a crash loop is exactly the case that
+ * produces them, and one log line per crash is the noise the coalescing exists
+ * to prevent.
+ */
+async function deferTalonRun(
+  db: Firestore,
+  siteId: string,
+  talon: StoredTalon,
+  event: TalonEventMatchEvent,
+  delayMinutes: number,
+  now: Date,
+): Promise<void> {
+  const runs = db.collection('sites').doc(siteId).collection('talon_runs');
+
+  const pending = await runs
+    .where('talonId', '==', talon.id)
+    .where('status', '==', 'pending')
+    .get();
+
+  const machineId = event.machineId ?? null;
+  const alreadyPending = pending.docs.some(
+    (doc) => ((doc.data() as TalonRunDoc).machineId ?? null) === machineId,
+  );
+  if (alreadyPending) return;
+
+  // `machineName` is left off on purpose: resolving it costs a machine read on
+  // a path that runs per event, and the run the deferral fires resolves it
+  // properly. The run list falls back to the id.
+  const deferral: TalonRunDoc = {
+    talonId: talon.id,
+    talonName: talon.name,
+    triggerType: 'event',
+    triggerSummary: `${describeMatch(talon, event)} · after ${delayMinutes} min`,
+    ...(event.machineId ? { machineId: event.machineId } : {}),
+    status: 'pending',
+    // Equal by construction: `createdAt` is the field the deferral lifecycle
+    // reads, `startedAt` is what the run history orders by (see TalonRunDoc).
+    createdAt: now,
+    startedAt: now,
+    runAfterAt: new Date(now.getTime() + delayMinutes * 60_000),
+    outputs: [],
+    correlationId: generateCorrelationId(),
+    ...(talon.chatId ? { chatId: talon.chatId } : {}),
+  };
+
+  await runs.add(deferral);
+}
+
+/* -------------------------------------------------------------------------- */
 /*  dispatch                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -195,6 +293,9 @@ async function readEnabledTalons(db: Firestore, siteId: string): Promise<StoredT
  * others, exactly as one failed output does not stop a run's remaining outputs.
  * Cooldown, the in-flight guard, and the auto-disable backoff all belong to the
  * engine and are not re-implemented here.
+ *
+ * A talon carrying a delay is DEFERRED instead of run — it still counts as
+ * matched, and contributes no run to the result until the sweep fires it.
  */
 export async function matchAndRunTalons(
   db: Firestore,
@@ -225,9 +326,18 @@ export async function matchAndRunTalons(
   );
   if (matches.length === 0) return { matched: 0, runs: [] };
 
+  const now = new Date();
   const runs: TalonRunSummary[] = [];
   for (const talon of matches) {
     try {
+      if (event.kind === 'event') {
+        const delayMinutes = eventDelayMinutes(talon);
+        if (delayMinutes > 0) {
+          await deferTalonRun(db, siteId, talon, event, delayMinutes, now);
+          continue;
+        }
+      }
+
       runs.push(
         ...(await runTalon(db, talon, {
           siteId,

@@ -7,10 +7,16 @@
  * Why this exists: most agent events reach the dashboard through an http
  * endpoint (`/api/agent/alert`, `/api/alerts/trigger`) which can tap the talon
  * matcher in-process. `process_restarted` and the `display_*` events do not —
- * the agent writes them STRAIGHT into the site's log collection. (The
- * `send_display_alert` helper that would have posted them to `/api/agent/alert`
- * has zero call sites.) Without this trigger, a talon subscribed to
- * `display_drift` or `process_restarted` could never fire.
+ * the agent writes them STRAIGHT into the site's log collection. Without this
+ * trigger, a talon subscribed to `display_drift` or `process_restarted` could
+ * never fire.
+ *
+ * This trigger is the SINGLE source for display talons, and stays that way
+ * even though the agent now also posts display events to `/api/agent/alert`
+ * (for email + webhook delivery). Every agent writes the log; only new enough
+ * agents post the alert. So `/api/agent/alert` deliberately skips its talon
+ * tap for display event types — see the comment on that tap. Firing from both
+ * would double-run every display talon on an up-to-date fleet.
  *
  * Matching events are forwarded to `POST /api/talons/internal/match`, which
  * runs the matcher exactly as the in-process taps do. Failures are logged, never

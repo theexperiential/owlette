@@ -94,6 +94,7 @@ const FIELD_ELEMENT_IDS: Readonly<Record<string, string>> = {
   'trigger.operator': 'talon-trigger-operator',
   'trigger.value': 'talon-trigger-value',
   'trigger.eventTypes': 'talon-trigger-events',
+  'trigger.delayMinutes': 'talon-trigger-delay',
   condition: 'talon-condition-expectation',
   'condition.type': 'talon-condition-expectation',
   'condition.expectation': 'talon-condition-expectation',
@@ -176,6 +177,11 @@ function slotForField(field: string): string | null {
     return 'trigger.eventTypes';
   }
   if (field === 'trigger.intervalMinutes') return 'trigger.intervalMinutes';
+  // Owned by the event branch's delay input, which is mounted whenever this
+  // error is reachable: `triggerDraftToInput` sends `delayMinutes` on the event
+  // form only, so the validator's "this only applies to event triggers" cannot
+  // be raised against anything this editor submits.
+  if (field === 'trigger.delayMinutes') return 'trigger.delayMinutes';
   if (field === 'trigger.value') return 'trigger.value';
   if (field === 'condition.expectation') return 'condition.expectation';
   if (field === 'condition.monitor') return 'condition.monitor';

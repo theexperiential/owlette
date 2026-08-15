@@ -34,6 +34,10 @@ jest.mock('@/lib/talons/engine.server', () => ({
   __esModule: true,
   runTalon: (...args: unknown[]) => mockRunTalon(...args),
 }));
+jest.mock('@/lib/auditLog.server', () => ({
+  __esModule: true,
+  generateCorrelationId: () => 'corr-fixed',
+}));
 jest.mock('@/lib/logger', () => ({
   __esModule: true,
   default: {
@@ -73,6 +77,8 @@ class FakeFirestore {
   readonly docs = new Map<string, DocData>();
   /** Set to make every `.get()` reject — the "Firestore is down" case. */
   failReads = false;
+  /** Set to make every `.add()` reject — a write that loses to a rules change. */
+  failWrites = false;
 
   collection(name: string): FakeCollection {
     return new FakeCollection(this, name);
@@ -98,6 +104,14 @@ class FakeCollection {
 
   where(field: string, _op: string, value: unknown): FakeQuery {
     return new FakeQuery(this.db, this.path, [{ field, value }], null);
+  }
+
+  /** Auto-id insert, as the matcher's deferral write uses. */
+  async add(data: DocData): Promise<FakeDocRef> {
+    if (this.db.failWrites) throw new Error('firestore unavailable');
+    const id = `doc-${this.db.docs.size + 1}`;
+    this.db.docs.set(`${this.path}/${id}`, { ...data });
+    return new FakeDocRef(this.db, `${this.path}/${id}`);
   }
 }
 
@@ -149,6 +163,7 @@ class FakeDocRef {
 
 const SITE = 'site-a';
 const TALONS_PATH = `sites/${SITE}/talons`;
+const RUNS_PATH = `sites/${SITE}/talon_runs`;
 const NOW = new Date('2026-08-14T12:00:00Z');
 
 let fake: FakeFirestore;
@@ -172,6 +187,28 @@ function seedTalon(id: string, overrides: Partial<TalonDoc> = {}): void {
     ...overrides,
   };
   fake.docs.set(`${TALONS_PATH}/${id}`, doc as unknown as DocData);
+}
+
+/** Every document written into this site's `talon_runs`, in insertion order. */
+function writtenRuns(): DocData[] {
+  return fake.childPaths(RUNS_PATH).map((path) => fake.docs.get(path) as DocData);
+}
+
+/** Seed a deferral the coalescing check will find. */
+function seedDeferral(id: string, overrides: DocData = {}): void {
+  fake.docs.set(`${RUNS_PATH}/${id}`, {
+    talonId: 'delayed',
+    talonName: 'talon delayed',
+    triggerType: 'event',
+    triggerSummary: 'on process_restarted · after 3 min',
+    status: 'pending',
+    createdAt: NOW,
+    startedAt: NOW,
+    runAfterAt: new Date(NOW.getTime() + 3 * 60_000),
+    outputs: [],
+    correlationId: 'corr-existing',
+    ...overrides,
+  });
 }
 
 /** Ids of the talons `runTalon` was called with, in call order. */
@@ -342,8 +379,9 @@ describe('event signals', () => {
   );
 
   it('short-circuits an event outside the catalog without reading firestore', async () => {
-    // `/api/agent/alert` taps on every alert it accepts, `connection_failure`
-    // included. No talon can subscribe to that, so it must not cost a query —
+    // `/api/agent/alert` taps on every alert it accepts bar display events,
+    // `connection_failure` included. No talon can subscribe to that, so it
+    // must not cost a query —
     // the poisoned reads below would surface as a rejection if one were issued.
     seedTalon('t1', { trigger: { type: 'event', eventTypes: ['process_crash'] } });
     fake.failReads = true;
@@ -385,6 +423,158 @@ describe('event signals', () => {
 
     expect(result.matched).toBe(1);
     expect(ranTalonIds()).toEqual(['on']);
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+/*  delayed event triggers                                                    */
+/* ------------------------------------------------------------------------- */
+
+describe('delayed event triggers', () => {
+  const restarted = { kind: 'event' as const, eventType: 'process_restarted', machineId: 'm1' };
+
+  function seedDelayed(delayMinutes: number | undefined, overrides: Partial<TalonDoc> = {}): void {
+    seedTalon('delayed', {
+      trigger: { type: 'event', eventTypes: ['process_restarted'], delayMinutes },
+      ...overrides,
+    });
+  }
+
+  it('writes a deferral instead of running the talon', async () => {
+    seedDelayed(3);
+
+    const result = await matchAndRunTalons(db, SITE, restarted);
+
+    // Still a match — it just has not run yet.
+    expect(result).toEqual({ matched: 1, runs: [] });
+    expect(mockRunTalon).not.toHaveBeenCalled();
+
+    const runs = writtenRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      talonId: 'delayed',
+      talonName: 'talon delayed',
+      triggerType: 'event',
+      triggerSummary: 'on process_restarted · after 3 min',
+      machineId: 'm1',
+      status: 'pending',
+      outputs: [],
+      correlationId: 'corr-fixed',
+    });
+  });
+
+  it('schedules the deferral exactly delayMinutes out, and stamps startedAt', async () => {
+    seedDelayed(3);
+    const before = Date.now();
+
+    await matchAndRunTalons(db, SITE, restarted);
+
+    const [deferral] = writtenRuns();
+    const runAfterMs = (deferral.runAfterAt as Date).getTime();
+    const createdMs = (deferral.createdAt as Date).getTime();
+
+    expect(runAfterMs - createdMs).toBe(3 * 60_000);
+    expect(createdMs).toBeGreaterThanOrEqual(before);
+    // The run history orders on `startedAt`; a crumb missing it is invisible.
+    expect((deferral.startedAt as Date).getTime()).toBe(createdMs);
+  });
+
+  it('coalesces a burst into one deferral', async () => {
+    seedDelayed(3);
+
+    // A process that crash-loops eight times inside the wait is still one thing
+    // to react to.
+    for (let index = 0; index < 8; index += 1) {
+      await matchAndRunTalons(db, SITE, restarted);
+    }
+
+    expect(writtenRuns()).toHaveLength(1);
+    expect(mockRunTalon).not.toHaveBeenCalled();
+  });
+
+  it('coalesces per machine, not per talon', async () => {
+    seedDelayed(3);
+
+    await matchAndRunTalons(db, SITE, restarted);
+    await matchAndRunTalons(db, SITE, { ...restarted, machineId: 'm2' });
+    await matchAndRunTalons(db, SITE, { ...restarted, machineId: 'm2' });
+
+    expect(writtenRuns().map((run) => run.machineId)).toEqual(['m1', 'm2']);
+  });
+
+  it('coalesces a site-level deferral, which carries no machineId at all', async () => {
+    seedDelayed(3);
+
+    await matchAndRunTalons(db, SITE, { kind: 'event', eventType: 'process_restarted' });
+    await matchAndRunTalons(db, SITE, { kind: 'event', eventType: 'process_restarted' });
+
+    const runs = writtenRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).not.toHaveProperty('machineId');
+    expect(runs[0].triggerSummary).toBe('on process_restarted · after 3 min');
+  });
+
+  it('does not coalesce against a deferral that has already fired', async () => {
+    seedDelayed(3);
+    seedDeferral('spent', { status: 'fired', machineId: 'm1' });
+
+    await matchAndRunTalons(db, SITE, restarted);
+
+    expect(writtenRuns().filter((run) => run.status === 'pending')).toHaveLength(1);
+  });
+
+  it('does not coalesce against another talon waiting on the same machine', async () => {
+    seedDelayed(3);
+    seedDeferral('other-talon', { talonId: 'somebody-else', machineId: 'm1' });
+
+    await matchAndRunTalons(db, SITE, restarted);
+
+    expect(writtenRuns().filter((run) => run.talonId === 'delayed')).toHaveLength(1);
+  });
+
+  it.each([[undefined], [0], [-5], [Number.NaN], ['3' as unknown as number]])(
+    'runs immediately when the delay is %p',
+    async (delayMinutes) => {
+      seedDelayed(delayMinutes);
+
+      const result = await matchAndRunTalons(db, SITE, restarted);
+
+      expect(result.runs).toHaveLength(1);
+      expect(mockRunTalon).toHaveBeenCalledTimes(1);
+      expect(runContext().triggerSummary).toBe('on process_restarted');
+      expect(writtenRuns()).toHaveLength(0);
+    },
+  );
+
+  it('never defers a threshold breach, whatever the trigger carries', async () => {
+    // `delayMinutes` is rejected on a threshold trigger by the validator; a
+    // hand-edited document must still not take the deferral path.
+    seedTalon('threshold-delay', {
+      trigger: {
+        type: 'threshold',
+        metric: 'cpu_percent',
+        operator: '>',
+        value: 90,
+        delayMinutes: 30,
+      } as unknown as TalonDoc['trigger'],
+    });
+
+    await matchAndRunTalons(db, SITE, breach());
+
+    expect(mockRunTalon).toHaveBeenCalledTimes(1);
+    expect(writtenRuns()).toHaveLength(0);
+  });
+
+  it('isolates a deferral write failure from the other talons', async () => {
+    seedDelayed(3);
+    seedTalon('immediate', { trigger: { type: 'event', eventTypes: ['process_restarted'] } });
+    fake.failWrites = true;
+
+    const result = await matchAndRunTalons(db, SITE, restarted);
+
+    expect(result.matched).toBe(2);
+    expect(ranTalonIds()).toEqual(['immediate']);
+    expect(mockLoggerError).toHaveBeenCalled();
   });
 });
 

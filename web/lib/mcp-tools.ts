@@ -951,7 +951,7 @@ TRIGGER (exactly one form):
 - clock times: {"type":"schedule","entries":[{"id":"e1","days":["mon","wed"],"time":"09:00"}]} — 24-hour HH:MM in the site's timezone, up to 50 entries.
 - interval: {"type":"schedule","intervalMinutes":30} — 5 to 1440 minutes, but 15 minutes minimum when the condition is a visual_check. "entries" and "intervalMinutes" are mutually exclusive.
 - threshold: {"type":"threshold","metric":"cpu_percent","operator":">","value":90} — metrics: cpu_percent, memory_percent, disk_percent, gpu_percent, cpu_temp, gpu_temp, network_latency, network_packet_loss. Operators: >, <, >=, <=.
-- event: {"type":"event","eventTypes":["process_crash","machine_offline"]} — also process_start_failed, process_restarted, exe_missing, and the display_* events (display_monitor_removed, display_apply_failed, display_drift, ...).
+- event: {"type":"event","eventTypes":["process_crash","machine_offline"]} — also process_start_failed, process_restarted, exe_missing, and the display_* events (display_monitor_removed, display_apply_failed, display_drift, ...). Event triggers only, add "delayMinutes":N (0-1440) to wait N minutes after the event before running — e.g. let a restarted app finish booting before a visual_check looks at it. Omit it, or use 0, to run the moment the event lands.
 
 CONDITION (optional, defaults to {"type":"none"}):
 - {"type":"visual_check","expectation":"the lobby wall is playing the loop, not showing a desktop","monitor":0} — captures a fresh screenshot and asks a vision model whether the expectation holds. monitor 0 = all displays combined, 1 = primary. Needs a site-level LLM key.

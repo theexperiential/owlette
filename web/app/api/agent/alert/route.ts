@@ -211,7 +211,16 @@ export const POST = withRateLimit(
       // Everything above this line is authentication, validation and rate
       // limiting — a request that reaches this statement is a real, authorized
       // event from the machine it claims to be. Fire-and-forget by contract.
-      tapTalonMatcher(db, siteId, { kind: 'event', eventType: resolvedEventType, machineId });
+      //
+      // SINGLE-SOURCE RULE — display events are excluded on purpose. Display
+      // talons are fired by `functions/src/talonLogEvents.ts` off the agent's
+      // `sites/{siteId}/logs` write, and that write happens on every agent
+      // regardless of whether it also posts here. Tapping again would
+      // double-fire every display talon on agents new enough to send the
+      // alert. The logs trigger stays the one source; do not "restore" this.
+      if (!isDisplayEvent) {
+        tapTalonMatcher(db, siteId, { kind: 'event', eventType: resolvedEventType, machineId });
+      }
 
       // --- Display events (B3.1 + B3.3) ---
       // Routed through `DISPLAY_EVENT_ROUTING`. `suppressAlert === true`

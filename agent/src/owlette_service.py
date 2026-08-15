@@ -4671,6 +4671,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         log_event already stamps machineId + timestamp (SERVER_TIMESTAMP), so
         we don't duplicate those here.
+
+        The same ``payload`` is handed to ``send_display_alert``, which posts
+        it to ``/api/agent/alert`` for email + webhook delivery. Two distinct
+        sinks: the log write owns the dashboard feed and the talon bridge, the
+        alert owns out-of-band delivery — neither substitutes for the other.
+        ``send_display_alert`` is non-blocking (daemon thread + retry queue)
+        and drops event types with no routing entry itself, so callers hand it
+        every event unconditionally.
+
+        ``payload`` carries the ``suppressAlert`` / ``correlatedApplyId`` flags
+        stamped by ``_emit_display_change_events`` when the event lands inside
+        the post-apply suppression window; the routing endpoint reads them off
+        ``data`` to skip email while still firing the webhook.
         """
         try:
             details = json.dumps(payload, separators=(',', ':'), sort_keys=True)
@@ -4682,6 +4695,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             level=severity,
             details=details,
         )
+        self.firebase_client.send_display_alert(event_type, payload)
 
     @staticmethod
     def _auto_restore_values_equal(label: str, live_value, assigned_value) -> bool:

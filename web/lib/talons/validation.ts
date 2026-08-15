@@ -23,6 +23,7 @@ import {
   type TalonCommandOutput,
   type TalonCommandType,
   type TalonCondition,
+  type TalonEventTrigger,
   type TalonEventType,
   type TalonMetric,
   type TalonOperator,
@@ -50,6 +51,12 @@ export const TALON_DIRECTIVE_MAX_LENGTH = 1000;
 export const TALON_EXPECTATION_MAX_LENGTH = 500;
 export const TALON_MAX_COOLDOWN_MINUTES = 1440;
 export const DEFAULT_TALON_COOLDOWN_MINUTES = 60;
+/**
+ * Longest an event trigger may wait before running. A day, matching the
+ * cooldown ceiling — anything longer is a schedule, not a reaction, and the
+ * deferral would outlive several sweeps' worth of fleet state.
+ */
+export const TALON_MAX_DELAY_MINUTES = 1440;
 
 /** Matches `capture_screenshot`: 0 = all monitors combined, 1 = primary. */
 const MIN_MONITOR_INDEX = 0;
@@ -295,6 +302,18 @@ function validateTrigger(
     return null;
   }
 
+  // A delay is a property of reacting to an event. Rejected on the other two
+  // forms rather than dropped: silently ignoring a field the caller set is how
+  // a talon ends up not doing what its author asked. Checked before the switch
+  // so the schedule and threshold branches can keep their early returns.
+  if (
+    (value.type === 'schedule' || value.type === 'threshold') &&
+    value.delayMinutes !== undefined &&
+    value.delayMinutes !== null
+  ) {
+    bag.add('trigger.delayMinutes', 'invalid_field', 'this only applies to event triggers');
+  }
+
   switch (value.type) {
     case 'schedule': {
       const hasEntries = value.entries !== undefined && value.entries !== null;
@@ -368,6 +387,30 @@ function validateTrigger(
     }
 
     case 'event': {
+      // Read before the event list so a bad delay and a bad subscription are
+      // reported together rather than one submit apart.
+      let delayMinutes: number | undefined;
+      let delayValid = true;
+      if (value.delayMinutes !== undefined && value.delayMinutes !== null) {
+        const outOfRange = `the delay must be between 0 and ${TALON_MAX_DELAY_MINUTES / 60} hours`;
+        const parsed = readBoundedInteger(
+          bag,
+          value.delayMinutes,
+          'trigger.delayMinutes',
+          0,
+          TALON_MAX_DELAY_MINUTES,
+          {
+            notInteger: 'enter a whole number of minutes',
+            tooLow: outOfRange,
+            tooHigh: outOfRange,
+          },
+        );
+        if (parsed === null) delayValid = false;
+        // 0 IS the absence of a delay, so it normalizes away — "run right now"
+        // has one representation on the document, not two.
+        else if (parsed > 0) delayMinutes = parsed;
+      }
+
       if (!Array.isArray(value.eventTypes) || value.eventTypes.length === 0) {
         bag.add('trigger.eventTypes', 'invalid_field', 'pick at least one event');
         return null;
@@ -385,11 +428,14 @@ function validateTrigger(
         }
         seen.add(eventType as TalonEventType);
       }
-      if (!valid) return null;
-      return {
+      if (!valid || !delayValid) return null;
+
+      const trigger: TalonEventTrigger = {
         type: 'event',
         eventTypes: TALON_EVENT_TYPES.filter((eventType) => seen.has(eventType)),
       };
+      if (delayMinutes !== undefined) trigger.delayMinutes = delayMinutes;
+      return trigger;
     }
 
     default:

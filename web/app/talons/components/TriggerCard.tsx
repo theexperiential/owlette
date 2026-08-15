@@ -45,6 +45,7 @@ import {
   type TalonTrigger,
   type TalonTriggerType,
 } from '@/lib/talons/types';
+import { TALON_MAX_DELAY_MINUTES } from '@/lib/talons/validation';
 
 /**
  * Operator-facing explanation per event type, shown as a tooltip in the event
@@ -89,6 +90,8 @@ export interface TriggerDraft {
   operator: TalonOperator;
   value: string;
   eventTypes: TalonEventType[];
+  /** Raw text, same reason as `intervalValue`. `''` and `'0'` both mean no wait. */
+  delayValue: string;
 }
 
 /**
@@ -142,6 +145,7 @@ export function newTriggerDraft(): TriggerDraft {
     operator: '>',
     value: '90',
     eventTypes: [],
+    delayValue: '0',
   };
 }
 
@@ -168,6 +172,9 @@ export function triggerDraftFromTalon(trigger: TalonTrigger): TriggerDraft {
     draft.value = String(trigger.value);
   } else {
     draft.eventTypes = [...trigger.eventTypes];
+    // An absent delay and an explicit 0 are the same talon, and the validator
+    // normalizes the one into the other — so both reopen as `0`.
+    draft.delayValue = String(trigger.delayMinutes ?? 0);
   }
 
   return draft;
@@ -203,8 +210,15 @@ export function triggerDraftToInput(draft: TriggerDraft): TalonTrigger {
         operator: draft.operator,
         value: toNumber(draft.value),
       };
-    case 'event':
-      return { type: 'event', eventTypes: draft.eventTypes };
+    case 'event': {
+      const delayMinutes = toNumber(draft.delayValue);
+      // An emptied box is "no wait", not a number the user got wrong: the field
+      // is optional, so it is simply not sent. A typed number always is —
+      // including a bad one, which the validator names.
+      return Number.isNaN(delayMinutes)
+        ? { type: 'event', eventTypes: draft.eventTypes }
+        : { type: 'event', eventTypes: draft.eventTypes, delayMinutes };
+    }
   }
 }
 
@@ -328,6 +342,7 @@ export function TriggerCard({
   const entriesError = errorFor('trigger.entries');
   const intervalError = errorFor('trigger.intervalMinutes');
   const eventsError = errorFor('trigger.eventTypes');
+  const delayError = errorFor('trigger.delayMinutes');
   const valueError = errorFor('trigger.value');
 
   return (
@@ -607,6 +622,39 @@ export function TriggerCard({
               {eventsError}
             </p>
           )}
+
+          {/* The wait between the event and the run. A restarted app is not a
+              booted app, and a visual check fired on the splash screen tells
+              you nothing true. */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="talon-trigger-delay" className="text-xs text-muted-foreground">
+                then wait
+              </Label>
+              <Input
+                id="talon-trigger-delay"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={TALON_MAX_DELAY_MINUTES}
+                value={draft.delayValue}
+                onChange={(e) => patch({ delayValue: e.target.value })}
+                disabled={disabled}
+                aria-invalid={!!delayError}
+                className="w-20 bg-background border-border"
+              />
+              <span className="text-xs text-muted-foreground">minutes</span>
+            </div>
+            {delayError ? (
+              <p role="alert" className="text-xs text-destructive">
+                {delayError}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                0 runs right away — give a restarted app time to boot before checking it
+              </p>
+            )}
+          </div>
         </div>
       )}
     </section>

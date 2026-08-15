@@ -11,6 +11,10 @@
  * `cancelled` (orange), `missed` as `partial` (yellow) — both are "the run did
  * not happen", not "the run failed".
  *
+ * A delayed event trigger also contributes non-execution rows: `pending` while
+ * it waits out its delay and `fired` once it has handed off. See
+ * `TalonRunDoc` — those crumbs live in the same collection.
+ *
  * talons wave 4.2.
  */
 
@@ -22,6 +26,7 @@ import {
   Loader2,
   MessageSquare,
   MinusCircle,
+  PlayCircle,
   XCircle,
 } from 'lucide-react';
 
@@ -129,6 +134,13 @@ export function talonStatusIcon(status: string | null | undefined) {
       return <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />;
     case 'running':
       return <Loader2 className="h-3.5 w-3.5 animate-spin text-accent-cyan" />;
+    // Deferral crumbs. `pending` is still waiting out its delay — a live clock,
+    // not the muted one the default returns for "never run". `fired` handed off
+    // to a real run, which carries the outcome and its own icon.
+    case 'pending':
+      return <Clock className="h-3.5 w-3.5 text-accent-cyan" />;
+    case 'fired':
+      return <PlayCircle className="h-3.5 w-3.5 text-accent-cyan" />;
     default:
       return <Clock className="h-3.5 w-3.5 text-muted-foreground" />;
   }
@@ -138,6 +150,8 @@ export function talonStatusIcon(status: string | null | undefined) {
 const STATUS_TOOLTIP: Record<string, string> = {
   missed: 'fired too late — skipped for safety',
   skipped: 'the run was gated before its outputs ran',
+  pending: 'waiting out the delay before it runs',
+  fired: 'the delay elapsed — the run it started is listed separately',
 };
 
 function outputsSummary(outputs: TalonRunOutput[]): {

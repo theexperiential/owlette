@@ -41,6 +41,37 @@ longer a schedule.
 
 ---
 
+## where a non-schedule trigger comes from
+
+Every event and threshold talon is fired by exactly ONE tap. The table below is the whole map — all
+fifteen `TALON_EVENT_TYPES` plus the threshold kind. If a talon fires twice for one real-world event,
+a second tap has been added somewhere it shouldn't be.
+
+| trigger | fired by | source of the signal |
+|---|---|---|
+| threshold (cpu / memory / disk / gpu) | `POST /api/alerts/trigger` | agent metric upload |
+| `process_crash`, `process_start_failed` | `POST /api/agent/alert` | agent alert POST |
+| `exe_missing` | `POST /api/agent/alert` | agent alert POST |
+| `machine_offline` | `GET /api/cron/health-check` | the offline scan (see trigger latency below) |
+| `process_restarted` | `onTalonLogEventCreated` (`functions/src/talonLogEvents.ts`) | the agent's `sites/{siteId}/logs` write |
+| the ten `display_*` events | `onTalonLogEventCreated` | the agent's `sites/{siteId}/logs` write |
+
+`/api/agent/alert` taps on more than the four rows above — `connection_failure` included — but no
+talon can subscribe to anything outside `TALON_EVENT_TYPES`, so the matcher short-circuits those
+without touching firestore.
+
+The display row is the one that needs explaining. As of agent 3.0.0 the agent ALSO posts display
+events to `/api/agent/alert` — that is what drives display emails and webhooks, which were dormant
+until that release. But the log write is what EVERY agent does, old and new, so the firestore trigger
+stays the single source for display talons and `/api/agent/alert` deliberately skips its talon tap
+for the ten routed display event types. Restoring that tap would double-fire every display talon on
+an up-to-date fleet.
+
+Consequence for latency: a display talon inherits the firestore-trigger cold start (typically a
+second or two, occasionally more), not the alert POST's round trip. That is the intended trade.
+
+---
+
 ## deploy order
 
 Do these in order. The cron is registered LAST.

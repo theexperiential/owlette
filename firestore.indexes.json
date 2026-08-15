@@ -226,6 +226,14 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "startedAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "talon_runs",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "runAfterAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
