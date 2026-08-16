@@ -15,8 +15,24 @@ name: build installer (slsa l3)
 #   - provenance is non-falsifiable by the build (✅ the generator runs
 #     in a separate job, reads the hash we output, signs outside our control)
 #
-# The authenticode signing step (wave 5.9) is separate — that needs the
-# EV cert from wave 0.7 and wraps THIS artifact after provenance is sealed.
+# Authenticode signing is NOT wired up yet. Two corrections to the older plan
+# that used to be documented here, both load-bearing:
+#
+#   1. Signing must happen BEFORE the "compute base64-subjects" step below,
+#      not after provenance is sealed. That step hashes the installer bytes
+#      into the attested subject, and the verify job re-hashes the released
+#      asset against it. Signing mutates the bytes, so signing afterwards
+#      would fail slsa-verifier on every tagged release.
+#
+#   2. An EV certificate is not the prerequisite. Microsoft removed EV's
+#      instant SmartScreen reputation in 2024 ("Paying a premium for EV solely
+#      to avoid SmartScreen warnings is no longer justified" —
+#      learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation).
+#      No certificate grants day-one trust for non-Store distribution; signing
+#      buys a verified publisher name plus reputation that persists across
+#      releases instead of resetting per file hash.
+#
+# The build job will also need `id-token: write` for Azure OIDC login.
 
 on:
   push:
