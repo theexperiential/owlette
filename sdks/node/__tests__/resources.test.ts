@@ -75,7 +75,7 @@ describe('owlette.account', () => {
             isLegacy: false,
           },
           rateLimit: { tier: 'api', limitPerMinute: 600 },
-          quota: { siteId: 'site-1', tier: 'pro', usedBytes: 10, limitBytes: 100 },
+          quota: { siteId: 'site-1', usedBytes: 10, limitBytes: 100 },
           primarySiteId: 'site-1',
         },
       },
@@ -455,13 +455,11 @@ describe('owlette.quotas', () => {
         status: 200,
         body: {
           siteId: 'site-1',
-          tier: 'pro',
           usedBytes: 100,
           pendingBytes: 25,
           committedBytes: 125,
           limitBytes: 1000,
           fractionUsed: 0.125,
-          roostAvailable: true,
           lastAlarmLevel: 0,
           lastAlarmAt: null,
           lastReconciledAt: null,
@@ -472,8 +470,8 @@ describe('owlette.quotas', () => {
     const result = await owlette.quotas.current('site-1');
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/quota');
     expect(result.committedBytes).toBe(125);
-    expect(result.tier).toBe('pro');
-    expect(result.roostAvailable).toBe(true);
+    expect(result.limitBytes).toBe(1000);
+    expect(result.fractionUsed).toBe(0.125);
   });
 
   it('history -> GET /api/sites/{siteId}/quota/history?period=...', async () => {

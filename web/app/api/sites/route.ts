@@ -15,13 +15,11 @@ import {
   problemForbidden,
   problemNotFound,
   problemScopeInsufficient,
-  problemTierInsufficient,
   problemTokenExpired,
   problemValidation,
   problemUnauthorized,
   ProblemType,
 } from '@/lib/apiErrors';
-import { coreSiteLimitDetail } from '@/lib/billing/billingSnapshot.server';
 import {
   ApiAuthError,
   applyAuthDeprecations,
@@ -225,14 +223,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
             code: 'site_already_exists',
           });
         }
-        // Core's one-site limit (billing-system wave 2.7). No `required`
-        // block: the failure is about the account, and naming an arbitrary
-        // owned site would point the caller at the wrong upgrade target —
-        // same reasoning as `accountTierInsufficient()` in billingGate.
-        if (result.kind === 'core_site_limit') {
-          return problemTierInsufficient(coreSiteLimitDetail());
-        }
-
         return applyScopedAuthDeprecations(
           NextResponse.json(
             {
@@ -240,7 +230,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
               name: result.name,
               timezone: result.timezone,
               owner: result.owner,
-              tier: result.tier,
               createdAt: result.createdAt,
             },
             { status: 201 },
@@ -273,22 +262,15 @@ function summariseSite(d: FirebaseFirestore.QueryDocumentSnapshot): {
   id: string;
   name: string;
   plan: string | null;
-  tier: 'core' | 'pro' | null;
-  tierUpgradedAt: string | null;
   timezone: string | null;
   owner: string | null;
   createdAt: string | null;
 } {
   const data = d.data();
-  const rawTier = data.tier;
-  const tier: 'core' | 'pro' | null =
-    rawTier === 'core' || rawTier === 'pro' ? rawTier : null;
   return {
     id: d.id,
     name: typeof data.name === 'string' ? data.name : d.id,
     plan: typeof data.plan === 'string' ? data.plan : null,
-    tier,
-    tierUpgradedAt: timestampToIso(data.tierUpgradedAt),
     timezone: typeof data.timezone === 'string' ? data.timezone : null,
     owner: typeof data.owner === 'string' ? data.owner : null,
     createdAt: timestampToIso(data.createdAt),

@@ -105,59 +105,7 @@ describe('GET /api/sites/{siteId}/quota', () => {
     });
   });
 
-  // billing-system wave 0.7: the route mirrors quotaLogic's two-tier model
-  // (core: no roost, pro: 1 TiB) instead of the retired four-plan storage
-  // ladder, and reports `roostAvailable` instead of `unlimited`.
-  it('reports a core site as having no roost entitlement', async () => {
-    mocks.get.mockResolvedValueOnce(
-      docSnapshot('quota', { tier: 'core', usedBytes: 500 }),
-    );
-    mocks.collectionGet
-      .mockResolvedValueOnce(querySnapshot([]))
-      .mockResolvedValueOnce(querySnapshot([]));
-
-    const req = createMockRequest(`http://localhost/api/sites/${SITE}/quota`);
-    const res = await quotaGET(req, { params: Promise.resolve({ siteId: SITE }) });
-    const body = (await res.json()) as {
-      tier: string;
-      limitBytes: number;
-      fractionUsed: number | null;
-      roostAvailable: boolean;
-    };
-
-    expect(res.status).toBe(200);
-    expect(body.tier).toBe('core');
-    expect(body.limitBytes).toBe(0);
-    // No allowance means no ratio to take — mirrors quotaLogic's NaN.
-    expect(body.fractionUsed).toBeNull();
-    expect(body.roostAvailable).toBe(false);
-  });
-
-  it('falls back to the pro tier cap when the doc has no planLimitBytes', async () => {
-    mocks.get.mockResolvedValueOnce(
-      docSnapshot('quota', { tier: 'pro', usedBytes: 500 }),
-    );
-    mocks.collectionGet
-      .mockResolvedValueOnce(querySnapshot([]))
-      .mockResolvedValueOnce(querySnapshot([]));
-
-    const req = createMockRequest(`http://localhost/api/sites/${SITE}/quota`);
-    const res = await quotaGET(req, { params: Promise.resolve({ siteId: SITE }) });
-    const body = (await res.json()) as {
-      tier: string;
-      limitBytes: number;
-      roostAvailable: boolean;
-    };
-
-    expect(res.status).toBe(200);
-    expect(body.tier).toBe('pro');
-    expect(body.limitBytes).toBe(1024 ** 4); // 1 TiB
-    expect(body.roostAvailable).toBe(true);
-  });
-
-  it('resolves an unstamped quota doc to the beta default tier', async () => {
-    // Legacy docs predate the `tier` field; getSiteTier() answers 'pro' for
-    // them until go-live task 5.3 stamps every site.
+  it('falls back to the standard per-site cap when the doc has no planLimitBytes', async () => {
     mocks.get.mockResolvedValueOnce(docSnapshot('quota', { usedBytes: 500 }));
     mocks.collectionGet
       .mockResolvedValueOnce(querySnapshot([]))
@@ -165,11 +113,10 @@ describe('GET /api/sites/{siteId}/quota', () => {
 
     const req = createMockRequest(`http://localhost/api/sites/${SITE}/quota`);
     const res = await quotaGET(req, { params: Promise.resolve({ siteId: SITE }) });
-    const body = (await res.json()) as { tier: string; roostAvailable: boolean };
+    const body = (await res.json()) as { limitBytes: number };
 
     expect(res.status).toBe(200);
-    expect(body.tier).toBe('pro');
-    expect(body.roostAvailable).toBe(true);
+    expect(body.limitBytes).toBe(1024 ** 4); // 1 TiB
   });
 });
 

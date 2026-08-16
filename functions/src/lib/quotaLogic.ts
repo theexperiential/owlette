@@ -1,16 +1,9 @@
 /**
  * Pure logic for roost per-site storage quota enforcement.
  *
- * Tier model (billing sprint wave 0.4 — authoritative:
- * `dev/active/billing-system/plan.md`):
- *   - core : roost not available — no included storage at all
- *   - pro  : 1 TiB included per site
- *
- * The tier is a property of the site doc (`sites/{siteId}.tier`), the same
- * field `web/lib/siteTier.ts` reads, so the dashboard gate and the server
- * enforcement can never disagree about what a customer bought. Overage
- * billing ($0.05/GB past the inclusion) and the 110 % hard cap are billing
- * sprint wave 2; this module models only the included allowance.
+ * A flat capacity limit — `SITE_STORAGE_BYTES` per site, applied to every
+ * site identically. This bounds what one site may hold in R2; it is not an
+ * entitlement, and nothing here consults a plan.
  *
  * Alarm thresholds fire at 50 / 80 / 100 % of cap. The transition — not
  * the absolute level — is what an alerting caller wants, so the pure
@@ -25,48 +18,22 @@
  * the signed URL.
  */
 
-export type SiteTier = 'core' | 'pro';
-
-/**
- * Tier assumed for a site doc whose `tier` field is missing or unknown.
- *
- * Mirrors `BETA_DEFAULT_TIER` in `web/lib/siteTier.ts` — web can't import
- * from functions/, so the constant exists on both sides and the two must
- * stay in sync: a divergent default would show roost in the dashboard
- * while every upload is denied server-side. Both are deleted at go-live
- * (billing sprint task 5.3), once every site doc carries an explicit tier.
- */
-export const BETA_DEFAULT_TIER: SiteTier = 'pro';
-
 const TIB = 1024 ** 4;
 
 /**
- * Included storage per site, in bytes. `core` is 0 rather than a small
- * allowance — roost is a pro-tier feature, so a core site has nothing to
- * spend at all (see `roostAvailable` on QuotaReport).
+ * Included storage per site, in bytes.
+ *
+ * Mirrored by `SITE_STORAGE_BYTES` in `web/lib/roostStorage.ts` — web can't
+ * import from functions/, so the number exists on both sides and the two
+ * must stay in sync.
  */
-export const TIER_STORAGE_BYTES: Record<SiteTier, number> = {
-  core: 0,
-  pro: 1 * TIB,
-};
-
-/**
- * Narrow a raw `tier` field (Firestore data is untyped) to a known tier,
- * falling back to the documented beta default.
- */
-export function resolveSiteTier(raw: unknown): SiteTier {
-  if (raw === 'core') return 'core';
-  if (raw === 'pro') return 'pro';
-  return BETA_DEFAULT_TIER;
-}
+export const SITE_STORAGE_BYTES = 1 * TIB;
 
 /** Alarm threshold levels, ordered low → high. 0 means "under 50 %". */
 export const ALARM_LEVELS = [0, 0.5, 0.8, 1.0] as const;
 export type AlarmLevel = (typeof ALARM_LEVELS)[number];
 
 export interface QuotaState {
-  /** Site tier, determines the cap. */
-  tier: SiteTier;
   /** Bytes already finalised in R2 for this site. */
   usedBytes: number;
   /**
@@ -78,42 +45,23 @@ export interface QuotaState {
 }
 
 export interface QuotaReport {
-  /** Included storage for the tier. 0 on core. */
+  /** Included storage per site. */
   planLimitBytes: number;
   /** usedBytes + pendingBytes */
   committedBytes: number;
   remainingBytes: number;
-  /** committedBytes / planLimitBytes (0..1). NaN when the tier has no storage. */
+  /** committedBytes / planLimitBytes (0..1). */
   fractionUsed: number;
   /** Highest threshold strictly crossed by committedBytes. */
   alarmLevel: AlarmLevel;
   /** `true` once committedBytes ≥ planLimitBytes. */
   atCap: boolean;
-  /** `false` on core — the tier carries no storage entitlement to spend. */
-  roostAvailable: boolean;
 }
 
 /** Compute the quota snapshot for a site without any other side-effect. */
 export function reportQuota(state: QuotaState): QuotaReport {
-  const planLimitBytes = TIER_STORAGE_BYTES[state.tier];
+  const planLimitBytes = SITE_STORAGE_BYTES;
   const committedBytes = Math.max(0, state.usedBytes + state.pendingBytes);
-
-  // Core has no allowance, so there is no ratio to take. Short-circuit
-  // before the division: a site downgraded to core while still holding
-  // roost bytes would otherwise divide by zero into a permanent 100 %
-  // alarm, spamming an alarm doc every reconcile. Uploads are already
-  // denied by the tier gate in admitUpload — alarms would add nothing.
-  if (planLimitBytes <= 0) {
-    return {
-      planLimitBytes: 0,
-      committedBytes,
-      remainingBytes: 0,
-      fractionUsed: NaN,
-      alarmLevel: 0,
-      atCap: true,
-      roostAvailable: false,
-    };
-  }
 
   const fractionUsed = committedBytes / planLimitBytes;
   const alarmLevel = currentAlarmLevel(fractionUsed);
@@ -126,7 +74,6 @@ export function reportQuota(state: QuotaState): QuotaReport {
     fractionUsed,
     alarmLevel,
     atCap,
-    roostAvailable: true,
   };
 }
 
@@ -172,38 +119,20 @@ export interface UploadAdmissionInput {
 export interface UploadAdmission {
   allowed: boolean;
   /** HTTP status the pre-upload hook should return. */
-  status: 200 | 400 | 402 | 403;
-  /**
-   * Machine-readable reason for logs + UI. `tier_insufficient` is the
-   * shared code for "pro-only feature on a core site" (billing sprint
-   * task 0.5 uses the same code on the web gating helpers).
-   */
-  reason?:
-    | 'invalid_request'
-    | 'tier_insufficient'
-    | 'quota_exceeded'
-    | 'quota_would_exceed';
+  status: 200 | 400 | 402;
+  /** Machine-readable reason for logs + UI. */
+  reason?: 'invalid_request' | 'quota_exceeded' | 'quota_would_exceed';
   report: QuotaReport;
-  /**
-   * UX hint for the dashboard when denied. `suggestedTier` is set only
-   * when changing tier actually resolves the denial (core → pro); a pro
-   * site that has filled its included storage has no higher tier to move
-   * to, so it carries the message alone.
-   */
-  upgradeCta?: {
-    currentTier: SiteTier;
-    suggestedTier?: SiteTier;
-    message: string;
-  };
+  /** UX hint for the dashboard when denied. */
+  denialHint?: { message: string };
 }
 
 /**
  * Decide if a new upload may proceed.
  *
- * Returns 403 (`tier_insufficient`) for a core site — roost isn't part of
- * that tier — and 402 ("Payment Required") when a pro site would cross its
- * included storage. Returns 400 when the caller sent a non-positive
- * `requestedBytes` (malformed).
+ * Returns 402 ("Payment Required") when the site would cross its storage
+ * allowance, and 400 when the caller sent a non-positive `requestedBytes`
+ * (malformed).
  *
  * The caller reserves `requestedBytes` as pendingBytes on admission and
  * releases on chunk upload success/failure. This is the backpressure
@@ -225,18 +154,6 @@ export function admitUpload(input: UploadAdmissionInput): UploadAdmission {
 
   const report = reportQuota(input.state);
 
-  // roost isn't sold on core, so this is a feature gate (403), not a
-  // quota that could be topped up by deleting versions (402).
-  if (!report.roostAvailable) {
-    return {
-      allowed: false,
-      status: 403,
-      reason: 'tier_insufficient',
-      report,
-      upgradeCta: denialHint(input.state.tier, report.planLimitBytes),
-    };
-  }
-
   // already at cap: straight 402.
   if (report.atCap) {
     return {
@@ -244,7 +161,7 @@ export function admitUpload(input: UploadAdmissionInput): UploadAdmission {
       status: 402,
       reason: 'quota_exceeded',
       report,
-      upgradeCta: denialHint(input.state.tier, report.planLimitBytes),
+      denialHint: denialHint(report.planLimitBytes),
     };
   }
 
@@ -256,36 +173,16 @@ export function admitUpload(input: UploadAdmissionInput): UploadAdmission {
       status: 402,
       reason: 'quota_would_exceed',
       report,
-      upgradeCta: denialHint(input.state.tier, report.planLimitBytes),
+      denialHint: denialHint(report.planLimitBytes),
     };
   }
 
   return { allowed: true, status: 200, report };
 }
 
-/**
- * Build the hint the dashboard / CLI shows on a denial.
- *
- * Only one upgrade path exists in the two-tier model (core → pro). A pro
- * site that has consumed its inclusion has nowhere higher to go, so it
- * gets a "free up space" message instead — until billing sprint wave 2
- * lands metered overage and this message becomes "pay the overage or
- * remove versions".
- */
-function denialHint(
-  currentTier: SiteTier,
-  limitBytes: number,
-): UploadAdmission['upgradeCta'] {
-  if (currentTier === 'core') {
-    return {
-      currentTier,
-      suggestedTier: 'pro',
-      message:
-        'roost is a pro-tier feature — upgrade to pro to store project versions.',
-    };
-  }
+/** Build the hint the dashboard / CLI shows on a denial. */
+function denialHint(limitBytes: number): UploadAdmission['denialHint'] {
   return {
-    currentTier,
-    message: `included storage full (${limitBytes / TIB} TB per site) — delete old roost versions to free space.`,
+    message: `storage full (${limitBytes / TIB} TB per site) — delete old roost versions to free space.`,
   };
 }

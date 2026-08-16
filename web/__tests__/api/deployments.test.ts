@@ -2,12 +2,10 @@
 
 import { createMockRequest } from './helpers/utils';
 import {
-  apiKeyAuth,
   mocks,
   mockDbFactory,
   docSnapshot,
   querySnapshot,
-  seedBilling,
 } from './helpers/firestore-mock';
 
 const mockEmitMutation = jest.fn();
@@ -58,7 +56,6 @@ beforeEach(() => {
   jest.clearAllMocks();
   authed();
   mocks.siteDocs.clear();
-  mocks.customerDocs.clear();
   mocks.siteDocs.set(SITE, { owner: 'user-1' });
   mocks.set.mockResolvedValue(undefined);
   mocks.batchCommit.mockResolvedValue(undefined);
@@ -283,101 +280,3 @@ describe('POST /api/roosts/{id}/resync', () => {
 /* ========================================================================== */
 /*  billing gate — roost deploy surfaces are pro-only (wave 0.6)              */
 /* ========================================================================== */
-
-describe('roost deploy surfaces — billing gate', () => {
-  beforeEach(() => {
-    mockResolveAuth.mockResolvedValue(apiKeyAuth());
-  });
-
-  function deployableRoost() {
-    mocks.get.mockResolvedValueOnce(
-      docSnapshot(ROOST, {
-        currentVersionId: VERSION,
-        versionUrl: 'https://r2.example/version.json',
-        targets: ['m-1', 'm-2'],
-      }),
-    );
-  }
-
-  function deploy(body: Record<string, unknown> = { siteId: SITE }) {
-    return deployPOST(
-      createMockRequest(`http://localhost/api/roosts/${ROOST}/deploy`, {
-        method: 'POST',
-        body,
-      }),
-      { params: Promise.resolve({ roostId: ROOST }) },
-    );
-  }
-
-  function resync() {
-    return resyncPOST(
-      createMockRequest(`http://localhost/api/roosts/${ROOST}/resync`, {
-        method: 'POST',
-        body: { siteId: SITE },
-      }),
-      { params: Promise.resolve({ roostId: ROOST }) },
-    );
-  }
-
-  it('402 trial_expired on deploy when the trial has ended', async () => {
-    seedBilling({ siteId: SITE, state: 'expired', tier: 'pro' });
-
-    const res = await deploy();
-    expect(res.status).toBe(402);
-    expect(await res.json()).toMatchObject({
-      code: 'trial_expired',
-      billingState: 'expired',
-    });
-    expect(mocks.batchCommit).not.toHaveBeenCalled();
-  });
-
-  it('403 tier_insufficient on deploy for an active core site', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    const res = await deploy();
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({
-      code: 'tier_insufficient',
-      required: { siteId: SITE, tier: 'pro', siteTier: 'core' },
-    });
-    expect(mocks.batchCommit).not.toHaveBeenCalled();
-  });
-
-  it('402 trial_expired on resync when the trial has ended', async () => {
-    seedBilling({ siteId: SITE, state: 'expired', tier: 'pro' });
-
-    expect((await resync()).status).toBe(402);
-  });
-
-  it('403 tier_insufficient on resync for an active core site', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    expect((await resync()).status).toBe(403);
-  });
-
-  it('lets a trialing account deploy from a core site', async () => {
-    seedBilling({ siteId: SITE, state: 'trialing', tier: 'core' });
-    deployableRoost();
-
-    expect((await deploy({ siteId: SITE, dryRun: true })).status).toBe(200);
-  });
-
-  it('lets an active pro site deploy', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'pro' });
-    deployableRoost();
-
-    expect((await deploy({ siteId: SITE, dryRun: true })).status).toBe(200);
-  });
-
-  it('does not tier-gate the deployments list GET', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    const res = await deploymentsGET(
-      createMockRequest(
-        `http://localhost/api/roosts/${ROOST}/deployments?siteId=${SITE}`,
-      ),
-      { params: Promise.resolve({ roostId: ROOST }) },
-    );
-    expect(res.status).toBe(200);
-  });
-});

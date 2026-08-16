@@ -61,13 +61,11 @@ afterEach(() => {
 
 const SNAPSHOT = {
   siteId: 'site-1',
-  tier: 'pro',
   usedBytes: 1024,
   pendingBytes: 0,
   committedBytes: 1024,
   limitBytes: 5 * 1024 * 1024 * 1024,
   fractionUsed: 0.0001,
-  roostAvailable: true,
   lastAlarmLevel: 0,
   lastAlarmAt: null,
   lastReconciledAt: '2026-04-26T00:00:00Z',
@@ -119,13 +117,11 @@ describe('owlette quota show', () => {
     expect(out).toMatch(/\[#+\.+\]/);
   });
 
-  it('reports the pro gate instead of a bar on a core-tier site', async () => {
+  it('reports bytes used instead of a bar when the limit is null', async () => {
     installFetchStub({
       ...SNAPSHOT,
-      tier: 'core',
-      limitBytes: 0,
+      limitBytes: null,
       fractionUsed: null,
-      roostAvailable: false,
     });
     const writes: string[] = [];
     (process.stdout.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
@@ -137,8 +133,8 @@ describe('owlette quota show', () => {
     await program.parseAsync(['quota', 'show', '--site', 'site-1'], { from: 'user' });
 
     const out = writes.join('');
-    expect(out).toContain('tier       core');
-    expect(out).toContain('storage: not included on this tier — roost requires pro');
+    expect(out).toContain('storage:');
+    expect(out).toContain('used');
     expect(out).not.toMatch(/\[[#.]+\]/);
   });
 });

@@ -53,18 +53,6 @@ jest.mock('firebase-admin/firestore', () => ({
   FieldValue: { serverTimestamp: () => '__SERVER_TS__' },
 }));
 
-// Billing gate (wave 3 landing): POST must consult requireProAccount and
-// return whatever problem the gate maps to. The real 402/403 problem shapes
-// are pinned by __tests__/api/account/api-keys.test.ts against the real gate;
-// here the contract under test is the wiring — this route must not be the
-// ungated second door into key creation again.
-const mockRequireProAccount = jest.fn();
-jest.mock('@/lib/billingGate.server', () => ({
-  requireProAccount: (...args: unknown[]) => mockRequireProAccount(...args),
-  billingErrorToProblem: (err: unknown) =>
-    (err as { __billingProblem?: Response } | null)?.__billingProblem ?? null,
-}));
-
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => mockDb(),
 }));
@@ -129,7 +117,7 @@ function docRef(parts: string[]) {
   };
 }
 
-import { GET, POST } from '@/app/api/keys/route';
+import { POST } from '@/app/api/keys/route';
 import { DELETE } from '@/app/api/keys/[keyId]/route';
 import { POST as rotatePOST } from '@/app/api/keys/[keyId]/rotate/route';
 
@@ -172,42 +160,6 @@ beforeEach(() => {
     return data;
   });
   mockAssertUserHasSiteAccess.mockResolvedValue({ siteId: 'site-1', siteData: {} });
-  mockRequireProAccount.mockResolvedValue(undefined);
-});
-
-describe('/api/keys POST — billing gate wiring', () => {
-  it('consults requireProAccount with the caller uid before creating', async () => {
-    await makePost({
-      name: 'gate check',
-      scopes: [{ resource: 'site', id: 'site-1', permissions: ['read'] }],
-    });
-
-    expect(mockRequireProAccount).toHaveBeenCalledTimes(1);
-    expect(mockRequireProAccount).toHaveBeenCalledWith('user-member');
-  });
-
-  it("returns the gate's problem response verbatim and mints nothing", async () => {
-    const gateResponse = new Response(
-      JSON.stringify({ code: 'trial_expired', status: 402 }),
-      { status: 402, headers: { 'Content-Type': 'application/problem+json; charset=utf-8' } },
-    );
-    mockRequireProAccount.mockRejectedValue({ __billingProblem: gateResponse });
-
-    const res = await makePost({
-      name: 'gated key',
-      scopes: [{ resource: 'site', id: 'site-1', permissions: ['read'] }],
-    });
-
-    expect(res).toBe(gateResponse);
-    expect(res.status).toBe(402);
-    expect(Array.from(store.keys()).some((p) => p.startsWith('api_keys/'))).toBe(false);
-    expect(mockEmitMutation).not.toHaveBeenCalled();
-  });
-
-  it('GET stays ungated — a downgraded account can still audit its keys', async () => {
-    await GET(new NextRequest('http://localhost/api/keys'));
-    expect(mockRequireProAccount).not.toHaveBeenCalled();
-  });
 });
 
 describe('/api/keys POST', () => {

@@ -47,10 +47,6 @@ import type { Actor } from '@/lib/capabilities';
 import { timestampToMs } from '@/lib/firestoreTime.server';
 import logger from '@/lib/logger';
 import {
-  createWebhookBillingCache,
-  type WebhookBillingCache,
-} from '@/lib/billing/webhookDelivery.server';
-import {
   executeTalonOutput,
   resolveBaseUrl,
   type TalonOutputContext,
@@ -134,7 +130,6 @@ interface RunEnvironment extends RunRecordEnv {
   siteName: string;
   siteLabel: string;
   baseUrl: string;
-  billingCache: WebhookBillingCache;
   /** Machines a `command` output acts on. */
   targetMachineIds: string[];
 }
@@ -223,9 +218,6 @@ export async function runTalon(
     siteName: site.name,
     siteLabel: site.label,
     baseUrl: resolveBaseUrl(),
-    // One memo per execution: a machine-scoped talon with a webhook output
-    // would otherwise re-read the owner's billing state once per machine.
-    billingCache: createWebhookBillingCache(),
     triggerSummary: context.triggerSummary ?? describeTrigger(talon.trigger),
     manual: context.manual === true,
     now,
@@ -540,7 +532,6 @@ async function executeRun(
       targetMachineIds: machine ? [machine.id] : env.targetMachineIds,
       ...(conditionForOutputs ? { condition: conditionForOutputs } : {}),
       baseUrl: env.baseUrl,
-      billingCache: env.billingCache,
       now: env.now,
     };
 

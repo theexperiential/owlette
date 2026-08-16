@@ -234,22 +234,6 @@ describe('checkQuota', () => {
     expect(checkQuota(1 * GB, undefined)).toBeNull();
   });
 
-  it('blocks with the tier gate when roost is not part of the tier', () => {
-    // core site: 0 included storage, server answers 403 tier_insufficient.
-    // The copy must say "upgrade", not "delete older content".
-    const c = checkQuota(1 * GB, {
-      planLimitBytes: 0,
-      usedBytes: 0,
-      pendingBytes: 0,
-      roostAvailable: false,
-    });
-    expect(c).not.toBeNull();
-    expect(c!.severity).toBe('error');
-    expect(c!.blocking).toBe(true);
-    expect(c!.message).toMatch(/pro-tier/i);
-    expect(c!.message).not.toMatch(/exceed/i);
-  });
-
   it('returns null when well under threshold', () => {
     // 1 GB upload on a 5 GB plan currently at 1 GB → 2 GB total, <80%
     expect(

@@ -3,12 +3,8 @@
  * POST /api/sites/{siteId}/presets/talon
  *
  * Capability: PRESET_MANAGE — the same capability as every other preset
- * family, and deliberately NOT `TALON_MANAGE`. `PRESET_MANAGE` is excluded from
- * `BILLING_LOCKED_CAPABILITIES` because presets edit stored config and never
- * reach a machine, which is exactly true of a talon template. A core-tier or
- * locked-out site keeps curating its templates; it just cannot instantiate one,
- * because `POST /api/sites/{siteId}/talons` carries `requirePro`. Do not add a
- * pro gate here.
+ * family, and deliberately NOT `TALON_MANAGE`. Presets edit stored config and
+ * never reach a machine, which is exactly true of a talon template.
  *
  * Firestore path: `config/{siteId}/talon_presets/{presetId}`.
  */

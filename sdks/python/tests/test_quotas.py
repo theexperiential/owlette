@@ -22,13 +22,11 @@ async def test_current_quota_uses_public_site_path() -> None:
             200,
             json={
                 "siteId": "site-1",
-                "tier": "pro",
                 "usedBytes": 100,
                 "pendingBytes": 25,
                 "committedBytes": 125,
                 "limitBytes": 1000,
                 "fractionUsed": 0.125,
-                "roostAvailable": True,
                 "lastAlarmLevel": 0,
                 "lastAlarmAt": None,
                 "lastReconciledAt": None,
@@ -40,8 +38,8 @@ async def test_current_quota_uses_public_site_path() -> None:
         out = await client.quotas.current("site-1")
 
     assert out.committed_bytes == 125
-    assert out.tier == "pro"
-    assert out.roost_available is True
+    assert out.limit_bytes == 1000
+    assert out.fraction_used == 0.125
     assert captured[0].method == "GET"
     assert captured[0].url.path == "/api/sites/site-1/quota"
 

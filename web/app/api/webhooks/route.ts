@@ -18,9 +18,6 @@
  *     never included.
  *
  * Scope: site:<id>:write for POST, site:<id>:read for GET.
- * Tier:  POST is pro-only (402 `trial_expired` / 403 `tier_insufficient`);
- *        GET is not tier-gated, so a downgraded site can still audit what
- *        it has subscribed.
  *
  * roost public api wave 6.1 (POST) + 6.2 (GET list).
  */
@@ -87,10 +84,7 @@ export async function POST(request: NextRequest) {
     const site = validateSiteIdBody(siteIdParam, 'query.siteId');
     if (!site.ok) return site.response;
 
-    // Pro-only: webhooks ship with the pro tier (plan.md gating points).
-    const auth = await requireSiteAuthAndScope(request, site.siteId, 'write', {
-      requirePro: true,
-    });
+    const auth = await requireSiteAuthAndScope(request, site.siteId, 'write');
     if (!auth.ok) return auth.response;
 
     const parsed = await readAndParseJsonBody(request);

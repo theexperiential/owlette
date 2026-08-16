@@ -8,17 +8,10 @@
  * header so receivers can verify authenticity.
  *
  * Auto-disables webhooks after 10 consecutive delivery failures.
- *
- * Delivery is paused entirely while the site's owning account is `expired` or
- * `canceled` (billing-system wave 2.6) — see `@/lib/billing/webhookDelivery.server`.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
 import { DISPLAY_EVENT_ROUTING } from '@/lib/alerts/displayEventRouting';
-import {
-  webhookDeliveryPausedBy,
-  type WebhookBillingCache,
-} from '@/lib/billing/webhookDelivery.server';
 import crypto from 'crypto';
 
 export type WebhookPlatform = 'slack' | 'discord' | 'generic';
@@ -146,8 +139,8 @@ function extractFields(eventType: string, data: Record<string, unknown>) {
  * Returns the JSON body string to send.
  *
  * Exported for the talon webhook output (`@/lib/talons/outputs.server`), which
- * delivers on its own signing + billing path but must render Slack/Discord
- * bodies identically to the subscription fan-out below.
+ * delivers on its own signing path but must render Slack/Discord bodies
+ * identically to the subscription fan-out below.
  */
 export function formatForPlatform(
   platform: WebhookPlatform,
@@ -259,23 +252,9 @@ export function formatForPlatform(
   });
 }
 
-export interface FireWebhooksOptions {
-  /**
-   * Per-batch memo for the billing gate. Pass one shared object when firing
-   * many events in a single run (the offline cron fires one per machine);
-   * omit it for a single event per request, where a memo would never hit.
-   */
-  billingCache?: WebhookBillingCache;
-}
-
 /**
  * Fire all enabled webhooks for a site that subscribe to the given event.
  * Non-blocking — uses Promise.allSettled, never throws.
- *
- * Skipped entirely when the owning account is locked out (billing-system
- * wave 2.6): nothing is sent, nothing is queued, and no failure is recorded
- * against the subscription, so a paused account's `failCount` can't creep
- * toward the 10-strike auto-disable while it waits to convert.
  *
  * @returns The number of webhooks that were successfully delivered.
  */
@@ -283,8 +262,7 @@ export async function fireWebhooks(
   siteId: string,
   siteName: string,
   eventType: string,
-  data: Record<string, unknown>,
-  options: FireWebhooksOptions = {}
+  data: Record<string, unknown>
 ): Promise<number> {
   const db = getAdminDb();
 
@@ -296,20 +274,6 @@ export async function fireWebhooks(
     .get();
 
   if (snapshot.empty) return 0;
-
-  // Billing gate runs after the subscription query on purpose: a site with no
-  // matching webhook has nothing to pause, and checking first would charge
-  // every event two extra reads for a decision nobody acts on.
-  const pausedBy = await webhookDeliveryPausedBy(siteId, {
-    db,
-    cache: options.billingCache,
-  });
-  if (pausedBy) {
-    console.debug(
-      `[webhooks] delivery paused for site ${siteId}: account ${pausedBy}`
-    );
-    return 0;
-  }
 
   const payload: WebhookPayload = {
     event: eventType,

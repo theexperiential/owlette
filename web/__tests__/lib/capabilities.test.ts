@@ -75,7 +75,6 @@ describe('Capability enum', () => {
         'SYSTEM_PRESET_MANAGE',
         'INSTALLER_MANAGE',
         'GLOBAL_SETTINGS_WRITE',
-        'BILLING_MANAGE',
         'USER_SELF_PREFS',
         'USER_SELF_DELETE',
       ])

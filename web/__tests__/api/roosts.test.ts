@@ -2,12 +2,10 @@
 
 import { createMockRequest } from './helpers/utils';
 import {
-  apiKeyAuth,
   mocks,
   mockDbFactory,
   docSnapshot,
   querySnapshot,
-  seedBilling,
 } from './helpers/firestore-mock';
 
 const mockEmitMutation = jest.fn();
@@ -60,7 +58,6 @@ beforeEach(() => {
   jest.clearAllMocks();
   authed();
   mocks.siteDocs.clear();
-  mocks.customerDocs.clear();
   mocks.siteDocs.set(SITE, { owner: 'user-1' });
   mocks.set.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue(undefined);
@@ -435,121 +432,3 @@ describe('DELETE /api/roosts/{id}', () => {
 /* ========================================================================== */
 /*  billing gate — roost mutations are pro-only (wave 0.6)                    */
 /* ========================================================================== */
-
-describe('/api/roosts — billing gate', () => {
-  beforeEach(() => {
-    // Only api-key callers are gated; the dashboard session path is not.
-    mockResolveAuth.mockResolvedValue(apiKeyAuth());
-    mocks.get.mockResolvedValue(docSnapshot('any', null));
-  });
-
-  function create() {
-    return createPOST(
-      createMockRequest('http://localhost/api/roosts', {
-        method: 'POST',
-        body: { siteId: SITE, name: 'my roost', targets: ['m-1'] },
-      }),
-    );
-  }
-
-  it('402 trial_expired on POST when the trial has ended', async () => {
-    seedBilling({ siteId: SITE, state: 'expired', tier: 'pro' });
-
-    const res = await create();
-    expect(res.status).toBe(402);
-    expect(await res.json()).toMatchObject({
-      code: 'trial_expired',
-      billingState: 'expired',
-    });
-    expect(mocks.set).not.toHaveBeenCalled();
-  });
-
-  it('403 tier_insufficient on POST for an active core site', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    const res = await create();
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({
-      code: 'tier_insufficient',
-      required: { siteId: SITE, tier: 'pro', siteTier: 'core' },
-    });
-    expect(mocks.set).not.toHaveBeenCalled();
-  });
-
-  it('201 on POST for a trialing account even on a core site', async () => {
-    seedBilling({ siteId: SITE, state: 'trialing', tier: 'core' });
-
-    expect((await create()).status).toBe(201);
-  });
-
-  it('201 on POST for an active pro site', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'pro' });
-
-    expect((await create()).status).toBe(201);
-  });
-
-  /* ---- X-Owlette-Billing-Warning (wave 3.3) ---------------------------- */
-
-  it('attaches the trial warning to a successful response while trialing', async () => {
-    seedBilling({ siteId: SITE, state: 'trialing', tier: 'pro' });
-
-    const res = await create();
-    expect(res.status).toBe(201);
-    // Format is public contract — the CLI and both SDKs print it verbatim.
-    expect(res.headers.get('X-Owlette-Billing-Warning')).toMatch(
-      /^trial ends \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z; choose a plan to keep API access$/,
-    );
-  });
-
-  it('omits the trial warning for a subscribed account', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'pro' });
-
-    const res = await create();
-    expect(res.status).toBe(201);
-    expect(res.headers.get('X-Owlette-Billing-Warning')).toBeNull();
-  });
-
-  it('omits the trial warning from the 402 lockout response', async () => {
-    seedBilling({ siteId: SITE, state: 'expired', tier: 'pro' });
-
-    const res = await create();
-    expect(res.status).toBe(402);
-    // The body already carries the remedy; the advisory would be noise.
-    expect(res.headers.get('X-Owlette-Billing-Warning')).toBeNull();
-  });
-
-  it('403 tier_insufficient on PATCH for an active core site', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    const res = await detailPATCH(
-      createMockRequest(`http://localhost/api/roosts/${ROOST}`, {
-        method: 'PATCH',
-        body: { siteId: SITE, name: 'renamed' },
-      }),
-      { params: Promise.resolve({ roostId: ROOST }) },
-    );
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({ code: 'tier_insufficient' });
-  });
-
-  it('403 tier_insufficient on DELETE for an active core site', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    const res = await detailDELETE(
-      createMockRequest(`http://localhost/api/roosts/${ROOST}?siteId=${SITE}`, {
-        method: 'DELETE',
-      }),
-      { params: Promise.resolve({ roostId: ROOST }) },
-    );
-    expect(res.status).toBe(403);
-  });
-
-  it('does not tier-gate the list GET — a core site can still read its roosts', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    const res = await listGET(
-      createMockRequest(`http://localhost/api/roosts?siteId=${SITE}`),
-    );
-    expect(res.status).toBe(200);
-  });
-});

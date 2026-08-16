@@ -18,11 +18,6 @@
  *   - `sites: []`
  *   - `mfaEnrolled: false`, `requiresMfaSetup: true`
  *   - `preferences: { temperatureUnit: 'C', timezone: <input or 'UTC'> }`
- *
- * billing-system wave 0.1 adds the paired `customers/{uid}` doc — this is
- * the one server-mediated point where an account comes into existence, so
- * it's where the free-trial clock starts. Wave 1.2 adds the Stripe customer
- * that doc points at.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -30,10 +25,6 @@ import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import { isValidTimezone } from '@/lib/timeUtils';
 import { sanitizeDisplayName } from '@/lib/sanitize';
-import logger from '@/lib/logger';
-import { newCustomerDoc, type BillingTimestamp } from '@/lib/types/customer';
-import { billingTimestampToMillis } from '@/lib/billing/billingState';
-import { linkStripeCustomer } from '@/lib/billing/stripeCustomer.server';
 
 export interface BootstrapUserInput {
   uid: string;
@@ -66,84 +57,6 @@ export type BootstrapUserResult =
     };
 
 const UID_REGEX = /^[A-Za-z0-9_-]{1,128}$/;
-
-/**
- * Outcome of {@link mintCustomerDoc}. `stripeCustomerId` is what the doc
- * carries once this returns — `null` on a freshly minted doc, and whatever a
- * pre-existing doc already held. `ok: false` means the doc is in an unknown
- * state and nothing downstream may write to it.
- */
-type MintCustomerResult =
-  | { ok: true; stripeCustomerId: string | null }
-  | { ok: false };
-
-/**
- * Mint the paired `customers/{uid}` billing doc with a fresh 14-day trial
- * clock (billing-system wave 0.1).
- *
- * Idempotent: an existing doc is never overwritten. The only writer that
- * could have got there first is `scripts/backfill-customers.mjs`, whose
- * `trialEndsAt: null` sentinel means "pre-go-live account, clock starts at
- * T0" — clobbering it with `now + 14d` would silently hand an account that
- * already has a trial a second one.
- *
- * Never throws. A billing bookkeeping write must not be able to fail a
- * signup: the caller is a brand-new user, a thrown error here would leave
- * them with a `users/{uid}` doc and an error toast, and the retry would
- * short-circuit on the `already_exists` path without ever repairing the
- * customer doc. The backfill script is the repair path for exactly this
- * gap, and the logged error reaches Sentry in production.
- *
- * Clock start is gated on go-live (added 2026-08-01 — 4.4's docs audit):
- * until `config/billing.goLiveAt` exists AND has passed, new accounts mint
- * the `trialEndsAt: null` sentinel like every other pre-go-live account.
- * Without this, a signup 15 days before billing goes live would resolve
- * `expired` — locked out with no way to pay (checkout 503s while Stripe is
- * unconfigured). Task 5.3's stamp then starts everyone's clock together;
- * signups after go-live self-start. An unreadable config doc counts as
- * "not live yet" — the failure mode of that choice is a too-long trial,
- * never a premature lockout.
- */
-async function trialClockStarted(db: Firestore, now: Date): Promise<boolean> {
-  try {
-    const snap = await db.collection('config').doc('billing').get();
-    if (!snap.exists) return false;
-    const raw = (snap.data() as { goLiveAt?: unknown } | undefined)?.goLiveAt;
-    const ms = billingTimestampToMillis(raw as BillingTimestamp);
-    return ms !== null && ms <= now.getTime();
-  } catch {
-    return false;
-  }
-}
-
-async function mintCustomerDoc(
-  db: Firestore,
-  uid: string,
-  now: Date,
-): Promise<MintCustomerResult> {
-  try {
-    const customerRef = db.collection('customers').doc(uid);
-    const existing = await customerRef.get();
-    if (existing.exists) {
-      const stored = existing.data()?.stripeCustomerId;
-      return {
-        ok: true,
-        stripeCustomerId: typeof stored === 'string' && stored.length > 0 ? stored : null,
-      };
-    }
-    const doc = (await trialClockStarted(db, now))
-      ? newCustomerDoc(now)
-      : { ...newCustomerDoc(now), trialEndsAt: null };
-    await customerRef.set(doc);
-    return { ok: true, stripeCustomerId: null };
-  } catch (err) {
-    logger.error('failed to mint customers doc at bootstrap', {
-      context: 'bootstrapUser',
-      data: { uid, error: err instanceof Error ? err.message : String(err) },
-    });
-    return { ok: false };
-  }
-}
 
 export async function bootstrapUser(
   ctx: BootstrapUserContext,
@@ -207,28 +120,6 @@ export async function bootstrapUser(
       timezone,
     },
   });
-
-  // Billing bookkeeping. Both steps are best-effort by design and neither
-  // can fail the signup; `scripts/backfill-customers.mjs` and
-  // `scripts/backfill-stripe-customers.mjs` are the repair paths.
-  //
-  // Signup latency is protected on three fronts: this only ever runs on the
-  // genuine first-signup path (a returning caller short-circuits at
-  // `already_exists` above), it makes zero network calls while Stripe is
-  // unconfigured, and the Stripe calls it does make are capped by the
-  // signup-path timeout in `stripeCustomer.server.ts`. It is awaited rather
-  // than floated because a floating promise is killed when the response ends
-  // on a serverless origin (the Vercel failover), losing the write-back with
-  // no error to surface.
-  const minted = await mintCustomerDoc(db, input.uid, nowDate);
-  if (minted.ok && minted.stripeCustomerId === null) {
-    await linkStripeCustomer({
-      db,
-      uid: input.uid,
-      email: input.email,
-      signupPath: true,
-    });
-  }
 
   emitMutation({
     kind: 'user_mutated',

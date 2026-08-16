@@ -2,12 +2,10 @@
 
 import { createMockRequest } from './helpers/utils';
 import {
-  apiKeyAuth,
   mocks,
   mockDbFactory,
   docSnapshot,
   querySnapshot,
-  seedBilling,
 } from './helpers/firestore-mock';
 
 const mockEmitMutation = jest.fn();
@@ -71,7 +69,6 @@ beforeEach(() => {
   jest.clearAllMocks();
   authed();
   mocks.siteDocs.clear();
-  mocks.customerDocs.clear();
   mocks.set.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue(undefined);
   mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('any', {})));
@@ -839,81 +836,3 @@ describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
 /* ========================================================================== */
 /*  billing gate — POST is pro-only (billing-system wave 0.6)                 */
 /* ========================================================================== */
-
-describe('POST /api/webhooks — billing gate', () => {
-  function post() {
-    return createPOST(
-      createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`, {
-        method: 'POST',
-        body: { url: 'https://example.com/hook', events: ['version.published'] },
-      }),
-    );
-  }
-
-  beforeEach(() => {
-    // The gate only runs for api-key callers; sessions stay ungated so the
-    // dashboard keeps working through a lockout.
-    mockResolveAuth.mockResolvedValue(apiKeyAuth());
-  });
-
-  it('402 trial_expired when the account trial has ended', async () => {
-    seedBilling({ siteId: SITE, state: 'expired', tier: 'pro' });
-
-    const res = await post();
-    expect(res.status).toBe(402);
-    expect(res.headers.get('Content-Type')).toBe('application/problem+json; charset=utf-8');
-    expect(await res.json()).toMatchObject({
-      code: 'trial_expired',
-      billingState: 'expired',
-    });
-    expect(mocks.set).not.toHaveBeenCalled();
-  });
-
-  it('402 trial_expired when the subscription was canceled', async () => {
-    seedBilling({ siteId: SITE, state: 'canceled', tier: 'pro' });
-
-    const res = await post();
-    expect(res.status).toBe(402);
-    expect(await res.json()).toMatchObject({ billingState: 'canceled' });
-  });
-
-  it('403 tier_insufficient for an active core site', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    const res = await post();
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({
-      code: 'tier_insufficient',
-      required: { siteId: SITE, tier: 'pro', siteTier: 'core' },
-    });
-    expect(mocks.set).not.toHaveBeenCalled();
-  });
-
-  it('201 for a trialing account even on a core site', async () => {
-    seedBilling({ siteId: SITE, state: 'trialing', tier: 'core' });
-
-    expect((await post()).status).toBe(201);
-  });
-
-  it('201 for an active pro site', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'pro' });
-
-    expect((await post()).status).toBe(201);
-  });
-
-  it('does not tier-gate GET — a core site can still list its webhooks', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    const res = await listGET(
-      createMockRequest(`http://localhost/api/webhooks?siteId=${SITE}`),
-    );
-    expect(res.status).toBe(200);
-  });
-
-  it('does not gate a session caller on a core site', async () => {
-    mockResolveAuth.mockResolvedValue({ userId: 'user-1', keyContext: null });
-    seedBilling({ siteId: SITE, state: 'expired', tier: 'core' });
-
-    expect((await post()).status).toBe(201);
-  });
-});

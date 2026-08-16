@@ -26,7 +26,7 @@ import {
   type ResolvedAuth,
 } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { getSiteTier, TIER_STORAGE_BYTES } from '@/lib/siteTier';
+import { SITE_STORAGE_BYTES } from '@/lib/roostStorage';
 
 export async function GET(request: NextRequest) {
   try {
@@ -169,15 +169,12 @@ async function loadQuotaSummary(siteId: string): Promise<Record<string, unknown>
       0,
     );
     // Resolved the same way as GET /api/sites/{siteId}/quota so the two
-    // quota surfaces can't disagree about a site's tier or its cap
-    // (billing-system wave 0.7).
-    const tier = getSiteTier({ tier: data.tier as string | undefined });
+    // quota surfaces can't disagree about a site's cap.
     const limitBytes = typeof data.planLimitBytes === 'number'
       ? data.planLimitBytes
-      : TIER_STORAGE_BYTES[tier];
+      : SITE_STORAGE_BYTES;
     return {
       siteId,
-      tier,
       usedBytes,
       pendingBytes,
       limitBytes,

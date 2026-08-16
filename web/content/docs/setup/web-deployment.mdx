@@ -163,8 +163,6 @@ returns 401.
 | `/api/cron/display-alerts` | `*/3 * * * *` | `X-Cron-Secret` | drains `pending_display_alerts` into email |
 | `/api/cron/status-ping` | every 60s | `X-Cron-Secret` | writes status pings, publishes to Instatus |
 | `/api/cron/retention` | daily | `X-Cron-Secret` | deletes metrics + logs past 400 days |
-| `/api/cron/billing-trial-lifecycle` | daily | `X-Cron-Secret` | trial expiries, reminder emails, post-expiry alert cutoff |
-| `/api/cron/billing-usage-report` | daily 03:00 UTC | `X-Cron-Secret` | reports machine counts + roost storage overage to Stripe meters |
 | `/api/cron/talons` | every 60s | `X-Cron-Secret` | claims due talons (schedule triggers), missed-fire grace, stale-run recovery |
 | `/api/cortex/escalation` | every 5 min | `Authorization: Bearer` | Cortex autonomous-mode backstop poller |
 
@@ -173,9 +171,7 @@ returns 401.
 Most of these fail **quietly** if unscheduled — nothing errors, the work simply
 never happens. The alert digests just let the queue grow. `/api/cron/retention`
 leaves data past its stated retention window, which contradicts the privacy
-policy rather than merely degrading a feature. The billing pair is similar:
-unscheduled, trials never expire and reminder emails never send, and Stripe
-meters receive no usage — invoices silently bill zero.
+policy rather than merely degrading a feature.
 
 `/api/cortex/escalation` is the odd one out: it takes
 `Authorization: Bearer <CRON_SECRET>`, **not** `X-Cron-Secret`.
@@ -350,7 +346,7 @@ Requirements:
 - [ ] Build command is `npm run build`
 - [ ] Start command is `npm start` where the host requires one
 - [ ] `CRON_SECRET` configured
-- [ ] Cron calls configured for **every route in the scheduled-endpoints table above**, in **each** environment — health-check (every 5 min), process-alerts + display-alerts (every 3 min), status-ping (every 60 s), retention (daily), billing-trial-lifecycle (daily), billing-usage-report (daily 03:00 UTC)
+- [ ] Cron calls configured for **every route in the scheduled-endpoints table above**, in **each** environment — health-check (every 5 min), process-alerts + display-alerts (every 3 min), status-ping (every 60 s), retention (daily)
 
 ### post-deployment
 

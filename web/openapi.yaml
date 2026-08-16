@@ -33,18 +33,6 @@ info:
     existing advisory `Roost-Version: YYYY-MM-DD` header; missing headers can
     emit `X-Roost-Version-Missing: true`.
 
-    ## Billing advisories
-
-    While the account owning the target site is on its free trial, successful
-    API-key responses carry
-    `X-Owlette-Billing-Warning: trial ends <ISO-8601 UTC instant>; choose a plan to keep API access`.
-    It is informational — nothing is blocked while it is present. Subscribed
-    accounts, accounts whose trial clock has not started, and session /
-    ID-token callers never receive it, and it is not attached to the `401` /
-    `403` / `404` / `402` responses of the auth and billing checks themselves.
-    Once the trial ends, requests answer `402` with code `trial_expired`.
-    See `/docs/api/errors#trial-warning-header`.
-
     ## Rate Limiting
 
     Responses may include `RateLimit-Limit`, `RateLimit-Remaining`,
@@ -546,11 +534,6 @@ paths:
         talon has a `webhook` output, mints its signing secret in the same
         commit. The secret is never returned.
 
-        Pro-only: a `core`-tier site answers `403 tier_insufficient`, and an
-        account whose trial has ended answers `402 trial_expired`. Listing and
-        deleting stay open on `core` so a downgraded site can still audit and
-        remove what it has.
-
         Additional preconditions, each reported as a problem `code`:
 
         - `command` outputs may only be authored by a site admin
@@ -587,7 +570,6 @@ paths:
               schema: { $ref: '#/components/schemas/Talon' }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
-        '402': { $ref: '#/components/responses/Problem402' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
         '409': { $ref: '#/components/responses/Problem409' }
@@ -806,7 +788,6 @@ paths:
               schema: { $ref: '#/components/schemas/Talon' }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
-        '402': { $ref: '#/components/responses/Problem402' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
         '429': { $ref: '#/components/responses/Problem429' }
@@ -2634,7 +2615,6 @@ paths:
               schema: { $ref: '#/components/schemas/Roost' }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
-        '402': { $ref: '#/components/responses/Problem402' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
         '409': { $ref: '#/components/responses/Problem409' }
@@ -3154,7 +3134,6 @@ paths:
               schema: { $ref: '#/components/schemas/DeploymentPlan' }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
-        '402': { $ref: '#/components/responses/Problem402' }
         '403': { $ref: '#/components/responses/Problem403' }
         '404': { $ref: '#/components/responses/Problem404' }
         '409': { $ref: '#/components/responses/Problem409' }
@@ -3283,11 +3262,6 @@ paths:
       description: |
         Creates a top-level site owned by the caller. Requires a
         superadmin caller; API-key callers must hold `site=*:admin`.
-
-        Core subscriptions include exactly one site: once the caller owns
-        one, this endpoint answers `403` with `code: tier_insufficient`
-        and no `required` block (the failure is account-scoped, not about
-        a particular site). Trialing and pro accounts are unlimited.
       security:
         - apiKey: []
         - bearerApiKey: []
@@ -3310,19 +3284,12 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [siteId, name, timezone, owner, tier, createdAt]
+                required: [siteId, name, timezone, owner, createdAt]
                 properties:
                   siteId: { type: string }
                   name: { type: string }
                   timezone: { type: string }
                   owner: { type: string }
-                  tier:
-                    type: string
-                    enum: [core, pro]
-                    description: |
-                      Pricing tier minted with the site. New sites bootstrap
-                      with the public-beta default (`pro`); a future billing
-                      sprint will flip this default and gate pro features.
                   createdAt: { type: integer, format: int64 }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
@@ -4757,7 +4724,6 @@ paths:
               schema: { $ref: '#/components/schemas/WebhookWithSecret' }
         '400': { $ref: '#/components/responses/Problem400' }
         '401': { $ref: '#/components/responses/Problem401' }
-        '402': { $ref: '#/components/responses/Problem402' }
         '403': { $ref: '#/components/responses/Problem403' }
         '409': { $ref: '#/components/responses/Problem409' }
         '429': { $ref: '#/components/responses/Problem429' }
@@ -7506,27 +7472,15 @@ components:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
     Problem402:
       description: |
-        Payment required. Either a quota would be exceeded
-        (`code: quota_exceeded`), or the account owning the site has no
-        active subscription — its free trial ended, or a previous
-        subscription was canceled (`code: trial_expired`, with
-        `billingState` naming which). A `trial_expired` response pauses
-        API, CLI, and SDK access until a plan is chosen; no data is
-        deleted and agents keep reporting.
+        Payment required — the site's roost storage quota would be
+        exceeded (`code: quota_exceeded`).
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
     Problem403:
       description: |
-        Forbidden — cross-site access, a missing capability, an api key
-        without the required scope (`code: scope_insufficient`), or a
-        pro-only operation attempted on a core-tier site
-        (`code: tier_insufficient`, with a `required` block naming the
-        site and tier). Account-scoped tier failures — creating an api key,
-        or creating a second site past core's one-site allowance — share
-        the `tier_insufficient` code but carry no `required` block, since
-        no single site is the subject. Accounts on a free trial run at the
-        pro feature level and never receive `tier_insufficient`.
+        Forbidden — cross-site access, a missing capability, or an api key
+        without the required scope (`code: scope_insufficient`).
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/ProblemDetails' }
@@ -9474,23 +9428,6 @@ components:
           type: string
           enum: [free, starter, pro, enterprise]
           nullable: true
-        tier:
-          type: string
-          enum: [core, pro]
-          nullable: true
-          description: |
-            Pricing tier that gates pro-only features (currently roost).
-            `null` on legacy site docs created before the field was
-            introduced — clients should treat absent/null as the beta
-            default (`pro`) until a billing flow flips this.
-        tierUpgradedAt:
-          type: string
-          format: date-time
-          nullable: true
-          description: |
-            Set when a billing event changes the site's `tier`. `null` on a
-            site still on the tier it was created at, and on site docs that
-            predate the field.
         timezone:
           type: string
           nullable: true
@@ -9606,25 +9543,17 @@ components:
     # quotas
     Quota:
       type: object
-      required: [siteId, tier, usedBytes, pendingBytes, committedBytes, limitBytes, fractionUsed, roostAvailable, lastAlarmLevel, alarms]
+      required: [siteId, usedBytes, pendingBytes, committedBytes, limitBytes, fractionUsed, lastAlarmLevel, alarms]
       properties:
         siteId: { type: string }
-        tier:
-          type: string
-          enum: [core, pro]
-          description: |
-            Pricing tier of the site. Determines the included roost storage:
-            `core` has none (roost is a pro-tier feature), `pro` includes
-            1 TiB per site.
         limitBytes:
           type: integer
           format: int64
           minimum: 0
           nullable: true
           description: |
-            Included storage for the tier, in bytes — `0` on `core`. A
-            per-site grant recorded on the quota doc takes precedence over
-            the tier default.
+            Included storage per site, in bytes. A per-site grant recorded on
+            the quota doc takes precedence over the standard allowance.
         usedBytes:
           type: integer
           format: int64
@@ -9645,13 +9574,8 @@ components:
           minimum: 0
           maximum: 1
           description: |
-            `committedBytes / limitBytes`, capped at 1. `null` when the tier
-            carries no included storage — there is no ratio to take.
-        roostAvailable:
-          type: boolean
-          description: |
-            Whether roost is part of this site's tier. `false` on `core`,
-            where uploads are rejected with `403 tier_insufficient`.
+            `committedBytes / limitBytes`, capped at 1. `null` when the site
+            has no storage allowance — there is no ratio to take.
         lastAlarmLevel:
           type: number
         lastAlarmAt:
@@ -10117,9 +10041,6 @@ components:
           properties:
             siteId:
               type: string
-            tier:
-              type: string
-              enum: [core, pro]
             usedBytes:
               type: integer
               format: int64

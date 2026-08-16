@@ -11,16 +11,6 @@ import {
   scopeMatches,
 } from '@/lib/apiKeyTypes';
 import { emitApiKeyUsed, scopeFingerprint } from '@/lib/auditLogClient';
-import {
-  billingLockoutDetail,
-  billingWarningFor,
-  getBillingSnapshot,
-  isLockedOut,
-  tierInsufficientDetail,
-  BILLING_WARNING_HEADER,
-  TIER_INSUFFICIENT_CODE,
-  TRIAL_EXPIRED_CODE,
-} from '@/lib/billing/billingSnapshot.server';
 
 export class ApiAuthError extends Error {
   status: number;
@@ -61,15 +51,6 @@ export interface ScopeCheckResult {
   isLegacy: boolean;
   /** True when the request omitted Roost-Version. Caller should set X-Roost-Version-Missing. */
   missingVersion?: boolean;
-  /**
-   * Trial-countdown advisory for an api-key caller whose account is still
-   * `trialing`. Set by the scope resolvers in `@/app/api/_shared` from the
-   * billing snapshot they already read, emitted as
-   * `X-Owlette-Billing-Warning` by {@link applyAuthDeprecations}. Absent for
-   * session callers, subscribed accounts, and pre-go-live accounts with no
-   * trial clock — see `billingWarningFor()`.
-   */
-  billingWarning?: string;
 }
 
 // Module-level memos to log each deprecated key path only once per process.
@@ -365,90 +346,13 @@ export function requireScope(
   );
 }
 
-export interface ApiKeyBillingOptions {
-  /**
-   * Also require the pro tier. Off by default: wave 0.5 blocks expired
-   * accounts from the whole public API, but tier is a per-endpoint question
-   * — most endpoints are available on `core`. Pro-only routes opt in during
-   * wave 0.6.
-   */
-  requirePro?: boolean;
-}
-
-/**
- * Billing gate for the public API (billing-system wave 0.5).
- *
- * Call once an api-key request has resolved its site scope. Per the plan's
- * lockout matrix, an `expired` / `canceled` account is blocked from the
- * public API, CLI, and SDK — while the dashboard stays readable — so this
- * deliberately **no-ops for session / id-token auth**. Dashboard and
- * server-action gating goes through `requireActiveBilling()` /
- * `requirePro()` in `@/lib/billingGate.server`, which wave 0.6 wires per
- * route according to the same matrix.
- *
- * Throws:
- *   - `402` `trial_expired` when the owning account is locked out.
- *   - `403` `tier_insufficient` when `requirePro` is set and the site is
- *     `core`. `trialing` never reaches this — the trial runs at the pro
- *     feature level.
- *
- * Returns the `X-Owlette-Billing-Warning` value the response should carry
- * (wave 3.3), or `null` for the common case. Computed here rather than by a
- * second snapshot read at response time: the gate has already paid for the
- * snapshot, and a caller that never passes the gate never gets a response to
- * attach it to.
- *
- * A site that doesn't exist is a silent pass: existence is
- * `assertUserHasSiteAccess()`'s call to make, and it runs first in every
- * caller. Answering 402 for an unknown site would mask that 404.
- *
- * Reads the billing snapshot through `@/lib/billing/billingSnapshot.server`
- * rather than importing `billingGate.server` — that module imports
- * `ApiAuthError` from this one, and the leaf keeps the graph acyclic.
- */
-export async function requireApiKeyBilling(
-  auth: ResolvedAuth,
-  siteId: string,
-  options: ApiKeyBillingOptions = {},
-): Promise<string | null> {
-  if (!auth.keyContext) return null;
-
-  const snapshot = await getBillingSnapshot(siteId);
-  if (!snapshot) return null;
-
-  if (isLockedOut(snapshot.billingState)) {
-    throw new ApiAuthError(402, billingLockoutDetail(snapshot.billingState), {
-      code: TRIAL_EXPIRED_CODE,
-      details: { siteId, billingState: snapshot.billingState },
-    });
-  }
-
-  if (
-    options.requirePro &&
-    snapshot.billingState !== 'trialing' &&
-    snapshot.siteTier === 'core'
-  ) {
-    throw new ApiAuthError(403, tierInsufficientDetail(), {
-      code: TIER_INSUFFICIENT_CODE,
-      details: { siteId, tier: 'pro', siteTier: snapshot.siteTier },
-    });
-  }
-
-  return billingWarningFor(snapshot);
-}
-
 /**
  * Attach the advisory headers a scope-check result asks for: the legacy-key
- * deprecation notice, the version-missing notice, and the trial-countdown
- * billing warning (wave 3.3).
+ * deprecation notice and the version-missing notice.
  *
  * This is the single sink for every advisory header on the public API —
  * routes call it on the responses they return, so a new advisory is wired
  * once here rather than at each route.
- *
- * `set` rather than `append` for the billing warning: there is exactly one
- * trial deadline per response, and a comma-joined duplicate would be
- * unparseable to the CLI/SDK consumers that print it verbatim.
  */
 export function applyAuthDeprecations(
   response: NextResponse,
@@ -459,9 +363,6 @@ export function applyAuthDeprecations(
   }
   if (check.missingVersion) {
     response.headers.set('X-Roost-Version-Missing', 'true');
-  }
-  if (check.billingWarning) {
-    response.headers.set(BILLING_WARNING_HEADER, check.billingWarning);
   }
   return response;
 }

@@ -28,23 +28,11 @@ interface QuotaAlarm {
 
 interface QuotaSnapshot {
   siteId: string;
-  /**
-   * `core` or `pro`. Left open to unknown strings so a tier introduced
-   * server-side still renders instead of breaking the build — same posture
-   * as `DeployResponse.stage` in `roost-deploy.ts`.
-   */
-  tier: 'core' | 'pro' | string;
   usedBytes: number;
   pendingBytes: number;
   committedBytes: number;
   limitBytes: number | null;
   fractionUsed: number | null;
-  /**
-   * Whether roost is part of this site's tier. `false` on `core`, which
-   * carries no storage entitlement at all — uploads there are rejected
-   * with `403 tier_insufficient`.
-   */
-  roostAvailable: boolean;
   lastAlarmLevel: number;
   lastAlarmAt: string | null;
   lastReconciledAt: string | null;
@@ -174,17 +162,12 @@ const BAR_WIDTH = 20;
 function formatQuotaSnapshot(q: QuotaSnapshot): string {
   const out: string[] = [];
   out.push(`site       ${q.siteId}`);
-  out.push(`tier       ${q.tier}`);
   out.push('');
 
-  if (!q.roostAvailable) {
-    // No entitlement, so there is no ratio and no bar to draw. The tier is
-    // already on the line above, so name the remedy rather than repeat it.
-    out.push('storage: not included on this tier — roost requires pro');
-  } else if (q.limitBytes === null) {
-    // Every live tier reports a finite cap; the schema still marks the
-    // field nullable, so render what we do know instead of a bar against
-    // an unknown limit.
+  if (q.limitBytes === null) {
+    // The API reports a finite cap; the schema still marks the field
+    // nullable, so render what we do know instead of a bar against an
+    // unknown limit.
     out.push(`storage: ${humanBytes(q.committedBytes)} used`);
   } else {
     out.push(formatProgressLine('storage', q.committedBytes, q.limitBytes));

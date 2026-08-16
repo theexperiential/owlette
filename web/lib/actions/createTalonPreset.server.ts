@@ -9,9 +9,8 @@
  *
  * The talon payload itself is NOT re-validated here: `validateTalonPresetInput`
  * delegates to `validateTalonInput`, so a preset can never store a talon the
- * store would refuse. Capability is `PRESET_MANAGE`, not `TALON_MANAGE`, and
- * there is deliberately no `requirePro` — curating a template touches no
- * machine, and instantiating one is separately pro-gated by `createTalon`.
+ * store would refuse. Capability is `PRESET_MANAGE`, not `TALON_MANAGE` —
+ * curating a template touches no machine.
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';

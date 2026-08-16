@@ -63,8 +63,6 @@ export const EXEMPT_ROUTES: readonly string[] = [
   'auth/forgot-password',
   // session create/destroy (sign-in / sign-out); the authentication act, not a resource mutation.
   'auth/session',
-  // stripe-signed webhook ingress; the signature is the only credential, there is no owlette actor.
-  'billing/stripe-webhook',
   // user-submitted bug/feature intake into `bug_reports`; touches no fleet, account, or security state.
   'bug-report',
   // read-only upload negotiation — returns which chunk hashes are missing, writes nothing.
@@ -126,10 +124,6 @@ export const KNOWN_GAPS: readonly string[] = [
   'agent/auth/device-code/authorize',
   // operator (session) mints a single-use agent registration code for a site.
   'agent/generate-installer',
-  // account owner starts a subscription checkout and links a stripe customer to their account.
-  'billing/checkout',
-  // account owner opens a stripe portal session that can cancel the subscription.
-  'billing/portal',
   // operator (session) mints an owk_* api key with caller-chosen scopes; POST /api/keys is audited, this path is not.
   'cli/device-code/authorize',
   // chat turn: creates turn state and relays tool calls that can reach the fleet.

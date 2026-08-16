@@ -19,7 +19,6 @@ const mockDeleteSentinel = { __fieldValue: 'delete' } as const;
 const mockEmitMutation = jest.fn();
 const mockAssertLlmKeyAvailable = jest.fn();
 const mockValidateWebhookUrl = jest.fn();
-const mockRequirePro = jest.fn();
 
 jest.mock('firebase-admin/firestore', () => ({
   FieldValue: { delete: () => mockDeleteSentinel },
@@ -32,12 +31,6 @@ jest.mock('@/lib/hoot-utils.server', () => ({
 }));
 jest.mock('@/lib/webhookUrl', () => ({
   validateWebhookUrl: (...args: unknown[]) => mockValidateWebhookUrl(...args),
-}));
-// The pro gate reads the owner's billing snapshot through the Admin SDK, which
-// this suite deliberately never loads. Passing is the default; the pro-gate
-// tests below make it throw.
-jest.mock('@/lib/billingGate.server', () => ({
-  requirePro: (...args: unknown[]) => mockRequirePro(...args),
 }));
 jest.mock('@/lib/logger', () => ({
   __esModule: true,
@@ -371,8 +364,6 @@ function auditAttributes(callIndex = 0): Record<string, unknown> {
 beforeEach(() => {
   fake = new FakeFirestore();
   db = fake as unknown as Firestore;
-  mockRequirePro.mockReset();
-  mockRequirePro.mockResolvedValue({ siteId: 'site-a', siteTier: 'pro', billingState: 'active' });
   mockAssertLlmKeyAvailable.mockReset();
   mockAssertLlmKeyAvailable.mockResolvedValue(undefined);
   mockValidateWebhookUrl.mockResolvedValue({
@@ -748,27 +739,6 @@ describe('createTalon', () => {
     expect(storedTalon(created.id).createdVia).toBe('cortex');
     expect(storedTalon(created.id).chatId).toBe('chat-7');
     expect(auditAttributes()).toMatchObject({ via: 'cortex', chatId: 'chat-7' });
-  });
-
-  // The pro gate lives in the store, not only in the API route, because the
-  // hoot tool path calls createTalon directly (talons wave 3, task 3.1).
-  it('gates creation on the pro tier and writes nothing when the gate fails', async () => {
-    mockRequirePro.mockRejectedValue(
-      Object.assign(new Error('this feature requires the pro tier.'), { status: 403 }),
-    );
-
-    await expectStoreError(createTalon(db, ctxFor(), talonInput()), 'pro_required', 403);
-    expect(mockRequirePro).toHaveBeenCalledWith(SITE);
-    expect(fake.docs.size).toBe(0);
-    expect(mockEmitMutation).not.toHaveBeenCalled();
-  });
-
-  it('carries the billing gate status through — 402 when the account is locked out', async () => {
-    mockRequirePro.mockRejectedValue(
-      Object.assign(new Error('your trial has ended.'), { status: 402 }),
-    );
-
-    await expectStoreError(createTalon(db, ctxFor(), talonInput()), 'pro_required', 402);
   });
 });
 

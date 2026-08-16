@@ -6,7 +6,6 @@ import {
   mockDbFactory,
   docSnapshot,
   querySnapshot,
-  seedBilling,
 } from './helpers/firestore-mock';
 import { verifySignature } from '@/lib/webhookSignature';
 
@@ -210,7 +209,6 @@ beforeEach(() => {
   mocks.batchDelete.mockClear();
   mocks.batchCommit.mockResolvedValue(undefined);
   mocks.siteDocs.clear();
-  mocks.customerDocs.clear();
   mocks.siteDocs.set(SITE, { owner: 'user-operator' });
   mocks.get.mockResolvedValue(docSnapshot('idem', null)); // idempotency cache miss
   // no webhook subscriptions unless a test seeds some
@@ -762,67 +760,3 @@ describe('POST /rollback — version.rolled_back webhook', () => {
 /* ========================================================================== */
 /*  billing gate — rollback is pro-only (wave 0.6)                            */
 /* ========================================================================== */
-
-describe('POST /api/roosts/{id}/rollback — billing gate', () => {
-  const OWNER = 'user-operator';
-
-  it('402 trial_expired when the trial has ended', async () => {
-    seedBilling({ siteId: SITE, state: 'expired', tier: 'pro', owner: OWNER });
-
-    const res = await rollback({ siteId: SITE });
-    expect(res.status).toBe(402);
-    expect(res.body).toMatchObject({
-      code: 'trial_expired',
-      billingState: 'expired',
-    });
-    expect(mockRunTransaction).not.toHaveBeenCalled();
-  });
-
-  it('402 trial_expired when the subscription was canceled', async () => {
-    seedBilling({ siteId: SITE, state: 'canceled', tier: 'pro', owner: OWNER });
-
-    const res = await rollback({ siteId: SITE });
-    expect(res.status).toBe(402);
-    expect(res.body).toMatchObject({ billingState: 'canceled' });
-  });
-
-  it('403 tier_insufficient for an active core site', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core', owner: OWNER });
-
-    const res = await rollback({ siteId: SITE });
-    expect(res.status).toBe(403);
-    expect(res.body).toMatchObject({
-      code: 'tier_insufficient',
-      required: { siteId: SITE, tier: 'pro', siteTier: 'core' },
-    });
-    expect(mockRunTransaction).not.toHaveBeenCalled();
-  });
-
-  it('lets a trialing account roll back from a core site', async () => {
-    seedBilling({ siteId: SITE, state: 'trialing', tier: 'core', owner: OWNER });
-    txState.versionCounter = 2;
-    txState.currentVersionId = 'vrs_v2_id';
-    mockResolveVersion.mockResolvedValue({
-      versionId: 'vrs_v1_id',
-      versionNumber: 1,
-      doc: fakeVersionDoc('vrs_v1_id', { versionUrl: 'u', totalFiles: 1, totalSize: 1 }),
-    });
-
-    const res = await rollback({ siteId: SITE });
-    expect(res.status).toBe(200);
-    expect(mockRunTransaction).toHaveBeenCalledTimes(1);
-  });
-
-  it('lets an active pro site roll back', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'pro', owner: OWNER });
-    txState.versionCounter = 2;
-    txState.currentVersionId = 'vrs_v2_id';
-    mockResolveVersion.mockResolvedValue({
-      versionId: 'vrs_v1_id',
-      versionNumber: 1,
-      doc: fakeVersionDoc('vrs_v1_id', { versionUrl: 'u', totalFiles: 1, totalSize: 1 }),
-    });
-
-    expect((await rollback({ siteId: SITE })).status).toBe(200);
-  });
-});

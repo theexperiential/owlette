@@ -12,18 +12,11 @@ if TYPE_CHECKING:
 @dataclass(slots=True)
 class QuotaSnapshot:
     site_id: str
-    # `core` (no roost storage) or `pro` (1 TiB included). Kept a plain `str`
-    # so a tier introduced server-side still parses, the same treatment the
-    # other resources give server-owned enums (e.g. `DeployResult.stage`).
-    tier: str
     used_bytes: int
     pending_bytes: int
     committed_bytes: int
     limit_bytes: int | None
     fraction_used: float | None
-    # Whether roost is part of this site's tier. `False` on `core`, where
-    # uploads are rejected with `403 tier_insufficient`.
-    roost_available: bool
     last_alarm_level: int
     last_alarm_at: str | None
     last_reconciled_at: str | None
@@ -48,18 +41,11 @@ class Quotas:
         data = resp.data if isinstance(resp.data, dict) else {}
         return QuotaSnapshot(
             site_id=str(data.get("siteId", site_id)),
-            # `tier` is required on the wire and the server already resolves an
-            # unstamped site through its own fallback (`BETA_DEFAULT_TIER` in
-            # web/lib/siteTier.ts), so propagate what it sends rather than
-            # guessing a tier here — a client-side default would keep asserting
-            # a tier after that fallback is deleted at go-live.
-            tier=str(data.get("tier", "")),
             used_bytes=int(data.get("usedBytes") or 0),
             pending_bytes=int(data.get("pendingBytes") or 0),
             committed_bytes=int(data.get("committedBytes") or 0),
             limit_bytes=data.get("limitBytes"),
             fraction_used=data.get("fractionUsed"),
-            roost_available=bool(data.get("roostAvailable", False)),
             last_alarm_level=int(data.get("lastAlarmLevel") or 0),
             last_alarm_at=data.get("lastAlarmAt"),
             last_reconciled_at=data.get("lastReconciledAt"),

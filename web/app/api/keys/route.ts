@@ -10,7 +10,6 @@ import {
   requireSessionOrIdToken,
 } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { billingErrorToProblem, requireProAccount } from '@/lib/billingGate.server';
 import {
   problem,
   problemForbidden,
@@ -112,21 +111,6 @@ export const POST = withRateLimit(
     try {
       const userId = await requireSessionOrIdToken(request, { rejectAgentTokens: true });
       const activeUserData = await assertActiveUser(userId);
-
-      // Same billing gate as the public POST /api/account/api-keys (:113) —
-      // this dashboard route is the other door into key creation, and an
-      // ungated door here would make the tier gate cosmetic (found in 3.2's
-      // survey; see plan.md pinned decisions). 402 trial_expired / 403
-      // tier_insufficient must keep their problem shapes, so the gate maps
-      // through billingErrorToProblem before the generic catch can mislabel
-      // a 402 as validation.
-      try {
-        await requireProAccount(userId);
-      } catch (error: unknown) {
-        const billingProblem = billingErrorToProblem(error);
-        if (billingProblem) return billingProblem;
-        throw error;
-      }
 
       let body: CreateKeyBody;
       try {

@@ -944,9 +944,6 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
                 </>
               )}
 
-              {/* Deliberately not behind ProTierGate: PRESET_MANAGE is not
-                  billing-locked, and curating templates a site cannot yet
-                  instantiate is a legitimate state. */}
               <Button
                 type="button"
                 variant="outline"

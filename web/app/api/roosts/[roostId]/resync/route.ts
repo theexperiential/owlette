@@ -72,10 +72,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const site = validateSiteIdBody(body.siteId);
     if (!site.ok) return site.response;
 
-    // Pro-only: roost deploy surface.
-    const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'deploy', {
-      requirePro: true,
-    });
+    const auth = await requireRoostAuthAndScope(request, site.siteId, roostId, 'deploy');
     if (!auth.ok) return auth.response;
 
     const gateRes = await gateOrProceed(site.siteId, readSiteDocForGate);

@@ -8,12 +8,8 @@
  * These routes are thin shims — `@/lib/talons/store.server` owns every rule,
  * and has its own suite — so the store is mocked here and the assertions are
  * about what the http layer is responsible for: the wrapper wiring that
- * enforces TALON_MANAGE, the pro gate on create, idempotency, the PATCH
- * toggle-vs-replace dispatch, and the TalonStoreError -> problem+json map.
- *
- * The billing gate runs for real against the shared firestore mock
- * (`seedBilling`), since "create is pro-only, read and delete are not" is a
- * policy this layer owns.
+ * enforces TALON_MANAGE, idempotency, the PATCH toggle-vs-replace dispatch,
+ * and the TalonStoreError -> problem+json map.
  *
  * talons wave 1.2.
  */
@@ -21,7 +17,7 @@
 import { NextResponse } from 'next/server';
 
 import { createMockRequest } from './helpers/utils';
-import { mockDbFactory, mocks, seedBilling } from './helpers/firestore-mock';
+import { mockDbFactory, mocks, seedSiteOwner } from './helpers/firestore-mock';
 
 const SITE = 'site-a';
 const TALON = 'tal000000000000000001';
@@ -199,8 +195,7 @@ beforeEach(() => {
     skippedTalonIds: [],
   });
   mockListTalonsAuthoredBy.mockResolvedValue([]);
-  // Trialing accounts run at the pro feature level, so create is allowed.
-  seedBilling({ siteId: SITE, state: 'trialing' });
+  seedSiteOwner(SITE);
 });
 
 /* -------------------------------------------------------------------------- */
@@ -326,38 +321,6 @@ describe('POST /api/sites/{siteId}/talons', () => {
       }),
       talonInput(),
     );
-  });
-
-  it('rejects a core-tier site with 403 tier_insufficient', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    const res = await createPOST(
-      createMockRequest(`http://localhost/api/sites/${SITE}/talons`, {
-        method: 'POST',
-        body: talonInput(),
-      }),
-      routeParams(),
-    );
-
-    expect(res.status).toBe(403);
-    expect(((await res.json()) as { code?: string }).code).toBe('tier_insufficient');
-    expect(mockCreateTalon).not.toHaveBeenCalled();
-  });
-
-  it('rejects an expired account with 402 trial_expired', async () => {
-    seedBilling({ siteId: SITE, state: 'expired' });
-
-    const res = await createPOST(
-      createMockRequest(`http://localhost/api/sites/${SITE}/talons`, {
-        method: 'POST',
-        body: talonInput(),
-      }),
-      routeParams(),
-    );
-
-    expect(res.status).toBe(402);
-    expect(((await res.json()) as { code?: string }).code).toBe('trial_expired');
-    expect(mockCreateTalon).not.toHaveBeenCalled();
   });
 
   it('replays a cached response without re-running the store', async () => {
@@ -630,19 +593,6 @@ describe('DELETE /api/sites/{siteId}/talons/{talonId}', () => {
     expect(((await res.json()) as { code?: string }).code).toBe('talon_not_found');
   });
 
-  it('is not blocked by an expired account — decommissioning stays open', async () => {
-    seedBilling({ siteId: SITE, state: 'expired' });
-
-    const res = await itemDELETE(
-      createMockRequest(`http://localhost/api/sites/${SITE}/talons/${TALON}`, {
-        method: 'DELETE',
-      }),
-      routeParams(TALON),
-    );
-
-    expect(res.status).toBe(204);
-    expect(mockDeleteTalon).toHaveBeenCalled();
-  });
 });
 
 /* -------------------------------------------------------------------------- */
@@ -822,5 +772,4 @@ describe('GET /api/sites/{siteId}/talons/authored', () => {
 /* keep the shared firestore mock honest about what these tests seeded */
 afterAll(() => {
   mocks.siteDocs.clear();
-  mocks.customerDocs.clear();
 });

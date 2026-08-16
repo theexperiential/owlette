@@ -11,10 +11,6 @@
  * Capability: TALON_MANAGE. GET takes read-class api-key scope
  * (`site=<siteId>:read`); POST takes the write-class default.
  *
- * Tier: POST is pro-only, matching `POST /api/webhooks`. GET (and DELETE on
- * the item route) are not, so a downgraded site can still audit and remove
- * what it already has.
- *
  * talons wave 1.2.
  */
 import type { NextRequest } from 'next/server';
@@ -26,7 +22,6 @@ import {
   authorizedSiteHandler,
   type SiteHandlerContext,
 } from '@/lib/authorizedHandler.server';
-import { billingErrorToProblem, requirePro } from '@/lib/billingGate.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { timestampToIso } from '@/lib/firestoreTime.server';
 import { checkIdempotency, saveIdempotency } from '@/lib/idempotency';
@@ -54,20 +49,12 @@ const PROBLEM_TITLE_BY_CODE: Readonly<Record<TalonStoreErrorCode, string>> = {
   invalid_webhook_url: 'webhook url rejected',
   llm_key_required: 'ai key required',
   talon_not_found: 'not found',
-  pro_required: 'pro plan required',
   invalid_reassign: 'validation failed',
   successor_invalid: 'invalid successor',
 };
 
 const PROBLEM_TYPE_BY_STATUS: Readonly<Record<number, string>> = {
   400: ProblemType.ValidationFailed,
-  // The store's `pro_required` carries the billing gate's own status: 402 when
-  // the account is locked out, 403 when the site is core-tier. POST re-checks
-  // `requirePro` before the store runs, so this row only matters if that
-  // pre-check is ever removed — but a 402 rendered as "validation failed"
-  // would be actively wrong, so the table stays total over the statuses the
-  // store can raise.
-  402: ProblemType.TrialExpired,
   403: ProblemType.Forbidden,
   404: ProblemType.NotFound,
   409: ProblemType.Conflict,
@@ -201,18 +188,6 @@ export const POST = authorizedSiteHandler<RouteParams>({
   targetKind: 'talon',
 })(async (request: NextRequest, ctx: SiteHandlerContext) => {
   try {
-    // Pro-only. The wrapper already ran the lockout half of the billing gate
-    // (TALON_MANAGE is in BILLING_LOCKED_CAPABILITIES and this is a mutation);
-    // this adds the tier half, and covers session callers too — unlike the
-    // api-key-only `{ requirePro: true }` path the public webhooks route takes.
-    try {
-      await requirePro(ctx.siteId);
-    } catch (err) {
-      const billingProblem = billingErrorToProblem(err, ctx.siteId);
-      if (billingProblem) return billingProblem;
-      throw err;
-    }
-
     const parsed = await readAndParseJsonBody(request);
     if (!parsed.ok) return parsed.response;
 

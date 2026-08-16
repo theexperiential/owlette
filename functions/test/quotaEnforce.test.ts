@@ -4,8 +4,7 @@
  * Covers pure logic in lib/quotaLogic.ts and the dep-injected
  * orchestrators in quotaEnforce.ts with in-memory fakes.
  *
- * Tier model (billing sprint wave 0.4): core has no roost storage at all,
- * pro includes 1 TiB per site.
+ * A flat SITE_STORAGE_BYTES allowance applies to every site.
  */
 
 import { describe, it } from 'node:test';
@@ -13,14 +12,11 @@ import assert from 'node:assert/strict';
 import {
   admitUpload,
   ALARM_LEVELS,
-  BETA_DEFAULT_TIER,
   newAlarmCrossings,
   reportQuota,
-  resolveSiteTier,
-  TIER_STORAGE_BYTES,
+  SITE_STORAGE_BYTES,
   type AlarmLevel,
   type QuotaState,
-  type SiteTier,
 } from '../src/lib/quotaLogic';
 import {
   reconcileOneSite,
@@ -35,26 +31,12 @@ const TB = 1024 ** 4;
 const NOW = new Date('2026-04-20T00:00:00Z');
 
 /* --------------------------------------------------------------------- */
-/*  tier model                                                           */
+/*  storage allowance                                                    */
 /* --------------------------------------------------------------------- */
 
-describe('tier model', () => {
-  it('passes through the two known tiers', () => {
-    assert.equal(resolveSiteTier('core'), 'core');
-    assert.equal(resolveSiteTier('pro'), 'pro');
-  });
-
-  it('falls back to the beta default for missing/unknown values', () => {
-    assert.equal(resolveSiteTier(undefined), BETA_DEFAULT_TIER);
-    assert.equal(resolveSiteTier(null), BETA_DEFAULT_TIER);
-    // retired plan names left on pre-billing docs land here too.
-    assert.equal(resolveSiteTier('legacy-plan'), BETA_DEFAULT_TIER);
-    assert.equal(resolveSiteTier(42), BETA_DEFAULT_TIER);
-  });
-
-  it('pro carries 1 TiB of included storage; core carries none', () => {
-    assert.equal(TIER_STORAGE_BYTES.pro, 1_099_511_627_776);
-    assert.equal(TIER_STORAGE_BYTES.core, 0);
+describe('storage allowance', () => {
+  it('every site carries 1 TiB of included storage', () => {
+    assert.equal(SITE_STORAGE_BYTES, 1_099_511_627_776);
   });
 });
 
@@ -64,17 +46,15 @@ describe('tier model', () => {
 
 describe('reportQuota', () => {
   it('reports zero usage cleanly', () => {
-    const r = reportQuota({ tier: 'pro', usedBytes: 0, pendingBytes: 0 });
+    const r = reportQuota({ usedBytes: 0, pendingBytes: 0 });
     assert.equal(r.fractionUsed, 0);
     assert.equal(r.atCap, false);
     assert.equal(r.alarmLevel, 0);
-    assert.equal(r.remainingBytes, TIER_STORAGE_BYTES.pro);
-    assert.equal(r.roostAvailable, true);
+    assert.equal(r.remainingBytes, SITE_STORAGE_BYTES);
   });
 
   it('sums used + pending toward the cap', () => {
     const r = reportQuota({
-      tier: 'pro',
       usedBytes: 900 * GB,
       pendingBytes: 100 * GB,
     });
@@ -85,7 +65,6 @@ describe('reportQuota', () => {
 
   it('atCap flips at exactly 100%', () => {
     const r = reportQuota({
-      tier: 'pro',
       usedBytes: 1 * TB,
       pendingBytes: 0,
     });
@@ -95,7 +74,6 @@ describe('reportQuota', () => {
 
   it('reports alarm level 0.5 when between 50%-79%', () => {
     const r = reportQuota({
-      tier: 'pro',
       usedBytes: 600 * GB, // 58.6 %
       pendingBytes: 0,
     });
@@ -104,38 +82,14 @@ describe('reportQuota', () => {
 
   it('reports alarm level 0.8 when between 80%-99%', () => {
     const r = reportQuota({
-      tier: 'pro',
       usedBytes: 900 * GB, // 87.9 %
       pendingBytes: 0,
     });
     assert.equal(r.alarmLevel, 0.8);
   });
 
-  it('core has no storage entitlement at all', () => {
-    const r = reportQuota({ tier: 'core', usedBytes: 0, pendingBytes: 0 });
-    assert.equal(r.roostAvailable, false);
-    assert.equal(r.planLimitBytes, 0);
-    assert.equal(r.remainingBytes, 0);
-    assert.equal(r.atCap, true);
-    assert.ok(Number.isNaN(r.fractionUsed));
-  });
-
-  it('core holding legacy bytes still raises no alarm (no divide-by-zero)', () => {
-    // a site downgraded from pro keeps its bytes until GC; alarming on
-    // every reconcile would be noise — the tier gate already denies uploads.
-    const r = reportQuota({
-      tier: 'core',
-      usedBytes: 40 * GB,
-      pendingBytes: 0,
-    });
-    assert.equal(r.alarmLevel, 0);
-    assert.equal(r.committedBytes, 40 * GB);
-    assert.equal(r.roostAvailable, false);
-  });
-
   it('clamps negative committedBytes at 0 (defensive)', () => {
     const r = reportQuota({
-      tier: 'pro',
       usedBytes: -10,
       pendingBytes: 0,
     });
@@ -179,42 +133,27 @@ describe('newAlarmCrossings', () => {
 describe('admitUpload', () => {
   it('admits a request that fits comfortably', () => {
     const d = admitUpload({
-      state: { tier: 'pro', usedBytes: 100 * GB, pendingBytes: 0 },
+      state: { usedBytes: 100 * GB, pendingBytes: 0 },
       requestedBytes: 10 * GB,
     });
     assert.equal(d.allowed, true);
     assert.equal(d.status, 200);
   });
 
-  it('denies a core site with 403 + an upgrade-to-pro CTA', () => {
+  it('denies an already-at-cap site with 402 + a free-up-space hint', () => {
     const d = admitUpload({
-      state: { tier: 'core', usedBytes: 0, pendingBytes: 0 },
-      requestedBytes: 1024,
-    });
-    assert.equal(d.allowed, false);
-    assert.equal(d.status, 403);
-    assert.equal(d.reason, 'tier_insufficient');
-    assert.equal(d.upgradeCta?.currentTier, 'core');
-    assert.equal(d.upgradeCta?.suggestedTier, 'pro');
-  });
-
-  it('denies an already-at-cap pro site with 402 + a free-up-space hint', () => {
-    const d = admitUpload({
-      state: { tier: 'pro', usedBytes: 1 * TB, pendingBytes: 0 },
+      state: { usedBytes: 1 * TB, pendingBytes: 0 },
       requestedBytes: 1024,
     });
     assert.equal(d.allowed, false);
     assert.equal(d.status, 402);
     assert.equal(d.reason, 'quota_exceeded');
-    assert.equal(d.upgradeCta?.currentTier, 'pro');
-    // no tier above pro — the CTA is the message alone.
-    assert.equal(d.upgradeCta?.suggestedTier, undefined);
-    assert.match(d.upgradeCta?.message ?? '', /1 TB per site/);
+    assert.match(d.denialHint?.message ?? '', /1 TB per site/);
   });
 
   it('denies a request that WOULD cross the cap with 402 + would_exceed', () => {
     const d = admitUpload({
-      state: { tier: 'pro', usedBytes: 1000 * GB, pendingBytes: 0 },
+      state: { usedBytes: 1000 * GB, pendingBytes: 0 },
       requestedBytes: 100 * GB, // 1000 + 100 > 1024
     });
     assert.equal(d.allowed, false);
@@ -225,7 +164,7 @@ describe('admitUpload', () => {
   it('counts pending against cap so concurrent admits cannot overcommit', () => {
     // 900 GB used + 124 GB pending = 1 TiB committed; next 1 KB would exceed.
     const d = admitUpload({
-      state: { tier: 'pro', usedBytes: 900 * GB, pendingBytes: 124 * GB },
+      state: { usedBytes: 900 * GB, pendingBytes: 124 * GB },
       requestedBytes: 1024,
     });
     assert.equal(d.allowed, false);
@@ -234,7 +173,7 @@ describe('admitUpload', () => {
 
   it('rejects non-positive requestedBytes with 400', () => {
     const d = admitUpload({
-      state: { tier: 'pro', usedBytes: 0, pendingBytes: 0 },
+      state: { usedBytes: 0, pendingBytes: 0 },
       requestedBytes: 0,
     });
     assert.equal(d.allowed, false);
@@ -255,10 +194,9 @@ interface FakeQuotaState {
   alarmWrites: Array<{ level: AlarmLevel; crossings: AlarmLevel[]; at: Date }>;
 }
 
-function fakeDirectory(tier: SiteTier, sites: string[] = ['s']): SiteDirectory {
+function fakeDirectory(sites: string[] = ['s']): SiteDirectory {
   return {
     async listSiteIds() { return sites; },
-    async readTier() { return tier; },
   };
 }
 
@@ -296,7 +234,7 @@ function fakeMetrics(bytes: number): StorageMetrics {
 describe('runPreUploadCheck', () => {
   it('admits a valid request and reserves pending', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'pro', usedBytes: 100 * GB, pendingBytes: 0 },
+      read: { usedBytes: 100 * GB, pendingBytes: 0 },
       lastAlarmLevel: 0,
       reservations: new Map(),
       rewrites: [],
@@ -305,20 +243,20 @@ describe('runPreUploadCheck', () => {
     const r = await runPreUploadCheck(
       { siteId: 's', reservationId: 'u-1', requestedBytes: 10 * GB },
       {
-        directory: fakeDirectory('pro'),
+        directory: fakeDirectory(),
         quota: fakeQuotaStore(state),
         now: () => NOW,
       },
     );
     assert.equal(r.status, 200);
     assert.equal(r.body.allowed, true);
-    assert.equal(r.body.planLimitBytes, TIER_STORAGE_BYTES.pro);
+    assert.equal(r.body.planLimitBytes, SITE_STORAGE_BYTES);
     assert.equal(state.reservations.get('u-1')?.bytes, 10 * GB);
   });
 
   it('denies at-cap with 402 + free-up-space hint; does NOT reserve', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'pro', usedBytes: 1 * TB, pendingBytes: 0 },
+      read: { usedBytes: 1 * TB, pendingBytes: 0 },
       lastAlarmLevel: 1.0,
       reservations: new Map(),
       rewrites: [],
@@ -327,42 +265,20 @@ describe('runPreUploadCheck', () => {
     const r = await runPreUploadCheck(
       { siteId: 's', reservationId: 'u-1', requestedBytes: 1024 },
       {
-        directory: fakeDirectory('pro'),
+        directory: fakeDirectory(),
         quota: fakeQuotaStore(state),
         now: () => NOW,
       },
     );
     assert.equal(r.status, 402);
     assert.equal(r.body.allowed, false);
-    assert.equal(r.body.upgrade?.currentTier, 'pro');
-    assert.equal(state.reservations.size, 0);
-  });
-
-  it('denies a core site with 403 + upgrade CTA; does NOT reserve', async () => {
-    const state: FakeQuotaState = {
-      read: { tier: 'core', usedBytes: 0, pendingBytes: 0 },
-      lastAlarmLevel: 0,
-      reservations: new Map(),
-      rewrites: [],
-      alarmWrites: [],
-    };
-    const r = await runPreUploadCheck(
-      { siteId: 's', reservationId: 'u-1', requestedBytes: 1024 },
-      {
-        directory: fakeDirectory('core'),
-        quota: fakeQuotaStore(state),
-        now: () => NOW,
-      },
-    );
-    assert.equal(r.status, 403);
-    assert.equal(r.body.reason, 'tier_insufficient');
-    assert.equal(r.body.upgrade?.suggestedTier, 'pro');
+    assert.match(r.body.denialHint?.message ?? '', /1 TB per site/);
     assert.equal(state.reservations.size, 0);
   });
 
   it('rejects malformed requests with 400', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'pro', usedBytes: 0, pendingBytes: 0 },
+      read: { usedBytes: 0, pendingBytes: 0 },
       lastAlarmLevel: 0,
       reservations: new Map(),
       rewrites: [],
@@ -371,7 +287,7 @@ describe('runPreUploadCheck', () => {
     const r = await runPreUploadCheck(
       { siteId: '', reservationId: '', requestedBytes: 0 },
       {
-        directory: fakeDirectory('pro'),
+        directory: fakeDirectory(),
         quota: fakeQuotaStore(state),
       },
     );
@@ -379,26 +295,6 @@ describe('runPreUploadCheck', () => {
     assert.equal(r.body.reason, 'invalid_request');
   });
 
-  it('uses directory-authoritative tier even if cached state disagrees', async () => {
-    // cached quota doc still says 'pro' but the site doc says 'core' →
-    // enforce core (a downgrade must take effect immediately).
-    const state: FakeQuotaState = {
-      read: { tier: 'pro', usedBytes: 0, pendingBytes: 0 },
-      lastAlarmLevel: 0,
-      reservations: new Map(),
-      rewrites: [],
-      alarmWrites: [],
-    };
-    const r = await runPreUploadCheck(
-      { siteId: 's', reservationId: 'u-1', requestedBytes: 1024 },
-      {
-        directory: fakeDirectory('core'),
-        quota: fakeQuotaStore(state),
-      },
-    );
-    assert.equal(r.status, 403);
-    assert.equal(r.body.allowed, false);
-  });
 });
 
 /* --------------------------------------------------------------------- */
@@ -408,14 +304,14 @@ describe('runPreUploadCheck', () => {
 describe('reconcileOneSite', () => {
   it('does not fire alarms when usage stays below 50%', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'pro', usedBytes: 0, pendingBytes: 0 },
+      read: { usedBytes: 0, pendingBytes: 0 },
       lastAlarmLevel: 0,
       reservations: new Map(),
       rewrites: [],
       alarmWrites: [],
     };
     const result = await reconcileOneSite('s', {
-      directory: fakeDirectory('pro'),
+      directory: fakeDirectory(),
       quota: fakeQuotaStore(state),
       metrics: fakeMetrics(400 * GB), // 39 %
       now: () => NOW,
@@ -426,14 +322,14 @@ describe('reconcileOneSite', () => {
 
   it('fires 50% alarm when crossing the threshold', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'pro', usedBytes: 0, pendingBytes: 0 },
+      read: { usedBytes: 0, pendingBytes: 0 },
       lastAlarmLevel: 0,
       reservations: new Map(),
       rewrites: [],
       alarmWrites: [],
     };
     const r = await reconcileOneSite('s', {
-      directory: fakeDirectory('pro'),
+      directory: fakeDirectory(),
       quota: fakeQuotaStore(state),
       metrics: fakeMetrics(600 * GB), // 58.6 %
       now: () => NOW,
@@ -444,14 +340,14 @@ describe('reconcileOneSite', () => {
 
   it('fires every unfired level on a big jump (0 → 100%)', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'pro', usedBytes: 0, pendingBytes: 0 },
+      read: { usedBytes: 0, pendingBytes: 0 },
       lastAlarmLevel: 0,
       reservations: new Map(),
       rewrites: [],
       alarmWrites: [],
     };
     const r = await reconcileOneSite('s', {
-      directory: fakeDirectory('pro'),
+      directory: fakeDirectory(),
       quota: fakeQuotaStore(state),
       metrics: fakeMetrics(1 * TB),
       now: () => NOW,
@@ -461,14 +357,14 @@ describe('reconcileOneSite', () => {
 
   it('does not refire when usage stays at the same alarm level', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'pro', usedBytes: 900 * GB, pendingBytes: 0 },
+      read: { usedBytes: 900 * GB, pendingBytes: 0 },
       lastAlarmLevel: 0.8, // already at 80% alarm
       reservations: new Map(),
       rewrites: [],
       alarmWrites: [],
     };
     const r = await reconcileOneSite('s', {
-      directory: fakeDirectory('pro'),
+      directory: fakeDirectory(),
       quota: fakeQuotaStore(state),
       metrics: fakeMetrics(950 * GB), // still in 80% band
       now: () => NOW,
@@ -477,23 +373,4 @@ describe('reconcileOneSite', () => {
     assert.equal(state.alarmWrites.length, 0);
   });
 
-  it('never alarms a core site (no entitlement to exhaust)', async () => {
-    const state: FakeQuotaState = {
-      read: { tier: 'core', usedBytes: 0, pendingBytes: 0 },
-      lastAlarmLevel: 0,
-      reservations: new Map(),
-      rewrites: [],
-      alarmWrites: [],
-    };
-    const r = await reconcileOneSite('s', {
-      directory: fakeDirectory('core'),
-      quota: fakeQuotaStore(state),
-      metrics: fakeMetrics(40 * GB), // legacy bytes from a downgrade
-      now: () => NOW,
-    });
-    assert.equal(r?.currentLevel, 0);
-    assert.equal(r?.crossings.length, 0);
-    assert.equal(r?.planLimitBytes, 0);
-    assert.equal(state.alarmWrites.length, 0);
-  });
 });

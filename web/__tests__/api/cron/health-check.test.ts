@@ -17,11 +17,6 @@ const mockSiteGet = jest.fn(async () => ({ data: () => ({ name: 'node-pa' }) }))
 /** Site ids the scan is allowed to address this test. */
 const knownSites = new Set<string>(['node-pa']);
 
-// `customers/{uid}` docs backing the post-expiry alert cutoff (billing 2.2).
-// Empty by default, so a site with no `owner` never triggers a lookup at all.
-const customerDocs = new Map<string, Record<string, unknown>>();
-const mockCustomerGet = jest.fn();
-
 const siteDocRef = {
   collection: jest.fn((name: string) => {
     if (name !== 'machines') throw new Error(`unexpected subcollection: ${name}`);
@@ -36,19 +31,9 @@ const sitesCollection = {
     return siteDocRef;
   }),
 };
-const customersCollection = {
-  doc: jest.fn((id: string) => ({
-    get: async () => {
-      mockCustomerGet(id);
-      const data = customerDocs.get(id);
-      return { exists: data !== undefined, data: () => data };
-    },
-  })),
-};
 const mockDb = {
   collection: jest.fn((name: string) => {
     if (name === 'sites') return sitesCollection;
-    if (name === 'customers') return customersCollection;
     throw new Error(`unexpected collection: ${name}`);
   }),
 };
@@ -321,7 +306,6 @@ describe('GET /api/cron/health-check', () => {
     process.env.CRON_SECRET = 'cron-secret';
     knownSites.clear();
     knownSites.add('node-pa');
-    customerDocs.clear();
     setSite({ name: 'node-pa' });
     getSiteAlertRecipientsMock.mockResolvedValue([
       { userId: 'u1', email: 'admin@node-pa.test', ccEmails: [], mutedMachines: [] },
@@ -748,151 +732,6 @@ describe('GET /api/cron/health-check', () => {
       { health: { staleSince: { __op: 'delete' } } },
       { merge: true }
     );
-  });
-
-  // --- post-expiry alert cutoff (billing-system wave 2.2) --------------------
-  // Last row of the plan's lockout matrix: an expired account keeps getting
-  // paged about dead machines for 30 days, then those emails stop.
-  describe('billing alert cutoff', () => {
-    const DAY = 24 * 60 * 60 * 1000;
-
-    /** A site owned by `owner-1` with a settled pending set — this alert fires. */
-    function setOwnedSite(siteId = 'node-pa') {
-      setSite({
-        name: siteId,
-        owner: 'owner-1',
-        health: {
-          offlineAlert: { pendingIds: ['INF-RENDER-1'], pendingUpdatedAt: ts(now - 8 * MIN) },
-        },
-      });
-      mockMachinesGet.mockResolvedValue({ size: 1, docs: [alertDoc('INF-RENDER-1')] });
-    }
-
-    it('suppresses the email once the account is flagged and still expired', async () => {
-      setOwnedSite();
-      customerDocs.set('owner-1', {
-        billingState: 'expired',
-        trialEndsAt: now - 60 * DAY,
-        alertEmailsDisabledAt: now - DAY,
-      });
-
-      const body = await (await GET(request('cron-secret'))).json();
-
-      expect(body.alertsSent).toBe(0);
-      expect(body.alertsSuppressed).toBe(1);
-      expect(emailSend).not.toHaveBeenCalled();
-      // Recipients are never even looked up for a cut-off account.
-      expect(getSiteAlertRecipientsMock).not.toHaveBeenCalled();
-      // Webhook delivery is wave 2's line to draw, not this one's.
-      expect(fireWebhooksMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('still taps the talon matcher for an account whose emails are cut off', async () => {
-      // The tap sits with the webhook fan-out, not the email branch, on purpose:
-      // an operator's own `machine_offline` escalation must not go quiet on the
-      // billing clock that silences owlette's alert emails.
-      setOwnedSite();
-      customerDocs.set('owner-1', {
-        billingState: 'expired',
-        trialEndsAt: now - 60 * DAY,
-        alertEmailsDisabledAt: now - DAY,
-      });
-
-      const body = await (await GET(request('cron-secret'))).json();
-
-      expect(body.alertsSuppressed).toBe(1);
-      expect(emailSend).not.toHaveBeenCalled();
-      expect(tapTalonMatcherMock).toHaveBeenCalledTimes(1);
-      expect(tapTalonMatcherMock).toHaveBeenCalledWith(expect.anything(), 'node-pa', {
-        kind: 'event',
-        eventType: 'machine_offline',
-        machineId: 'INF-RENDER-1',
-      });
-    });
-
-    it('still emails an expired account inside the 30-day grace (no flag yet)', async () => {
-      setOwnedSite();
-      customerDocs.set('owner-1', { billingState: 'expired', trialEndsAt: now - 5 * DAY });
-
-      const body = await (await GET(request('cron-secret'))).json();
-
-      expect(body.alertsSent).toBe(1);
-      expect(body.alertsSuppressed).toBe(0);
-      expect(emailSend).toHaveBeenCalledTimes(1);
-    });
-
-    it('resumes alerts the moment a flagged account converts, without waiting for the sweep', async () => {
-      setOwnedSite();
-      customerDocs.set('owner-1', {
-        subscriptionStatus: 'active',
-        billingState: 'active',
-        trialEndsAt: now - 60 * DAY,
-        alertEmailsDisabledAt: now - DAY, // stale stamp the nightly sweep hasn't cleared yet
-      });
-
-      const body = await (await GET(request('cron-secret'))).json();
-
-      expect(body.alertsSent).toBe(1);
-      expect(body.alertsSuppressed).toBe(0);
-    });
-
-    it('never looks up billing for a site with no owner', async () => {
-      setSite({
-        name: 'node-pa',
-        health: {
-          offlineAlert: { pendingIds: ['INF-RENDER-1'], pendingUpdatedAt: ts(now - 8 * MIN) },
-        },
-      });
-      mockMachinesGet.mockResolvedValue({ size: 1, docs: [alertDoc('INF-RENDER-1')] });
-
-      const body = await (await GET(request('cron-secret'))).json();
-
-      expect(body.alertsSent).toBe(1);
-      expect(mockCustomerGet).not.toHaveBeenCalled();
-    });
-
-    it('emails anyway when the billing lookup fails (fails open)', async () => {
-      setOwnedSite();
-      customersCollection.doc.mockImplementationOnce(() => ({
-        get: async () => {
-          throw new Error('firestore unavailable');
-        },
-      }));
-
-      const body = await (await GET(request('cron-secret'))).json();
-
-      expect(body.alertsSent).toBe(1);
-      expect(body.alertsSuppressed).toBe(0);
-    });
-
-    it('reads the billing customer ONCE for a fleet of sites under one owner', async () => {
-      knownSites.add('node-nyc');
-      customerDocs.set('owner-1', {
-        billingState: 'expired',
-        trialEndsAt: now - 60 * DAY,
-        alertEmailsDisabledAt: now - DAY,
-      });
-      const siteData = {
-        name: 'shared-owner',
-        owner: 'owner-1',
-        health: {
-          offlineAlert: { pendingIds: ['INF-RENDER-1'], pendingUpdatedAt: ts(now - 8 * MIN) },
-        },
-      };
-      mockSitesGet.mockResolvedValue({
-        size: 2,
-        docs: [
-          { id: 'node-pa', data: () => siteData, ref: { set: siteRefSet } },
-          { id: 'node-nyc', data: () => siteData, ref: { set: siteRefSet } },
-        ],
-      });
-      mockMachinesGet.mockResolvedValue({ size: 1, docs: [alertDoc('INF-RENDER-1')] });
-
-      const body = await (await GET(request('cron-secret'))).json();
-
-      expect(body.alertsSuppressed).toBe(2);
-      expect(mockCustomerGet).toHaveBeenCalledTimes(1);
-    });
   });
 
   it('clears a stale shutdown latch at the source once the window has elapsed', async () => {

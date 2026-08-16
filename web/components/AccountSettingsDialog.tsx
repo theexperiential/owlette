@@ -11,10 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Check, CreditCard, Loader2, User, Bell, BellOff, Trash2, Key, Plus, X, Code } from 'lucide-react';
-import { BillingTab } from '@/components/BillingTab';
-import { ProTierGate } from '@/components/billing/ProTierGate';
-import { useAccountTier } from '@/hooks/useAccountTier';
+import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Check, Loader2, User, Bell, BellOff, Trash2, Key, Plus, X, Code } from 'lucide-react';
 import { CopyButton } from '@/components/CopyButton';
 import Link from 'next/link';
 import { toast } from '@/lib/toast';
@@ -30,7 +27,7 @@ import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HootIcon } from '@/components/icons/HootIcon';
 
-type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'hoot' | 'security' | 'api' | 'billing' | 'danger';
+type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'hoot' | 'security' | 'api' | 'danger';
 
 const AVAILABLE_MODELS: Record<'anthropic' | 'openai', { id: string; name: string }[]> = {
   anthropic: [
@@ -60,7 +57,6 @@ const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[
   { id: 'hoot', label: 'hoot', icon: HootIcon },
   { id: 'security', label: 'security', icon: Shield },
   { id: 'api', label: 'api', icon: Code },
-  { id: 'billing', label: 'billing', icon: CreditCard },
   { id: 'danger', label: 'danger zone', icon: Trash2 },
 ];
 
@@ -123,13 +119,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [llmModelsLoading, setLlmModelsLoading] = useState(false);
 
   // API key state.
-  //
-  // `accountTier` gates the section below. Enabled only while the api section
-  // is actually on screen: the snapshot route behind this hook fans out to a
-  // machines read per owned site, and this dialog stays mounted (closed) on
-  // every page that renders it — the same reasoning that keeps `BillingTab`
-  // conditionally mounted rather than hidden with css.
-  const accountTier = useAccountTier(open && activeSection === 'api');
   const [apiKeys, setApiKeys] = useState<ApiKeyEntry[]>([]);
   const [apiKeysLoading, setApiKeysLoading] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
@@ -138,14 +127,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [creatingKey, setCreatingKey] = useState(false);
   const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null);
   const [confirmRevokeKeyId, setConfirmRevokeKeyId] = useState<string | null>(null);
-  // The full-card gate replaces the whole section only when there are no keys
-  // behind it to audit or revoke. With keys on file the section renders and
-  // the inline gate takes the create form's place instead — listing and
-  // revoking are ungated server-side, and revocation is a security action that
-  // must not depend on a subscription. `!apiKeysLoading` is load-bearing: an
-  // empty `apiKeys` before the first response is "unknown", not "none".
-  const showApiEmptyStateGate =
-    accountTier === 'core' && !apiKeysLoading && apiKeys.length === 0;
 
   // Account deletion state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -1151,245 +1132,216 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
               )}
 
               {/* ─── API ─── */}
-              {/* Same gate as /settings/api-keys — this section is the other
-                  way into key creation, and a core account reaching either
-                  should read the tier here rather than in a failed create.
-                  Full card only when there are no keys to audit or revoke;
-                  otherwise the section renders and the inline gate replaces
-                  the create form below. The margin override cancels the
-                  gate's page-sized lead-in at both breakpoints; inside a
-                  dialog panel it would push the card below the fold. */}
               {activeSection === 'api' && (
-                showApiEmptyStateGate ? (
-                  <ProTierGate
-                    tier={accountTier}
-                    feature="api access"
-                    blurb="api keys are included in the pro tier — they authenticate the public REST API, the CLI, and the SDK. upgrade your account to enable."
-                    className="mt-2 md:mt-2"
-                  />
-                ) : (
-                  <div className="space-y-5">
-                    <div>
-                      <h3 className="text-base font-medium text-white">API keys</h3>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        create keys for programmatic access to the Owlette API
-                      </p>
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-base font-medium text-white">API keys</h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      create keys for programmatic access to the Owlette API
+                    </p>
+                  </div>
+
+                  {/* Show newly created key */}
+                  {createdKey && (
+                    <div className="relative rounded-md border border-accent-cyan/50 bg-accent-cyan/5 p-4 space-y-2">
+                      <button
+                        type="button"
+                        onClick={() => setCreatedKey(null)}
+                        className="absolute top-2.5 right-2.5 cursor-pointer text-muted-foreground hover:text-white"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                      <p className="text-sm text-accent-cyan font-medium pr-6">key created — copy it now, you won&apos;t see it again</p>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 text-xs bg-background rounded px-3 py-2 text-white font-mono break-all select-all">
+                          {createdKey}
+                        </code>
+                        <CopyButton
+                          value={createdKey}
+                          successMessage="API key copied to clipboard"
+                          tooltipLabel="copy key"
+                          className="border-border text-accent-cyan hover:bg-muted h-8 flex-shrink-0"
+                        />
+                      </div>
                     </div>
+                  )}
 
-                    {/* Show newly created key */}
-                    {createdKey && (
-                      <div className="relative rounded-md border border-accent-cyan/50 bg-accent-cyan/5 p-4 space-y-2">
-                        <button
-                          type="button"
-                          onClick={() => setCreatedKey(null)}
-                          className="absolute top-2.5 right-2.5 cursor-pointer text-muted-foreground hover:text-white"
+                  {/* Create new key */}
+                  <div className="rounded-md border border-border bg-card/50 p-4 space-y-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="apiKeyName" className="text-white">key name</Label>
+                      <Input
+                        id="apiKeyName"
+                        type="text"
+                        placeholder="e.g. CI/CD, monitoring script"
+                        value={newKeyName}
+                        onChange={(e) => setNewKeyName(e.target.value)}
+                        className="border-border bg-background text-white"
+                        disabled={creatingKey}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="apiKeyScope" className="text-white">scope</Label>
+                      <Select
+                        value={keyScopePreset}
+                        onValueChange={(v) => setKeyScopePreset(v as ApiKeyScopePreset)}
+                        disabled={creatingKey}
+                      >
+                        <SelectTrigger id="apiKeyScope" className="border-border bg-background text-white hover:bg-secondary">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="border-border bg-secondary text-white">
+                          {SCOPE_PRESET_KEYS.map((p) => (
+                            <SelectItem key={p} value={p} className="cursor-pointer hover:bg-muted">
+                              {p}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground">{SCOPE_PRESET_DESCRIPTIONS[keyScopePreset]}</p>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] text-muted-foreground">
+                        need custom scopes?{' '}
+                        <Link
+                          href="/settings/api-keys"
+                          onClick={() => onOpenChange(false)}
+                          className="hl-link text-accent-cyan"
                         >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                        <p className="text-sm text-accent-cyan font-medium pr-6">key created — copy it now, you won&apos;t see it again</p>
-                        <div className="flex items-center gap-2">
-                          <code className="flex-1 text-xs bg-background rounded px-3 py-2 text-white font-mono break-all select-all">
-                            {createdKey}
-                          </code>
-                          <CopyButton
-                            value={createdKey}
-                            successMessage="API key copied to clipboard"
-                            tooltipLabel="copy key"
-                            className="border-border text-accent-cyan hover:bg-muted h-8 flex-shrink-0"
-                          />
-                        </div>
-                      </div>
-                    )}
+                          manage api keys
+                        </Link>
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={async () => {
+                          setCreatingKey(true);
+                          try {
+                            const res = await fetch('/api/keys', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                name: newKeyName.trim() || 'api key',
+                                scopes: SCOPE_PRESETS[keyScopePreset],
+                              }),
+                            });
+                            const data = await res.json();
+                            if (res.ok && data.success) {
+                              setCreatedKey(data.key);
+                              setNewKeyName('');
+                              // Refresh list
+                              const listRes = await fetch('/api/keys');
+                              const listData = await listRes.json();
+                              if (listData.success) setApiKeys(listData.keys || []);
+                              toast.success('API key created');
+                            } else {
+                              toast.error(data.detail || data.error || 'Failed to create key');
+                            }
+                          } catch {
+                            toast.error('Failed to create key');
+                          }
+                          setCreatingKey(false);
+                        }}
+                        disabled={creatingKey}
+                        className="cursor-pointer text-gray-900 h-9 flex-shrink-0"
+                      >
+                        {creatingKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5 mr-1" /> create key</>}
+                      </Button>
+                    </div>
+                  </div>
 
-                    {/* Create new key. Creation is the only pro-gated
-                        operation on this surface; the active-keys list below
-                        (and its revoke button) stays live for a downgraded
-                        account because the server never gated it. */}
-                    <ProTierGate tier={accountTier} variant="inline" item="api keys">
-                      <div className="rounded-md border border-border bg-card/50 p-4 space-y-3">
-                        <div className="space-y-2">
-                          <Label htmlFor="apiKeyName" className="text-white">key name</Label>
-                          <Input
-                            id="apiKeyName"
-                            type="text"
-                            placeholder="e.g. CI/CD, monitoring script"
-                            value={newKeyName}
-                            onChange={(e) => setNewKeyName(e.target.value)}
-                            className="border-border bg-background text-white"
-                            disabled={creatingKey}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="apiKeyScope" className="text-white">scope</Label>
-                          <Select
-                            value={keyScopePreset}
-                            onValueChange={(v) => setKeyScopePreset(v as ApiKeyScopePreset)}
-                            disabled={creatingKey}
-                          >
-                            <SelectTrigger id="apiKeyScope" className="border-border bg-background text-white hover:bg-secondary">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className="border-border bg-secondary text-white">
-                              {SCOPE_PRESET_KEYS.map((p) => (
-                                <SelectItem key={p} value={p} className="cursor-pointer hover:bg-muted">
-                                  {p}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <p className="text-[11px] text-muted-foreground">{SCOPE_PRESET_DESCRIPTIONS[keyScopePreset]}</p>
-                        </div>
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-[11px] text-muted-foreground">
-                            need custom scopes?{' '}
-                            <Link
-                              href="/settings/api-keys"
-                              onClick={() => onOpenChange(false)}
-                              className="hl-link text-accent-cyan"
-                            >
-                              manage api keys
-                            </Link>
-                          </p>
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={async () => {
-                              setCreatingKey(true);
-                              try {
-                                const res = await fetch('/api/keys', {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({
-                                    name: newKeyName.trim() || 'api key',
-                                    scopes: SCOPE_PRESETS[keyScopePreset],
-                                  }),
-                                });
-                                const data = await res.json();
-                                if (res.ok && data.success) {
-                                  setCreatedKey(data.key);
-                                  setNewKeyName('');
-                                  // Refresh list
-                                  const listRes = await fetch('/api/keys');
-                                  const listData = await listRes.json();
-                                  if (listData.success) setApiKeys(listData.keys || []);
-                                  toast.success('API key created');
-                                } else {
-                                  toast.error(data.detail || data.error || 'Failed to create key');
-                                }
-                              } catch {
-                                toast.error('Failed to create key');
-                              }
-                              setCreatingKey(false);
-                            }}
-                            disabled={creatingKey}
-                            className="cursor-pointer text-gray-900 h-9 flex-shrink-0"
-                          >
-                            {creatingKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5 mr-1" /> create key</>}
-                          </Button>
-                        </div>
-                      </div>
-                    </ProTierGate>
-
-                    {/* Existing keys list */}
-                    {apiKeys.length > 0 && (
+                  {/* Existing keys list */}
+                  {apiKeys.length > 0 && (
+                    <div className="space-y-2">
+                      <Label className="text-white">active keys</Label>
                       <div className="space-y-2">
-                        <Label className="text-white">active keys</Label>
-                        <div className="space-y-2">
-                          {apiKeys.map((k) => (
-                            <div key={k.id} className="flex items-center justify-between rounded-md border border-border bg-card/50 px-4 py-3">
-                              <div className="space-y-0.5 min-w-0">
-                                <p className="text-sm text-white truncate">{k.name}</p>
-                                <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                                  <code className="font-mono">{k.keyPrefix}•••</code>
-                                  <span>created {new Date(k.createdAt).toLocaleDateString()}</span>
-                                  {k.lastUsedAt && (
-                                    <span>last used {new Date(k.lastUsedAt).toLocaleDateString()}</span>
-                                  )}
-                                </div>
+                        {apiKeys.map((k) => (
+                          <div key={k.id} className="flex items-center justify-between rounded-md border border-border bg-card/50 px-4 py-3">
+                            <div className="space-y-0.5 min-w-0">
+                              <p className="text-sm text-white truncate">{k.name}</p>
+                              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                                <code className="font-mono">{k.keyPrefix}•••</code>
+                                <span>created {new Date(k.createdAt).toLocaleDateString()}</span>
+                                {k.lastUsedAt && (
+                                  <span>last used {new Date(k.lastUsedAt).toLocaleDateString()}</span>
+                                )}
                               </div>
-                              {confirmRevokeKeyId === k.id ? (
-                                <div className="flex items-center gap-1.5 flex-shrink-0">
-                                  <span className="text-xs text-red-400">revoke?</span>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={async () => {
-                                      setRevokingKeyId(k.id);
-                                      try {
-                                        const res = await fetch(`/api/keys/${encodeURIComponent(k.id)}`, {
-                                          method: 'DELETE',
-                                        });
-                                        if (res.ok) {
-                                          setApiKeys((prev) => prev.filter((key) => key.id !== k.id));
-                                          toast.success('API key revoked');
-                                        } else {
-                                          const data = await res.json().catch(() => ({}));
-                                          toast.error(data.detail || data.error || 'Failed to revoke key');
-                                        }
-                                      } catch {
-                                        toast.error('Failed to revoke key');
-                                      }
-                                      setRevokingKeyId(null);
-                                      setConfirmRevokeKeyId(null);
-                                    }}
-                                    disabled={revokingKeyId === k.id}
-                                    className="cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-950/30 h-7 px-2 text-xs"
-                                  >
-                                    {revokingKeyId === k.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'yes'}
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => setConfirmRevokeKeyId(null)}
-                                    className="cursor-pointer text-muted-foreground hover:text-white hover:bg-muted h-7 px-2 text-xs"
-                                  >
-                                    no
-                                  </Button>
-                                </div>
-                              ) : (
+                            </div>
+                            {confirmRevokeKeyId === k.id ? (
+                              <div className="flex items-center gap-1.5 flex-shrink-0">
+                                <span className="text-xs text-red-400">revoke?</span>
                                 <Button
                                   type="button"
                                   size="sm"
                                   variant="ghost"
-                                  onClick={() => setConfirmRevokeKeyId(k.id)}
-                                  aria-label={`revoke ${k.name}`}
-                                  className="cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-950/30 h-8 flex-shrink-0"
+                                  onClick={async () => {
+                                    setRevokingKeyId(k.id);
+                                    try {
+                                      const res = await fetch(`/api/keys/${encodeURIComponent(k.id)}`, {
+                                        method: 'DELETE',
+                                      });
+                                      if (res.ok) {
+                                        setApiKeys((prev) => prev.filter((key) => key.id !== k.id));
+                                        toast.success('API key revoked');
+                                      } else {
+                                        const data = await res.json().catch(() => ({}));
+                                        toast.error(data.detail || data.error || 'Failed to revoke key');
+                                      }
+                                    } catch {
+                                      toast.error('Failed to revoke key');
+                                    }
+                                    setRevokingKeyId(null);
+                                    setConfirmRevokeKeyId(null);
+                                  }}
+                                  disabled={revokingKeyId === k.id}
+                                  className="cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-950/30 h-7 px-2 text-xs"
                                 >
-                                  <X className="h-3.5 w-3.5" />
+                                  {revokingKeyId === k.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'yes'}
                                 </Button>
-                              )}
-                            </div>
-                          ))}
-                        </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => setConfirmRevokeKeyId(null)}
+                                  className="cursor-pointer text-muted-foreground hover:text-white hover:bg-muted h-7 px-2 text-xs"
+                                >
+                                  no
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setConfirmRevokeKeyId(k.id)}
+                                aria-label={`revoke ${k.name}`}
+                                className="cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-950/30 h-8 flex-shrink-0"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        ))}
                       </div>
-                    )}
-
-                    {apiKeys.length === 0 && !apiKeysLoading && (
-                      <p className="text-xs text-muted-foreground">no API keys yet. create one to get started.</p>
-                    )}
-
-                    {/* Usage example */}
-                    <div className="rounded-md border border-border bg-card/50 p-4 space-y-2">
-                      <p className="text-xs text-muted-foreground font-medium">usage</p>
-                      <code className="block text-[11px] bg-background rounded px-3 py-2 text-muted-foreground font-mono whitespace-pre-wrap">
-                        {`curl "https://owlette.app/api/sites/SITE_ID/machines?api_key=owk_..."`}
-                      </code>
-                      <p className="text-[11px] text-muted-foreground">
-                        or pass as header: <code className="font-mono">x-api-key: owk_...</code>
-                      </p>
                     </div>
-                  </div>
-                )
-              )}
+                  )}
 
-              {/* ─── Billing ─── */}
-              {/* Mounted only while visible, like every other section here —
-                  which is also what gates the fetch: the snapshot route fans
-                  out to a machines read per owned site, and mounting it with
-                  the dialog would spend those reads on every open. */}
-              {activeSection === 'billing' && <BillingTab />}
+                  {apiKeys.length === 0 && !apiKeysLoading && (
+                    <p className="text-xs text-muted-foreground">no API keys yet. create one to get started.</p>
+                  )}
+
+                  {/* Usage example */}
+                  <div className="rounded-md border border-border bg-card/50 p-4 space-y-2">
+                    <p className="text-xs text-muted-foreground font-medium">usage</p>
+                    <code className="block text-[11px] bg-background rounded px-3 py-2 text-muted-foreground font-mono whitespace-pre-wrap">
+                      {`curl "https://owlette.app/api/sites/SITE_ID/machines?api_key=owk_..."`}
+                    </code>
+                    <p className="text-[11px] text-muted-foreground">
+                      or pass as header: <code className="font-mono">x-api-key: owk_...</code>
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* ─── Danger Zone ─── */}
               {activeSection === 'danger' && (

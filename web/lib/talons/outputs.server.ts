@@ -25,14 +25,6 @@ import {
   ExecuteMachineCommandError,
 } from '@/lib/actions/executeMachineCommand.server';
 import {
-  alertEmailsDisabled,
-  type TrialLifecycleCustomer,
-} from '@/lib/billing/trialLifecycle.server';
-import {
-  webhookDeliveryPausedBy,
-  type WebhookBillingCache,
-} from '@/lib/billing/webhookDelivery.server';
-import {
   EMAIL_COLORS,
   emailDataTable,
   emailTimestamp,
@@ -98,8 +90,6 @@ export interface TalonOutputContext {
   condition?: TalonRunCondition;
   /** Absolute origin for unsubscribe links (no trailing slash). */
   baseUrl: string;
-  /** Per-run memo for the webhook billing gate. */
-  billingCache: WebhookBillingCache;
   now: Date;
 }
 
@@ -143,39 +133,7 @@ export async function executeTalonOutput(
 /*  email                                                                     */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Whether this site's owning account has had its alert emails cut off — the
- * last row of the billing lockout matrix (an expired account keeps getting
- * paged for 30 days, then stops). Same two-read shape and same fail-OPEN
- * posture as `alertEmailsCutOff` in `/api/cron/health-check`: losing a real
- * alert to a billing hiccup is worse than one email to a quiet account.
- */
-async function alertEmailsCutOff(ctx: TalonOutputContext): Promise<boolean> {
-  try {
-    const siteSnap = await ctx.db.collection('sites').doc(ctx.siteId).get();
-    const ownerUid = siteSnap.data()?.owner as string | undefined;
-    if (!ownerUid) return false;
-
-    const customerSnap = await ctx.db.collection('customers').doc(ownerUid).get();
-    if (!customerSnap.exists) return false;
-    return alertEmailsDisabled(
-      customerSnap.data() as TrialLifecycleCustomer | undefined,
-      ctx.now,
-    );
-  } catch (error) {
-    logger.warn(
-      `Talon email billing lookup failed for site ${ctx.siteId}; delivering anyway`,
-      { context: 'talons/outputs', data: { error: String(error) } },
-    );
-    return false;
-  }
-}
-
 async function executeEmailOutput(ctx: TalonOutputContext): Promise<TalonRunOutput> {
-  if (await alertEmailsCutOff(ctx)) {
-    return { type: 'email', status: 'skipped', detail: 'billing_email_cutoff' };
-  }
-
   const resend = getResend();
   if (resend === null) {
     // No RESEND_API_KEY in this environment. Reporting `sent` here would tell
@@ -305,22 +263,6 @@ async function executeWebhookOutput(
   ctx: TalonOutputContext,
   output: TalonWebhookOutput,
 ): Promise<TalonRunOutput> {
-  // Billing gate first: a locked-out account gets no delivery and no DNS
-  // lookup, and — like the subscription fan-out — records no failure, so its
-  // talon can't drift toward auto-disable while it waits to convert.
-  const pausedBy = await webhookDeliveryPausedBy(ctx.siteId, {
-    db: ctx.db,
-    cache: ctx.billingCache,
-    now: ctx.now,
-  });
-  if (pausedBy) {
-    return {
-      type: 'webhook',
-      status: 'skipped',
-      detail: `webhook_delivery_paused (account ${pausedBy})`,
-    };
-  }
-
   // Re-validate at SEND time. The store already ran this check when the talon
   // was authored, but DNS can be repointed at an internal address afterwards —
   // that TOCTOU window is exactly what this second pass closes. Do not relax it.

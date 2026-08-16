@@ -23,12 +23,10 @@ import DownloadButton from '@/components/DownloadButton';
 import { LoadingWord } from '@/components/LoadingWord';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { PageHeader } from '@/components/PageHeader';
-import { ProTierGate } from '@/components/billing/ProTierGate';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites } from '@/hooks/useFirestore';
-import { useSiteTier } from '@/hooks/useSiteTier';
 import { useTalonPresets, type TalonPreset } from '@/hooks/useTalonPresets';
 import { useTalons } from '@/hooks/useTalons';
 import { findTalonPresetByName, talonPresetTemplateFrom } from '@/lib/talons/presetTemplate';
@@ -83,7 +81,6 @@ export default function TalonsPage() {
 
   const { machines } = useMachines(currentSiteId);
   const { talons, loading: talonsLoading, error } = useTalons(currentSiteId);
-  const siteTier = useSiteTier(currentSiteId);
   // One subscription for the whole list — the rows raise "save as template"
   // here rather than each opening their own.
   const {
@@ -238,22 +235,16 @@ export default function TalonsPage() {
             </p>
           </div>
 
-          {/* Creation is the only pro-gated talon operation — `POST
-              /api/sites/{siteId}/talons` carries `requirePro`, while listing,
-              running, toggling, and deleting stay open so a downgraded site
-              keeps every control the api would still honour. */}
-          <ProTierGate tier={siteTier} variant="inline" item="talons" className="flex-shrink-0">
-            <Button
-              type="button"
-              data-testid="talon-create"
-              onClick={openCreate}
-              disabled={!currentSiteId}
-              className="cursor-pointer text-gray-900"
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              create talon
-            </Button>
-          </ProTierGate>
+          <Button
+            type="button"
+            data-testid="talon-create"
+            onClick={openCreate}
+            disabled={!currentSiteId}
+            className="flex-shrink-0 cursor-pointer text-gray-900"
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            create talon
+          </Button>
         </div>
 
         {/* Ahead of the loading branch: `loading` is derived from "the listener
@@ -286,12 +277,10 @@ export default function TalonsPage() {
               a talon watches for something — a schedule, a threshold, an event — and acts on it.
             </p>
             <div className="mt-3 flex justify-center">
-              <ProTierGate tier={siteTier} variant="inline" item="talons">
-                <Button type="button" size="sm" onClick={openCreate} className="cursor-pointer text-gray-900">
-                  <Plus className="mr-1 h-3.5 w-3.5" />
-                  create talon
-                </Button>
-              </ProTierGate>
+              <Button type="button" size="sm" onClick={openCreate} className="cursor-pointer text-gray-900">
+                <Plus className="mr-1 h-3.5 w-3.5" />
+                create talon
+              </Button>
             </div>
           </Card>
         ) : (

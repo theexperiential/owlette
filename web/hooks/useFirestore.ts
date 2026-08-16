@@ -4,7 +4,6 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { collection, onSnapshot, doc, getDoc, Timestamp, type Unsubscribe } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { logger } from '@/lib/logger';
-import type { SiteTier } from '@/lib/siteTier';
 
 /**
  * Every shape a Firestore timestamp-ish field can arrive in on the client:
@@ -405,27 +404,6 @@ export interface Site {
   createdAt: FirestoreTs;
   timezone?: string;  // IANA timezone, e.g., "America/New_York"
   owner?: string;  // UID of the user who owns this site
-  /**
-   * Pricing tier. Optional because existing site docs predate the field —
-   * always resolve via `getSiteTier()` from `@/lib/siteTier` so the
-   * undefined → BETA_DEFAULT_TIER fallback stays in one place.
-   */
-  tier?: SiteTier;
-  /**
-   * When a billing event last moved this site to its current `tier`
-   * (billing-system wave 0.3). `null` on a site minted at its tier and never
-   * upgraded into it; absent on site docs that predate the field.
-   */
-  tierUpgradedAt?: FirestoreTs;
-}
-
-/**
- * Narrow the `tier` field read from a Firestore site doc. Anything that
- * isn't the literal `'core'` or `'pro'` becomes `undefined`, which lets
- * `getSiteTier()` apply the beta default consistently.
- */
-function parseSiteTier(raw: unknown): SiteTier | undefined {
-  return raw === 'core' || raw === 'pro' ? raw : undefined;
 }
 
 // DELETE once all agents are >= 2.9.0
@@ -689,8 +667,6 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
                 createdAt: data.createdAt || Date.now(),
                 timezone: data.timezone,
                 owner: data.owner,
-                tier: parseSiteTier(data.tier),
-                tierUpgradedAt: data.tierUpgradedAt ?? null,
               });
             });
             siteData.sort((a, b) => a.name.localeCompare(b.name));
@@ -740,8 +716,6 @@ export function useSites(userId?: string, userSites?: string[], isSuperadmin?: b
                 createdAt: data.createdAt || Date.now(),
                 timezone: data.timezone,
                 owner: data.owner,
-                tier: parseSiteTier(data.tier),
-                tierUpgradedAt: data.tierUpgradedAt ?? null,
               });
             } else {
               siteDataMap.delete(siteId);

@@ -12,8 +12,6 @@ import {
   problemNotFound,
   problemRateLimited,
   problemQuotaExceeded,
-  problemTierInsufficient,
-  problemTrialExpired,
   ProblemType,
 } from '@/lib/apiErrors';
 
@@ -260,43 +258,6 @@ describe('apiErrors (rfc 7807 problem+json)', () => {
       expect(body.upgradeUrl).toBeUndefined();
     });
 
-    it('problemTrialExpired → 402 with the trial_expired code and docs anchor', async () => {
-      const { status, body } = await readResponse(
-        problemTrialExpired('this free trial has ended', 'expired'),
-      );
-      expect(status).toBe(402);
-      expect(body.type).toBe(ProblemType.TrialExpired);
-      expect(body.title).toBe('payment required');
-      expect(body.code).toBe('trial_expired');
-      expect(body.billingState).toBe('expired');
-      expect(body.docsUrl).toBe('https://owlette.app/docs/api/errors#trial_expired');
-    });
-
-    it('problemTrialExpired omits billingState when not provided', async () => {
-      const { body } = await readResponse(problemTrialExpired('trial over'));
-      expect(body.billingState).toBeUndefined();
-    });
-
-    it('problemTierInsufficient → 403 with the required block', async () => {
-      const { status, body } = await readResponse(
-        problemTierInsufficient('pro only', {
-          siteId: 'site-1',
-          tier: 'pro',
-          siteTier: 'core',
-        }),
-      );
-      expect(status).toBe(403);
-      expect(body.type).toBe(ProblemType.TierInsufficient);
-      expect(body.title).toBe('insufficient tier');
-      expect(body.code).toBe('tier_insufficient');
-      expect(body.required).toEqual({ siteId: 'site-1', tier: 'pro', siteTier: 'core' });
-      expect(body.docsUrl).toBe('https://owlette.app/docs/api/errors#tier_insufficient');
-    });
-
-    it('problemTierInsufficient omits required when not provided', async () => {
-      const { body } = await readResponse(problemTierInsufficient('pro only'));
-      expect(body.required).toBeUndefined();
-    });
   });
 
   describe('requestId generation', () => {

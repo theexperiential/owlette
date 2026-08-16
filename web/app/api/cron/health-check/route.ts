@@ -8,11 +8,6 @@ import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { fireWebhooks } from '@/lib/webhookSender.server';
 import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
-import {
-  alertEmailsDisabled,
-  type TrialLifecycleCustomer,
-} from '@/lib/billing/trialLifecycle.server';
-import { createWebhookBillingCache } from '@/lib/billing/webhookDelivery.server';
 
 /**
  * GET /api/cron/health-check
@@ -201,57 +196,9 @@ interface OfflineSections {
 interface SendPlan {
   siteId: string;
   siteName: string;
-  // The site's billing customer (`sites/{siteId}.owner`), read off the doc the
-  // scan already loaded. Drives the post-expiry alert cutoff below; `null` for
-  // an ownerless (legacy / partially-written) site, which never suppresses.
-  ownerUid: string | null;
   sections: OfflineSections;
   webhookMachines: { machineId: string; lastHeartbeatMs: number }[];
   timezone?: string;
-}
-
-/**
- * Whether this account's offline alert emails have been cut off — the last row
- * of the plan's lockout matrix: an expired account keeps getting paged about
- * dead machines for 30 days, then those stop.
- *
- * The decision itself is `alertEmailsDisabled()` (wave 2.2), which requires
- * BOTH the `alertEmailsDisabledAt` stamp written by
- * `/api/cron/billing-trial-lifecycle` AND the account still resolving
- * `'expired'` — so a customer who converts gets their alerts back immediately
- * rather than waiting on the next nightly sweep.
- *
- * Cost: one `customers/{uid}` read per *distinct owner* per run, memoised in
- * `cache`, and only for sites that actually have a settled alert to send. A
- * fleet under one owner pays for one read no matter how many sites alert.
- *
- * Fails OPEN on any read error — the same posture as `getBillingSnapshot()`.
- * Losing a page about a dead machine because a billing lookup hiccuped is far
- * worse than sending one alert to an account that had gone quiet.
- */
-async function alertEmailsCutOff(
-  db: FirebaseFirestore.Firestore,
-  ownerUid: string | null,
-  now: number,
-  cache: Map<string, boolean>
-): Promise<boolean> {
-  if (!ownerUid) return false;
-
-  const cached = cache.get(ownerUid);
-  if (cached !== undefined) return cached;
-
-  let cutOff = false;
-  try {
-    const snap = await db.collection('customers').doc(ownerUid).get();
-    cutOff =
-      snap.exists &&
-      alertEmailsDisabled(snap.data() as TrialLifecycleCustomer | undefined, new Date(now));
-  } catch (error) {
-    console.error(`[cron/health-check] Billing lookup failed for owner ${ownerUid}:`, error);
-  }
-
-  cache.set(ownerUid, cutOff);
-  return cutOff;
 }
 
 function heartbeatAgeMinutes(lastHeartbeatMs: number, now: number): number {
@@ -577,11 +524,9 @@ export async function GET(request: NextRequest) {
       });
 
       offlineMachines += notResponding.length;
-      const rawOwner = siteData.owner;
       sendPlans.push({
         siteId,
         siteName: (siteData.name as string) || siteId,
-        ownerUid: typeof rawOwner === 'string' && rawOwner.length > 0 ? rawOwner : null,
         sections: {
           notResponding: notResponding.map(({ machineId, heartbeatAgeMinutes }) => ({ machineId, heartbeatAgeMinutes })),
           shuttingDown,
@@ -602,91 +547,67 @@ export async function GET(request: NextRequest) {
       machinesChecked,
       offlineMachines: 0,
       alertsSent: 0,
-      alertsSuppressed: 0,
     });
   }
 
   const resendClient = getResend();
   const baseUrl = request.nextUrl.origin;
-  // One entry per distinct site owner, for the whole run.
-  const billingCutoffCache = new Map<string, boolean>();
-  // Separate memo for the webhook-delivery gate (wave 2.6). It answers a
-  // different question than the email cutoff — "is the account locked out?"
-  // vs. "is it 30 days past expiry?" — so the two can't share a map.
-  const webhookBillingCache = createWebhookBillingCache();
   let alertsSent = 0;
-  let alertsSuppressed = 0;
 
   for (const plan of sendPlans) {
     try {
-      // Billing lockout, last row of the plan's matrix: 30 days past trial
-      // expiry the emails stop. Only the EMAILS — webhook delivery pauses on
-      // a different clock (the moment the account locks out, not 30 days
-      // later), and is gated inside `fireWebhooks` below.
-      if (await alertEmailsCutOff(db, plan.ownerUid, now, billingCutoffCache)) {
-        alertsSuppressed++;
-        console.log(
-          `[cron/health-check] Alert emails cut off for site ${plan.siteId} ` +
-            `(account expired past the post-expiry grace)`
-        );
-      } else {
-        const recipients = await getSiteAlertRecipients(plan.siteId, 'healthAlerts');
-        if (recipients.length === 0) {
-          console.warn(`[cron/health-check] No recipients for site ${plan.siteId}`);
-          continue;
-        }
-
-        if (!resendClient) {
-          console.warn('[cron/health-check] Resend not configured — skipping email');
-          continue;
-        }
-
-        const siteLabel = await getSiteLabel(plan.siteId);
-
-        // Send individual emails so each user gets their own unsubscribe link
-        for (const recipient of recipients) {
-          try {
-            const sections = filterSectionsForRecipient(plan.sections, recipient.mutedMachines);
-            // The not-responding set is the page trigger; if the user muted every
-            // triggering machine, they've opted out of this page — skip them even
-            // if context rows remain.
-            if (sections.notResponding.length === 0) continue;
-
-            const total = sections.notResponding.length + sections.shuttingDown.length + sections.stillOffline.length;
-
-            const unsubscribeUrl = recipient.userId !== 'fallback'
-              ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
-              : undefined;
-
-            const result = await resendClient.emails.send({
-              from: FROM_EMAIL,
-              to: [recipient.email],
-              ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
-              subject: safeEmailSubject(`${total} machine(s) offline in ${siteLabel}`),
-              html: buildOfflineEmail(siteLabel, sections, plan.timezone, unsubscribeUrl),
-            });
-
-            if (result.error) {
-              console.error(`[cron/health-check] Resend error for ${recipient.email}:`, result.error);
-            } else {
-              alertsSent++;
-            }
-          } catch (emailError) {
-            console.error(`[cron/health-check] Failed to send to ${recipient.email}:`, emailError);
-          }
-        }
-
-        console.log(
-          `[cron/health-check] Alert sent for site ${plan.siteId}: ` +
-            `${plan.sections.notResponding.length} not responding, ${recipients.length} recipient(s)`
-        );
+      const recipients = await getSiteAlertRecipients(plan.siteId, 'healthAlerts');
+      if (recipients.length === 0) {
+        console.warn(`[cron/health-check] No recipients for site ${plan.siteId}`);
+        continue;
       }
 
+      if (!resendClient) {
+        console.warn('[cron/health-check] Resend not configured — skipping email');
+        continue;
+      }
+
+      const siteLabel = await getSiteLabel(plan.siteId);
+
+      // Send individual emails so each user gets their own unsubscribe link
+      for (const recipient of recipients) {
+        try {
+          const sections = filterSectionsForRecipient(plan.sections, recipient.mutedMachines);
+          // The not-responding set is the page trigger; if the user muted every
+          // triggering machine, they've opted out of this page — skip them even
+          // if context rows remain.
+          if (sections.notResponding.length === 0) continue;
+
+          const total = sections.notResponding.length + sections.shuttingDown.length + sections.stillOffline.length;
+
+          const unsubscribeUrl = recipient.userId !== 'fallback'
+            ? `${baseUrl}/api/unsubscribe?token=${generateUnsubscribeToken(recipient.userId)}`
+            : undefined;
+
+          const result = await resendClient.emails.send({
+            from: FROM_EMAIL,
+            to: [recipient.email],
+            ...(recipient.ccEmails.length > 0 ? { cc: recipient.ccEmails } : {}),
+            subject: safeEmailSubject(`${total} machine(s) offline in ${siteLabel}`),
+            html: buildOfflineEmail(siteLabel, sections, plan.timezone, unsubscribeUrl),
+          });
+
+          if (result.error) {
+            console.error(`[cron/health-check] Resend error for ${recipient.email}:`, result.error);
+          } else {
+            alertsSent++;
+          }
+        } catch (emailError) {
+          console.error(`[cron/health-check] Failed to send to ${recipient.email}:`, emailError);
+        }
+      }
+
+      console.log(
+        `[cron/health-check] Alert sent for site ${plan.siteId}: ` +
+          `${plan.sections.notResponding.length} not responding, ${recipients.length} recipient(s)`
+      );
+
       // Fire webhooks for each not-responding machine (non-blocking).
-      // `webhookBillingCache` is shared across the whole run so a fleet of
-      // dead machines under one owner costs one billing lookup, not one per
-      // machine — and the gate stays live, so a mid-run conversion is picked
-      // up by the next run with nothing to invalidate.
       for (const m of plan.webhookMachines) {
         fireWebhooks(
           plan.siteId,
@@ -694,16 +615,14 @@ export async function GET(request: NextRequest) {
           'machine.offline',
           {
             machine: { id: m.machineId, name: m.machineId, lastSeen: new Date(m.lastHeartbeatMs).toISOString() },
-          },
-          { billingCache: webhookBillingCache }
+          }
         ).catch(console.error);
 
         // Talon tap. Deliberately alongside the WEBHOOK fan-out and not the
-        // email branch above: the email is skipped wholesale for a
-        // billing-expired owner, and `machine_offline` talons — which is where
-        // an operator's own escalation lives — must not silently stop firing
-        // on the same clock. This is also the only dispatcher for the event;
-        // an offline machine cannot report that it is offline.
+        // email branch above: `machine_offline` talons — which is where an
+        // operator's own escalation lives — must fire even when the site has
+        // no email recipients configured. This is also the only dispatcher for
+        // the event; an offline machine cannot report that it is offline.
         tapTalonMatcher(db, plan.siteId, {
           kind: 'event',
           eventType: 'machine_offline',
@@ -720,7 +639,6 @@ export async function GET(request: NextRequest) {
     sitesChecked,
     machinesChecked,
     offlineMachines,
-    alertsSuppressed,
     alertsSent,
   });
 }

@@ -15,17 +15,14 @@ import {
   problemScopeInsufficient,
   problemTokenExpired,
 } from '@/lib/apiErrors';
-import { billingErrorToProblem } from '@/lib/billingGate.server';
 import {
   ApiAuthError,
   applyAuthDeprecations,
   auditApiKeyUse,
   requireAdminOrIdToken,
-  requireApiKeyBilling,
   requireScope,
   resolveAuth,
   assertUserHasSiteAccess,
-  type ApiKeyBillingOptions,
   type ResolvedAuth,
   type ScopeCheckResult,
 } from '@/lib/apiAuth.server';
@@ -331,68 +328,6 @@ function isMutationPermission(permission: ApiKeyPermission): boolean {
   return permission !== 'read';
 }
 
-export type BillingCheckResult =
-  | {
-      ok: true;
-      /**
-       * `X-Owlette-Billing-Warning` value for this response, or `null`. The
-       * resolvers below fold it into their `scopeCheck` so
-       * `applyAuthDeprecations()` emits it without any route-level wiring.
-       */
-      billingWarning: string | null;
-    }
-  | { ok: false; response: NextResponse };
-
-/**
- * Billing gate for the public API (billing-system wave 0.5).
- *
- * Runs after auth + site access + scope, so a caller who can't reach the
- * site never learns anything about its billing state. No-ops for
- * session / id-token callers — `requireApiKeyBilling` only gates the
- * api-key surface, per the plan's lockout matrix (public API / CLI / SDK
- * blocked on expiry; dashboard stays readable).
- *
- * Wave 0.6 reaches it through the `options` argument the scope resolvers
- * below now accept: a pro-only route passes `{ requirePro: true }` at its
- * resolver call rather than re-running the gate for itself.
- *
- * Wave 3.3 makes this the choke point for the trial-countdown advisory as
- * well — the gate already holds the billing snapshot, so the warning costs
- * no extra read. It rides the success branch only: a caller who fails the
- * gate gets the 402 `trial_expired` body, and a caller who fails auth, site
- * access, or scope must learn nothing about the site's billing state.
- */
-export async function requireBillingOrProblem(
-  auth: ResolvedAuth,
-  siteId: string,
-  options: ApiKeyBillingOptions = {},
-): Promise<BillingCheckResult> {
-  try {
-    const billingWarning = await requireApiKeyBilling(auth, siteId, options);
-    return { ok: true, billingWarning };
-  } catch (err) {
-    const billingProblem = billingErrorToProblem(err, siteId);
-    if (billingProblem) return { ok: false, response: billingProblem };
-    throw err;
-  }
-}
-
-/**
- * Fold a passed billing check into a scope-check result so
- * `applyAuthDeprecations()` can emit the advisory header. Omits the key
- * entirely when there is no warning, keeping `ScopeCheckResult` objects
- * byte-identical to their pre-3.3 shape for the overwhelming majority of
- * requests (subscribed accounts, session callers, pre-go-live accounts).
- */
-function withBillingWarning(
-  scopeCheck: ScopeCheckResult,
-  billing: Extract<BillingCheckResult, { ok: true }>,
-): ScopeCheckResult {
-  return billing.billingWarning
-    ? { ...scopeCheck, billingWarning: billing.billingWarning }
-    : scopeCheck;
-}
-
 async function assertSiteAccessOrProblem(
   userId: string,
   siteId: string,
@@ -411,16 +346,10 @@ async function assertSiteAccessOrProblem(
   }
 }
 
-/**
- * `billing` opts into the pro-tier half of the gate for a route that is
- * pro-only (`{ requirePro: true }`). Left off, the resolver still runs the
- * lockout check every public-API route gets — see `requireBillingOrProblem`.
- */
 export async function requireSiteAuthAndScope(
   req: NextRequest,
   siteId: string,
   permission: ApiKeyPermission,
-  billing: ApiKeyBillingOptions = {},
 ): Promise<ScopedAuthResult> {
   if (!SITE_ID_RE.test(siteId)) {
     return {
@@ -443,19 +372,13 @@ export async function requireSiteAuthAndScope(
   const scopeResult = runScopeCheck(authResult.auth, 'site', siteId, permission);
   if (!scopeResult.ok) return scopeResult;
 
-  const billingCheck = await requireBillingOrProblem(authResult.auth, siteId, billing);
-  if (!billingCheck.ok) return { ok: false, response: billingCheck.response };
-
   auditApiKeyUse(authResult.auth, siteId, req);
 
   return {
     ok: true,
     userId: authResult.auth.userId,
     auth: authResult.auth,
-    scopeCheck: withBillingWarning(
-      { ...scopeResult.scopeCheck, missingVersion: versionCheck.missing },
-      billingCheck,
-    ),
+    scopeCheck: { ...scopeResult.scopeCheck, missingVersion: versionCheck.missing },
   };
 }
 
@@ -534,26 +457,21 @@ export async function requireMachineAuthAndScope(
   const scopeResult = runScopeCheck(authResult.auth, 'machine', machineId, permission);
   if (!scopeResult.ok) return scopeResult;
 
-  const billingCheck = await requireBillingOrProblem(authResult.auth, siteId);
-  if (!billingCheck.ok) return { ok: false, response: billingCheck.response };
-
   auditApiKeyUse(authResult.auth, siteId, req);
 
   return {
     ok: true,
     userId: authResult.auth.userId,
     auth: authResult.auth,
-    scopeCheck: withBillingWarning(scopeResult.scopeCheck, billingCheck),
+    scopeCheck: scopeResult.scopeCheck,
   };
 }
 
-/** `billing` behaves exactly as in {@link requireSiteAuthAndScope}. */
 export async function requireRoostAuthAndScope(
   req: NextRequest,
   siteId: string,
   roostId: string,
   permission: ApiKeyPermission,
-  billing: ApiKeyBillingOptions = {},
 ): Promise<ScopedAuthResult> {
   if (!SITE_ID_RE.test(siteId)) {
     return {
@@ -590,19 +508,13 @@ export async function requireRoostAuthAndScope(
   const scopeResult = runScopeCheck(authResult.auth, 'roost', roostId, permission);
   if (!scopeResult.ok) return scopeResult;
 
-  const billingCheck = await requireBillingOrProblem(authResult.auth, siteId, billing);
-  if (!billingCheck.ok) return { ok: false, response: billingCheck.response };
-
   auditApiKeyUse(authResult.auth, siteId, req);
 
   return {
     ok: true,
     userId: authResult.auth.userId,
     auth: authResult.auth,
-    scopeCheck: withBillingWarning(
-      { ...scopeResult.scopeCheck, missingVersion: versionCheck.missing },
-      billingCheck,
-    ),
+    scopeCheck: { ...scopeResult.scopeCheck, missingVersion: versionCheck.missing },
   };
 }
 
@@ -693,16 +605,13 @@ export async function requireChatAuthAndScope(
   const scopeResult = runScopeCheck(authResult.auth, 'chat', siteId, permission);
   if (!scopeResult.ok) return scopeResult;
 
-  const billingCheck = await requireBillingOrProblem(authResult.auth, siteId);
-  if (!billingCheck.ok) return { ok: false, response: billingCheck.response };
-
   auditApiKeyUse(authResult.auth, siteId, req);
 
   return {
     ok: true,
     userId: authResult.auth.userId,
     auth: authResult.auth,
-    scopeCheck: withBillingWarning(scopeResult.scopeCheck, billingCheck),
+    scopeCheck: scopeResult.scopeCheck,
   };
 }
 

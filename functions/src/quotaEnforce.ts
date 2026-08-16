@@ -6,8 +6,7 @@
  *   preUploadCheck   — HTTPS callable. The tusd pre-create hook (wave 2b.1)
  *                      calls this before issuing a signed upload URL. On
  *                      admission the pending-bytes reservation is written
- *                      atomically; on denial a 403 (roost isn't sold on
- *                      core) or 402 (pro site out of included storage)
+ *                      atomically; on denial a 402 (site out of storage)
  *                      returns to tusd which propagates to the client.
  *
  *   reconcileQuota   — scheduled daily. Rebuilds `usedBytes` from the
@@ -30,11 +29,9 @@ import {
   ALARM_LEVELS,
   newAlarmCrossings,
   reportQuota,
-  resolveSiteTier,
-  TIER_STORAGE_BYTES,
+  SITE_STORAGE_BYTES,
   type AlarmLevel,
   type QuotaState,
-  type SiteTier,
 } from './lib/quotaLogic';
 
 /** Pending reservations older than this are presumed abandoned. */
@@ -80,11 +77,6 @@ export interface StorageMetrics {
 
 export interface SiteDirectory {
   listSiteIds(): Promise<string[]>;
-  /**
-   * Read the tier off the site doc. Falls back to the documented beta
-   * default (`quotaLogic.BETA_DEFAULT_TIER`) when the field is missing.
-   */
-  readTier(siteId: string): Promise<SiteTier>;
 }
 
 /* --------------------------------------------------------------------- */
@@ -104,11 +96,7 @@ export interface PreUploadResponse {
     reason?: string;
     remainingBytes?: number;
     planLimitBytes?: number;
-    upgrade?: {
-      currentTier: SiteTier;
-      suggestedTier?: SiteTier;
-      message: string;
-    };
+    denialHint?: { message: string };
   };
 }
 
@@ -142,19 +130,12 @@ export async function runPreUploadCheck(
     };
   }
 
-  const [tier, existing] = await Promise.all([
-    deps.directory.readTier(req.siteId),
-    deps.quota.read(req.siteId),
-  ]);
+  const existing = await deps.quota.read(req.siteId);
 
   const state: QuotaState = existing?.state ?? {
-    tier,
     usedBytes: 0,
     pendingBytes: 0,
   };
-  // directory is the source of truth for tier; never let a stale cached
-  // tier in the quota doc grant more than the customer actually pays for.
-  state.tier = tier;
 
   const decision = admitUpload({ state, requestedBytes: req.requestedBytes });
 
@@ -166,7 +147,7 @@ export async function runPreUploadCheck(
         reason: decision.reason,
         remainingBytes: decision.report.remainingBytes,
         planLimitBytes: decision.report.planLimitBytes,
-        upgrade: decision.upgradeCta,
+        denialHint: decision.denialHint,
       },
     };
   }
@@ -217,8 +198,7 @@ export async function reconcileOneSite(
 ): Promise<SiteReconcileResult | null> {
   const now = deps.now ? deps.now() : new Date();
 
-  const [tier, existing, usedBytes] = await Promise.all([
-    deps.directory.readTier(siteId),
+  const [existing, usedBytes] = await Promise.all([
     deps.quota.read(siteId),
     deps.metrics.usedBytes(siteId),
   ]);
@@ -226,7 +206,6 @@ export async function reconcileOneSite(
   // preserve previously-tracked pendingBytes, but let the TTL prune by
   // passing `now` to rewrite — store impl expires stale reservations.
   const nextState: QuotaState = {
-    tier,
     usedBytes,
     pendingBytes: existing?.state.pendingBytes ?? 0,
   };
@@ -328,13 +307,6 @@ function getDefaultDirectory(): SiteDirectory {
       const snap = await db.collection('sites').listDocuments();
       return snap.map((d) => d.id);
     },
-    async readTier(siteId: string) {
-      const snap = await db.collection('sites').doc(siteId).get();
-      // same field web/lib/siteTier.ts reads, same fallback.
-      return resolveSiteTier(
-        snap.exists ? (snap.data() as { tier?: unknown }).tier : undefined,
-      );
-    },
   };
 }
 
@@ -358,18 +330,16 @@ function getDefaultQuotaStore(): QuotaStore {
       ]);
       if (!doc.exists) return null;
       const data = doc.data() as {
-        tier?: unknown;
         usedBytes?: number;
         lastAlarmLevel?: AlarmLevel;
       };
-      const tier = resolveSiteTier(data.tier);
       const usedBytes = data.usedBytes ?? 0;
       const pendingBytes = pendingSnap.docs.reduce(
         (n, d) => n + ((d.data() as { bytes?: number }).bytes ?? 0),
         0,
       );
       return {
-        state: { tier, usedBytes, pendingBytes },
+        state: { usedBytes, pendingBytes },
         lastAlarmLevel: (data.lastAlarmLevel as AlarmLevel) ?? 0,
       };
     },
@@ -393,9 +363,8 @@ function getDefaultQuotaStore(): QuotaStore {
       batch.set(
         quotaDoc(siteId),
         {
-          tier: state.tier,
           usedBytes: state.usedBytes,
-          planLimitBytes: TIER_STORAGE_BYTES[state.tier],
+          planLimitBytes: SITE_STORAGE_BYTES,
           lastReconciledAt: FieldValue.serverTimestamp(),
         },
         { merge: true },

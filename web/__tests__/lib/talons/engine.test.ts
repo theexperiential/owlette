@@ -24,8 +24,6 @@ const mockEvaluateVisualCheck = jest.fn();
 const mockGetSiteAlertRecipients = jest.fn();
 const mockGetResend = jest.fn();
 const mockValidateWebhookUrl = jest.fn();
-const mockWebhookDeliveryPausedBy = jest.fn();
-const mockAlertEmailsDisabled = jest.fn();
 const mockRunHootOutput = jest.fn();
 const mockFetch = jest.fn();
 
@@ -98,15 +96,6 @@ jest.mock('@/lib/resendClient.server', () => ({
 jest.mock('@/lib/webhookUrl', () => ({
   __esModule: true,
   validateWebhookUrl: (...args: unknown[]) => mockValidateWebhookUrl(...args),
-}));
-jest.mock('@/lib/billing/webhookDelivery.server', () => ({
-  __esModule: true,
-  createWebhookBillingCache: () => ({ siteOwners: new Map(), ownerStates: new Map() }),
-  webhookDeliveryPausedBy: (...args: unknown[]) => mockWebhookDeliveryPausedBy(...args),
-}));
-jest.mock('@/lib/billing/trialLifecycle.server', () => ({
-  __esModule: true,
-  alertEmailsDisabled: (...args: unknown[]) => mockAlertEmailsDisabled(...args),
 }));
 jest.mock('@/lib/hoot-utils.server', () => ({
   __esModule: true,
@@ -350,8 +339,6 @@ beforeEach(() => {
   mockRunHootOutput.mockResolvedValue({ status: 'sent', chatId: 'talon_1755172800000_r1' });
   mockGetResend.mockReturnValue(null);
   mockGetSiteAlertRecipients.mockResolvedValue([]);
-  mockAlertEmailsDisabled.mockReturnValue(false);
-  mockWebhookDeliveryPausedBy.mockResolvedValue(null);
   mockValidateWebhookUrl.mockResolvedValue({
     ok: true,
     url: 'https://hooks.example.com/t',
@@ -697,23 +684,6 @@ describe('outputs', () => {
     expect(summaries[0].status).toBe('failed');
   });
 
-  it('skips the webhook while the account is locked out, without recording a failure', async () => {
-    mockWebhookDeliveryPausedBy.mockResolvedValue('expired');
-    const talon = seedTalon('t1', {
-      outputs: [{ type: 'webhook', url: 'https://hooks.example.com/t' }],
-    });
-
-    const summaries = await runTalon(db, talon, { siteId: SITE, now: NOW });
-
-    expect(outputByType(summaries[0].outputs, 'webhook')).toEqual({
-      type: 'webhook',
-      status: 'skipped',
-      detail: 'webhook_delivery_paused (account expired)',
-    });
-    expect(summaries[0].status).toBe('succeeded');
-    expect(talonDoc('t1').consecutiveFailures).toBe(0);
-  });
-
   it('emails every unmuted recipient with their own unsubscribe link', async () => {
     const { client, send } = workingResend();
     mockGetResend.mockReturnValue(client);
@@ -742,23 +712,6 @@ describe('outputs', () => {
       status: 'sent',
       detail: 'delivered to 1 recipient(s)',
     });
-  });
-
-  it('skips the email when the account is past its alert cutoff', async () => {
-    const { client, send } = workingResend();
-    mockGetResend.mockReturnValue(client);
-    mockAlertEmailsDisabled.mockReturnValue(true);
-    fake.docs.set('customers/owner-uid', { billingState: 'expired' });
-    const talon = seedTalon('t1');
-
-    const summaries = await runTalon(db, talon, { siteId: SITE, now: NOW });
-
-    expect(outputByType(summaries[0].outputs, 'email')).toEqual({
-      type: 'email',
-      status: 'skipped',
-      detail: 'billing_email_cutoff',
-    });
-    expect(send).not.toHaveBeenCalled();
   });
 
   it('reports an in-band resend rejection as a failed output', async () => {

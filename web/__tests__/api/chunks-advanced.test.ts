@@ -2,12 +2,10 @@
 
 import { createMockRequest } from './helpers/utils';
 import {
-  apiKeyAuth,
   mocks,
   mockDbFactory,
   docSnapshot,
   querySnapshot,
-  seedBilling,
 } from './helpers/firestore-mock';
 
 const mockEmitMutation = jest.fn();
@@ -47,8 +45,6 @@ jest.mock('@/lib/r2Client.server', () => ({
 
 import { POST as mountPOST } from '@/app/api/chunks/[digest]/mount/route';
 import { GET as referrersGET } from '@/app/api/chunks/[digest]/referrers/route';
-import { POST as uploadUrlsPOST } from '@/app/api/chunks/upload-urls/route';
-import { POST as checkPOST } from '@/app/api/chunks/check/route';
 
 const SITE = 'site-abc';
 const DIGEST = 'a'.repeat(64);
@@ -67,7 +63,6 @@ beforeEach(() => {
   jest.clearAllMocks();
   makeAuthed();
   mocks.siteDocs.clear();
-  mocks.customerDocs.clear();
   mocks.siteDocs.set(SITE, { owner: 'user-1' });
   mocks.set.mockResolvedValue(undefined);
   mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('x', {})));
@@ -201,100 +196,3 @@ describe('GET /api/chunks/{digest}/referrers', () => {
 /* ========================================================================== */
 /*  billing gate — the chunk upload surfaces are pro-only (wave 0.6)          */
 /* ========================================================================== */
-
-describe('chunk upload surfaces — billing gate', () => {
-  beforeEach(() => {
-    mockResolveAuth.mockResolvedValue(apiKeyAuth());
-    mockHasChunk.mockResolvedValue(true);
-  });
-
-  function uploadUrls() {
-    return uploadUrlsPOST(
-      createMockRequest('http://localhost/api/chunks/upload-urls', {
-        method: 'POST',
-        body: { siteId: SITE, hashes: [DIGEST] },
-      }),
-    );
-  }
-
-  function check() {
-    return checkPOST(
-      createMockRequest('http://localhost/api/chunks/check', {
-        method: 'POST',
-        body: { siteId: SITE, hashes: [DIGEST] },
-      }),
-    );
-  }
-
-  function mount() {
-    return mountPOST(
-      createMockRequest(
-        `http://localhost/api/chunks/${DIGEST}/mount?siteId=${SITE}&from=${ROOST_FROM}&to=${ROOST_TO}`,
-        { method: 'POST' },
-      ),
-      { params: Promise.resolve({ digest: DIGEST }) },
-    );
-  }
-
-  it.each([
-    ['upload-urls', () => uploadUrls()],
-    ['check', () => check()],
-    ['mount', () => mount()],
-  ])('402 trial_expired on %s when the trial has ended', async (_label, call) => {
-    seedBilling({ siteId: SITE, state: 'expired', tier: 'pro' });
-
-    const res = await call();
-    expect(res.status).toBe(402);
-    expect(await res.json()).toMatchObject({
-      code: 'trial_expired',
-      billingState: 'expired',
-    });
-  });
-
-  it.each([
-    ['upload-urls', () => uploadUrls()],
-    ['check', () => check()],
-    ['mount', () => mount()],
-  ])('403 tier_insufficient on %s for an active core site', async (_label, call) => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    const res = await call();
-    expect(res.status).toBe(403);
-    expect(await res.json()).toMatchObject({
-      code: 'tier_insufficient',
-      required: { siteId: SITE, tier: 'pro', siteTier: 'core' },
-    });
-  });
-
-  it('200 on upload-urls for a trialing account even on a core site', async () => {
-    seedBilling({ siteId: SITE, state: 'trialing', tier: 'core' });
-
-    const res = await uploadUrls();
-    expect(res.status).toBe(200);
-    expect((await res.json()).urls[DIGEST]).toBe(`https://r2.test/put/${DIGEST}`);
-  });
-
-  it('200 on upload-urls for an active pro site', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'pro' });
-
-    expect((await uploadUrls()).status).toBe(200);
-  });
-
-  it('200 on check for an active pro site', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'pro' });
-
-    expect((await check()).status).toBe(200);
-  });
-
-  it('does not tier-gate the referrers GET', async () => {
-    seedBilling({ siteId: SITE, state: 'active', tier: 'core' });
-
-    const res = await referrersGET(
-      createMockRequest(
-        `http://localhost/api/chunks/${DIGEST}/referrers?siteId=${SITE}`,
-      ),
-      { params: Promise.resolve({ digest: DIGEST }) },
-    );
-    expect(res.status).toBe(200);
-  });
-});
