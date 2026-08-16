@@ -2384,6 +2384,17 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
     offers no corroboration the match must be UNIQUE — with several candidate
     instances of the same exe there is no way to know which one the operator
     meant, so none is returned rather than risking an unrelated process.
+
+    Matching precedence, strongest evidence first:
+      1. file_path present and found in a candidate's command line — unambiguous
+         even when several instances of the exe are running (the TouchDesigner
+         case: one image, one process per .toe).
+      2. an exact exe-path match that is unique on the machine.
+      3. (non-strict only) an exe-path or image-name match chosen from several.
+         Ambiguous by construction — logged with a warning, because the fix is
+         to configure file_path, not to guess better. strict refuses here.
+    Callers that kill or restart must pass strict=True; only startup adoption,
+    which merely risks watching the wrong instance, may take tier 3.
     """
     try:
         exe_lower = exe_path.replace('/', '\\').lower()
@@ -2426,18 +2437,42 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         continue  # Can't verify cmdline, skip to avoid false match
                     return proc.info['pid']  # cmdline-corroborated — unambiguous
-                if not strict:
-                    return proc.info['pid']
-                candidates.append(proc.info['pid'])
+                candidates.append((proc.info['pid'], full_match))
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        if strict and len(candidates) == 1:
-            return candidates[0]
-        if strict and len(candidates) > 1:
+        # No file_path to corroborate with. Rank an exact exe-path match above a
+        # bare image-name match: several instances of one image are normal for
+        # the apps Owlette supervises (every TouchDesigner project is the same
+        # TouchDesigner.exe), and an unranked scan would adopt whichever one
+        # psutil happened to yield first — possibly a different install entirely.
+        full_matches = [pid for pid, is_full in candidates if is_full]
+        if len(full_matches) == 1:
+            return full_matches[0]
+        if strict:
+            # Bare basename matches never reach `candidates` under strict, so
+            # everything here is a full-path match and the unique case already
+            # returned above. Reaching this point means several instances of
+            # the configured exe are running with nothing to tell them apart.
+            if candidates:
+                logging.warning(
+                    f"find_running_process_by_exe: {len(candidates)} instances of "
+                    f"{exe_basename} match with no file_path to disambiguate — refusing"
+                )
+            return None
+        # Non-strict callers (startup adoption) must still return something when
+        # the choice is ambiguous: returning None makes the monitor loop launch
+        # yet another instance, which is the duplicate we are trying to avoid.
+        # Prefer an exact-path match, then fall back to the image-name match.
+        if full_matches:
             logging.warning(
-                f"find_running_process_by_exe: {len(candidates)} instances of "
-                f"{exe_basename} match with no file_path to disambiguate — refusing"
+                f"find_running_process_by_exe: {len(full_matches)} instances of "
+                f"{exe_path} running and no file_path configured to tell them "
+                f"apart — adopting PID {full_matches[0]}. Set the file path on "
+                f"this process entry to make adoption unambiguous."
             )
+            return full_matches[0]
+        if candidates:
+            return candidates[0][0]
     except Exception:
         pass
     return None

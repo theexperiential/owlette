@@ -36,6 +36,7 @@ import time
 import json
 import datetime
 import atexit
+import re
 import shlex
 import subprocess
 import tempfile
@@ -281,6 +282,17 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # log agent_stopped twice or race the Firestore offline write.
         self._shutdown_lock = threading.Lock()
         self._shutdown_trigger = None
+
+        # Per-process launch serialisation. Three threads reach the launch
+        # path — the monitor loop, the slow-command worker (start/restart/
+        # set_launch_mode), and the Firestore config listener — and nothing
+        # made "decide it isn't running" and "launch it" atomic, so two of
+        # them could each observe an absent PID and each launch. Keyed by
+        # process id: launching one process must not stall monitoring of the
+        # others. RLock because kill_and_relaunch_process holds it across a
+        # terminate plus a launch.
+        self._launch_locks = {}
+        self._launch_locks_guard = threading.Lock()
         # ConnectionManager the status-file listener is registered against, so
         # re-initialising the Firebase client re-wires it against the new one.
         self._connection_status_manager = None
@@ -1655,10 +1667,26 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         'result': f'Process {process_name} was not running'}
             else:
                 # restart_process (also used for start): relaunch if running, else launch.
+                discovered = False
+                if not (last_pid and Util.is_pid_running(last_pid)):
+                    # Same reasoning as kill_process above: an off-mode or
+                    # otherwise untracked instance is live but absent from
+                    # last_started, and launching on top of it duplicates it.
+                    # This path runs unattended from hoot tier-2 self-healing,
+                    # so nobody is watching to catch the second instance.
+                    fallback_pid = (
+                        self._find_running_process_by_exe(
+                            target.get('exe_path', ''), target.get('file_path', ''), strict=True)
+                        if target.get('exe_path') else None
+                    )
+                    if fallback_pid:
+                        last_pid = fallback_pid
+                        discovered = True
                 if last_pid and Util.is_pid_running(last_pid):
                     new_pid = self.kill_and_relaunch_process(last_pid, target)
+                    note = ' (PID discovered by exe/file_path lookup)' if discovered else ''
                     return {'status': 'completed',
-                            'result': f'Process {process_name} restarted (new PID {new_pid})'}
+                            'result': f'Process {process_name} restarted (new PID {new_pid}){note}'}
                 new_pid = self.handle_process_launch(target)
                 return {'status': 'completed',
                         'result': f'Process {process_name} started (PID {new_pid})'}
@@ -1730,6 +1758,52 @@ class OwletteService(win32serviceutil.ServiceFramework):
         cmd.exe-wrapper handling.
         """
         return shared_utils.find_running_process_by_exe(exe_path, file_path, strict=strict)
+
+    def _launch_lock_for(self, process_list_id):
+        """The launch lock for one process entry, created on first use."""
+        with self._launch_locks_guard:
+            lock = self._launch_locks.get(process_list_id)
+            if lock is None:
+                lock = threading.RLock()
+                self._launch_locks[process_list_id] = lock
+            return lock
+
+    def _adopt_running_instance(self, process):
+        """Adopt a live instance of `process` that the service isn't tracking.
+
+        Returns its PID (and records it in last_started) or None.
+
+        Used by the operator-initiated start paths, where last_started is not
+        proof of absence: recover_running_processes never adopts an off-mode
+        process, so a perfectly healthy instance can be live and untracked, and
+        launching on top of it is what produces duplicates.
+
+        strict=True is load-bearing, not caution. Several instances of one
+        executable are the norm for the apps Owlette supervises — every
+        TouchDesigner project is the same TouchDesigner.exe with a different
+        .toe — so a bare image-name match is never enough to call one of them
+        "this process". Strict requires either an exact exe-path match that is
+        unique on the box, or a basename match corroborated by file_path
+        appearing in the command line. With several candidates and nothing to
+        disambiguate it returns None, and we launch rather than adopt a
+        stranger — the same trade kill_process makes.
+        """
+        exe_path = process.get('exe_path', '')
+        if not exe_path:
+            return None
+        pid = self._find_running_process_by_exe(
+            exe_path, process.get('file_path', ''), strict=True)
+        if not pid:
+            return None
+        process_list_id = process['id']
+        self.last_started[process_list_id] = {
+            'time': datetime.datetime.now(), 'pid': pid}
+        shared_utils.update_process_status_in_json(
+            pid, 'RUNNING', self.firebase_client, process_id=process_list_id)
+        logging.info(
+            f"[OK] Adopted already-running '{Util.get_process_name(process)}' "
+            f"(PID {pid}) instead of launching a duplicate")
+        return pid
 
     def _enable_privileges(self):
         """Enable critical privileges in the service process token.
@@ -2299,10 +2373,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # then uses ShellExecuteEx (ctypes) to launch the target with full
         # desktop/GPU context. The PID is returned immediately from the process handle.
         import json as json_module
+        import uuid
 
+        # os.getpid() is the service PID — constant for the whole service
+        # lifetime — so a second-resolution timestamp was the only thing
+        # separating two launches. Command threads and the monitor loop can
+        # both be in here at once (see _launch_lock_for), and two launches in the
+        # same second would then share both paths: one helper reads the
+        # other's args and the finally-block below deletes the file the other
+        # is still waiting on. The suffix makes each handoff unique.
         tmp_dir = shared_utils.get_data_path('tmp')
-        pid_file = os.path.join(tmp_dir, f'pid_{int(time.time())}_{os.getpid()}.txt')
-        args_file = os.path.join(tmp_dir, f'launch_{int(time.time())}_{os.getpid()}.json')
+        handoff = f'{int(time.time())}_{os.getpid()}_{uuid.uuid4().hex[:8]}'
+        pid_file = os.path.join(tmp_dir, f'pid_{handoff}.txt')
+        args_file = os.path.join(tmp_dir, f'launch_{handoff}.json')
 
         try:
             launch_args = {
@@ -2485,6 +2568,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # Kill and restart a process
     def kill_and_relaunch_process(self, pid, process):
+        # Terminate-then-launch is one indivisible operation: the window
+        # between them is precisely when the monitor loop sees no live PID and
+        # launches a replacement of its own. Held across the whole sequence,
+        # so the loop's launch waits and then short-circuits on the PID this
+        # call records. Same lock handle_process_launch takes (reentrant).
+        with self._launch_lock_for(process.get('id', '')):
+            return self._kill_and_relaunch_locked(pid, process)
+
+    def _kill_and_relaunch_locked(self, pid, process):
         # Ensure process has not exceeded maximum relaunch attempts
         process_name = Util.get_process_name(process)
         if not self.reached_max_relaunch_attempts(process):
@@ -2510,6 +2602,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 if new_pid is None:
                     logging.error(f"Relaunch of {process_name} failed - no PID returned")
                     return None
+
+                # Record the new PID before releasing the launch lock. Callers
+                # also store it, but they do so after we return — and a thread
+                # blocked on the lock re-reads last_started the moment it is
+                # released, so leaving the gap open would let it conclude
+                # nothing is running and launch a duplicate.
+                self.last_started[process.get('id', '')] = {
+                    'time': datetime.datetime.now(), 'pid': new_pid}
 
                 self.log_and_notify(
                     process,
@@ -2578,8 +2678,26 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # Attempt to launch the process if not running
     def handle_process_launch(self, process):
+        # Snapshot the tracked PID before contending for the launch lock. Every
+        # caller decided "this needs launching" from state read outside the
+        # lock; if a concurrent launch lands while we wait, that decision is
+        # stale and launching anyway is exactly the duplicate we are guarding
+        # against. Re-checked against the post-lock value in _launch_locked().
+        pid_before_lock = self.last_started.get(process.get('id', ''), {}).get('pid')
+        with self._launch_lock_for(process.get('id', '')):
+            return self._launch_locked(process, pid_before_lock)
+
+    def _launch_locked(self, process, pid_before_lock):
         # Validate executable path before attempting launch
         process_id = process.get('id', '')
+        current_pid = self.last_started.get(process_id, {}).get('pid')
+        if (current_pid and current_pid != pid_before_lock
+                and Util.is_pid_running(current_pid)):
+            logging.info(
+                f"[OK] '{Util.get_process_name(process)}' was launched by another "
+                f"thread while this launch waited for the lock (PID {current_pid}) "
+                f"- not launching a second instance")
+            return current_pid
         exe_path = process.get('exe_path', '').strip()
         if not exe_path:
             process_name = Util.get_process_name(process)
@@ -3074,9 +3192,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self._last_seen_launch_schedules[process_id] = new_schedule_signature
                 continue
 
-            self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
+            # Record the transition as seen BEFORE applying it. Applying can
+            # block for seconds (an off->always transition launches the
+            # process), and this dict is what every other thread diffs against
+            # to decide whether a transition still needs applying. Updating it
+            # afterwards leaves a window in which a concurrent caller re-reads
+            # the old mode and applies the identical transition a second time.
             self._last_seen_launch_modes[process_id] = new_mode
             self._last_seen_launch_schedules[process_id] = new_schedule_signature
+            self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
 
         stale_process_ids = set(self._last_seen_launch_modes.keys()) - current_process_ids
         for process_id in stale_process_ids:
@@ -3259,9 +3383,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         )
 
                         if old_mode != new_mode or schedules_changed:
-                            self._apply_launch_mode_transition(process_id, old_mode, new_mode, new_proc)
+                            # Seen-state first, then apply — see the note in
+                            # _diff_and_apply_launch_modes. This runs on the
+                            # Firestore config-listener thread while the
+                            # monitor loop diffs the same dict every tick.
                             self._last_seen_launch_modes[process_id] = new_mode
                             self._last_seen_launch_schedules[process_id] = self._get_schedule_signature(new_proc)
+                            self._apply_launch_mode_transition(process_id, old_mode, new_mode, new_proc)
 
                 # Log summary
                 logging.info(f"Config update complete - Processes: {len(old_processes)} -> {len(new_processes)}, Removed: {len(removed_process_ids)}")
@@ -3447,9 +3575,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         last_info = self.last_started.get(process_list_id, {})
                         last_pid = last_info.get('pid')
                         if cmd_type == 'start_process':
-                            self.last_started.pop(process_list_id, None)
                             if last_pid and Util.is_pid_running(last_pid):
                                 return f"Process {process_name} is already running with PID {last_pid}"
+                            # The tracked PID is not proof of absence. Off-mode
+                            # processes are never adopted by the monitor loop
+                            # (recover_running_processes skips them), so a live
+                            # instance leaves last_started empty and a bare
+                            # last_pid test launches a duplicate on top of it.
+                            # Same discovery fallback kill_process already uses.
+                            adopted_pid = self._adopt_running_instance(process)
+                            if adopted_pid:
+                                return (f"Process {process_name} is already running with "
+                                        f"PID {adopted_pid} (discovered by exe/file_path lookup)")
+                            self.last_started.pop(process_list_id, None)
                             new_pid = self.handle_process_launch(process)
                             # Log command execution
                             if self.firebase_client and self.firebase_client.is_connected():
@@ -3586,9 +3724,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         and old_schedule_signature != new_schedule_signature
                     )
                     if old_mode != new_mode or schedules_changed:
-                        self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
+                        # Seen-state first, then apply — see the note in
+                        # _diff_and_apply_launch_modes. save_config() above has
+                        # already published the new mode, so the monitor loop's
+                        # next tick reads 'always' from disk; without this
+                        # ordering it would diff against a stale snapshot and
+                        # fire the same off->always launch we are about to.
                         self._last_seen_launch_modes[process_id] = new_mode
                         self._last_seen_launch_schedules[process_id] = new_schedule_signature
+                        self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
 
                     return f"Launch mode for {process_name} set to {new_mode}"
                 target = process_id or process_name
@@ -6680,6 +6824,156 @@ with open(out_path, 'wb') as f:
                 f"migration will retry on next boot (idempotent — paths no longer exist)"
             )
 
+    # Per-launch scheduled tasks created by agents older than 2.1.1, which
+    # launched supervised processes through Task Scheduler instead of
+    # CreateProcessAsUser. Both families were meant to be deleted seconds after
+    # the launch, but the delete sat on a path that exceptions skipped, so a
+    # long-lived box accumulates them. Anchored full-name matches: these two
+    # shapes are generated only by Owlette and appear nowhere else.
+    #   OwletteProcess_<uuid>_<epoch>  — 2.0.26-2.0.54 (schtasks CLI)
+    #   Owlette_Launch_<helper pid>    — 2.0.56 (Task Scheduler COM)
+    LEGACY_LAUNCH_TASK_PATTERNS = (
+        re.compile(r'^OwletteProcess_[0-9a-fA-F-]{8,36}_\d{9,11}$'),
+        re.compile(r'^Owlette_Launch_\d+$'),
+    )
+
+    def _sweep_legacy_launch_tasks(self):
+        """One-time removal of per-launch scheduled tasks left by pre-2.1.1 agents.
+
+        These are inert — the COM-created ones carry no trigger at all and the
+        schtasks-created ones a single one-time trigger dated to their creation
+        day — so this is hygiene, not a live-fire fix: they clutter Task
+        Scheduler and get mistaken for a second Owlette autostart.
+
+        Deliberately narrow, because deleting a task an operator created would
+        be far worse than leaving litter:
+          * anchored full-name match on the two generated shapes only. A
+            prefix match would take `Owlette_Test_*` and anything else a
+            technician named Owlette-something.
+          * never `OwletteUpdate_*` / `OwletteRecovery_*` — those are current,
+            and one may be mid-flight right now. The post-update handler owns
+            those and reaps them on its own path.
+          * a task must have no trigger, or exactly one non-repeating trigger
+            whose start boundary is in the past. Anything with a live trigger
+            did not come from these code paths; it is logged and left alone.
+
+        Gated by a one-shot flag file next to the roost-cache migration.
+        """
+        if os.name != 'nt':
+            return
+
+        program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+        flag_dir = os.path.join(program_data, 'Owlette', '.migrations')
+        flag_path = os.path.join(flag_dir, 'legacy-launch-tasks-swept')
+        if os.path.exists(flag_path):
+            return
+
+        def _is_inert(task_name):
+            """True if the task can never fire on its own again.
+
+            Reads the task's XML rather than trusting the name: the name tells
+            us Owlette generated it, this tells us removing it is safe.
+            """
+            try:
+                result = subprocess.run(
+                    ['schtasks', '/Query', '/TN', task_name, '/XML', 'ONE'],
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                if result.returncode != 0 or not result.stdout.strip():
+                    return False
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(result.stdout)
+                ns = {'t': 'http://schemas.microsoft.com/windows/2004/02/mit/task'}
+                triggers = root.find('t:Triggers', ns)
+                if triggers is None or len(triggers) == 0:
+                    return True  # demand-start only — the COM-created shape
+                if len(triggers) > 1:
+                    return False
+                trigger = triggers[0]
+                # A repeating trigger fires again regardless of start date.
+                if trigger.find('t:Repetition', ns) is not None:
+                    return False
+                enabled = trigger.find('t:Enabled', ns)
+                if enabled is not None and (enabled.text or '').strip().lower() == 'false':
+                    return True
+                boundary = trigger.find('t:StartBoundary', ns)
+                if boundary is None or not (boundary.text or '').strip():
+                    return False
+                start = datetime.datetime.fromisoformat(boundary.text.strip())
+                if start.tzinfo is not None:
+                    start = start.replace(tzinfo=None)
+                return start < datetime.datetime.now()
+            except Exception as e:
+                logging.debug(f"legacy task sweep: could not inspect {task_name}: {e}")
+                return False
+
+        removed, skipped = 0, 0
+        try:
+            result = subprocess.run(
+                ['schtasks', '/Query', '/FO', 'LIST'],
+                capture_output=True, text=True, timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            if result.returncode != 0:
+                logging.debug("legacy task sweep: schtasks query failed - will retry next start")
+                return
+
+            seen = set()
+            for line in result.stdout.splitlines():
+                if not line.lower().startswith('taskname:'):
+                    continue
+                # "TaskName: \Owlette_Launch_40320" — tasks live at the root.
+                name = line.split(':', 1)[1].strip().lstrip('\\')
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                if not any(p.match(name) for p in self.LEGACY_LAUNCH_TASK_PATTERNS):
+                    continue
+                if not _is_inert(name):
+                    logging.info(
+                        f"legacy task sweep: leaving '{name}' in place - it has a "
+                        f"live trigger, so it did not come from the legacy launcher"
+                    )
+                    skipped += 1
+                    continue
+                delete = subprocess.run(
+                    ['schtasks', '/Delete', '/TN', name, '/F'],
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                if delete.returncode == 0:
+                    logging.info(f"legacy task sweep: removed stale launch task '{name}'")
+                    removed += 1
+                else:
+                    logging.warning(
+                        f"legacy task sweep: could not remove '{name}': "
+                        f"{(delete.stderr or '').strip()}"
+                    )
+                    skipped += 1
+        except Exception as e:
+            # Never block service start on housekeeping. No flag is written,
+            # so the next start retries.
+            logging.warning(f"legacy task sweep failed (non-fatal): {e}")
+            return
+
+        if removed or skipped:
+            logging.info(
+                f"legacy task sweep complete: {removed} removed, {skipped} left in place")
+
+        try:
+            os.makedirs(flag_dir, exist_ok=True)
+            with open(flag_path, 'w') as f:
+                f.write(
+                    f"legacy launch tasks swept at {datetime.datetime.now().isoformat()} "
+                    f"({removed} removed, {skipped} skipped)\n"
+                )
+        except OSError as e:
+            logging.warning(
+                f"legacy task sweep: could not write flag at {flag_path!r}: {e}; "
+                f"will re-run next start (idempotent — the tasks are already gone)"
+            )
+
     # Main main
     def main(self):
 
@@ -6736,6 +7030,15 @@ with open(out_path, 'wb') as f:
             self._migrate_legacy_roost_cache()
         except Exception as e:
             logging.warning(f"Legacy roost cache migration errored (non-fatal): {e}")
+
+        # One-shot removal of per-launch scheduled tasks left behind by agents
+        # older than 2.1.1. Not gated on the update marker — these predate any
+        # 3.0.0 self-update, so a box that upgrades keeps them forever
+        # otherwise. Flag-file gated; idempotent no-op once complete.
+        try:
+            self._sweep_legacy_launch_tasks()
+        except Exception as e:
+            logging.warning(f"Legacy launch-task sweep errored (non-fatal): {e}")
 
         # Classify the prior session — detects unexpected reboots, BSODs,
         # crashes, and operator-initiated reboots that bypassed Owlette.

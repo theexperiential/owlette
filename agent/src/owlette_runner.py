@@ -158,6 +158,12 @@ if __name__ == '__main__':
             self._skip_launch_delay = set()
             self._last_seen_launch_modes = {}
             self._last_seen_launch_schedules = {}
+            # Per-process launch locks (mirror OwletteService.__init__).
+            # handle_process_launch and kill_and_relaunch_process take these on
+            # every launch — without them the runner dies with AttributeError
+            # the first time it starts a process.
+            self._launch_locks = {}
+            self._launch_locks_guard = threading.Lock()
             self._cached_site_timezone = None
             self._last_scheduled_reboot_time = None
             self._reboot_schedule_counter = 0
