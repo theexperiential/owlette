@@ -3,7 +3,9 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSites, useMachines } from '@/hooks/useFirestore';
+import { useMachines } from '@/hooks/useFirestore';
+import { useCurrentSite } from '@/hooks/useCurrentSite';
+import { NoSitesEmptyState } from '@/components/NoSitesEmptyState';
 import { useProjectDistributionManager } from '@/hooks/useProjectDistributions';
 import { useRoosts } from '@/hooks/useRoosts';
 import { useSelectedRoost } from '@/hooks/useSelectedRoost';
@@ -44,29 +46,19 @@ function formatDescriptionPreview(description: string | null): string | null {
 }
 
 export default function RoostsPageClient() {
-  const { user, loading: authLoading, userSites, isSuperadmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
-  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
-  // User's explicit pick via handleSiteChange / onSiteCreated. Empty string means
-  // "no explicit pick yet — fall back to lastSiteId / localStorage / sites[0]".
-  const [userPickedSiteId, setUserPickedSiteId] = useState<string>('');
-  // Derived during render (not via useEffect + setState) so we don't trigger
-  // cascading renders on site-list changes — matches `react-hooks/set-state-in-effect`.
-  const currentSiteId = useMemo(() => {
-    if (userPickedSiteId && sites.some((s) => s.id === userPickedSiteId)) {
-      return userPickedSiteId;
-    }
-    if (sitesLoading || sites.length === 0) return '';
-    const savedSite =
-      lastSiteId ||
-      (typeof window !== 'undefined'
-        ? localStorage.getItem('owlette_current_site')
-        : null);
-    if (savedSite && sites.some((s) => s.id === savedSite)) return savedSite;
-    return sites[0].id;
-  }, [userPickedSiteId, sites, sitesLoading, lastSiteId]);
-  // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
-  const currentSite = sites.find(s => s.id === currentSiteId);
-  const siteTimezone = currentSite?.timezone;
+  const { user, loading: authLoading, userPreferences } = useAuth();
+  const {
+    sites,
+    sitesLoading,
+    currentSiteId,
+    siteTimezone,
+    hasNoSites,
+    selectSite,
+    pickSite,
+    createSite,
+    updateSite,
+    deleteSite,
+  } = useCurrentSite();
   const [distributionDialogOpen, setDistributionDialogOpen] = useState(false);
   // When set, the dialog opens in "+ new version" mode for an existing roost.
   // null = normal "new roost" mode.
@@ -207,8 +199,7 @@ export default function RoostsPageClient() {
   }, [upload.state.status]);
 
   const handleSiteChange = (siteId: string) => {
-    setUserPickedSiteId(siteId);
-    updateLastSite(siteId);
+    selectSite(siteId);
   };
 
   // Discreet copy-to-clipboard helper used by the "copy roost id" /
@@ -325,7 +316,7 @@ export default function RoostsPageClient() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onCreateSite={createSite}
-        onSiteCreated={(siteId) => setUserPickedSiteId(siteId)}
+        onSiteCreated={(siteId) => pickSite(siteId)}
       />
 
       {/* Main content */}
@@ -413,14 +404,22 @@ export default function RoostsPageClient() {
         >
           <div className="flex-1 min-w-0 rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
             {/*
-              Render a spinner whenever ANY upstream source isn't yet resolved:
-                - sites still loading (user's site list)
-                - currentSiteId not yet derived (empty while sites arrive)
-                - roosts onSnapshot hasn't fired its first batch yet
-              Skipping any of these flashes the welcome/empty-state for a tick
-              on real users who already have roosts.
+              Order matters. `hasNoSites` is checked before the spinner: it is
+              only true once the site list has settled, and it is a terminal
+              state, not a transient one. The previous gate folded it into the
+              loading condition via a bare `!currentSiteId`, so an account with
+              no sites spun forever with no error and no next step.
+
+              The spinner still covers every genuinely-unresolved source —
+              sites in flight, or the roosts listener yet to deliver its first
+              batch — so users who do have roosts never see a flash of empty
+              state.
             */}
-            {sitesLoading || !currentSiteId || roostsLoading ? (
+            {hasNoSites ? (
+              <div className="p-8">
+                <NoSitesEmptyState action="manage roosts" />
+              </div>
+            ) : sitesLoading || !currentSiteId || roostsLoading ? (
               <div className="p-8 text-center">
                 <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
                 <p className="mt-2 text-muted-foreground">loading...</p>

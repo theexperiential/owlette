@@ -3,7 +3,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSites, useMachines } from '@/hooks/useFirestore';
+import { useMachines } from '@/hooks/useFirestore';
+import { useCurrentSite } from '@/hooks/useCurrentSite';
+import { NoSitesEmptyState } from '@/components/NoSitesEmptyState';
 import { useDeploymentManager, type Deployment, type DeploymentTarget } from '@/hooks/useDeployments';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -289,12 +291,19 @@ const DeploymentRow = React.memo(function DeploymentRow({
 });
 
 export default function DeploymentsPage() {
-  const { user, loading: authLoading, userSites, isSuperadmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
-  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
-  const [currentSiteId, setCurrentSiteId] = useState<string>('');
-  // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
-  const currentSite = sites.find(s => s.id === currentSiteId);
-  const siteTimezone = currentSite?.timezone;
+  const { user, loading: authLoading, userPreferences } = useAuth();
+  const {
+    sites,
+    sitesLoading,
+    currentSiteId,
+    siteTimezone,
+    hasNoSites,
+    selectSite,
+    pickSite,
+    createSite,
+    updateSite,
+    deleteSite,
+  } = useCurrentSite();
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
   const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
   const [initialSoftwareName, setInitialSoftwareName] = useState<string | undefined>(undefined);
@@ -394,21 +403,8 @@ export default function DeploymentsPage() {
     await runRetry(deployment, [machineId]);
   }, [runRetry]);
 
-  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
-  useEffect(() => {
-    if (!sitesLoading && sites.length > 0 && !currentSiteId) {
-      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
-      if (savedSite && sites.find(s => s.id === savedSite)) {
-        setCurrentSiteId(savedSite);
-      } else {
-        setCurrentSiteId(sites[0].id);
-      }
-    }
-  }, [sites, sitesLoading, currentSiteId, lastSiteId]);
-
   const handleSiteChange = (siteId: string) => {
-    setCurrentSiteId(siteId);
-    updateLastSite(siteId);
+    selectSite(siteId);
   };
 
   const handleToggleDeployment = useCallback((id: string) => {
@@ -492,7 +488,7 @@ export default function DeploymentsPage() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onCreateSite={createSite}
-        onSiteCreated={(siteId) => setCurrentSiteId(siteId)}
+        onSiteCreated={(siteId) => pickSite(siteId)}
       />
 
       {/* Main content */}
@@ -531,7 +527,10 @@ export default function DeploymentsPage() {
 
         {/* Section header with inline stats */}
         {(() => {
-          const statsLoading = deploymentsLoading || templatesLoading || !currentSiteId;
+          // A site-less account has a settled, knowable answer — zero — so
+          // show it rather than a permanent '--' placeholder.
+          const statsLoading =
+            !hasNoSites && (deploymentsLoading || templatesLoading || !currentSiteId);
           const inProgressCount = deployments.filter(d => d.status === 'in_progress').length;
           return (
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -602,7 +601,15 @@ export default function DeploymentsPage() {
 
         {/* Deployments List */}
         <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
-          {deploymentsLoading || sitesLoading || !currentSiteId ? (
+          {/* `hasNoSites` first: it is terminal and only true once the site
+              list has settled. Folding it into the loading condition below
+              (via a bare `!currentSiteId`) is what left a site-less account
+              on a permanent "loading deployments..." spinner. */}
+          {hasNoSites ? (
+            <div className="p-8">
+              <NoSitesEmptyState action="manage deployments" />
+            </div>
+          ) : deploymentsLoading || sitesLoading || !currentSiteId ? (
             <div className="p-8 text-center">
               <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
               <p className="mt-2 text-muted-foreground">loading deployments...</p>

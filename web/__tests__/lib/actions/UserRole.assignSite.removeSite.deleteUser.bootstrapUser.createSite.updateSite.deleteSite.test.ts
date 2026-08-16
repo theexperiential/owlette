@@ -57,13 +57,39 @@ class FakeDb {
     return new FakeCollectionGroup(this, id);
   }
 
-  /** Write batch, for the talon store's all-or-nothing reassign commit. */
+  /**
+   * Write batch, for the talon store's all-or-nothing reassign commit and
+   * for createSite's site-doc + owner-membership pair.
+   *
+   * Models the two real-Firestore behaviours the callers depend on, which a
+   * naive sequential apply would not: `update` against a missing document
+   * fails, and a failed commit writes nothing at all. `FakeDoc.update` on its
+   * own deliberately keeps its upsert behaviour — plenty of existing tests
+   * rely on it — so the strictness lives here, at the batch boundary.
+   */
   batch() {
-    const ops: Array<{ ref: FakeDoc; patch: Record<string, unknown> }> = [];
+    const ops: Array<{
+      ref: FakeDoc;
+      patch: Record<string, unknown>;
+      mode: 'set' | 'update';
+    }> = [];
     return {
-      update: (ref: FakeDoc, patch: Record<string, unknown>) => ops.push({ ref, patch }),
+      set: (ref: FakeDoc, patch: Record<string, unknown>) =>
+        ops.push({ ref, patch, mode: 'set' }),
+      update: (ref: FakeDoc, patch: Record<string, unknown>) =>
+        ops.push({ ref, patch, mode: 'update' }),
       commit: async () => {
-        for (const op of ops) await op.ref.update(op.patch);
+        for (const op of ops) {
+          if (op.mode !== 'update') continue;
+          const snap = await op.ref.get();
+          if (!snap.exists) {
+            throw new Error(`NOT_FOUND: no document to update: ${op.ref.path}`);
+          }
+        }
+        for (const op of ops) {
+          if (op.mode === 'set') await op.ref.set(op.patch);
+          else await op.ref.update(op.patch);
+        }
       },
     };
   }
@@ -597,7 +623,7 @@ describe('site CRUD actions', () => {
     });
   }
 
-  it('createSite writes only the top-level site document', async () => {
+  it('createSite writes the site document and the creator\'s membership together', async () => {
     const db = new FakeDb();
     db.seed('users/owner-1', { sites: [] });
 
@@ -615,7 +641,35 @@ describe('site CRUD actions', () => {
       owner: 'owner-1',
       timezone: 'Not/AZone',
     });
-    expect(db.docs.get('users/owner-1')?.sites).toEqual([]);
+    // The regression this guards: stamping `owner` alone left the site
+    // invisible to its creator, because the client site list resolves
+    // `users/{uid}.sites[]` and never queries by owner. Asserting the
+    // membership entry is the whole point — an owner-only write passes
+    // every other assertion in this test.
+    expect(db.docs.get('users/owner-1')?.sites).toEqual(['site-a']);
+  });
+
+  it('createSite preserves memberships the creator already had', async () => {
+    const db = new FakeDb();
+    db.seed('users/owner-1', { sites: ['existing-site'] });
+
+    await runCreateSite(db);
+
+    // arrayUnion, not an overwrite: a user creating their second site must
+    // not lose access to the first.
+    expect(db.docs.get('users/owner-1')?.sites).toEqual(['existing-site', 'site-a']);
+  });
+
+  it('createSite creates no site when the creator has no user document', async () => {
+    const db = new FakeDb();
+
+    await expect(runCreateSite(db)).rejects.toThrow();
+
+    // Atomicity: the batch fails as a unit, so no orphaned site doc is left
+    // behind for nobody to see. The route's assertActiveUser makes this
+    // unreachable in production; the guard is here so a future caller that
+    // skips it fails loudly instead of recreating the original bug.
+    expect(db.docs.get('sites/site-a')).toBeUndefined();
   });
 
   it('updateSite writes whitelisted fields and allows arbitrary timezone strings', async () => {

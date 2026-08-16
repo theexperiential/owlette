@@ -12,7 +12,7 @@
  * talons wave 4.2.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, Plus, Zap } from 'lucide-react';
 
@@ -26,7 +26,8 @@ import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
-import { useMachines, useSites } from '@/hooks/useFirestore';
+import { useMachines } from '@/hooks/useFirestore';
+import { useCurrentSite } from '@/hooks/useCurrentSite';
 import { useTalonPresets, type TalonPreset } from '@/hooks/useTalonPresets';
 import { useTalons } from '@/hooks/useTalons';
 import { findTalonPresetByName, talonPresetTemplateFrom } from '@/lib/talons/presetTemplate';
@@ -47,37 +48,17 @@ const CUSTOM_TEMPLATE_ORDER = 100;
 
 export default function TalonsPage() {
   const router = useRouter();
+  const { user, loading: authLoading, isSiteAdmin } = useAuth();
   const {
-    user,
-    loading: authLoading,
-    userSites,
-    isSuperadmin,
-    isSiteAdmin,
-    lastSiteId,
-    updateLastSite,
-  } = useAuth();
-  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(
-    user?.uid,
-    userSites,
-    isSuperadmin,
-  );
-
-  // User's explicit pick wins once made; otherwise fall back to the last site
-  // (Firestore-synced), then localStorage, then the first accessible site.
-  // Derived during render rather than synced through an effect — same as
-  // `/roosts` — so a changing site list can't cascade re-renders.
-  const [userPickedSiteId, setUserPickedSiteId] = useState<string>('');
-  const currentSiteId = useMemo(() => {
-    if (userPickedSiteId && sites.some((s) => s.id === userPickedSiteId)) {
-      return userPickedSiteId;
-    }
-    if (sitesLoading || sites.length === 0) return '';
-    const savedSite =
-      lastSiteId ||
-      (typeof window !== 'undefined' ? localStorage.getItem('owlette_current_site') : null);
-    if (savedSite && sites.some((s) => s.id === savedSite)) return savedSite;
-    return sites[0].id;
-  }, [userPickedSiteId, sites, sitesLoading, lastSiteId]);
+    sites,
+    sitesLoading,
+    currentSiteId,
+    createSite,
+    updateSite,
+    deleteSite,
+    selectSite,
+    pickSite,
+  } = useCurrentSite();
 
   const { machines } = useMachines(currentSiteId);
   const { talons, loading: talonsLoading, error } = useTalons(currentSiteId);
@@ -102,8 +83,7 @@ export default function TalonsPage() {
   } | null>(null);
 
   const handleSiteChange = (siteId: string) => {
-    setUserPickedSiteId(siteId);
-    updateLastSite(siteId);
+    selectSite(siteId);
   };
 
   const openCreate = () => {
@@ -218,7 +198,7 @@ export default function TalonsPage() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onCreateSite={createSite}
-        onSiteCreated={(siteId) => setUserPickedSiteId(siteId)}
+        onSiteCreated={(siteId) => pickSite(siteId)}
       />
 
       <AccountSettingsDialog open={accountSettingsOpen} onOpenChange={setAccountSettingsOpen} />
