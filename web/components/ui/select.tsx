@@ -103,8 +103,18 @@ function SelectLabel({
 function SelectItem({
   className,
   children,
+  hint,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Item>) {
+}: React.ComponentProps<typeof SelectPrimitive.Item> & {
+  /**
+   * Secondary text shown at the row's trailing edge — a requirement, a status,
+   * a shortcut. Rendered OUTSIDE `ItemText` on purpose: Radix clones an item's
+   * `ItemText` into the closed trigger, so anything put in `children` to
+   * annotate a row comes along for the ride and makes the trigger as tall and
+   * as wide as the annotation. A hint stays in the list where it belongs.
+   */
+  hint?: React.ReactNode
+}) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
@@ -120,6 +130,9 @@ function SelectItem({
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+      {hint ? (
+        <span className="text-muted-foreground ml-auto truncate pl-3 text-xs">{hint}</span>
+      ) : null}
     </SelectPrimitive.Item>
   )
 }

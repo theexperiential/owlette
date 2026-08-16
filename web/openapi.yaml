@@ -595,6 +595,150 @@ paths:
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
+  /api/sites/{siteId}/talons/authored:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - name: uid
+        in: query
+        required: true
+        description: The author whose talons to list.
+        schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,128}$' }
+    get:
+      operationId: listAuthoredTalons
+      tags: [Talons]
+      summary: talons one person authored on this site
+      description: |
+        The departure preview. Removing a member touches nothing under
+        `sites/{siteId}`, so their talons survive the removal — but a talon
+        with a `cortex` output re-resolves its AUTHOR's site access on every
+        run, so it starts failing the moment they lose access. Call this before
+        removing a member to learn what that removal will break.
+
+        Names only — this is not a second way to read a talon. Bounded by the
+        20-talon per-site cap.
+
+        Requires `TALON_MANAGE`; API keys need `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: What this person authored here.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [siteId, uid, count, talons]
+                properties:
+                  siteId: { type: string }
+                  uid: { type: string }
+                  count: { type: integer }
+                  talons:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, name, enabled]
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        enabled: { type: boolean }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/talons/reassign:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    post:
+      operationId: reassignTalons
+      tags: [Talons]
+      summary: hand talon authorship to a successor
+      description: |
+        Rewrites `createdBy` on one or more talons. Use it before the person
+        who wrote them loses access — an unattended run resolves the author's
+        site access, not the operator's, so an orphaned author is an
+        automation that stops.
+
+        Selection is exactly one of:
+
+        - `fromUid` — every talon on the site currently authored by that uid
+          (the departure case);
+        - `talonIds` — an explicit list.
+
+        The successor is held to the same bar the store holds every author to:
+        an active (non-soft-deleted) account with `TALON_MANAGE` on this site,
+        and `MACHINE_EXEC_COMMAND` as well when any selected talon carries a
+        `command` output or a `cortex` output with `allowActions`. A refusal is
+        `400 successor_invalid`.
+
+        All-or-nothing: nothing is written unless every selected talon exists
+        and the successor clears both gates — a partial move would leave some
+        automations orphaned with no signal which. Talons already authored by
+        the successor come back in `skippedTalonIds` without a write.
+
+        Requires `TALON_MANAGE`; API keys need `site=<siteId>:write`.
+        Accepts `Idempotency-Key`.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [toUid]
+              properties:
+                toUid:
+                  type: string
+                  description: The successor who inherits authorship.
+                  pattern: '^[A-Za-z0-9_-]{1,128}$'
+                fromUid:
+                  type: string
+                  description: Move every talon this uid authored. Mutually exclusive with `talonIds`.
+                  pattern: '^[A-Za-z0-9_-]{1,128}$'
+                talonIds:
+                  type: array
+                  description: Move exactly these talons. Mutually exclusive with `fromUid`.
+                  items: { type: string }
+                  maxItems: 20
+      responses:
+        '200':
+          description: What moved.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [siteId, toUid, reassignedTalonIds, skippedTalonIds, reassignedCount]
+                properties:
+                  siteId: { type: string }
+                  toUid: { type: string }
+                  reassignedTalonIds:
+                    type: array
+                    items: { type: string }
+                  skippedTalonIds:
+                    type: array
+                    description: Already authored by the successor — untouched.
+                    items: { type: string }
+                  reassignedCount: { type: integer }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
   /api/sites/{siteId}/talons/{talonId}:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
@@ -633,11 +777,13 @@ paths:
           for a month does not fire the instant it is switched back on.
         - anything else replaces the caller-owned fields wholesale and is
           revalidated exactly like a create — including the `command`-output
-          privilege gate, the webhook-url SSRF check, and the site-LLM-key
+          privilege gate, the webhook-url SSRF check, and the author-LLM-key
           precondition. Omitted optional fields return to their defaults.
 
         Run bookkeeping (`lastRunAt`, `lastRunStatus`, `consecutiveFailures`)
-        is never touched by either shape.
+        is never touched by either shape. `disabledReason` is cleared by the
+        enable/disable shape — a person moving the switch settles the question
+        of why it moved.
 
         Requires `TALON_MANAGE`; API keys need `site=<siteId>:write`.
       security:
@@ -4052,6 +4198,158 @@ paths:
         '429': { $ref: '#/components/responses/Problem429' }
         '500': { $ref: '#/components/responses/Problem500' }
 
+  /api/sites/{siteId}/presets/talon:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+    get:
+      operationId: listTalonPresets
+      tags: [Presets]
+      summary: list talon preset (template) docs
+      description: |
+        Lists reusable talon templates stored at
+        `config/{siteId}/talon_presets`. Built-in defaults are merged by
+        dashboard clients. Requires `PRESET_MANAGE`; API keys need
+        `site=<siteId>:read`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Talon preset docs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/TalonPreset' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    post:
+      operationId: createTalonPreset
+      tags: [Presets]
+      summary: create a custom talon preset
+      description: |
+        Saves a talon as a reusable template. The `template` body is run
+        through the talon validator, so a preset can never store a talon the
+        talons API would refuse; failures come back as `template.*` field
+        errors. Requires `PRESET_MANAGE` — NOT a pro subscription: curating a
+        template reaches no machine. Instantiating one still goes through
+        `POST /api/sites/{siteId}/talons`, which is pro-gated.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TalonPresetInput' }
+      responses:
+        '201':
+          description: Talon preset created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [presetId, siteId]
+                properties:
+                  presetId: { type: string }
+                  siteId: { type: string }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
+  /api/sites/{siteId}/presets/talon/{presetId}:
+    parameters:
+      - $ref: '#/components/parameters/SiteIdPath'
+      - $ref: '#/components/parameters/PresetIdPath'
+    get:
+      operationId: getTalonPreset
+      tags: [Presets]
+      summary: fetch a talon preset doc
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: Talon preset.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TalonPreset' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    patch:
+      operationId: updateTalonPreset
+      tags: [Presets]
+      summary: update a talon preset or built-in override
+      description: |
+        For `builtin-*` ids, the route uses set-with-merge to create or
+        update the override doc and forces `isBuiltIn: true`. Custom
+        ids require an existing doc. A supplied `template` is re-validated
+        in full. Requires `PRESET_MANAGE`.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TalonPresetPatch' }
+      responses:
+        '200':
+          description: Talon preset updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [presetId, siteId, isBuiltInOverride]
+                properties:
+                  presetId: { type: string }
+                  siteId: { type: string }
+                  isBuiltInOverride: { type: boolean }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+    delete:
+      operationId: deleteTalonPreset
+      tags: [Presets]
+      summary: delete a talon preset or built-in override
+      description: |
+        Idempotent — a missing preset is still a `204`. Deleting a `builtin-*`
+        id removes the site's override so the shipped default reappears.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '204':
+          description: Talon preset deleted.
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
+
   /api/sites/{siteId}/presets/deployment-template:
     parameters:
       - $ref: '#/components/parameters/SiteIdPath'
@@ -6466,6 +6764,16 @@ paths:
         owned sites to the supplied `successorUid`. Refuses if the user
         owns sites and `successorUid` is not provided (409 `orphan_sites`).
 
+        Talons the user authored are reported as `authoredTalonCount` on every
+        successful delete — an unattended talon run resolves its AUTHOR's site
+        access, so deleting the author stops it. They are only moved when
+        `reassignTalons=true` is passed as well; the flag is opt-in so a client
+        that has always sent `successorUid` for site ownership does not
+        silently start rewriting authorship. Per-site refusals (a successor who
+        is not a member there) come back in `talonReassignFailures` rather than
+        aborting — the account is already deleted by that point.
+        `GET /api/users/{uid}/talons` is the preview.
+
         True-idempotent: re-issuing DELETE on an already-deleted user
         returns 200 with `alreadyDeleted: true`.
 
@@ -6483,6 +6791,13 @@ paths:
             must exist, not be soft-deleted, and have role `admin` or
             `superadmin`.
           schema: { type: string }
+        - name: reassignTalons
+          in: query
+          required: false
+          description: |
+            `true` to also hand `successorUid` the talons this user authored.
+            Requires `successorUid`; without it the request is rejected 400.
+          schema: { type: string, enum: ['true'] }
         - name: Idempotency-Key
           in: header
           required: false
@@ -6504,11 +6819,79 @@ paths:
                   revokedKeyIds:
                     type: array
                     items: { type: string }
-        '400': { description: Invalid successor }
+                  authoredTalonCount:
+                    type: integer
+                    description: Talons this user authored fleet-wide, reported whether or not they moved.
+                  reassignedTalonIds:
+                    type: array
+                    items: { type: string }
+                  talonReassignFailures:
+                    type: array
+                    description: Sites whose talons could not be moved, and why.
+                    items:
+                      type: object
+                      properties:
+                        siteId: { type: string }
+                        detail: { type: string }
+        '400': { description: Invalid successor, or reassignTalons without successorUid }
         '401': { description: Unauthorized }
         '403': { description: Forbidden (not superadmin) }
         '404': { description: User not found }
         '409': { description: Orphan sites (provide successorUid) }
+
+  /api/users/{uid}/talons:
+    parameters:
+      - name: uid
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Users]
+      summary: talons this user authored, fleet-wide (superadmin only)
+      description: |
+        The account-deletion preview. `DELETE /api/users/{uid}` refuses to
+        orphan the SITES a user owns but says nothing about the automations
+        they wrote, and a talon with a `cortex` output resolves its author's
+        site access on every run — so soft-deleting the author stops it.
+
+        One collection-group query rather than a walk of the user's site
+        membership: a superadmin's `sites[]` can be empty while they author
+        talons across the fleet.
+
+        Requires `user=*:read` scope or session/id-token from a superadmin.
+      security:
+        - apiKey: []
+        - bearerApiKey: []
+        - firebaseIdToken: []
+      responses:
+        '200':
+          description: What this user authored, with a per-site tally.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uid: { type: string }
+                  count: { type: integer }
+                  sites:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        siteId: { type: string }
+                        count: { type: integer }
+                  talons:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        siteId: { type: string }
+                        talonId: { type: string }
+                        name: { type: string }
+                        enabled: { type: boolean }
+        '400': { description: Malformed uid }
+        '401': { description: Unauthorized }
+        '403': { description: Forbidden (not superadmin) }
 
   /api/users/{uid}/promote:
     parameters:
@@ -6775,15 +7158,33 @@ paths:
         `cannot_remove_owner`) — use `DELETE /api/users/{uid}?successorUid=<uid>`
         to transfer ownership instead.
 
+        Talons the departing member authored survive the removal — nothing
+        under `sites/{siteId}` is touched — but a talon with a `cortex` output
+        re-resolves its AUTHOR's site access on every run, so it starts failing
+        the moment they lose access. `talonCount` is therefore always in the
+        response, and `?talonSuccessorUid=<uid>` moves those talons to a
+        successor *before* the membership write, so the automation never has a
+        moment where its author has no access. A refused successor answers
+        `400 successor_invalid` and the membership is left intact.
+        `GET /api/sites/{siteId}/talons/authored?uid=<uid>` is the preview.
+
         True-idempotent: removing a non-member returns 200 with
         `wasMember: false`.
 
         Requires `site=<siteId>:admin` scope or session/id-token from an
-        admin of this site.
+        admin of this site. Reassignment additionally requires `TALON_MANAGE`.
       security:
         - apiKey: []
         - bearerApiKey: []
         - firebaseIdToken: []
+      parameters:
+        - name: talonSuccessorUid
+          in: query
+          required: false
+          description: |
+            Move the talons this member authored on this site to that user
+            before removing them. Held to the same bar as any talon author.
+          schema: { type: string }
       responses:
         '200':
           description: Member removed (or was not a member)
@@ -6795,8 +7196,15 @@ paths:
                   siteId: { type: string }
                   uid: { type: string }
                   wasMember: { type: boolean }
+                  talonCount:
+                    type: integer
+                    description: Talons this member authored here, reported whether or not they moved.
+                  reassignedTalonIds:
+                    type: array
+                    items: { type: string }
+        '400': { description: Malformed or refused talonSuccessorUid }
         '401': { description: Unauthorized }
-        '403': { description: Forbidden (not site admin) }
+        '403': { description: Forbidden (not site admin, or lacks TALON_MANAGE) }
         '404': { description: User or site not found }
         '409': { description: Cannot remove site owner }
 
@@ -7629,9 +8037,10 @@ components:
     TalonOutput:
       description: |
         What the talon does when it fires. `command` outputs may only be
-        authored by a site admin; `cortex` outputs require a site-level LLM
-        key; `webhook` urls must be https and must not resolve to a private,
-        loopback, or link-local address.
+        authored by a site admin; `cortex` outputs require the talon's author
+        to have an LLM key saved in their own account settings; `webhook` urls
+        must be https and must not resolve to a private, loopback, or
+        link-local address.
       oneOf:
         - type: object
           required: [type]
@@ -7652,8 +8061,19 @@ components:
           properties:
             type: { type: string, enum: [cortex] }
             directive: { type: string, maxLength: 1000 }
+            allowActions:
+              type: boolean
+              default: false
+              description: |
+                Let the unattended turn use tier-2 tools (process control,
+                service management, screenshots) instead of the read-only
+                tier-1 set. Site admins only — the same privilege a `command`
+                output takes. Tier-3 tools stay unreachable on this path.
         - type: object
           required: [type, commandType]
+          description: |
+            Exactly one of `processId` or `processName` is required — a command
+            with no target fails on every run.
           properties:
             type: { type: string, enum: [command] }
             commandType:
@@ -7699,6 +8119,71 @@ components:
           maximum: 1440
           default: 60
           description: Minimum gap between runs.
+
+    TalonPresetTemplate:
+      type: object
+      required: [name, trigger, outputs]
+      description: |
+        The talon-shaped payload a preset carries — `TalonInput` MINUS `scope`
+        and `enabled`, both of which are rejected. Machine ids mean nothing in
+        another site, and a template does not decide whether the talon it
+        creates is armed. Validated by the talon validator, so every talon
+        bound applies here too.
+      properties:
+        name: { type: string, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        trigger: { $ref: '#/components/schemas/TalonTrigger' }
+        condition: { $ref: '#/components/schemas/TalonCondition' }
+        outputs:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: '#/components/schemas/TalonOutput' }
+        cooldownMinutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+          default: 60
+
+    TalonPresetInput:
+      type: object
+      required: [name, template]
+      properties:
+        name: { type: string, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        template: { $ref: '#/components/schemas/TalonPresetTemplate' }
+        isBuiltIn:
+          type: boolean
+          default: false
+        order:
+          type: number
+          default: 0
+
+    TalonPresetPatch:
+      type: object
+      properties:
+        name: { type: string, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        template: { $ref: '#/components/schemas/TalonPresetTemplate' }
+        isBuiltIn: { type: boolean }
+        order: { type: number }
+
+    TalonPreset:
+      allOf:
+        - $ref: '#/components/schemas/TalonPresetInput'
+        - type: object
+          required: [id, template, isBuiltIn, order, createdBy, createdAt]
+          properties:
+            id: { type: string }
+            createdBy: { type: string }
+            createdAt:
+              type: string
+              format: date-time
+              nullable: true
+            updatedAt:
+              type: string
+              format: date-time
+              nullable: true
 
     TalonEnabledPatch:
       type: object
@@ -7763,6 +8248,21 @@ components:
             consecutiveFailures:
               type: integer
               description: Reset to 0 on any successful run; drives auto-disable backoff.
+            disabledReason:
+              type: string
+              nullable: true
+              enum:
+                - creator_not_a_user
+                - creator_deleted
+                - creator_access_revoked
+                - creator_missing_llm_key
+                - repeated_failures
+              description: >-
+                Why the SYSTEM switched this talon off. `null` while it is
+                enabled, and cleared whenever a person toggles it either way.
+                The four `creator_*` reasons are unrecoverable and disable the
+                talon on the first occurrence; `repeated_failures` is the
+                consecutive-failure backoff.
 
     TalonRun:
       type: object
@@ -7826,12 +8326,34 @@ components:
                 type: integer
                 description: Webhook outputs only.
               error: { type: string }
+              disabledReason:
+                type: string
+                enum:
+                  - creator_not_a_user
+                  - creator_deleted
+                  - creator_access_revoked
+                  - creator_missing_llm_key
+                description: >-
+                  Set when THIS output's failure was unrecoverable and cost the
+                  talon its enabled state.
         correlationId:
           type: string
           nullable: true
           description: Ties the run to its audit-log entries and downstream commands.
         chatId: { type: string, nullable: true }
         error: { type: string, nullable: true }
+        disabledReason:
+          type: string
+          nullable: true
+          enum:
+            - creator_not_a_user
+            - creator_deleted
+            - creator_access_revoked
+            - creator_missing_llm_key
+            - repeated_failures
+          description: >-
+            Set when this run is the one that switched the talon off, so the run
+            history explains itself. Mirrors `Talon.disabledReason`.
         manual:
           type: boolean
           description: True when an operator ran the talon on demand rather than the trigger firing.

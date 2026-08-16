@@ -31,7 +31,12 @@ import {
 } from 'lucide-react';
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import type { TalonRunCondition, TalonRunOutput, TalonTimestamp } from '@/lib/talons/types';
+import {
+  describeTalonDisabledReason,
+  type TalonRunCondition,
+  type TalonRunOutput,
+  type TalonTimestamp,
+} from '@/lib/talons/types';
 
 /**
  * A run as the client sees it. Every field beyond the id is optional or
@@ -55,6 +60,8 @@ export interface TalonRunListItem {
   outputs?: TalonRunOutput[] | null;
   chatId?: string | null;
   error?: string | null;
+  /** Set when this run is the one that switched the talon off. */
+  disabledReason?: string | null;
   manual?: boolean;
 }
 
@@ -178,6 +185,10 @@ export function TalonRunRow({ run }: TalonRunRowProps) {
   const summary = run.triggerSummary || run.triggerType || 'talon run';
   const statusTooltip = STATUS_TOOLTIP[status];
   const outputSummary = outputs.length > 0 ? outputsSummary(outputs) : null;
+  // The run that cost the talon its enabled state says so in words. It outranks
+  // `error` on this line: the raw error is a diagnostic string, and this is the
+  // one sentence that explains why the talon has stopped running at all.
+  const disabledReason = describeTalonDisabledReason(run.disabledReason);
 
   return (
     <div
@@ -206,7 +217,21 @@ export function TalonRunRow({ run }: TalonRunRowProps) {
             <span className="text-muted-foreground"> · {run.machineName || run.machineId}</span>
           ) : null}
         </span>
-        {isVisualCheck && condition ? (
+        {disabledReason ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                data-testid="talon-run-disabled-reason"
+                className="block truncate text-amber-600 dark:text-amber-400"
+              >
+                talon switched off — {disabledReason}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-md whitespace-pre-wrap">
+              {run.error ?? `talon switched off — ${disabledReason}`}
+            </TooltipContent>
+          </Tooltip>
+        ) : isVisualCheck && condition ? (
           <Tooltip>
             <TooltipTrigger asChild>
               <span

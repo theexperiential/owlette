@@ -11,13 +11,13 @@
  *
  * `firebase-admin/firestore` is mocked down to `FieldValue` alone so the suite
  * never loads the real Admin SDK; the collaborators with I/O or crypto cost
- * (`resolveLlmConfig`, `validateWebhookUrl`, the audit emitter) are mocked the
- * way the `__tests__/lib/actions/*` suites mock theirs.
+ * (`assertLlmKeyAvailable`, `validateWebhookUrl`, the audit emitter) are mocked
+ * the way the `__tests__/lib/actions/*` suites mock theirs.
  */
 
 const mockDeleteSentinel = { __fieldValue: 'delete' } as const;
 const mockEmitMutation = jest.fn();
-const mockResolveLlmConfig = jest.fn();
+const mockAssertLlmKeyAvailable = jest.fn();
 const mockValidateWebhookUrl = jest.fn();
 const mockRequirePro = jest.fn();
 
@@ -28,7 +28,7 @@ jest.mock('@/lib/auditLogClient', () => ({
   emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
 }));
 jest.mock('@/lib/hoot-utils.server', () => ({
-  resolveLlmConfig: (...args: unknown[]) => mockResolveLlmConfig(...args),
+  assertLlmKeyAvailable: (...args: unknown[]) => mockAssertLlmKeyAvailable(...args),
 }));
 jest.mock('@/lib/webhookUrl', () => ({
   validateWebhookUrl: (...args: unknown[]) => mockValidateWebhookUrl(...args),
@@ -48,10 +48,14 @@ import type { Firestore } from 'firebase-admin/firestore';
 import type { Actor } from '@/lib/capabilities';
 import {
   TalonStoreError,
+  countTalonsAuthoredBy,
   createTalon,
   deleteTalon,
   getTalon,
   listTalons,
+  listTalonsAuthoredBy,
+  listTalonsAuthoredByAcrossSites,
+  reassignTalons,
   setTalonEnabled,
   updateTalon,
   type TalonStoreContext,
@@ -73,6 +77,10 @@ class FakeFirestore {
 
   collection(name: string): FakeCollection {
     return new FakeCollection(this, name);
+  }
+
+  collectionGroup(id: string): FakeCollectionGroup {
+    return new FakeCollectionGroup(this, id);
   }
 
   batch() {
@@ -133,17 +141,118 @@ class FakeCollection {
   }
 
   orderBy(field: string) {
+    return new FakeQuery(this.db, this.path, [], field);
+  }
+
+  /** Equality filters only — everything the store issues is `field == value`. */
+  where(field: string, op: string, value: unknown) {
+    if (op !== '==') throw new Error(`FakeCollection.where: unsupported operator ${op}`);
+    return new FakeQuery(this.db, this.path, [[field, value]], null);
+  }
+}
+
+/** A filtered/ordered view over one collection. */
+class FakeQuery {
+  constructor(
+    private readonly db: FakeFirestore,
+    private readonly path: string,
+    private readonly filters: Array<[string, unknown]>,
+    private readonly order: string | null,
+  ) {}
+
+  where(field: string, op: string, value: unknown): FakeQuery {
+    if (op !== '==') throw new Error(`FakeQuery.where: unsupported operator ${op}`);
+    return new FakeQuery(this.db, this.path, [...this.filters, [field, value]], this.order);
+  }
+
+  orderBy(field: string): FakeQuery {
+    return new FakeQuery(this.db, this.path, this.filters, field);
+  }
+
+  private matchingPaths(): string[] {
+    const paths = this.db
+      .childPaths(this.path)
+      .filter((path) =>
+        this.filters.every(([field, value]) => this.db.docs.get(path)?.[field] === value),
+      );
+    if (!this.order) return paths;
+    const order = this.order;
+    return [...paths].sort((a, b) =>
+      String(this.db.docs.get(a)?.[order] ?? '').localeCompare(
+        String(this.db.docs.get(b)?.[order] ?? ''),
+      ),
+    );
+  }
+
+  count() {
     return {
-      get: async () => ({
-        docs: this.db
-          .childPaths(this.path)
-          .map((path) => new FakeDocRef(this.db, path))
-          .sort((a, b) =>
-            String(this.db.docs.get(a.path)?.[field] ?? '').localeCompare(
-              String(this.db.docs.get(b.path)?.[field] ?? ''),
-            ),
-          )
-          .map((ref) => ({ id: ref.id, data: () => ({ ...this.db.docs.get(ref.path) }) })),
+      get: async () => ({ data: () => ({ count: this.matchingPaths().length }) }),
+    };
+  }
+
+  async get() {
+    return {
+      docs: this.matchingPaths().map((path) => {
+        const ref = new FakeDocRef(this.db, path);
+        return { id: ref.id, data: () => ({ ...this.db.docs.get(path) }) };
+      }),
+    };
+  }
+}
+
+/**
+ * Cross-collection view keyed on the last collection segment, so
+ * `sites/*\/talons/*` all match one `collectionGroup('talons')`. Exposes
+ * `ref.parent.parent.id` because the store reads the owning site back off it.
+ */
+class FakeCollectionGroup {
+  constructor(
+    private readonly db: FakeFirestore,
+    private readonly collectionId: string,
+    private readonly filters: Array<[string, unknown]> = [],
+    private readonly order: string | null = null,
+  ) {}
+
+  where(field: string, op: string, value: unknown): FakeCollectionGroup {
+    if (op !== '==') throw new Error(`FakeCollectionGroup.where: unsupported operator ${op}`);
+    return new FakeCollectionGroup(
+      this.db,
+      this.collectionId,
+      [...this.filters, [field, value]],
+      this.order,
+    );
+  }
+
+  orderBy(field: string): FakeCollectionGroup {
+    return new FakeCollectionGroup(this.db, this.collectionId, this.filters, field);
+  }
+
+  async get() {
+    let paths = [...this.db.docs.keys()].filter((path) => {
+      const segments = path.split('/');
+      return segments.length >= 2 && segments[segments.length - 2] === this.collectionId;
+    });
+    paths = paths.filter((path) =>
+      this.filters.every(([field, value]) => this.db.docs.get(path)?.[field] === value),
+    );
+    if (this.order) {
+      const order = this.order;
+      paths = [...paths].sort((a, b) =>
+        String(this.db.docs.get(a)?.[order] ?? '').localeCompare(
+          String(this.db.docs.get(b)?.[order] ?? ''),
+        ),
+      );
+    }
+
+    return {
+      docs: paths.map((path) => {
+        const segments = path.split('/');
+        const grandparentId = segments.length >= 3 ? segments[segments.length - 3] : undefined;
+        return {
+          id: segments[segments.length - 1],
+          data: () => ({ ...this.db.docs.get(path) }),
+          ref: { parent: { parent: grandparentId ? { id: grandparentId } : null } },
+        };
       }),
     };
   }
@@ -264,7 +373,8 @@ beforeEach(() => {
   db = fake as unknown as Firestore;
   mockRequirePro.mockReset();
   mockRequirePro.mockResolvedValue({ siteId: 'site-a', siteTier: 'pro', billingState: 'active' });
-  mockResolveLlmConfig.mockResolvedValue({ provider: 'anthropic', apiKey: 'sk-test' });
+  mockAssertLlmKeyAvailable.mockReset();
+  mockAssertLlmKeyAvailable.mockResolvedValue(undefined);
   mockValidateWebhookUrl.mockResolvedValue({
     ok: true,
     url: 'https://hooks.example.com/t',
@@ -452,7 +562,9 @@ describe('createTalon', () => {
       createTalon(
         db,
         ctxFor(MEMBER),
-        talonInput({ outputs: [{ type: 'command', commandType: 'restart_process' }] }),
+        talonInput({
+          outputs: [{ type: 'command', commandType: 'restart_process', processName: 'TouchDesigner' }],
+        }),
       ),
       'command_output_forbidden',
       403,
@@ -484,16 +596,57 @@ describe('createTalon', () => {
       createTalon(
         db,
         ctxFor(otherSiteAdmin),
-        talonInput({ outputs: [{ type: 'command', commandType: 'stop_process' }] }),
+        talonInput({
+          outputs: [{ type: 'command', commandType: 'stop_process', processName: 'TouchDesigner' }],
+        }),
       ),
       'command_output_forbidden',
       403,
     );
   });
 
-  it('requires a usable site llm key for a visual_check condition', async () => {
-    mockResolveLlmConfig.mockRejectedValue(
-      new Error('No site-level LLM API key configured. Autonomous hoot requires a site-level key.'),
+  it('refuses a hoot output that lets hoot act, authored by a non-admin', async () => {
+    // Same power class as a `command` output — an unattended turn on tier-2
+    // tools can restart the same process — so it takes the same privilege.
+    await expectStoreError(
+      createTalon(
+        db,
+        ctxFor(MEMBER),
+        talonInput({
+          outputs: [{ type: 'cortex', directive: 'restart it', allowActions: true }],
+        }),
+      ),
+      'hoot_actions_forbidden',
+      403,
+    );
+    expect(fake.docs.size).toBe(0);
+  });
+
+  it('allows a read-only hoot output authored by a non-admin', async () => {
+    const created = await createTalon(
+      db,
+      ctxFor(MEMBER),
+      talonInput({ outputs: [{ type: 'cortex', directive: 'have a look' }] }),
+    );
+    expect(storedTalon(created.id).outputs).toEqual([
+      { type: 'cortex', directive: 'have a look' },
+    ]);
+  });
+
+  it('allows a hoot output that lets hoot act, authored by a site admin', async () => {
+    const created = await createTalon(
+      db,
+      ctxFor(),
+      talonInput({ outputs: [{ type: 'cortex', directive: 'restart it', allowActions: true }] }),
+    );
+    expect(storedTalon(created.id).outputs).toEqual([
+      { type: 'cortex', directive: 'restart it', allowActions: true },
+    ]);
+  });
+
+  it("requires the author's own llm key for a visual_check condition", async () => {
+    mockAssertLlmKeyAvailable.mockRejectedValue(
+      new Error('No LLM API key configured. Add one in Account Settings → hoot.'),
     );
 
     await expectStoreError(
@@ -505,15 +658,18 @@ describe('createTalon', () => {
           trigger: { type: 'schedule', intervalMinutes: 30 },
         }),
       ),
-      'site_llm_key_required',
+      'llm_key_required',
       400,
     );
-    expect(mockResolveLlmConfig).toHaveBeenCalledWith(db, null, SITE, { autonomous: true });
+    // The AUTHORING uid, never a site — there is no site-level key scope.
+    expect(mockAssertLlmKeyAvailable).toHaveBeenCalledWith(db, 'admin-uid');
     expect(fake.docs.size).toBe(0);
   });
 
-  it('requires a usable site llm key for a hoot output', async () => {
-    mockResolveLlmConfig.mockRejectedValue(new Error('Failed to decrypt site-level LLM API key.'));
+  it("requires the author's own llm key for a hoot output", async () => {
+    mockAssertLlmKeyAvailable.mockRejectedValue(
+      new Error('Failed to decrypt the stored LLM API key.'),
+    );
 
     await expectStoreError(
       createTalon(
@@ -521,14 +677,45 @@ describe('createTalon', () => {
         ctxFor(),
         talonInput({ outputs: [{ type: 'cortex', directive: 'investigate the black screen' }] }),
       ),
-      'site_llm_key_required',
+      'llm_key_required',
       400,
     );
   });
 
-  it('does not consult the llm config for talons that never call the model', async () => {
+  it('names the one screen that fixes a missing key, and leaks nothing else', async () => {
+    mockAssertLlmKeyAvailable.mockRejectedValue(
+      new Error('Failed to decrypt the stored LLM API key using OWLETTE_LLM_KEY.'),
+    );
+
+    const error = await createTalon(
+      db,
+      ctxFor(),
+      talonInput({ outputs: [{ type: 'cortex', directive: 'look' }] }),
+    ).catch((err: TalonStoreError) => err);
+
+    expect((error as TalonStoreError).message).toBe(
+      'this talon uses ai, so it needs an ai key. add one in settings → hoot, then save again.',
+    );
+    // The underlying failure names server infrastructure — it must not travel.
+    expect((error as TalonStoreError).message).not.toContain('OWLETTE_LLM_KEY');
+  });
+
+  it('refuses an ai talon authored by a system actor, which has no key to spend', async () => {
+    await expectStoreError(
+      createTalon(
+        db,
+        { ...ctxFor(), actor: { type: 'system', name: 'talon_runner', siteId: SITE } as Actor },
+        talonInput({ outputs: [{ type: 'cortex', directive: 'look' }] }),
+      ),
+      'llm_key_required',
+      400,
+    );
+    expect(mockAssertLlmKeyAvailable).not.toHaveBeenCalled();
+  });
+
+  it('does not consult the llm key for talons that never call the model', async () => {
     await createTalon(db, ctxFor(), talonInput());
-    expect(mockResolveLlmConfig).not.toHaveBeenCalled();
+    expect(mockAssertLlmKeyAvailable).not.toHaveBeenCalled();
   });
 
   it('emits a talon.create audit', async () => {
@@ -718,7 +905,9 @@ describe('updateTalon', () => {
         db,
         ctxFor(MEMBER),
         't1',
-        talonInput({ outputs: [{ type: 'command', commandType: 'restart_process' }] }),
+        talonInput({
+          outputs: [{ type: 'command', commandType: 'restart_process', processName: 'TouchDesigner' }],
+        }),
       ),
       'command_output_forbidden',
       403,
@@ -726,9 +915,26 @@ describe('updateTalon', () => {
     expect(storedTalon('t1').outputs).toEqual([{ type: 'email' }]);
   });
 
-  it('refuses an edit that adds a hoot output without a site llm key', async () => {
+  it('refuses an edit that lets hoot act, as a non-admin', async () => {
     seedTalon('t1');
-    mockResolveLlmConfig.mockRejectedValue(new Error('No site-level LLM API key configured.'));
+    await expectStoreError(
+      updateTalon(
+        db,
+        ctxFor(MEMBER),
+        't1',
+        talonInput({
+          outputs: [{ type: 'cortex', directive: 'restart it', allowActions: true }],
+        }),
+      ),
+      'hoot_actions_forbidden',
+      403,
+    );
+    expect(storedTalon('t1').outputs).toEqual([{ type: 'email' }]);
+  });
+
+  it("refuses an edit that adds a hoot output without the author's llm key", async () => {
+    seedTalon('t1');
+    mockAssertLlmKeyAvailable.mockRejectedValue(new Error('No LLM API key configured.'));
 
     await expectStoreError(
       updateTalon(
@@ -737,10 +943,25 @@ describe('updateTalon', () => {
         't1',
         talonInput({ outputs: [{ type: 'cortex', directive: 'restart the show' }] }),
       ),
-      'site_llm_key_required',
+      'llm_key_required',
       400,
     );
     expect(storedTalon('t1').outputs).toEqual([{ type: 'email' }]);
+  });
+
+  it("checks the original AUTHOR's key, not the editor's", async () => {
+    // `createdBy` never changes on an update, so the talon will still run on
+    // the original author's key however many other admins edit it.
+    seedTalon('t1', { createdBy: 'original-author' });
+
+    await updateTalon(
+      db,
+      ctxFor({ type: 'user', userId: 'second-admin', role: 'admin', sites: [SITE] }),
+      't1',
+      talonInput({ outputs: [{ type: 'cortex', directive: 'restart the show' }] }),
+    );
+
+    expect(mockAssertLlmKeyAvailable).toHaveBeenCalledWith(db, 'original-author');
   });
 });
 
@@ -787,23 +1008,43 @@ describe('setTalonEnabled', () => {
 
     expect(updated.enabled).toBe(false);
     expect(updated.nextRunAt).toEqual(stale);
-    expect(mockResolveLlmConfig).not.toHaveBeenCalled();
+    expect(mockAssertLlmKeyAvailable).not.toHaveBeenCalled();
   });
 
-  it('refuses to enable a talon whose site llm key is gone', async () => {
+  it("refuses to enable a talon whose author's llm key is gone", async () => {
     seedTalon('t1', {
       enabled: false,
       condition: { type: 'visual_check', expectation: 'the loop is playing' },
     });
-    mockResolveLlmConfig.mockRejectedValue(new Error('No site-level LLM API key configured.'));
+    mockAssertLlmKeyAvailable.mockRejectedValue(new Error('No LLM API key configured.'));
 
     await expectStoreError(
       setTalonEnabled(db, ctxFor(), 't1', true),
-      'site_llm_key_required',
+      'llm_key_required',
       400,
     );
     expect(storedTalon('t1').enabled).toBe(false);
     expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])(
+    'clears a system disabledReason when a person moves the switch to %p',
+    async (enabled) => {
+      seedTalon('t1', { enabled: !enabled, disabledReason: 'creator_access_revoked' });
+
+      await setTalonEnabled(db, ctxFor(), 't1', enabled);
+
+      // Deleted, not blanked: a re-armed talon must not still claim a cause.
+      expect('disabledReason' in storedTalon('t1')).toBe(false);
+    },
+  );
+
+  it('does not write a disabledReason delete when there was none', async () => {
+    seedTalon('t1', { enabled: false });
+
+    await setTalonEnabled(db, ctxFor(), 't1', true);
+
+    expect('disabledReason' in storedTalon('t1')).toBe(false);
   });
 
   it('emits talon.enable and talon.disable audits', async () => {
@@ -887,5 +1128,356 @@ describe('getTalon / listTalons', () => {
 
   it('returns an empty list for a site with no talons', async () => {
     await expect(listTalons(db, SITE)).resolves.toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+/*  reassign — authorship survives a departure                                */
+/* ------------------------------------------------------------------------- */
+
+describe('countTalonsAuthoredBy / listTalonsAuthoredBy', () => {
+  it('counts only the talons the named uid authored', async () => {
+    seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
+    seedTalon('t2', { name: 'beta', createdBy: 'leaver-uid' });
+    seedTalon('t3', { name: 'gamma', createdBy: 'someone-else' });
+
+    await expect(countTalonsAuthoredBy(db, SITE, 'leaver-uid')).resolves.toBe(2);
+    await expect(countTalonsAuthoredBy(db, SITE, 'someone-else')).resolves.toBe(1);
+    await expect(countTalonsAuthoredBy(db, SITE, 'never-authored')).resolves.toBe(0);
+  });
+
+  it('lists them by name so the warning can name what breaks', async () => {
+    seedTalon('t1', { name: 'zebra', createdBy: 'leaver-uid' });
+    seedTalon('t2', { name: 'alpha', createdBy: 'leaver-uid' });
+    seedTalon('t3', { name: 'mango', createdBy: 'other-uid' });
+
+    const talons = await listTalonsAuthoredBy(db, SITE, 'leaver-uid');
+    expect(talons.map((talon) => talon.name)).toEqual(['alpha', 'zebra']);
+  });
+});
+
+describe('listTalonsAuthoredByAcrossSites', () => {
+  it('reaches sites the user is not a member of', async () => {
+    seedTalon('t1', { name: 'lobby', createdBy: 'leaver-uid' });
+    // A second site, authored by the same person — the case a walk of
+    // `users/{uid}.sites[]` would miss for a superadmin.
+    fake.docs.set('sites/site-b/talons/t9', {
+      name: 'atrium',
+      enabled: false,
+      createdBy: 'leaver-uid',
+      outputs: [{ type: 'email' }],
+    });
+    fake.docs.set('sites/site-b/talons/t8', {
+      name: 'somebody else',
+      enabled: true,
+      createdBy: 'other-uid',
+      outputs: [{ type: 'email' }],
+    });
+
+    const authored = await listTalonsAuthoredByAcrossSites(db, 'leaver-uid');
+
+    expect(authored).toEqual([
+      { siteId: 'site-b', talonId: 't9', name: 'atrium', enabled: false },
+      { siteId: SITE, talonId: 't1', name: 'lobby', enabled: true },
+    ]);
+  });
+});
+
+describe('reassignTalons', () => {
+  /** An eligible successor: admin, assigned to this site, not deleted. */
+  function seedSuccessor(uid: string, overrides: DocData = {}): void {
+    fake.docs.set(`users/${uid}`, { role: 'admin', sites: [SITE], ...overrides });
+  }
+
+  it('moves every talon the departing author wrote', async () => {
+    seedSuccessor('successor-uid');
+    seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
+    seedTalon('t2', { name: 'beta', createdBy: 'leaver-uid' });
+    seedTalon('t3', { name: 'gamma', createdBy: 'bystander-uid' });
+
+    const result = await reassignTalons(db, ctxFor(), 'successor-uid', {
+      fromUid: 'leaver-uid',
+    });
+
+    expect(result.reassignedTalonIds.sort()).toEqual(['t1', 't2']);
+    expect(storedTalon('t1').createdBy).toBe('successor-uid');
+    expect(storedTalon('t2').createdBy).toBe('successor-uid');
+    // Untouched: a bystander's talon is not swept up by a departure.
+    expect(storedTalon('t3').createdBy).toBe('bystander-uid');
+  });
+
+  /* --- the handover has to actually finish the job -------------------------
+   *
+   * Both of these were live defects when the two halves of this feature were
+   * composed: `reassignTalons` wrote `createdBy` and nothing else, so the very
+   * scenario the feature exists for — an author leaves, the system disables
+   * their talons, an admin takes them over — ended with the talons still off,
+   * still blaming an author who is no longer relevant.
+   */
+
+  it('re-arms a talon the system disabled because its creator left', async () => {
+    seedSuccessor('successor-uid');
+    seedTalon('t1', {
+      createdBy: 'leaver-uid',
+      enabled: false,
+      disabledReason: 'creator_access_revoked',
+      consecutiveFailures: 3,
+    });
+
+    await reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' });
+
+    const stored = storedTalon('t1');
+    expect(stored.createdBy).toBe('successor-uid');
+    expect(stored.enabled).toBe(true);
+    expect(stored.disabledReason).toBeUndefined();
+    // A fresh author starts on a clean sheet, not one strike from auto-disable.
+    expect(stored.consecutiveFailures).toBe(0);
+  });
+
+  it('leaves repeated_failures disabled — reassignment fixes nothing about it', async () => {
+    seedSuccessor('successor-uid');
+    seedTalon('t1', {
+      createdBy: 'leaver-uid',
+      enabled: false,
+      disabledReason: 'repeated_failures',
+    });
+
+    await reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' });
+
+    const stored = storedTalon('t1');
+    expect(stored.createdBy).toBe('successor-uid');
+    expect(stored.enabled).toBe(false);
+    expect(stored.disabledReason).toBe('repeated_failures');
+  });
+
+  it('leaves a human-paused talon paused', async () => {
+    seedSuccessor('successor-uid');
+    seedTalon('t1', { createdBy: 'leaver-uid', enabled: false });
+
+    await reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' });
+
+    expect(storedTalon('t1').enabled).toBe(false);
+  });
+
+  it('refuses a successor with no ai key when the talons use ai', async () => {
+    seedSuccessor('successor-uid');
+    seedTalon('t1', {
+      createdBy: 'leaver-uid',
+      condition: { type: 'visual_check', expectation: 'the screen shows the loop' },
+    });
+    mockAssertLlmKeyAvailable.mockRejectedValue(new Error('no key'));
+
+    await expect(
+      reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' }),
+    ).rejects.toMatchObject({ status: 400, code: 'successor_invalid' });
+
+    // Refused means refused: nothing moved.
+    expect(storedTalon('t1').createdBy).toBe('leaver-uid');
+    expect(mockAssertLlmKeyAvailable).toHaveBeenCalledWith(db, 'successor-uid');
+  });
+
+  it('does not demand a key from a successor taking on talons that never use ai', async () => {
+    seedSuccessor('successor-uid');
+    seedTalon('t1', { createdBy: 'leaver-uid' });
+    mockAssertLlmKeyAvailable.mockRejectedValue(new Error('no key'));
+
+    await expect(
+      reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' }),
+    ).resolves.toMatchObject({ reassignedTalonIds: ['t1'] });
+  });
+
+  it('emits one talon.reassign audit row per talon, naming both authors', async () => {
+    seedSuccessor('successor-uid');
+    seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
+
+    await reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' });
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    const event = mockEmitMutation.mock.calls[0][0];
+    expect(event).toMatchObject({
+      kind: 'talon_mutated',
+      siteId: SITE,
+      actor: 'user:admin-uid',
+      // The talon, not the user — "did this talon change?" has to stay
+      // answerable from the audit log.
+      targetId: 't1',
+    });
+    expect(auditAttributes()).toMatchObject({
+      verb: 'talon.reassign',
+      method: 'POST',
+      endpoint: `/api/sites/${SITE}/talons`,
+      changedFields: ['createdBy'],
+      previousCreatedBy: 'leaver-uid',
+      newCreatedBy: 'successor-uid',
+      via: 'ui',
+    });
+  });
+
+  it('moves an explicit list of talons', async () => {
+    seedSuccessor('successor-uid');
+    seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
+    seedTalon('t2', { name: 'beta', createdBy: 'leaver-uid' });
+
+    const result = await reassignTalons(db, ctxFor(), 'successor-uid', { talonIds: ['t2'] });
+
+    expect(result.reassignedTalonIds).toEqual(['t2']);
+    expect(storedTalon('t1').createdBy).toBe('leaver-uid');
+    expect(storedTalon('t2').createdBy).toBe('successor-uid');
+  });
+
+  it('skips talons the successor already authored without writing or auditing', async () => {
+    seedSuccessor('successor-uid');
+    seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
+    seedTalon('t2', { name: 'beta', createdBy: 'successor-uid' });
+
+    const result = await reassignTalons(db, ctxFor(), 'successor-uid', {
+      talonIds: ['t1', 't2'],
+    });
+
+    expect(result).toMatchObject({
+      reassignedTalonIds: ['t1'],
+      skippedTalonIds: ['t2'],
+    });
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a soft-deleted successor', async () => {
+    seedSuccessor('successor-uid', { deletedAt: 1_700_000_000_000 });
+    seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
+
+    await expectStoreError(
+      reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' }),
+      'successor_invalid',
+      400,
+    );
+    expect(storedTalon('t1').createdBy).toBe('leaver-uid');
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  it('refuses a successor with no access to the site', async () => {
+    // An admin — of some other site. TALON_MANAGE is site-scoped, so this is
+    // exactly the "handed it to someone who cannot run it" failure again.
+    seedSuccessor('successor-uid', { sites: ['site-elsewhere'] });
+    seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
+
+    await expectStoreError(
+      reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' }),
+      'successor_invalid',
+      400,
+    );
+    expect(storedTalon('t1').createdBy).toBe('leaver-uid');
+  });
+
+  it('refuses a member — TALON_MANAGE is what authoring takes', async () => {
+    seedSuccessor('successor-uid', { role: 'member' });
+    seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
+
+    await expectStoreError(
+      reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' }),
+      'successor_invalid',
+      400,
+    );
+  });
+
+  it('refuses a successor that does not exist', async () => {
+    seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
+
+    await expectStoreError(
+      reassignTalons(db, ctxFor(), 'ghost-uid', { fromUid: 'leaver-uid' }),
+      'successor_invalid',
+      400,
+    );
+  });
+
+  it('accepts a superadmin who is assigned to no sites', async () => {
+    seedSuccessor('successor-uid', { role: 'superadmin', sites: [] });
+    seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
+
+    await reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' });
+
+    expect(storedTalon('t1').createdBy).toBe('successor-uid');
+  });
+
+  it('writes nothing when one talon in the selection is missing', async () => {
+    seedSuccessor('successor-uid');
+    seedTalon('t1', { name: 'alpha', createdBy: 'leaver-uid' });
+
+    await expectStoreError(
+      reassignTalons(db, ctxFor(), 'successor-uid', { talonIds: ['t1', 'ghost'] }),
+      'talon_not_found',
+      404,
+    );
+    // All-or-nothing: a partial move would leave some automations orphaned
+    // with no signal which.
+    expect(storedTalon('t1').createdBy).toBe('leaver-uid');
+  });
+
+  it('rejects a selection that names neither or both selectors', async () => {
+    seedSuccessor('successor-uid');
+
+    await expectStoreError(
+      reassignTalons(db, ctxFor(), 'successor-uid', {}),
+      'invalid_reassign',
+      400,
+    );
+    await expectStoreError(
+      reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid', talonIds: ['t1'] }),
+      'invalid_reassign',
+      400,
+    );
+  });
+
+  it('rejects reassigning a user to themselves', async () => {
+    seedSuccessor('successor-uid');
+
+    await expectStoreError(
+      reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'successor-uid' }),
+      'invalid_reassign',
+      400,
+    );
+  });
+
+  it('rejects a malformed successor id before reading anything', async () => {
+    await expectStoreError(
+      reassignTalons(db, ctxFor(), '../escape', { fromUid: 'leaver-uid' }),
+      'invalid_reassign',
+      400,
+    );
+  });
+
+  describe('privileged outputs', () => {
+    // Honest note on coverage: the store checks MACHINE_EXEC_COMMAND
+    // separately from TALON_MANAGE, but the current capability matrix grants
+    // both to exactly the same roles, so no seedable user can fail only the
+    // second. These tests therefore pin the observable behaviour — a talon
+    // that runs commands still refuses an ineligible successor, and an
+    // eligible admin can inherit one — not the isolated inner gate.
+    it('refuses an ineligible successor for a talon that runs commands', async () => {
+      seedSuccessor('successor-uid', { sites: ['site-elsewhere'] });
+      seedTalon('t1', {
+        name: 'alpha',
+        createdBy: 'leaver-uid',
+        outputs: [{ type: 'command', command: 'restart', processId: 'p1' }],
+      });
+
+      await expectStoreError(
+        reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' }),
+        'successor_invalid',
+        400,
+      );
+    });
+
+    it('allows a site admin to inherit a talon that lets hoot act', async () => {
+      seedSuccessor('successor-uid');
+      seedTalon('t1', {
+        name: 'alpha',
+        createdBy: 'leaver-uid',
+        outputs: [{ type: 'cortex', prompt: 'look at it', allowActions: true }],
+      });
+
+      await reassignTalons(db, ctxFor(), 'successor-uid', { fromUid: 'leaver-uid' });
+
+      expect(storedTalon('t1').createdBy).toBe('successor-uid');
+    });
   });
 });

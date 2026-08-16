@@ -32,6 +32,13 @@
  * resets on any success. At {@link AUTO_DISABLE_AFTER_FAILURES} the talon is
  * disabled and the disable is audited — a talon pointed at a decommissioned
  * machine stops paging people rather than failing forever.
+ *
+ * The counter is for TRANSIENT faults only: a machine that happened to be
+ * offline, a rate limit, a provider 500. A run that comes back carrying a
+ * `disabledReason` has hit something no retry can fix — the author left the
+ * site, was deleted, or has no ai key — and the talon is disabled on that
+ * single run, with the reason stored on both the talon and the run so an
+ * operator is told WHY rather than finding it silently off ten firings later.
  */
 import type { DocumentReference, Firestore } from 'firebase-admin/firestore';
 import { emitMutation } from '@/lib/auditLogClient';
@@ -50,6 +57,7 @@ import {
 } from './outputs.server';
 import { getTalon, TalonStoreError, type StoredTalon } from './store.server';
 import type {
+  TalonDisabledReason,
   TalonRunCondition,
   TalonRunDoc,
   TalonRunOutput,
@@ -94,6 +102,12 @@ export interface TalonRunSummary {
   condition?: TalonRunCondition;
   /** Skip reason or failure detail, mirroring the run document's `error`. */
   error?: string;
+  /**
+   * Set when this run hit something no retry can fix — see
+   * {@link TalonDisabledReason}. `settleTalon` disables the talon on the spot
+   * rather than waiting for {@link AUTO_DISABLE_AFTER_FAILURES}.
+   */
+  disabledReason?: TalonDisabledReason;
 }
 
 interface TargetMachine {
@@ -223,7 +237,7 @@ export async function runTalon(
   if (talon.condition.type === 'visual_check') {
     for (const target of targets) {
       // Sequential: the agent throttles `capture_screenshot` to one per 5s per
-      // machine, and a shared site llm key is happier not being hit N-wide.
+      // machine, and one person's llm key is happier not being hit N-wide.
       summaries.push(
         target.online
           ? await executeRun(env, talon, target)
@@ -476,6 +490,7 @@ async function executeRun(
         env.db,
         env.siteId,
         machine.id,
+        talon,
         talon.condition,
         correlationId,
       );
@@ -547,11 +562,16 @@ async function executeRun(
   // property of the talon and is already on the talon document.
   const hootChatId = findHootChatId(outputs);
 
+  // First-wins: several outputs can hit the same dead author, and the talon can
+  // only be switched off for one stated reason.
+  const disabledReason = outputs.find((output) => output.disabledReason)?.disabledReason;
+
   await ref.update({
     status,
     outputs,
     ...(condition ? { condition } : {}),
     ...(hootChatId ? { chatId: hootChatId } : {}),
+    ...(disabledReason ? { disabledReason } : {}),
     completedAt: env.now,
     durationMs: Date.now() - startedMs,
   });
@@ -563,6 +583,7 @@ async function executeRun(
     machineId: machine?.id,
     outputs,
     ...(condition ? { condition } : {}),
+    ...(disabledReason ? { disabledReason } : {}),
   };
 }
 
@@ -572,7 +593,9 @@ async function executeRun(
  * `machine_offline` and `no_interactive_session` describe a machine that was
  * not in a state to be checked — nothing is wrong with the talon, so those are
  * `skipped` and do not count toward auto-disable. `capture_failed` and
- * `verdict_error` are genuine faults and fail the run.
+ * `verdict_error` are genuine faults and fail the run. `author_unavailable`
+ * fails it too AND carries the reason that switches the talon off, because the
+ * person whose key backs the check is not coming back on the next firing.
  */
 async function finalizeConditionError(
   env: RunEnvironment,
@@ -588,16 +611,26 @@ async function finalizeConditionError(
   const detail = benign
     ? code
     : `${code}: ${error instanceof Error ? error.message : String(error)}`;
+  const disabledReason =
+    error instanceof TalonVisualCheckError ? error.disabledReason : undefined;
 
   await ref.update({
     status,
     error: detail,
+    ...(disabledReason ? { disabledReason } : {}),
     completedAt: env.now,
     durationMs: Date.now() - startedMs,
   });
 
   await writeRunLog(env, talon, status, machine, detail);
-  return { runId: ref.id, status, machineId: machine?.id, outputs: [], error: detail };
+  return {
+    runId: ref.id,
+    status,
+    machineId: machine?.id,
+    outputs: [],
+    error: detail,
+    ...(disabledReason ? { disabledReason } : {}),
+  };
 }
 
 /**
@@ -716,18 +749,24 @@ async function settleTalon(
   // A skipped execution leaves the counter alone: it neither proved the talon
   // works nor proved it doesn't.
 
-  const disable = consecutiveFailures >= AUTO_DISABLE_AFTER_FAILURES;
+  // An unrecoverable reason short-circuits the counter entirely. Ten runs spent
+  // rediscovering that the author left the site is ten firings during which
+  // nobody was told why the talon stopped working.
+  const fatalReason = summaries.find((summary) => summary.disabledReason)?.disabledReason;
+  const disabledReason: TalonDisabledReason | undefined =
+    fatalReason ?? (consecutiveFailures >= AUTO_DISABLE_AFTER_FAILURES ? 'repeated_failures' : undefined);
+
   const updates: Record<string, unknown> = {
     lastRunAt: now,
     lastRunStatus: status,
     lastRunId: summaries[summaries.length - 1].runId,
     consecutiveFailures,
-    ...(disable ? { enabled: false, updatedAt: now } : {}),
+    ...(disabledReason ? { enabled: false, disabledReason, updatedAt: now } : {}),
   };
 
   await talonRef(db, siteId, talon.id).update(updates);
 
-  if (!disable) return;
+  if (!disabledReason) return;
 
   emitMutation({
     kind: 'talon_mutated',
@@ -738,14 +777,16 @@ async function settleTalon(
       verb: 'talon.disable',
       endpoint: `/api/sites/${siteId}/talons/${talon.id}`,
       method: 'PATCH',
-      changedFields: ['enabled'],
-      reason: 'consecutive_failures',
+      changedFields: ['enabled', 'disabledReason'],
+      reason: disabledReason,
       consecutiveFailures,
     },
   });
 
   logger.warn(
-    `Talon ${talon.id} disabled after ${consecutiveFailures} consecutive failed runs`,
+    fatalReason
+      ? `Talon ${talon.id} disabled immediately: ${fatalReason}`
+      : `Talon ${talon.id} disabled after ${consecutiveFailures} consecutive failed runs`,
     { context: 'talons/engine', data: { siteId } },
   );
 }

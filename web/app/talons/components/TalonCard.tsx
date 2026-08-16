@@ -23,6 +23,7 @@
 import { useState } from 'react';
 import {
   AlertTriangle,
+  BookmarkPlus,
   ChevronDown,
   ChevronRight,
   Eye,
@@ -42,14 +43,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { Machine } from '@/hooks/useFirestore';
 import { useTalonRuns } from '@/hooks/useTalonRuns';
 import { toast } from '@/lib/toast';
-import type {
-  TalonCondition,
-  TalonMetric,
-  TalonOutput,
-  TalonScheduleEntry,
-  TalonScope,
-  TalonTimestamp,
-  TalonTrigger,
+import {
+  describeTalonDisabledReason,
+  type TalonCondition,
+  type TalonMetric,
+  type TalonOutput,
+  type TalonScheduleEntry,
+  type TalonScope,
+  type TalonTimestamp,
+  type TalonTrigger,
 } from '@/lib/talons/types';
 
 import { formatRelative, talonStatusIcon, TalonRunRow } from './TalonRunRow';
@@ -61,10 +63,11 @@ const RUN_HISTORY_LIMIT = 20;
  * The one column definition the list header and every talon row share. Each
  * row is its own grid element, so the tracks only line up if they resolve
  * identically everywhere — which means **no `auto` tracks**: a header cell and
- * a four-button action cluster would size the same `auto` track differently
+ * a five-button action cluster would size the same `auto` track differently
  * and skew every `fr` column after it. Every non-`fr` track here is a fixed
- * length for exactly that reason — the trailing `9.5rem` is sized off the four
- * `h-8 w-8` action buttons plus their gaps, with slack.
+ * length for exactly that reason — the trailing `11.75rem` is sized off the
+ * five `h-8 w-8` action buttons plus their gaps, with slack. Adding or removing
+ * an action means changing that literal in ALL THREE variants below.
  *
  * Cells are placed by document order, so hiding one at a breakpoint shifts the
  * rest up a track. The three tiers below are therefore prefix-compatible:
@@ -77,9 +80,9 @@ const RUN_HISTORY_LIMIT = 20;
  */
 export const TALON_ROW_GRID =
   'md:grid md:items-center md:gap-x-3 ' +
-  'md:grid-cols-[2.25rem_minmax(0,1fr)_minmax(0,1.5fr)_9.5rem_9.5rem] ' +
-  'lg:grid-cols-[2.25rem_minmax(0,1fr)_minmax(0,1.35fr)_minmax(0,0.9fr)_9.5rem_9.5rem] ' +
-  'xl:grid-cols-[2.25rem_minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,0.9fr)_8rem_9.5rem_9.5rem]';
+  'md:grid-cols-[2.25rem_minmax(0,1fr)_minmax(0,1.5fr)_9.5rem_11.75rem] ' +
+  'lg:grid-cols-[2.25rem_minmax(0,1fr)_minmax(0,1.35fr)_minmax(0,0.9fr)_9.5rem_11.75rem] ' +
+  'xl:grid-cols-[2.25rem_minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,0.9fr)_8rem_9.5rem_11.75rem]';
 
 /**
  * A talon as the client sees it. Deliberately permissive past `id`, `name`,
@@ -99,6 +102,12 @@ export interface TalonListItem {
   lastRunAt?: TalonTimestamp | null;
   lastRunStatus?: string | null;
   consecutiveFailures?: number | null;
+  /**
+   * Why the SYSTEM switched this talon off. Typed loosely for the same reason
+   * as everything above it: a reason added by a newer build has to render as
+   * "disabled" rather than crash an older client.
+   */
+  disabledReason?: string | null;
 }
 
 interface TalonCardProps {
@@ -107,6 +116,13 @@ interface TalonCardProps {
   /** The site's machines — used to size the scope summary. */
   machines: Machine[];
   onEdit: () => void;
+  /**
+   * Templatize this talon. Owned by the page rather than the row: one
+   * `useTalonPresets` subscription for the whole list, not one per row, and the
+   * name-collision confirm belongs where that list lives. Omit it and the
+   * action simply isn't offered.
+   */
+  onSaveAsTemplate?: () => void | Promise<void>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -290,7 +306,13 @@ function TalonRunList({ siteId, talonId }: { siteId: string; talonId: string }) 
 /*  card                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export function TalonCard({ talon, siteId, machines, onEdit }: TalonCardProps) {
+export function TalonCard({
+  talon,
+  siteId,
+  machines,
+  onEdit,
+  onSaveAsTemplate,
+}: TalonCardProps) {
   const { userPreferences } = useAuth();
   const use24h = (userPreferences.timeFormat || '12h') === '24h';
   const [expanded, setExpanded] = useState(false);
@@ -304,6 +326,10 @@ export function TalonCard({ talon, siteId, machines, onEdit }: TalonCardProps) {
   const outputs = talon.outputs ?? [];
   const failures = talon.consecutiveFailures ?? 0;
   const isVisualCheck = talon.condition?.type === 'visual_check';
+  // Only meaningful while the talon is off — the toggle clears the field, so a
+  // reason surviving next to an enabled talon would be a stale document, not a
+  // state worth explaining.
+  const disabledReason = talon.enabled ? null : describeTalonDisabledReason(talon.disabledReason);
 
   // Every column truncates, so each one also carries the full value as a
   // `title` — the list stays dense without hiding anything from the operator.
@@ -360,6 +386,16 @@ export function TalonCard({ talon, siteId, machines, onEdit }: TalonCardProps) {
     setBusyAction(null);
   }
 
+  async function handleSaveAsTemplate() {
+    if (!onSaveAsTemplate) return;
+    setBusyAction('template');
+    try {
+      await onSaveAsTemplate();
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function handleDelete() {
     setBusyAction('delete');
     try {
@@ -410,7 +446,9 @@ export function TalonCard({ talon, siteId, machines, onEdit }: TalonCardProps) {
                 }`}
               />
             </TooltipTrigger>
-            <TooltipContent>{talon.enabled ? 'enabled' : 'disabled'}</TooltipContent>
+            <TooltipContent className="max-w-xs">
+              {disabledReason ? `disabled — ${disabledReason}` : talon.enabled ? 'enabled' : 'disabled'}
+            </TooltipContent>
           </Tooltip>
         </div>
 
@@ -434,6 +472,18 @@ export function TalonCard({ talon, siteId, machines, onEdit }: TalonCardProps) {
                 </Badge>
               )}
             </div>
+            {/* Why the system switched it off, on the row itself: the whole
+                point of the reason is that an operator learns it WITHOUT
+                having to expand the history and read a run. */}
+            {disabledReason && (
+              <p
+                data-testid="talon-disabled-reason"
+                className="mt-1 truncate text-xs text-amber-600 dark:text-amber-400"
+                title={`switched off automatically — ${disabledReason}`}
+              >
+                switched off — {disabledReason}
+              </p>
+            )}
             {talon.description && (
               <p className="mt-1 truncate text-xs text-muted-foreground md:hidden">
                 {talon.description}
@@ -570,6 +620,30 @@ export function TalonCard({ talon, siteId, machines, onEdit }: TalonCardProps) {
             </TooltipTrigger>
             <TooltipContent>edit</TooltipContent>
           </Tooltip>
+
+          {onSaveAsTemplate && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  data-testid="talon-save-template"
+                  onClick={handleSaveAsTemplate}
+                  disabled={busyAction !== null}
+                  aria-label={`save ${talon.name} as a template`}
+                  className="h-8 w-8 cursor-pointer border-border p-0"
+                >
+                  {busyAction === 'template' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <BookmarkPlus className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>save as template</TooltipContent>
+            </Tooltip>
+          )}
 
           <Tooltip>
             <TooltipTrigger asChild>

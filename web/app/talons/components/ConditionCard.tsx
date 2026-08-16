@@ -179,8 +179,8 @@ export function ConditionCard({
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                hoot grabs a fresh screenshot and checks it against this on the site llm key. the
-                outputs fire when the check FAILS.
+                hoot grabs a fresh screenshot and checks it against this, using the ai key of
+                whoever created this talon. the outputs fire when the check FAILS.
               </p>
             )}
           </div>

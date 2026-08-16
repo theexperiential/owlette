@@ -28,6 +28,7 @@ import {
   type TalonMetric,
   type TalonOperator,
   type TalonOutput,
+  type TalonPresetTemplate,
   type TalonScheduleEntry,
   type TalonScope,
   type TalonTrigger,
@@ -535,7 +536,23 @@ function validateOutput(bag: ErrorBag, value: unknown, path: string): TalonOutpu
           tooLong: `keep this to ${TALON_DIRECTIVE_MAX_LENGTH} characters or fewer`,
         },
       );
-      return directive === null ? null : { type: 'cortex', directive };
+
+      let allowActions = false;
+      if (value.allowActions !== undefined && value.allowActions !== null) {
+        if (typeof value.allowActions !== 'boolean') {
+          bag.add(`${path}.allowActions`, 'invalid_field', 'this must be on or off');
+          return null;
+        }
+        allowActions = value.allowActions;
+      }
+
+      if (directive === null) return null;
+      // `false` IS the default, so it normalizes away — "hoot only looks" has
+      // one representation on the document, not two. Authoring `true` is
+      // separately gated on site admin by the store.
+      return allowActions
+        ? { type: 'cortex', directive, allowActions: true }
+        : { type: 'cortex', directive };
     }
 
     case 'command': {
@@ -568,7 +585,18 @@ function validateOutput(bag: ErrorBag, value: unknown, path: string): TalonOutpu
         }
         output[key] = parsed;
       }
-      return valid ? output : null;
+      if (!valid) return null;
+
+      // A command with no target is accepted by nothing downstream: the agent
+      // resolves id-then-name, reports `<unspecified>`, and the executor
+      // records a `failed` run — every run, until the tenth consecutive failure
+      // auto-disables the talon. Reported against `processId` because the
+      // editor routes both target keys to one message slot.
+      if (output.processId === undefined && output.processName === undefined) {
+        bag.add(`${path}.processId`, 'missing_field', PROCESS_TARGET_COPY.processId.missing);
+        return null;
+      }
+      return output;
     }
 
     default:
@@ -740,5 +768,71 @@ export function validateTalonInput(input: unknown): TalonValidationResult {
   };
   if (description !== undefined) value.description = description;
 
+  return { ok: true, value };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  talon presets                                                             */
+/* -------------------------------------------------------------------------- */
+
+export type TalonPresetTemplateResult =
+  | { ok: true; value: TalonPresetTemplate }
+  | { ok: false; errors: TalonFieldError[] };
+
+/**
+ * Fields a talon carries that a TEMPLATE must not — see {@link TalonPresetTemplate}.
+ * Rejected rather than dropped: silently discarding a field the caller set is
+ * how a preset ends up not doing what its author asked.
+ */
+const PRESET_FORBIDDEN_FIELDS: Readonly<Record<string, string>> = {
+  scope: 'a template applies to every machine — pick machines when you use it',
+  enabled: 'a template does not decide whether the talon it creates is on',
+};
+
+/**
+ * Validates the talon-shaped payload a preset carries.
+ *
+ * DELEGATES to `validateTalonInput` rather than re-deriving the rules: a preset
+ * that stored a talon the store would refuse is a preset whose breakage the
+ * operator only discovers at apply time. `enabled` and `scope` are injected at
+ * their template defaults so the delegate sees a complete talon, then dropped
+ * from the result — a template owns neither. Every bound the talon validator
+ * enforces (output count, interval floors, the visual-check floor, directive
+ * and expectation lengths) therefore applies to a template for free.
+ *
+ * Error paths are prefixed `template.` so they address the preset body the
+ * caller actually sent. Paths the editor has no exact slot for fall through to
+ * its footer summary, which is where an API-shaped error belongs anyway.
+ */
+export function validateTalonPresetInput(input: unknown): TalonPresetTemplateResult {
+  if (!isPlainObject(input)) {
+    return {
+      ok: false,
+      errors: [
+        { field: 'template', code: 'invalid_body', message: 'the template must be an object' },
+      ],
+    };
+  }
+
+  const forbidden = Object.entries(PRESET_FORBIDDEN_FIELDS)
+    .filter(([key]) => input[key] !== undefined)
+    .map(([key, message]): TalonFieldError => ({
+      field: `template.${key}`,
+      code: 'unknown_field',
+      message,
+    }));
+  if (forbidden.length > 0) return { ok: false, errors: forbidden };
+
+  const result = validateTalonInput({ ...input, enabled: true, scope: { machineIds: null } });
+  if (!result.ok) {
+    return {
+      ok: false,
+      errors: result.errors.map((error) => ({ ...error, field: `template.${error.field}` })),
+    };
+  }
+
+  const { name, description, trigger, condition, outputs, cooldownMinutes } = result.value;
+  const value: TalonPresetTemplate = { name, trigger, condition, outputs, cooldownMinutes };
+  if (description !== undefined) value.description = description;
   return { ok: true, value };
 }

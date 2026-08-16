@@ -80,7 +80,6 @@ const INTERNAL_ROUTES = new Set([
   '/api/cron/status-ping',
   '/api/settings/llm-key',
   '/api/settings/llm-models',
-  '/api/settings/site-llm-key',
   '/api/cron/health-check',
   '/api/cron/process-alerts',
   // internal-secret ingress for the `onTalonLogEventCreated` cloud function —

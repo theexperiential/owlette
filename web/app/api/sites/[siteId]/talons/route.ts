@@ -4,7 +4,7 @@
  *
  * Thin http shim. Every rule that decides whether a talon may exist — input
  * validation, the per-site cap, the `command`-output privilege gate, the SSRF
- * check on webhook outputs, the site-llm-key precondition, `nextRunAt`
+ * check on webhook outputs, the author-llm-key precondition, `nextRunAt`
  * stamping, secret minting, and the mutation audit — lives in
  * `@/lib/talons/store.server`. Adding a caller here can never sidestep them.
  *
@@ -50,10 +50,13 @@ const PROBLEM_TITLE_BY_CODE: Readonly<Record<TalonStoreErrorCode, string>> = {
   invalid_talon: 'validation failed',
   talon_limit_reached: 'talon limit reached',
   command_output_forbidden: 'forbidden',
+  hoot_actions_forbidden: 'forbidden',
   invalid_webhook_url: 'webhook url rejected',
-  site_llm_key_required: 'site llm key required',
+  llm_key_required: 'ai key required',
   talon_not_found: 'not found',
   pro_required: 'pro plan required',
+  invalid_reassign: 'validation failed',
+  successor_invalid: 'invalid successor',
 };
 
 const PROBLEM_TYPE_BY_STATUS: Readonly<Record<number, string>> = {
@@ -162,6 +165,9 @@ export function serializeTalon(talon: StoredTalon) {
     lastRunStatus: talon.lastRunStatus ?? null,
     lastRunId: talon.lastRunId ?? null,
     consecutiveFailures: talon.consecutiveFailures,
+    // Why the system switched it off. `null` on a talon that is enabled, or
+    // one an operator paused themselves — a human decision states no cause.
+    disabledReason: talon.disabledReason ?? null,
   };
 }
 

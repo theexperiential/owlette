@@ -56,6 +56,7 @@ jest.mock('@/lib/llm', () => ({
 
 const mockExecuteServerSideTool = jest.fn();
 const mockResolveLlmConfig = jest.fn();
+const mockResolveSiteKeyOwner = jest.fn();
 const mockIsMachineOnline = jest.fn();
 const mockIsHootEnabled = jest.fn();
 
@@ -65,6 +66,7 @@ jest.mock('@/lib/hoot-utils.server', () => ({
   SERVER_SIDE_TOOLS: jest.requireActual('@/lib/hoot-utils.server').SERVER_SIDE_TOOLS,
   executeServerSideTool: (...args: unknown[]) => mockExecuteServerSideTool(...args),
   resolveLlmConfig: (...args: unknown[]) => mockResolveLlmConfig(...args),
+  resolveSiteKeyOwner: (...args: unknown[]) => mockResolveSiteKeyOwner(...args),
   isMachineOnline: (...args: unknown[]) => mockIsMachineOnline(...args),
   isHootEnabled: (...args: unknown[]) => mockIsHootEnabled(...args),
 }));
@@ -215,6 +217,9 @@ beforeEach(() => {
 
   mockIsMachineOnline.mockResolvedValue(true);
   mockIsHootEnabled.mockResolvedValue(true);
+  // An unattended investigation has no author, so it spends the SITE OWNER's
+  // key — there is no shared site key scope any more.
+  mockResolveSiteKeyOwner.mockResolvedValue('owner-uid');
   mockResolveLlmConfig.mockResolvedValue({ provider: 'anthropic', model: 'test' });
   mockGetToolsByTier.mockImplementation((maxTier: 1 | 2 | 3) => realGetToolsByTier(maxTier));
   mockExecuteServerSideTool.mockResolvedValue({ ok: true });
@@ -327,5 +332,15 @@ describe('autonomous tool set exclusions', () => {
 
     expect(Object.keys(tools)).not.toContain('create_talon');
     expect(Object.keys(tools).length).toBeGreaterThan(0);
+  });
+});
+
+describe('whose key an autonomous investigation spends', () => {
+  it("resolves the SITE OWNER's key — there is no shared site key any more", async () => {
+    await buildTools();
+
+    expect(mockResolveSiteKeyOwner).toHaveBeenCalledWith(mockDb, SITE);
+    // The uid, never a site: an unattended run has to name whose key it spends.
+    expect(mockResolveLlmConfig).toHaveBeenCalledWith(mockDb, 'owner-uid');
   });
 });

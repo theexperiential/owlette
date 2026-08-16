@@ -5,6 +5,14 @@
  * GET keeps the existing read-only public route. DELETE now delegates to
  * `deleteUser` behind `authorizedPlatformHandler(USER_DELETE)` while
  * preserving the response/error contract from the api-sprint users route.
+ *
+ * Query params on DELETE:
+ *   - `successorUid`    who inherits the sites this user owns (required when
+ *                       they own any).
+ *   - `reassignTalons`  `true` to also hand that successor the talons this
+ *                       user authored. Opt-in; `authoredTalonCount` comes back
+ *                       either way. See `GET /api/users/{uid}/talons` for the
+ *                       preview the dashboard shows before confirming.
  */
 
 import type { NextRequest } from 'next/server';
@@ -144,6 +152,17 @@ export const DELETE = authorizedPlatformHandler<RouteParams>({
       });
     }
 
+    // Opt-in: hand the talons this user authored to the successor already
+    // being named for site ownership. Off by default so an api client that has
+    // always passed `successorUid` doesn't silently start rewriting authorship
+    // on automations it never asked about — the count comes back either way.
+    const reassignTalons = request.nextUrl.searchParams.get('reassignTalons') === 'true';
+    if (reassignTalons && !successorUid) {
+      return problemValidation('reassignTalons requires a successor', {
+        'query.reassignTalons': ['pass ?successorUid=<uid> to name who inherits the talons'],
+      });
+    }
+
     return await withIdempotency(
       request,
       {
@@ -155,10 +174,11 @@ export const DELETE = authorizedPlatformHandler<RouteParams>({
         const result = await deleteUser(
           {
             auditActor: auditActor(ctx),
+            actor: ctx.actor,
             endpoint: `/api/users/${uid}`,
             method: 'DELETE',
           },
-          { uid, successorUid },
+          { uid, successorUid, reassignTalons },
         );
 
         if (result.kind === 'not_found') {
@@ -216,6 +236,12 @@ export const DELETE = authorizedPlatformHandler<RouteParams>({
             transferredSites: result.transferredSites,
             revokedKeyIds: result.revokedKeyIds,
             authDisabled: result.authDisabled,
+            // Always reported, reassigned or not — a client that deletes an
+            // account blind still learns how many automations just lost their
+            // author.
+            authoredTalonCount: result.authoredTalonCount,
+            reassignedTalonIds: result.reassignedTalonIds,
+            talonReassignFailures: result.talonReassignFailures,
           }),
           ctx.scopeCheck,
         );

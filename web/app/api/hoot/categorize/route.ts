@@ -36,7 +36,7 @@ export const POST = withRateLimit(async (request: NextRequest) => {
 
     const db = getAdminDb();
     await verifyUserSiteAccess(db, userId, siteId);
-    const llmConfig = await resolveLlmConfig(db, userId, siteId);
+    const llmConfig = await resolveLlmConfig(db, userId);
     const model = createCheapModel(llmConfig);
 
     // Batch mode — categorize multiple existing conversations

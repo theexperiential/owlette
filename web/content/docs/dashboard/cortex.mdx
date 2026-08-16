@@ -25,9 +25,9 @@ The available tier depends on the caller. Site admins and superadmins can use th
 
 ## setup
 
-### user-level key
+### your key
 
-Cortex can use a personal LLM key from your account settings.
+There is exactly one place an LLM key lives: your own account settings. Every Cortex feature — chat, talons, visual checks, autonomous investigations — resolves a key belonging to a specific person.
 
 1. Open the dashboard account menu.
 2. Select **account settings**.
@@ -36,13 +36,23 @@ Cortex can use a personal LLM key from your account settings.
 5. Select a model.
 6. Paste the provider API key and save it.
 
-The key is encrypted server-side and stored under your user settings. The raw key is not returned to the browser after it is saved.
+The key is encrypted server-side and stored under your user settings at `users/{uid}/settings/llm`. The raw key is not returned to the browser after it is saved.
 
-### site-level key
+### which key an unattended run spends
 
-Cortex also checks for a site-level LLM key at `sites/{siteId}/settings/llm`. User keys take priority for normal chat, and the site key is the fallback when a user has not configured a personal key.
+Nobody is in the chat when a talon fires at 3am, so each unattended feature names the person whose key it is spending:
 
-Autonomous Cortex uses the site-level key only. The shipped dashboard does not currently include site-level key management; site-level keys are managed through the admin/API surface (`/api/settings/site-llm-key`) until a dashboard UI is added.
+| unattended work | key it resolves |
+|---|---|
+| a talon's hoot output | the talon's **creator** (`createdBy`) |
+| a talon's visual check | the talon's **creator** (`createdBy`) |
+| autonomous Cortex | the **site owner** |
+
+A talon's creator is re-checked on every run, not trusted from the day it was written. If the creator has left the site, had their account deleted, or removed their key, the talon is switched off immediately with the reason recorded on the talon and on the run that found out — it does not keep failing silently.
+
+<Callout type="warning" title="Changed in 3.0.0 — the site-level key is gone">
+  The site-level key scope (`sites/{siteId}/settings/llm`) and its admin endpoint (`/api/settings/site-llm-key`) have been **removed**. Nothing in the dashboard could ever create a site key, which made every AI talon un-runnable; the scope is gone rather than given a UI. Any `sites/{siteId}/settings/llm` document created through the old API is no longer read by anything and can be deleted. Save a key in **account settings → cortex** instead.
+</Callout>
 
 ---
 
@@ -127,7 +137,7 @@ For a single-machine chat, the web server runs the model loop and relays tool ca
 ```text
 dashboard chat
   -> POST /api/cortex
-  -> resolve user key, then site key fallback
+  -> resolve the signed-in user's key
   -> web server runs the turn (detached from your connection)
   -> tier-1/2 tool calls are relayed to the agent through Firestore commands
   -> tier-3 calls pause for in-chat approval, then run
@@ -198,7 +208,7 @@ Custom directives can be set in Firestore at `sites/{siteId}/settings/cortex` in
 ### enabling autonomous mode
 
 1. Set `CORTEX_INTERNAL_SECRET` in the web runtime environment.
-2. Configure a site-level LLM key at `sites/{siteId}/settings/llm`.
+2. Make sure the **site owner** has saved an LLM key in their account settings — that is the key autonomous investigations run on.
 3. Set `sites/{siteId}/settings/cortex.autonomousEnabled` to `true`.
 
 ### configuration options
@@ -208,7 +218,6 @@ Custom directives can be set in Firestore at `sites/{siteId}/settings/cortex` in
 | `autonomousEnabled` | `false` | Master switch for autonomous investigations |
 | `directive` | Default directive | Site-specific mission text for autonomous Cortex |
 | `maxTier` | `2` | Maximum tool tier for autonomous investigations |
-| `autonomousModel` | `null` | Optional site-level model override for autonomous work |
 | `cooldownMinutes` | `15` | Deduplication window for the same machine and process |
 | `escalationEmail` | `true` | Sends escalation email when Cortex cannot resolve the issue |
 
@@ -228,7 +237,7 @@ Custom directives can be set in Firestore at `sites/{siteId}/settings/cortex` in
 ## security
 
 - LLM keys are encrypted at rest and resolved only on the server.
-- User-level keys are preferred for normal chat; site-level keys are fallback and are required for autonomous mode.
+- Every key belongs to one person. Chat spends the signed-in user's key; a talon spends its creator's, re-checked against site access on every run; autonomous mode spends the site owner's.
 - Tier 3 tools are governed by the per-site approval setting (on by default): when on, they require an explicit in-chat approve/deny before running.
 - Server-side Cortex checks site access before every chat request, and sending, stopping, or cancelling a turn verifies the caller owns the target conversation.
 - Members and chat-scoped API keys are capped to read-only tools.

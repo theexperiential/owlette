@@ -954,7 +954,7 @@ TRIGGER (exactly one form):
 - event: {"type":"event","eventTypes":["process_crash","machine_offline"]} — also process_start_failed, process_restarted, exe_missing, and the display_* events (display_monitor_removed, display_apply_failed, display_drift, ...). Event triggers only, add "delayMinutes":N (0-1440) to wait N minutes after the event before running — e.g. let a restarted app finish booting before a visual_check looks at it. Omit it, or use 0, to run the moment the event lands.
 
 CONDITION (optional, defaults to {"type":"none"}):
-- {"type":"visual_check","expectation":"the lobby wall is playing the loop, not showing a desktop","monitor":0} — captures a fresh screenshot and asks a vision model whether the expectation holds. monitor 0 = all displays combined, 1 = primary. Needs a site-level LLM key.
+- {"type":"visual_check","expectation":"the lobby wall is playing the loop, not showing a desktop","monitor":0} — captures a fresh screenshot and asks a vision model whether the expectation holds. monitor 0 = all displays combined, 1 = primary. Needs the talon author to have an LLM key saved.
 
 OUTPUTS (1 to 5, run in order): email (notify the site's alert recipients), webhook (POST the run payload to an https URL), cortex (hand a directive to hoot to carry out — the wire value stays "cortex"), command (restart_process / start_process / stop_process against the machines in scope; site admins only).
 

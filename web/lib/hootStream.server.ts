@@ -410,7 +410,7 @@ async function runServerSideLLM(
   userRole: string | null,
 ): Promise<Response> {
   const [llmConfig, processes, requireTier3Approval] = await Promise.all([
-    resolveLlmConfig(db, userId, siteId),
+    resolveLlmConfig(db, userId),
     fetchProcessSummaries(db, siteId, machineId),
     getHootRequireTier3Approval(db, siteId),
   ]);
@@ -468,7 +468,7 @@ async function runSiteWideMode(
   userRole: string | null,
 ): Promise<Response> {
   const [llmConfig, requireTier3Approval] = await Promise.all([
-    resolveLlmConfig(db, userId, siteId),
+    resolveLlmConfig(db, userId),
     getHootRequireTier3Approval(db, siteId),
   ]);
   const toolDefs = getToolsByTier(maxToolTier);

@@ -195,85 +195,105 @@ function actionErrorResult(error: unknown): ProcessToolResult {
   };
 }
 
-export interface ResolveLlmConfigOptions {
-  /** If true, skip user-level key and only read site-level config. */
-  autonomous?: boolean;
-}
-
 /**
- * Resolve LLM config: user key first, then site key fallback.
- * In autonomous mode, only reads the site-level key.
+ * Resolve the LLM config belonging to ONE named user.
+ *
+ * ## one key, one place
+ *
+ * There is exactly one place a key can live: `users/{uid}/settings/llm`, saved
+ * by that person in settings → hoot. The old `sites/{siteId}/settings/llm`
+ * scope is GONE — nothing in the product could ever create one, so every
+ * unattended feature that required it (talons, visual checks) was un-runnable,
+ * and an operator who had already saved a personal key was told they needed a
+ * second, shared one with nowhere to set it.
+ *
+ * ## unattended runs must name whose key they spend
+ *
+ * `userId` is non-nullable and there is no site fallback, so an unattended
+ * caller cannot compile without deciding whose key it is spending. Talons
+ * resolve their AUTHOR (`talon.createdBy`, re-checked against site access on
+ * every run — see `lib/talons/author.server.ts`); autonomous investigations
+ * resolve the SITE OWNER, the one uid a site-wide feature can attribute itself
+ * to (`resolveSiteKeyOwner`).
+ *
+ * The old site-doc `autonomousModel` override went with the site doc. It never
+ * existed on a user doc — nothing writes that field there and no UI offers it —
+ * so an unattended run now uses the same `model` the key's owner picked for
+ * their own chats.
+ *
+ * @throws {Error} with copy an operator can act on when no key is saved or the
+ *                 stored key can no longer be decrypted.
  */
 export async function resolveLlmConfig(
   db: FirebaseFirestore.Firestore,
-  userId: string | null,
-  siteId: string,
-  options?: ResolveLlmConfigOptions
+  userId: string
 ): Promise<LlmConfig> {
-  // In user mode, check user-level key first
-  if (!options?.autonomous && userId) {
-    const userDoc = await db
-      .collection('users')
-      .doc(userId)
-      .collection('settings')
-      .doc('llm')
-      .get();
-
-    if (userDoc.exists) {
-      const data = userDoc.data()!;
-      try {
-        return {
-          provider: data.provider,
-          apiKey: decryptApiKey(data.apiKeyEncrypted),
-          model: data.model || undefined,
-        };
-      } catch {
-        throw new Error(
-          'Failed to decrypt your LLM API key. This usually means the server encryption key has changed since the key was saved. Please re-enter your API key in Account Settings → hoot.'
-        );
-      }
-    }
-  }
-
-  // Site-level key (fallback for user mode, primary for autonomous)
-  const siteDoc = await db
-    .collection('sites')
-    .doc(siteId)
+  const userDoc = await db
+    .collection('users')
+    .doc(userId)
     .collection('settings')
     .doc('llm')
     .get();
 
-  if (siteDoc.exists) {
-    const data = siteDoc.data()!;
-    let decryptedKey: string;
-    try {
-      decryptedKey = decryptApiKey(data.apiKeyEncrypted);
-    } catch {
-      throw new Error(
-        options?.autonomous
-          ? 'Failed to decrypt site-level LLM API key. The server encryption key may have changed — re-save the key in Admin Settings.'
-          : 'Failed to decrypt the site LLM API key. The server encryption key may have changed. Please ask your admin to re-save the key, or set your own in Account Settings → hoot.'
-      );
-    }
-    const config: LlmConfig = {
-      provider: data.provider,
-      apiKey: decryptedKey,
-      model: data.model || undefined,
-    };
-
-    // In autonomous mode, check for model override
-    if (options?.autonomous && data.autonomousModel) {
-      config.model = data.autonomousModel;
-    }
-
-    return config;
+  if (!userDoc.exists) {
+    throw new Error(
+      'No LLM API key configured. Add one in Account Settings → hoot.'
+    );
   }
 
-  throw new Error(
-    options?.autonomous
-      ? 'No site-level LLM API key configured. Autonomous hoot requires a site-level key.'
-      : 'No LLM API key configured. Add one in Account Settings or ask your admin to set a site-level key.'
-  );
+  const data = userDoc.data()!;
+  let apiKey: string;
+  try {
+    apiKey = decryptApiKey(data.apiKeyEncrypted);
+  } catch {
+    throw new Error(
+      'Failed to decrypt the stored LLM API key. This usually means the server encryption key has changed since the key was saved. Re-enter the API key in Account Settings → hoot.'
+    );
+  }
+
+  return {
+    provider: data.provider,
+    apiKey,
+    model: data.model || undefined,
+  };
+}
+
+/**
+ * Assert `userId` has a usable llm key, WITHOUT handing the key back.
+ *
+ * For callers that only need the precondition — the talon store's create/enable
+ * gate and the unattended pre-flight. Resolving through this helper means the
+ * decrypted key never enters a scope that could log, store, or forward it.
+ */
+export async function assertLlmKeyAvailable(
+  db: FirebaseFirestore.Firestore,
+  userId: string
+): Promise<void> {
+  await resolveLlmConfig(db, userId);
+}
+
+/**
+ * The uid whose llm key a site-wide unattended run spends: the site owner.
+ *
+ * Autonomous investigations are triggered by a machine, not a person, so there
+ * is no author to attribute them to. The owner is the one uid that is durable
+ * for the life of the site and already carries its billing — and, being the
+ * owner, always passes `verifyUserSiteAccess`.
+ *
+ * @throws {Error} when the site is gone or has no owner recorded.
+ */
+export async function resolveSiteKeyOwner(
+  db: FirebaseFirestore.Firestore,
+  siteId: string
+): Promise<string> {
+  const siteDoc = await db.collection('sites').doc(siteId).get();
+  const owner = siteDoc.data()?.owner;
+  if (typeof owner !== 'string' || owner.length === 0) {
+    throw new Error(
+      `Site ${siteId} has no owner, so there is no LLM API key for an unattended run to use.`
+    );
+  }
+  return owner;
 }
 
 /**
@@ -288,6 +308,40 @@ export interface SiteAccessLevel {
   isSuperadmin: boolean;
   isSiteAdmin: boolean;
   isSiteOwner: boolean;
+}
+
+/**
+ * Why {@link verifyUserSiteAccess} said no.
+ *
+ * `user_not_found` / `user_deleted` / `no_site_access` are DETERMINISTIC — the
+ * same call will say the same thing tomorrow. `site_not_found` is grouped with
+ * them for completeness but is not the user's problem: a site that has gone
+ * missing takes its whole talon collection with it.
+ */
+export type SiteAccessErrorCode =
+  | 'user_not_found'
+  | 'user_deleted'
+  | 'site_not_found'
+  | 'no_site_access';
+
+/**
+ * A refusal from {@link verifyUserSiteAccess}, carrying WHICH refusal it was.
+ *
+ * Subclasses `Error` and keeps the original messages verbatim, so every caller
+ * that only logs `error.message` is unaffected. The code exists for the one
+ * caller that has to act on the distinction: an unattended talon run, which
+ * disables the talon on a deterministic refusal and must NOT do so when the
+ * throw was a Firestore outage (which arrives as some other error type
+ * entirely — that is the whole point of narrowing on this class).
+ */
+export class SiteAccessError extends Error {
+  readonly code: SiteAccessErrorCode;
+
+  constructor(code: SiteAccessErrorCode, message: string) {
+    super(message);
+    this.name = 'SiteAccessError';
+    this.code = code;
+  }
 }
 
 /**
@@ -312,10 +366,10 @@ export async function verifyUserSiteAccess(
   ]);
 
   if (!userDoc.exists) {
-    throw new Error('User not found');
+    throw new SiteAccessError('user_not_found', 'User not found');
   }
   if (!siteDoc.exists) {
-    throw new Error('Site not found');
+    throw new SiteAccessError('site_not_found', 'Site not found');
   }
 
   const userData = userDoc.data()!;
@@ -328,7 +382,7 @@ export async function verifyUserSiteAccess(
   // keep driving Hoot, including tier-3 tools, until their cookie lapses.
   // Mirrors assertUserDataActive() in apiAuth.server.
   if (typeof userData.deletedAt === 'number') {
-    throw new Error('User is deleted or inactive');
+    throw new SiteAccessError('user_deleted', 'User is deleted or inactive');
   }
 
   const siteData = siteDoc.data() || {};
@@ -339,7 +393,7 @@ export async function verifyUserSiteAccess(
   const isAssigned = userSites.includes(siteId);
 
   if (!isSuperadmin && !isSiteOwner && !isAssigned) {
-    throw new Error('You do not have access to this site');
+    throw new SiteAccessError('no_site_access', 'You do not have access to this site');
   }
 
   // Mirrors AuthContext.isSiteAdmin: superadmin, or admin role with

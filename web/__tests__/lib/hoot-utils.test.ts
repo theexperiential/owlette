@@ -139,6 +139,10 @@ import {
   executeToolOnAgent,
   executeExistingCommand,
   buildExecutableTools,
+  assertLlmKeyAvailable,
+  resolveLlmConfig,
+  resolveSiteKeyOwner,
+  SiteAccessError,
   verifyUserSiteAccess,
   resolveHootMaxTier,
   getHootRequireTier3Approval,
@@ -147,6 +151,7 @@ import {
 } from '@/lib/hoot-utils.server';
 
 import { allTools } from '@/lib/mcp-tools';
+import { decryptApiKey } from '@/lib/llm-encryption.server';
 
 beforeEach(() => {
   mockCreateProcess.mockReset();
@@ -586,6 +591,103 @@ describe('buildExecutableTools', () => {
   }, 15000);
 });
 
+// ─── resolveLlmConfig ───────────────────────────────────────────────────────
+
+/**
+ * A db whose `users/{uid}/settings/llm` and `sites/{siteId}` docs are seeded
+ * from `store`, and which RECORDS every path it was asked for — the site-key
+ * assertions below are about a read that must no longer happen at all.
+ */
+function makeKeyDb(store: Record<string, Record<string, unknown>>) {
+  const reads: string[] = [];
+  const docRef = (path: string) => ({
+    get: async () => {
+      reads.push(path);
+      const data = store[path];
+      return { exists: data !== undefined, data: () => data };
+    },
+    collection: (child: string) => ({ doc: (id: string) => docRef(`${path}/${child}/${id}`) }),
+  });
+  const db = {
+    collection: (name: string) => ({ doc: (id: string) => docRef(`${name}/${id}`) }),
+  } as unknown as FirebaseFirestore.Firestore;
+  return { db, reads };
+}
+
+describe('resolveLlmConfig', () => {
+  it("returns the named user's key, decrypted", async () => {
+    const { db } = makeKeyDb({
+      'users/u1/settings/llm': {
+        provider: 'anthropic',
+        apiKeyEncrypted: 'sk-user',
+        model: 'claude-x',
+      },
+    });
+
+    await expect(resolveLlmConfig(db, 'u1')).resolves.toEqual({
+      provider: 'anthropic',
+      apiKey: 'sk-user',
+      model: 'claude-x',
+    });
+  });
+
+  it('never consults a site-level key, even when one exists', async () => {
+    // The old `sites/{siteId}/settings/llm` scope is gone. A document left over
+    // from the removed admin endpoint must be inert, not a silent fallback.
+    const { db, reads } = makeKeyDb({
+      'sites/s1/settings/llm': { provider: 'anthropic', apiKeyEncrypted: 'sk-site' },
+    });
+
+    await expect(resolveLlmConfig(db, 'u1')).rejects.toThrow(/No LLM API key configured/);
+    expect(reads).toEqual(['users/u1/settings/llm']);
+  });
+
+  it('points a keyless caller at the one screen that fixes it', async () => {
+    const { db } = makeKeyDb({});
+
+    await expect(resolveLlmConfig(db, 'u1')).rejects.toThrow('Account Settings → hoot');
+  });
+
+  it('reports an undecryptable key without echoing any of it', async () => {
+    const { db } = makeKeyDb({
+      'users/u1/settings/llm': { provider: 'anthropic', apiKeyEncrypted: 'sk-corrupt' },
+    });
+    (decryptApiKey as jest.Mock).mockImplementationOnce(() => {
+      throw new Error('bad key');
+    });
+
+    const error = await resolveLlmConfig(db, 'u1').catch((err: Error) => err);
+    expect((error as Error).message).toMatch(/Failed to decrypt/);
+    expect((error as Error).message).not.toContain('sk-corrupt');
+  });
+
+  it('asserts a key without handing it back', async () => {
+    const { db } = makeKeyDb({
+      'users/u1/settings/llm': { provider: 'anthropic', apiKeyEncrypted: 'sk-user' },
+    });
+
+    await expect(assertLlmKeyAvailable(db, 'u1')).resolves.toBeUndefined();
+    await expect(assertLlmKeyAvailable(db, 'u-nokey')).rejects.toThrow(/No LLM API key/);
+  });
+});
+
+describe('resolveSiteKeyOwner', () => {
+  it('names the site owner as the uid an unattended site-wide run spends', async () => {
+    const { db } = makeKeyDb({ 'sites/s1': { owner: 'owner-uid' } });
+
+    await expect(resolveSiteKeyOwner(db, 's1')).resolves.toBe('owner-uid');
+  });
+
+  it.each([
+    ['a site with no owner recorded', { 'sites/s1': {} }],
+    ['a site that is gone', {}],
+  ])('refuses %s', async (_label, store) => {
+    const { db } = makeKeyDb(store as Record<string, Record<string, unknown>>);
+
+    await expect(resolveSiteKeyOwner(db, 's1')).rejects.toThrow(/has no owner/);
+  });
+});
+
 // ─── verifyUserSiteAccess ───────────────────────────────────────────────────
 
 /**
@@ -701,6 +803,28 @@ describe('verifyUserSiteAccess', () => {
     await expect(verifyUserSiteAccess(db, 'u1', 's1')).rejects.toThrow(
       /do not have access/
     );
+  });
+
+  /**
+   * The codes exist for one caller: an unattended talon run, which disables the
+   * talon on a DETERMINISTIC refusal and must not on anything else. A refusal
+   * that arrived without a code would be indistinguishable from a Firestore
+   * outage, so every branch that says no has to say which no it is.
+   */
+  it.each([
+    ['user_not_found', { users: null, sites: { owner: 'someone' } }],
+    ['site_not_found', { users: { role: 'member', sites: ['s1'] }, siteExists: false }],
+    [
+      'user_deleted',
+      { users: { role: 'admin', sites: ['s1'], deletedAt: 1700000000000 }, sites: {} },
+    ],
+    ['no_site_access', { users: { role: 'member', sites: ['other'] }, sites: { owner: 'x' } }],
+  ])('refuses with code %s', async (code, docs) => {
+    const db = makeAccessDb(docs as Parameters<typeof makeAccessDb>[0]);
+
+    const error = await verifyUserSiteAccess(db, 'u1', 's1').catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(SiteAccessError);
+    expect((error as SiteAccessError).code).toBe(code);
   });
 });
 

@@ -36,6 +36,10 @@ import { useLayoutEffect, useRef, useState } from 'react';
 const ARROW = 4;
 /** Below this, two ends count as sharing a row and the elbow collapses. */
 const SAME_ROW_EPSILON = 0.5;
+/** Identical rects in a row before the open animation counts as finished. */
+const SETTLE_STABLE_FRAMES = 2;
+/** ~0.5s at 60fps. A box still moving after this is animating on a loop. */
+const SETTLE_MAX_FRAMES = 30;
 
 /** The subset of `DOMRect` the geometry reads. */
 export interface ConnectorRect {
@@ -156,9 +160,23 @@ export function PipelineConnectors({ outputCount }: PipelineConnectorsProps) {
     const el = containerRef.current;
     if (!el) return;
     const wrapper = el.parentElement;
-    const nodeEls = Array.from(wrapper?.querySelectorAll('[data-talon-node]') ?? []);
+    if (!wrapper) return;
+
+    /*
+     * Queried per measurement, never captured once.
+     *
+     * A node set captured on mount goes stale the moment React replaces an
+     * element, and a DETACHED node still answers getBoundingClientRect() — with
+     * all zeros. That read like "this row has no size", so the arm to it was
+     * skipped and the fan silently lost a wire. Applying a template did exactly
+     * this: it swaps an output's TYPE without changing the output COUNT, so the
+     * effect below never re-ran, and the row element it was holding had already
+     * been thrown away.
+     */
+    const findNodes = () => Array.from(wrapper.querySelectorAll('[data-talon-node]'));
 
     const measure = () => {
+      const nodeEls = findNodes();
       const container = el.getBoundingClientRect();
 
       let trigger: ConnectorRect | null = null;
@@ -196,13 +214,66 @@ export function PipelineConnectors({ outputCount }: PipelineConnectorsProps) {
     // Measured before paint so the first frame already has the connectors.
     measure();
 
+    /*
+     * ...and then again until the box stops moving.
+     *
+     * The dialog animates OPEN with a transform (Radix's `zoom-in-95`). A
+     * transform changes what `getBoundingClientRect()` reports but NOT the
+     * element's border-box size, so a ResizeObserver never fires for it — the
+     * measurement above is taken mid-animation, at 95%, and stays that way for
+     * the life of the dialog. Every arm then lands about a gutter short of the
+     * card it points at.
+     *
+     * The tell was that it looked correct with two or more outputs: changing
+     * `outputCount` re-runs this effect, which re-measures after the animation
+     * has finished. One output meant one measurement, taken at the wrong moment.
+     *
+     * So: re-measure per frame until the container's rect repeats, then stop.
+     * Bounded because a never-settling box (a looping animation) must not pin a
+     * rAF loop for the life of the dialog.
+     */
+    let frame = 0;
+    let elapsed = 0;
+    let previous = '';
+    let repeats = 0;
+    const settle = () => {
+      const { left, top, width, height } = el.getBoundingClientRect();
+      const key = `${left}|${top}|${width}|${height}`;
+      if (key === previous) {
+        repeats += 1;
+      } else {
+        previous = key;
+        repeats = 0;
+        measure();
+      }
+      if (repeats >= SETTLE_STABLE_FRAMES || (elapsed += 1) > SETTLE_MAX_FRAMES) return;
+      frame = requestAnimationFrame(settle);
+    };
+    frame = requestAnimationFrame(settle);
+
     // Every node, not just the overlay: a row that grows (email → hoot swaps a
     // hint line for a textarea) shifts the rows below it without changing the
     // overlay's own box, since the grid row is sized by the tallest card.
     const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    for (const node of nodeEls) observer.observe(node);
-    return () => observer.disconnect();
+    const observeAll = () => {
+      observer.disconnect();
+      observer.observe(el);
+      for (const node of findNodes()) observer.observe(node);
+      measure();
+    };
+    observeAll();
+
+    // Re-point the observer whenever the card subtree is rebuilt — a swapped
+    // output row is a NEW element, and an observer still watching the old one
+    // reports on a node nobody can see.
+    const mutations = new MutationObserver(observeAll);
+    mutations.observe(wrapper, { childList: true, subtree: true });
+
+    return () => {
+      cancelAnimationFrame(frame);
+      mutations.disconnect();
+      observer.disconnect();
+    };
   }, [outputCount]);
 
   const drawable = size.width > 0 && size.height > 0 && paths.length > 0;

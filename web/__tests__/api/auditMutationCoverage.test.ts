@@ -150,8 +150,6 @@ export const KNOWN_GAPS: readonly string[] = [
   'passkeys/register/verify',
   // stores or removes the caller's encrypted user-level LLM api key.
   'settings/llm-key',
-  // stores or removes a site-level encrypted LLM api key (admin-only).
-  'settings/site-llm-key',
   // operator (session) mints an agent registration code for a site.
   'setup/generate-token',
 ];

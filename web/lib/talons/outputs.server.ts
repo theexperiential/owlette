@@ -560,6 +560,9 @@ async function executeHootOutput(
     runId: ctx.runId,
     correlationId: ctx.correlationId,
     directive: output.directive,
+    // Only forwarded when set, so the runner's default path is byte-identical
+    // to what every talon authored before the opt-in existed.
+    ...(output.allowActions ? { allowActions: true } : {}),
     triggerSummary: ctx.triggerSummary,
     ...(ctx.machineId ? { machineId: ctx.machineId } : {}),
     ...(ctx.machineName ? { machineName: ctx.machineName } : {}),
@@ -573,5 +576,8 @@ async function executeHootOutput(
         status: 'failed',
         detail: result.detail,
         ...(result.error ? { error: result.error } : {}),
+        // Only an unrecoverable author problem sets this; the engine lifts it
+        // onto the run and switches the talon off without waiting for ten.
+        ...(result.disabledReason ? { disabledReason: result.disabledReason } : {}),
       };
 }

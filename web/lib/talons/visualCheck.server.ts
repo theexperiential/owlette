@@ -28,11 +28,16 @@ import type { Firestore } from 'firebase-admin/firestore';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { ExecuteMachineCommandError } from '@/lib/actions/executeMachineCommand.server';
-import { resolveLlmConfig } from '@/lib/hoot-utils.server';
 import { dispatchAndAwait } from '@/lib/jobs/talonRunner.server';
 import { createModel } from '@/lib/llm';
 import logger from '@/lib/logger';
-import type { TalonVisualCheckCondition } from './types';
+import {
+  TalonAuthorError,
+  resolveTalonAuthor,
+  resolveTalonAuthorLlmConfig,
+} from './author.server';
+import type { StoredTalon } from './store.server';
+import type { TalonDisabledReason, TalonVisualCheckCondition } from './types';
 
 /**
  * Poll budget for the capture. Wider than the shared 30s command timeout: the
@@ -48,22 +53,35 @@ export type TalonVisualCheckErrorCode =
   | 'capture_failed'
   | 'machine_offline'
   | 'no_interactive_session'
-  | 'verdict_error';
+  | 'verdict_error'
+  | 'author_unavailable';
 
 /**
  * A visual check that could not produce a verdict at all — distinct from a
  * `fail` verdict, which IS an answer. The engine maps the two "the machine
  * wasn't in a state to be checked" codes (`machine_offline`,
- * `no_interactive_session`) onto a skipped run and the two genuine faults
+ * `no_interactive_session`) onto a skipped run and the genuine faults
  * (`capture_failed`, `verdict_error`) onto a failed one.
+ *
+ * `author_unavailable` is the third kind: not a fault of the machine or the
+ * model but of the person whose key backs the check. It always carries a
+ * `disabledReason`, and the engine switches the talon off rather than failing
+ * it ten more times to reach the same conclusion.
  */
 export class TalonVisualCheckError extends Error {
   readonly code: TalonVisualCheckErrorCode;
+  /** Set only on `author_unavailable` — the reason to stamp on the talon. */
+  readonly disabledReason?: TalonDisabledReason;
 
-  constructor(code: TalonVisualCheckErrorCode, message: string) {
+  constructor(
+    code: TalonVisualCheckErrorCode,
+    message: string,
+    disabledReason?: TalonDisabledReason,
+  ) {
     super(message);
     this.name = 'TalonVisualCheckError';
     this.code = code;
+    if (disabledReason) this.disabledReason = disabledReason;
   }
 }
 
@@ -79,11 +97,36 @@ export interface VisualCheckResult {
   screenshotUrl?: string;
 }
 
-const verdictSchema = z.object({
+export const visualCheckVerdictSchema = z.object({
   verdict: z.enum(['pass', 'fail']),
-  confidence: z.number().min(0).max(1),
+  /**
+   * Deliberately unbounded IN THE SCHEMA. `z.number().min(0).max(1)` renders as
+   * JSON Schema `minimum`/`maximum`, and Google's structured-output dialect
+   * rejects both on a number — "For 'number' type, properties maximum, minimum
+   * are not supported" — which failed EVERY visual check on a Gemini key with
+   * `verdict_error` before the model was even asked to look at the screenshot.
+   *
+   * The bound is not lost, just moved: {@link clampConfidence} applies it after
+   * the call, where it also covers a model that answers 0-100 or NaN. Schemas
+   * that cross a provider boundary have to hold to the smallest dialect any
+   * provider accepts; a constraint we can enforce ourselves does not belong in
+   * one. Anything added here must be checked against Google's subset.
+   */
+  confidence: z.number(),
   reason: z.string(),
 });
+
+/**
+ * The [0,1] bound the schema can no longer carry. A model that returns 87 (a
+ * percentage), a negative, or a NaN gets pulled back into range rather than
+ * poisoning the run record and the alert email — and an unusable value reads as
+ * no confidence rather than total confidence.
+ */
+function clampConfidence(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value > 1 && value <= 100) return Math.min(1, value / 100);
+  return Math.min(1, Math.max(0, value));
+}
 
 const VISUAL_CHECK_SYSTEM_PROMPT = `You are a strict visual inspector for unattended video-wall, kiosk, and digital-signage installations. You are shown one screenshot of a remote machine's display and one operator expectation describing what that display should look like right now.
 
@@ -159,17 +202,51 @@ function readCaptureResult(entry: Record<string, unknown>): CaptureResult {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * The vision model this check runs on: the author's own, re-resolved every run.
+ *
+ * There is no shared site key any more (see `resolveLlmConfig`), so a visual
+ * check spends the key of whoever wrote the talon — and only while that person
+ * still has access to the site. Both halves are the same fire-time question the
+ * hoot output asks, answered by the same module, so the two AI paths can never
+ * drift apart on who is allowed to run unattended work.
+ */
+async function resolveAuthorModel(db: Firestore, siteId: string, talon: StoredTalon) {
+  try {
+    const author = await resolveTalonAuthor(db, siteId, talon);
+    return createModel(await resolveTalonAuthorLlmConfig(db, author.userId));
+  } catch (error) {
+    if (error instanceof TalonAuthorError) {
+      throw new TalonVisualCheckError('author_unavailable', error.message, error.reason);
+    }
+    // Transient — a failed read, a missing site. Stays on the failure counter.
+    throw new TalonVisualCheckError(
+      'verdict_error',
+      `could not resolve who this talon runs as: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
+/**
  * Capture the machine's display and judge it against `condition.expectation`.
  *
+ * @param talon the talon being evaluated — its `createdBy` is the person whose
+ *              key pays for the verdict, re-checked on every run.
  * @throws {TalonVisualCheckError} when no verdict could be produced.
  */
 export async function evaluateVisualCheck(
   db: Firestore,
   siteId: string,
   machineId: string,
+  talon: StoredTalon,
   condition: VisualCheckSpec,
   correlationId: string,
 ): Promise<VisualCheckResult> {
+  // Resolved BEFORE the capture: a check nobody can pay for should not cost the
+  // machine a 45-second screenshot round trip to find that out.
+  const model = await resolveAuthorModel(db, siteId, talon);
+
   const capture = await captureScreenshot(db, siteId, machineId, condition, correlationId);
 
   const url = capture.url;
@@ -190,25 +267,11 @@ export async function evaluateVisualCheck(
     );
   }
 
-  // `autonomous: true` skips the per-user key by design — a talon runs with no
-  // human in the loop, so only a site-level key can back it.
-  let model;
-  try {
-    model = createModel(await resolveLlmConfig(db, null, siteId, { autonomous: true }));
-  } catch (error) {
-    throw new TalonVisualCheckError(
-      'verdict_error',
-      `this talon needs a usable site llm key to judge the screenshot: ${
-        error instanceof Error ? error.message : 'no site-level llm key is configured.'
-      }`,
-    );
-  }
-
-  let verdict: z.infer<typeof verdictSchema>;
+  let verdict: z.infer<typeof visualCheckVerdictSchema>;
   try {
     const generated = await generateObject({
       model,
-      schema: verdictSchema,
+      schema: visualCheckVerdictSchema,
       system: VISUAL_CHECK_SYSTEM_PROMPT,
       messages: [
         {
@@ -233,14 +296,16 @@ export async function evaluateVisualCheck(
     );
   }
 
+  const confidence = clampConfidence(verdict.confidence);
+
   logger.info(
-    `Talon visual check on ${machineId}: ${verdict.verdict} (${verdict.confidence})`,
+    `Talon visual check on ${machineId}: ${verdict.verdict} (${confidence})`,
     { context: 'talons/visualCheck', data: { siteId, machineId, correlationId } },
   );
 
   return {
     verdict: verdict.verdict,
-    confidence: verdict.confidence,
+    confidence,
     reason: verdict.reason,
     ...(capture.storage_path ? { screenshotPath: capture.storage_path } : {}),
     screenshotUrl: url,

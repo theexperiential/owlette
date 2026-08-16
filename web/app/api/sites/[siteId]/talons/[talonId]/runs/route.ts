@@ -123,6 +123,9 @@ function serializeRun(id: string, data: FirebaseFirestore.DocumentData) {
     correlationId: stringOrNull(data.correlationId),
     chatId: stringOrNull(data.chatId),
     error: stringOrNull(data.error),
+    // Set only on the run that switched the talon off — the run history's own
+    // explanation of why the talon stopped.
+    disabledReason: stringOrNull(data.disabledReason),
     manual: data.manual === true,
   };
 }

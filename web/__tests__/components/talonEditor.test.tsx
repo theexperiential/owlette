@@ -56,9 +56,54 @@ jest.mock('@/lib/toast', () => ({
   toast: { success: jest.fn(), error: jest.fn(), info: jest.fn(), warning: jest.fn() },
 }));
 
+/**
+ * The preset hook is mocked wholesale: its Firestore listener and the shipped
+ * built-in catalog belong to their own units, and what this file is testing is
+ * what the picker DOES with a template — hydration and the payload it cuts.
+ */
+const mockCreatePreset = jest.fn(async () => 'talon-saved-1');
+const mockUpdatePreset = jest.fn(async () => undefined);
+const mockDeletePreset = jest.fn(async () => undefined);
+let mockPresets: unknown[] = [];
+
+jest.mock('@/hooks/useTalonPresets', () => ({
+  useTalonPresets: () => ({
+    presets: mockPresets,
+    loading: false,
+    error: null,
+    createPreset: mockCreatePreset,
+    updatePreset: mockUpdatePreset,
+    deletePreset: mockDeletePreset,
+  }),
+}));
+
 const MACHINES = [
   { id: 'machine-a', name: 'lobby wall', online: true, processes: [{ id: 'p1', name: 'TouchDesigner' }] },
 ];
+
+/**
+ * A template carries no `scope` and no `enabled` — that is the whole point of
+ * the shape, and the hydration test below proves the editor does not invent
+ * either from the preset.
+ */
+const OVERNIGHT_TEMPLATE = {
+  id: 'builtin-overnight-restart',
+  name: 'overnight restart',
+  description: 'restart the loop when it crashes overnight',
+  template: {
+    name: 'overnight restart',
+    description: 'restart the loop when it crashes overnight',
+    trigger: { type: 'event', eventTypes: ['process_crash'], delayMinutes: 2 },
+    condition: { type: 'visual_check', expectation: 'the wall shows the brand loop' },
+    outputs: [{ type: 'webhook', url: 'https://example.com/hooks/talon' }],
+    cooldownMinutes: 30,
+  },
+  isBuiltIn: true,
+  order: 0,
+  createdBy: '',
+  createdAt: null,
+  requires: [],
+};
 
 /**
  * Every error message on screen, in dom order. Both surfaces use role="alert" —
@@ -67,6 +112,17 @@ const MACHINES = [
  */
 function errorTexts(): string[] {
   return screen.queryAllByRole('alert').map((el) => el.textContent?.trim() ?? '');
+}
+
+/**
+ * The SAVE requests a fetch spy saw, ignoring the editor's read-only probes.
+ *
+ * Opening the editor in create mode reads whether the current user has an llm
+ * key (to annotate the template picker), so "nothing was submitted" can no
+ * longer be expressed as "fetch was never called" — only writes count.
+ */
+function saveCalls(fetchSpy: jest.Mock): unknown[][] {
+  return fetchSpy.mock.calls.filter(([url]) => String(url).includes('/talons'));
 }
 
 /** Switches the first output row to the hoot type, whose directive starts empty. */
@@ -88,6 +144,10 @@ function renderEditor(props: Partial<React.ComponentProps<typeof TalonEditorDial
 }
 
 describe('TalonEditorDialog', () => {
+  beforeEach(() => {
+    mockPresets = [];
+  });
+
   it('renders the three pipeline stages in create mode', () => {
     renderEditor();
 
@@ -130,7 +190,7 @@ describe('TalonEditorDialog', () => {
     expect(screen.getAllByTestId('output-row')).toHaveLength(TALON_MAX_OUTPUTS);
   });
 
-  it('binds a validator error to the field that earned it, and never fetches', async () => {
+  it('binds a validator error to the field that earned it, and never saves', async () => {
     const fetchSpy = jest.fn();
     global.fetch = fetchSpy as unknown as typeof fetch;
 
@@ -144,7 +204,7 @@ describe('TalonEditorDialog', () => {
     expect(name).toHaveAttribute('aria-invalid', 'true');
 
     expect(errorTexts()).toEqual(['give this talon a name']);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(saveCalls(fetchSpy)).toHaveLength(0);
   });
 
   it('writes errors in plain english, with no field paths or index notation', async () => {
@@ -192,12 +252,19 @@ describe('TalonEditorDialog', () => {
     expect(errorTexts()).toContain('give this talon a name');
     expect(errorTexts()).toContain('tell hoot what to do when this talon fires');
 
-    await user.type(screen.getByRole('textbox', { name: 'name' }), 'overnight restart');
+    // Paste rather than type: what's under test is that correcting a field
+    // clears its error, not per-keystroke behaviour, and 33 keystrokes across a
+    // now-heavier editor (preset picker + cooldown control) pushed this past
+    // jest's default timeout under full-suite worker contention. Same reason
+    // the delay test pastes its name.
+    await user.click(screen.getByRole('textbox', { name: 'name' }));
+    await user.paste('overnight restart');
     expect(errorTexts()).not.toContain('give this talon a name');
     // Untouched fields keep theirs.
     expect(errorTexts()).toContain('tell hoot what to do when this talon fires');
 
-    await user.type(screen.getByRole('textbox', { name: 'output 1 directive' }), 'restart the loop');
+    await user.click(screen.getByRole('textbox', { name: 'output 1 directive' }));
+    await user.paste('restart the loop');
     expect(errorTexts()).toEqual([]);
   });
 
@@ -258,7 +325,7 @@ describe('TalonEditorDialog', () => {
 
     expect(delay).toHaveAttribute('aria-invalid', 'true');
     expect(errorTexts()).toEqual(['the delay must be between 0 and 24 hours']);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(saveCalls(fetchSpy)).toHaveLength(0);
   }, 15_000);
 
   it('prefills the delay from an existing talon', () => {
@@ -312,5 +379,185 @@ describe('TalonEditorDialog', () => {
     expect(within(outputRow).getByRole('textbox', { name: 'output 1 url' })).toHaveValue(
       'https://example.com/hooks/talon',
     );
+  });
+
+  it('hides the template picker in edit mode', () => {
+    mockPresets = [OVERNIGHT_TEMPLATE];
+    renderEditor({
+      talon: {
+        id: 'talon-1',
+        schemaVersion: 1,
+        name: 'overnight restart',
+        enabled: true,
+        trigger: { type: 'event', eventTypes: ['process_crash'] },
+        condition: { type: 'none' },
+        outputs: [{ type: 'email' }],
+        scope: { machineIds: null },
+        cooldownMinutes: 30,
+        createdBy: 'user-1',
+        createdVia: 'ui',
+        createdAt: 0,
+        updatedAt: 0,
+        consecutiveFailures: 0,
+      },
+    });
+
+    expect(screen.queryByTestId('talon-template-picker')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('talon-template-save')).not.toBeInTheDocument();
+  });
+
+  /* --- a met requirement is not a requirement -----------------------------
+   *
+   * The picker used to print "needs an ai key" on every ai template whatever
+   * the operator had configured — the copy only varied when the key was known
+   * to be MISSING, so having one and having none read identically, and every ai
+   * template sat under "needs a detail" for the people best equipped to run it.
+   */
+
+  const AI_TEMPLATE = { ...OVERNIGHT_TEMPLATE, requires: ['llm_key'] as const };
+
+  function mockLlmKey(configured: boolean) {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ configured }),
+    }) as unknown as typeof fetch;
+  }
+
+  it('says nothing about an ai key once the operator has one', async () => {
+    mockPresets = [AI_TEMPLATE];
+    mockLlmKey(true);
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByTestId('talon-template-picker'));
+    const option = await screen.findByRole('option', { name: /overnight restart/ });
+
+    expect(option).not.toHaveTextContent(/needs an ai/i);
+    // ...and it belongs with the templates that run as-is.
+    expect(await screen.findByText('ready to use')).toBeInTheDocument();
+    expect(screen.queryByText('needs a detail')).not.toBeInTheDocument();
+  });
+
+  it('asks for an ai api key only when the operator has none', async () => {
+    mockPresets = [AI_TEMPLATE];
+    mockLlmKey(false);
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByTestId('talon-template-picker'));
+    const option = await screen.findByRole('option', { name: /overnight restart/ });
+
+    expect(option).toHaveTextContent(/needs an ai api key/i);
+    expect(await screen.findByText('needs a detail')).toBeInTheDocument();
+  });
+
+  it('hydrates the whole form from a template and resets scope to all machines', async () => {
+    mockPresets = [OVERNIGHT_TEMPLATE];
+    const user = userEvent.setup();
+    renderEditor();
+
+    // Narrow the scope first, so "all machines" afterwards is the template
+    // resetting it rather than the create-mode default never having moved.
+    await user.click(screen.getByRole('checkbox', { name: 'all machines' }));
+    await user.click(screen.getByRole('checkbox', { name: /lobby wall/ }));
+    expect(screen.getByRole('checkbox', { name: 'all machines' })).not.toBeChecked();
+
+    await user.click(screen.getByTestId('talon-template-picker'));
+    await user.click(await screen.findByRole('option', { name: /overnight restart/ }));
+
+    // trigger
+    expect(screen.getByTestId('trigger-event')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /process_crash/ })).toBeChecked();
+    expect(screen.getByLabelText('then wait')).toHaveValue(2);
+
+    // condition
+    expect(screen.getByTestId('condition-visual-check')).toBeInTheDocument();
+    expect(screen.getByLabelText(/what should be on screen/)).toHaveValue(
+      'the wall shows the brand loop',
+    );
+
+    // outputs
+    expect(screen.getByRole('textbox', { name: 'output 1 url' })).toHaveValue(
+      'https://example.com/hooks/talon',
+    );
+
+    // name, description and cooldown all come along
+    expect(screen.getByRole('textbox', { name: 'name' })).toHaveValue('overnight restart');
+    expect(screen.getByRole('spinbutton', { name: 'run at most once every' })).toHaveValue(30);
+
+    // scope is the one field a template never carries
+    expect(screen.getByRole('checkbox', { name: 'all machines' })).toBeChecked();
+  });
+
+  it('cuts a template with no scope, no enabled and no process id', async () => {
+    const user = userEvent.setup();
+    renderEditor({ isSiteAdmin: true });
+
+    await user.click(screen.getByRole('textbox', { name: 'name' }));
+    await user.paste('restart the lobby loop');
+
+    // A command output bound to a real process id — the per-machine identifier
+    // a template must not carry.
+    await user.click(screen.getByLabelText('output 1 type'));
+    await user.click(await screen.findByRole('option', { name: 'command' }));
+    await user.click(screen.getByLabelText('output 1 process'));
+    await user.click(await screen.findByRole('option', { name: 'TouchDesigner' }));
+
+    await user.click(screen.getByTestId('talon-template-save'));
+
+    // The inline form pre-fills from the talon's own name.
+    expect(screen.getByTestId('talon-template-name')).toHaveValue('restart the lobby loop');
+    await user.click(screen.getByTestId('talon-template-submit'));
+
+    expect(mockCreatePreset).toHaveBeenCalledTimes(1);
+    const body = mockCreatePreset.mock.calls[0][0] as unknown as Record<string, unknown>;
+    const template = body.template as Record<string, unknown>;
+
+    expect(body).toMatchObject({ name: 'restart the lobby loop', isBuiltIn: false, order: 100 });
+    expect(template.outputs).toEqual([{ type: 'command', commandType: 'restart_process' }]);
+    expect(template.cooldownMinutes).toBe(60);
+
+    // Nothing site-specific and nothing armed survives the round trip, at any
+    // depth — a nested `scope` would be just as wrong as a top-level one.
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain('scope');
+    expect(serialized).not.toContain('enabled');
+    expect(serialized).not.toContain('processId');
+  });
+
+  it('refuses to cut a template from a draft the validator rejects', async () => {
+    const user = userEvent.setup();
+    renderEditor();
+
+    // Name is empty — the same error the save button raises.
+    await user.click(screen.getByTestId('talon-template-save'));
+
+    expect(errorTexts()).toEqual(['give this talon a name']);
+    expect(screen.queryByTestId('talon-template-name')).not.toBeInTheDocument();
+    expect(mockCreatePreset).not.toHaveBeenCalled();
+  });
+
+  it('asks before replacing a template whose name is already taken', async () => {
+    mockPresets = [OVERNIGHT_TEMPLATE];
+    const user = userEvent.setup();
+    renderEditor();
+
+    await user.click(screen.getByRole('textbox', { name: 'name' }));
+    await user.paste('Overnight Restart');
+    await user.click(screen.getByTestId('talon-template-save'));
+    await user.click(screen.getByTestId('talon-template-submit'));
+
+    // Case-insensitive, and checked against the merged list so a built-in
+    // counts — nothing is created until the operator says so.
+    expect(mockCreatePreset).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(/template “overnight restart” already exists\. replace it\?/),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('talon-template-replace'));
+
+    expect(mockCreatePreset).not.toHaveBeenCalled();
+    expect(mockUpdatePreset).toHaveBeenCalledTimes(1);
+    expect(mockUpdatePreset.mock.calls[0][0]).toBe('builtin-overnight-restart');
   });
 });

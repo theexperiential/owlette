@@ -61,7 +61,7 @@ import {
   createModel,
   type ProcessSummary,
 } from '@/lib/llm';
-import { getToolsByTier } from '@/lib/mcp-tools';
+import { getToolsByTier, type ToolTier } from '@/lib/mcp-tools';
 import {
   buildExecutableTools,
   getHootRequireTier3Approval,
@@ -108,6 +108,17 @@ export interface StartTurnParams {
   messages: UIMessage[];
   userId: string;
   access: SiteAccessLevel;
+  /**
+   * Explicit ceiling on the tool tier this turn may use. Intersected with the
+   * tier `access` already earns, so it can only ever LOWER the tool set —
+   * never raise it above what the acting user could do themselves.
+   *
+   * Omitted means "whatever `access` earns", which is the interactive
+   * `/api/hoot` behaviour. The unattended talon path sets it explicitly rather
+   * than degrading `access` itself, so fire-time access re-resolution keeps
+   * working: a demoted author still drops to tier 1 through the intersection.
+   */
+  maxToolTier?: ToolTier;
   /** Prior turn's recovery index: `toolCallId → machineId → { commandId }`. */
   priorToolCommands?: Record<string, Record<string, { commandId: string }>> | null;
   source?: 'user' | 'followup' | 'talon';
@@ -466,14 +477,19 @@ export function startTurn(
       }
 
       const [llmConfig, requireTier3Approval, processes] = await Promise.all([
-        resolveLlmConfig(db, params.userId, params.siteId),
+        resolveLlmConfig(db, params.userId),
         getHootRequireTier3Approval(db, params.siteId),
         isSiteMode
           ? Promise.resolve<ProcessSummary[]>([])
           : fetchProcessSummaries(db, params.siteId, params.machineId),
       ]);
 
-      const toolDefs = getToolsByTier(resolveHootMaxTier(params.access));
+      const earnedTier = resolveHootMaxTier(params.access);
+      const toolDefs = getToolsByTier(
+        params.maxToolTier === undefined
+          ? earnedTier
+          : (Math.min(params.maxToolTier, earnedTier) as ToolTier),
+      );
       const tools = buildExecutableTools(
         db,
         params.siteId,
@@ -559,7 +575,7 @@ export function startTurn(
         // Auto-title + categorize new conversations (fire-and-forget).
         const userMessage = firstUserText(mergedMessages);
         if (isNewConversation && userMessage) {
-          resolveLlmConfig(db, params.userId, params.siteId)
+          resolveLlmConfig(db, params.userId)
             .then((cfg) => categorizeNewChat(db, createCheapModel(cfg), chatId, userMessage))
             .catch(() => {
               /* best-effort */

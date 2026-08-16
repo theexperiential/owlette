@@ -208,6 +208,19 @@ export interface TalonWebhookOutput {
 export interface TalonHootOutput {
   type: 'cortex';
   directive: string;
+  /**
+   * Let the unattended turn reach tier-2 tools (process control, screenshots,
+   * service management) instead of the read-only tier-1 set. Absent — the
+   * default — keeps the turn read-only, and the validator normalizes an
+   * explicit `false` away so an opted-out talon has ONE representation on the
+   * document.
+   *
+   * Authoring it is a site-admin privilege, gated in `store.server.ts` next to
+   * the `command` output gate: a turn that can restart a process is the same
+   * power class as a talon that queues the restart itself. Tier 3 stays
+   * unreachable on this path whatever the flag says — see `hootOutput.server`.
+   */
+  allowActions?: boolean;
 }
 
 /** Queue a process-control command against the machines in scope. */
@@ -252,6 +265,83 @@ export type TalonRunStatus =
 
 export type TalonOutputStatus = 'sent' | 'failed' | 'skipped';
 
+/* -------------------------------------------------------------------------- */
+/*  system-disabled reasons                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Why the SYSTEM switched a talon off. Absent on a talon an operator paused
+ * themselves — the toggle clears it, because a human decision needs no stated
+ * cause from us.
+ *
+ * The four `creator_*` reasons are UNRECOVERABLE: the talon's author can no
+ * longer back the run, and no number of retries changes that, so the talon is
+ * disabled the first time one is hit rather than after ten wasted firings.
+ * `repeated_failures` is the opposite case — transient faults (a machine
+ * offline, a rate limit, a provider 500) that only add up to a verdict after
+ * `AUTO_DISABLE_AFTER_FAILURES` of them in a row.
+ *
+ * Stored as a stable code, never as a sentence: the copy below is rewritten
+ * whenever the wording improves, and a doc written last month must pick that up
+ * instead of preserving the old phrasing forever.
+ */
+export type TalonDisabledReason =
+  | 'creator_not_a_user'
+  | 'creator_deleted'
+  | 'creator_access_revoked'
+  | 'creator_missing_llm_key'
+  | 'repeated_failures';
+
+/**
+ * The `creator_*` subset — the reasons a REASSIGNMENT resolves.
+ *
+ * Handing a talon to a present, keyed author falsifies every one of these, so
+ * `reassignTalons` re-arms exactly these and leaves the rest alone:
+ * `repeated_failures` describes the talon rather than its author, and a talon a
+ * human paused carries no reason at all and must stay paused.
+ *
+ * Derived from the union by a total record so a new reason cannot be added
+ * without deciding, at the type level, which side of that line it falls on.
+ */
+const CREATOR_DISABLED_REASONS: Readonly<Record<TalonDisabledReason, boolean>> = {
+  creator_not_a_user: true,
+  creator_deleted: true,
+  creator_access_revoked: true,
+  creator_missing_llm_key: true,
+  repeated_failures: false,
+};
+
+/** Whether a stored reason is one a reassignment fixes. */
+export function isCreatorDisabledReason(
+  reason: TalonDisabledReason | undefined | null,
+): boolean {
+  return reason ? CREATOR_DISABLED_REASONS[reason] === true : false;
+}
+
+/**
+ * The one place a disable reason becomes words. Lowercase, no jargon, and no
+ * count baked into the text — `AUTO_DISABLE_AFTER_FAILURES` is free to change.
+ */
+export const TALON_DISABLED_REASON_COPY: Readonly<Record<TalonDisabledReason, string>> = {
+  creator_not_a_user:
+    'nobody owns this talon, so there is no ai key it can run with',
+  creator_deleted:
+    'the person who created this talon no longer has an account',
+  creator_access_revoked:
+    'the person who created this talon no longer has access to this site',
+  creator_missing_llm_key:
+    'the person who created this talon has no ai key saved in settings → hoot',
+  repeated_failures: 'it failed too many times in a row',
+};
+
+/** The human sentence for a stored reason, or `null` when it is unrecognized. */
+export function describeTalonDisabledReason(
+  reason: string | null | undefined,
+): string | null {
+  if (!reason) return null;
+  return TALON_DISABLED_REASON_COPY[reason as TalonDisabledReason] ?? null;
+}
+
 /** `sites/{siteId}/talons/{talonId}` */
 export interface TalonDoc {
   schemaVersion: 1;
@@ -278,6 +368,11 @@ export interface TalonDoc {
   lastRunId?: string;
   /** Reset to 0 on any successful run; drives auto-disable backoff. */
   consecutiveFailures: number;
+  /**
+   * Set when the SYSTEM disabled this talon; cleared whenever a human toggles
+   * `enabled` either way. Never present on an enabled talon.
+   */
+  disabledReason?: TalonDisabledReason;
 }
 
 /** Outcome of the condition gate, recorded on the run. */
@@ -301,6 +396,13 @@ export interface TalonRunOutput {
   /** Webhook outputs only. */
   httpStatus?: number;
   error?: string;
+  /**
+   * Set when THIS output's failure is unrecoverable and cost the talon its
+   * enabled state. A run can hold several outputs and only one of them be
+   * fatal, so it is recorded here as well as on the run — this says which
+   * output was the problem, the run-level field says what it cost.
+   */
+  disabledReason?: TalonDisabledReason;
 }
 
 /**
@@ -339,6 +441,11 @@ export interface TalonRunDoc {
   correlationId: string;
   chatId?: string;
   error?: string;
+  /**
+   * Set when this run is the one that disabled the talon — so the run history
+   * explains itself without the reader having to go and read the talon.
+   */
+  disabledReason?: TalonDisabledReason;
   /** True when an operator ran the talon on demand rather than the trigger firing. */
   manual?: boolean;
   /** Deferral only — the instant the delay expires and the sweep may fire it. */
@@ -349,4 +456,64 @@ export interface TalonRunDoc {
   firedAt?: TalonTimestamp;
   /** Deferral only — ids of the runs the fire produced, empty when none were. */
   firedRunIds?: string[];
+}
+
+/* -------------------------------------------------------------------------- */
+/*  talon presets — reusable templates                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Something a template needs before the talon it produces can be created.
+ *
+ * `llm_key` — a visual-check condition or a hoot output, both of which the
+ * store refuses unless the talon's author has an llm key of their own.
+ * `process_target` — a `command` output whose process the operator still has to
+ * pick, because a process id is per-machine and never travels in a template.
+ *
+ * Canonical here rather than beside the built-in catalog: the editor, the hook
+ * and the catalog all need it, and only the catalog can afford to import data.
+ */
+export type TalonPresetRequirement = 'llm_key' | 'process_target';
+
+/**
+ * The talon-shaped payload a preset carries: the caller-owned half of a talon
+ * MINUS `scope` and `enabled`.
+ *
+ * Both omissions are deliberate. `scope.machineIds` holds machine ids that mean
+ * nothing in another site — and an empty array is rejected outright — so a
+ * template seeds "every machine" and the operator narrows it. `enabled` is the
+ * instance's own armed/paused state; a template must not decide whether the
+ * talon it produces is live.
+ */
+export interface TalonPresetTemplate {
+  /** Default name for the talon this preset seeds — NOT the preset's own name. */
+  name: string;
+  description?: string;
+  trigger: TalonTrigger;
+  condition: TalonCondition;
+  outputs: TalonOutput[];
+  cooldownMinutes: number;
+}
+
+/**
+ * `config/{siteId}/talon_presets/{presetId}`
+ *
+ * Same field vocabulary as the other `config/{siteId}/*_presets` families
+ * (`isBuiltIn` / `order` / `createdBy`), so the built-in merge and the shared
+ * preset routes behave identically. Doc ids are `talon-{slug}-{epochMs}`,
+ * except a built-in override, which pins `builtin-{slug}`.
+ *
+ * The talon payload is nested under `template` rather than flattened: flat
+ * fields would collide the preset's own `name`/`description` with the ones the
+ * talon it creates should start from.
+ */
+export interface TalonPresetDoc {
+  name: string;
+  description?: string;
+  template: TalonPresetTemplate;
+  isBuiltIn: boolean;
+  order: number;
+  createdBy: string;
+  createdAt: TalonTimestamp;
+  updatedAt?: TalonTimestamp;
 }

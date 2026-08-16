@@ -25,13 +25,25 @@
  *      control drops the errors bound to it, instead of leaving a stale
  *      message under a field the user already fixed.
  *
+ * Create mode also carries the TEMPLATE controls, in the dialog HEADER beside
+ * the title: a grouped picker that hydrates the whole form from a stored
+ * preset, and a disk button that cuts one back out of the current draft. They
+ * live in the header because they are chrome for the form rather than fields of
+ * it — as a full-width row at the top of the body they read as the most
+ * important control on screen while being the most optional one. A talon is a
+ * whole object, so this follows the deployment-template flow (picker + save-as,
+ * no dirty overlay, no auto-detect) rather than the preset pill bar the
+ * sub-field families use. Scope is the one field a template never carries —
+ * machine ids belong to one site.
+ *
  * Naming: automations are **talons**; the assistant is **hoot** in every piece
  * of copy here. The wire type for a hoot output stays `'cortex'`.
  */
 
-import { Loader2 } from 'lucide-react';
-import { useMemo, useState, type FormEvent } from 'react';
+import { Loader2, Pencil, Save, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -44,16 +56,33 @@ import {
 import { FormError } from '@/components/ui/form-error';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { useTalonPresets, type TalonPreset } from '@/hooks/useTalonPresets';
 import { toast } from '@/lib/toast';
+import {
+  findTalonPresetByName,
+  talonPresetTemplateFrom,
+  type TalonPresetRequirement,
+} from '@/lib/talons/presetTemplate';
 import type { TalonDoc } from '@/lib/talons/types';
 import {
   DEFAULT_TALON_COOLDOWN_MINUTES,
   TALON_DESCRIPTION_MAX_LENGTH,
+  TALON_MAX_COOLDOWN_MINUTES,
   TALON_MIN_INTERVAL_MINUTES,
   TALON_MIN_INTERVAL_MINUTES_VISUAL_CHECK,
   TALON_NAME_MAX_LENGTH,
   validateTalonInput,
   type TalonFieldError,
+  type TalonValidationResult,
 } from '@/lib/talons/validation';
 
 import {
@@ -102,7 +131,7 @@ const FIELD_ELEMENT_IDS: Readonly<Record<string, string>> = {
   outputs: 'talon-outputs',
   scope: 'talon-scope',
   'scope.machineIds': 'talon-scope',
-  cooldownMinutes: 'talon-name',
+  cooldownMinutes: 'talon-cooldown',
 };
 
 const OUTPUT_FIELD_SUFFIXES: Readonly<Record<string, string>> = {
@@ -156,10 +185,9 @@ function elementIdForField(field: string): string {
  * asked for `outputs` and was handed `outputs[0].directive` — printing the same
  * sentence under the textarea AND under "add output". Slots are exact.
  *
- * Paths with no slot (an output's `type`, `cooldownMinutes`, `trigger.metric`,
- * an unknown field from the API) fall through to the footer summary, which
- * renders ONLY those. Between them the two surfaces cover every error exactly
- * once.
+ * Paths with no slot (an output's `type`, `trigger.metric`, an unknown field
+ * from the API) fall through to the footer summary, which renders ONLY those.
+ * Between them the two surfaces cover every error exactly once.
  */
 function slotForField(field: string): string | null {
   const output = OUTPUT_FIELD_PATTERN.exec(field);
@@ -171,7 +199,7 @@ function slotForField(field: string): string | null {
     return null;
   }
   if (field === 'outputs' || OUTPUT_ROW_PATTERN.test(field)) return 'outputs';
-  if (field === 'name' || field === 'description') return field;
+  if (field === 'name' || field === 'description' || field === 'cooldownMinutes') return field;
   if (field === 'trigger.entries' || field.startsWith('trigger.entries[')) return 'trigger.entries';
   if (field === 'trigger.eventTypes' || field.startsWith('trigger.eventTypes[')) {
     return 'trigger.eventTypes';
@@ -232,6 +260,73 @@ function isFieldErrorList(value: unknown): value is TalonFieldError[] {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/*  templates                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What a template still needs from the operator, in the picker's own words.
+ *
+ * There is exactly ONE key now — the operator's own, in settings → hoot — and
+ * a talon spends the key of whoever created it. So "an ai key" means the key
+ * the person reading this row would be saving, which is why the unmet form
+ * below can name the one screen that fixes it.
+ */
+const REQUIREMENT_LABELS: Readonly<Record<TalonPresetRequirement, string>> = {
+  llm_key: 'needs an ai api key — add one in settings → hoot',
+  process_target: 'needs a process to point at',
+};
+
+/**
+ * The requirements this operator has NOT already met.
+ *
+ * A requirement is a statement about what is still missing, not a permanent
+ * label on the template. Showing "needs an ai api key" to someone who saved one
+ * an hour ago reads as a bug in the product — they DID provide it — and it also
+ * banished every ai template to the "needs a detail" group for the users most
+ * ready to run them.
+ *
+ * `llm_key` is met once the signed-in user has a key. `process_target` can
+ * never be met in advance: the template deliberately carries no process, so the
+ * operator always picks one.
+ *
+ * `hasLlmKey === null` means the probe has not answered (or failed). Unknown is
+ * treated as MET: a false "you need a key" is a worse error than letting
+ * someone pick a template and meet the store's own rejection, which names the
+ * same fix. Never claim a thing is missing on the strength of not having looked.
+ */
+function unmetRequirements(
+  requires: readonly TalonPresetRequirement[],
+  hasLlmKey: boolean | null,
+): TalonPresetRequirement[] {
+  return requires.filter(
+    (requirement) => !(requirement === 'llm_key' && hasLlmKey !== false),
+  );
+}
+
+/** Custom presets carry no requirements, so they always sort into "ready". */
+const NO_REQUIREMENT_NOTE = '';
+
+/**
+ * The annotation under a template's name in the picker.
+ *
+ * Requirements ANNOTATE, they never disable: an operator with no llm key can
+ * still pick the visual-check template and find out at create time, with a
+ * message that says exactly what to go and set. That is better discovery than
+ * a greyed row with no explanation.
+ */
+function requirementNote(
+  requires: readonly TalonPresetRequirement[],
+  hasLlmKey: boolean | null,
+): string {
+  const unmet = unmetRequirements(requires, hasLlmKey);
+  if (unmet.length === 0) return NO_REQUIREMENT_NOTE;
+  return unmet.map((requirement) => REQUIREMENT_LABELS[requirement]).join(' · ');
+}
+
+/** Custom templates are created above every built-in's index, as in every family. */
+const CUSTOM_TEMPLATE_ORDER = 100;
+
 /** `crypto.randomUUID` needs a secure context; the fallback keeps http dev origins working. */
 function newIdempotencyKey(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -278,13 +373,7 @@ export function TalonEditorDialog({
         data-testid="talon-editor"
         className="bg-card border-border sm:max-w-5xl lg:max-w-6xl max-h-[90dvh] overflow-y-auto"
       >
-        <DialogHeader>
-          <DialogTitle>{talon ? 'edit talon' : 'new talon'}</DialogTitle>
-          <DialogDescription className="text-muted-foreground">
-            a talon watches for something, checks a condition, then acts.
-          </DialogDescription>
-        </DialogHeader>
-
+        {/* Header renders inside the form — see the comment there. */}
         <TalonEditorForm
           key={talon?.id ?? 'new'}
           siteId={siteId}
@@ -306,6 +395,16 @@ interface TalonEditorFormProps {
   onClose: () => void;
 }
 
+/**
+ * The inline template form. `save` cuts a new template from the current draft;
+ * `rename` only re-labels the selected one, leaving its stored talon alone.
+ */
+interface TemplateFormState {
+  mode: 'save' | 'rename';
+  name: string;
+  description: string;
+}
+
 function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: TalonEditorFormProps) {
   const [name, setName] = useState(talon?.name ?? '');
   const [description, setDescription] = useState(talon?.description ?? '');
@@ -323,16 +422,86 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
       ? talon.outputs.map(outputDraftFromTalon)
       : [newOutputDraft('email')],
   );
-  // No control renders these two: the list owns the enable toggle, and the
-  // cooldown has no editor yet. They are still carried through every save —
-  // PATCH replaces the caller-owned half of the talon wholesale, and the
-  // validator defaults an omitted `enabled` to true and an omitted cooldown to
-  // 60, which would silently re-enable a paused talon or reset a tuned gap.
+  /** Raw text, as in `TriggerCard` — a half-typed number must not snap back. */
+  const [cooldownValue, setCooldownValue] = useState(() =>
+    String(talon?.cooldownMinutes ?? DEFAULT_TALON_COOLDOWN_MINUTES),
+  );
+  // No control renders this one: the list owns the enable toggle. It is still
+  // carried through every save — PATCH replaces the caller-owned half of the
+  // talon wholesale, and the validator defaults an omitted `enabled` to true,
+  // which would silently re-arm a paused talon.
   const enabled = talon?.enabled ?? true;
-  const cooldownMinutes = talon?.cooldownMinutes ?? DEFAULT_TALON_COOLDOWN_MINUTES;
 
   const [fieldErrors, setFieldErrors] = useState<TalonFieldError[]>([]);
   const [busy, setBusy] = useState(false);
+
+  /* ---------------------------------------------------------------------- */
+  /*  templates — create mode only                                          */
+  /* ---------------------------------------------------------------------- */
+
+  // Editing an existing talon offers no picker: a template that silently
+  // replaced a live talon's every field is the "did that just overwrite my
+  // work?" question no confirm dialog answers well. `null` keeps the listener
+  // closed in that mode rather than subscribing for a row that never renders.
+  const isCreate = talon === null;
+  const {
+    presets: templates,
+    createPreset: createTemplate,
+    updatePreset: updateTemplate,
+    deletePreset: deleteTemplate,
+  } = useTalonPresets(isCreate ? siteId : null);
+
+  const [templateId, setTemplateId] = useState('');
+  /** The inline name/description form — never a nested dialog. */
+  const [templateForm, setTemplateForm] = useState<TemplateFormState | null>(null);
+  /** Set when the chosen name already belongs to a template; drives the replace row. */
+  const [pendingReplace, setPendingReplace] = useState<TalonPreset | null>(null);
+  const [templateBusy, setTemplateBusy] = useState(false);
+  const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState(false);
+  /**
+   * `null` = not known (the probe failed). Only `false` upgrades the llm
+   * annotation to "you have none yet" — an unknown state must not claim a key
+   * is missing.
+   */
+  const [hasLlmKey, setHasLlmKey] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    // The CURRENT USER's key, because a talon created here runs on it. Session
+    // scoped, so unlike the site-key probe it replaced this works for members
+    // too — they author talons and spend their own key exactly as admins do.
+    if (!isCreate) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch('/api/settings/llm-key');
+        if (!response.ok) return;
+        const body = (await response.json()) as { configured?: boolean };
+        if (!cancelled) setHasLlmKey(body.configured === true);
+      } catch {
+        // Unknown — the picker keeps the generic note.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isCreate]);
+
+  const selectedTemplate = templates.find((preset) => preset.id === templateId) ?? null;
+  // Built-ins are the shipped catalog; editing or deleting one belongs on a
+  // management page, not in the middle of authoring a talon.
+  const canManageSelected = selectedTemplate !== null && !selectedTemplate.isBuiltIn;
+  const builtInTemplates = templates.filter((preset) => preset.isBuiltIn);
+  // Grouped by what is still MISSING for this operator, not by what the
+  // template declares: with a key saved, every ai template is ready to use, and
+  // filing them under "needs a detail" told the people best equipped to run
+  // them that they were not.
+  const readyTemplates = builtInTemplates.filter(
+    (preset) => unmetRequirements(preset.requires, hasLlmKey).length === 0,
+  );
+  const needsDetailTemplates = builtInTemplates.filter(
+    (preset) => unmetRequirements(preset.requires, hasLlmKey).length > 0,
+  );
+  const savedTemplates = templates.filter((preset) => !preset.isBuiltIn);
 
   /**
    * Split the error list into the inline slots and the footer summary.
@@ -419,10 +588,37 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
     });
   }
 
+  function handleCooldownChange(value: string): void {
+    setCooldownValue(value);
+    clearErrorsWhere((field) => field === 'cooldownMinutes');
+  }
+
   /** Bind a validator/server error list to the inputs, and focus the first offender. */
   function applyFieldErrors(errors: TalonFieldError[]): void {
     setFieldErrors(errors);
     focusField(elementIdForField(errors[0].field));
+  }
+
+  /**
+   * Run the SHARED validator over the current draft. Both the save button and
+   * "save as template" go through this, so a template can never hold a talon
+   * this editor would refuse to create.
+   *
+   * `''` is passed through as `NaN` rather than coerced to 0 — the validator
+   * owns the message, exactly as `TriggerCard` treats its own number fields.
+   */
+  function validateDraft(): TalonValidationResult {
+    const cooldown = cooldownValue.trim();
+    return validateTalonInput({
+      name,
+      ...(description.trim() ? { description } : {}),
+      enabled,
+      trigger: triggerDraftToInput(trigger),
+      condition: conditionDraftToInput(condition),
+      outputs: outputs.map(outputDraftToInput),
+      scope: scopeDraftToInput(scope),
+      cooldownMinutes: cooldown === '' ? Number.NaN : Number(cooldown),
+    });
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -431,16 +627,7 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
 
     setFieldErrors([]);
 
-    const result = validateTalonInput({
-      name,
-      ...(description.trim() ? { description } : {}),
-      enabled,
-      trigger: triggerDraftToInput(trigger),
-      condition: conditionDraftToInput(condition),
-      outputs: outputs.map(outputDraftToInput),
-      scope: scopeDraftToInput(scope),
-      cooldownMinutes,
-    });
+    const result = validateDraft();
     if (!result.ok) {
       applyFieldErrors(result.errors);
       return;
@@ -484,6 +671,164 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
     }
   }
 
+  /* ---------------------------------------------------------------------- */
+  /*  template actions                                                      */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Replace the WHOLE draft with the template's talon.
+   *
+   * Scope is the one field that never comes from a template: machine ids belong
+   * to one site, so every applied template starts at "all machines" and the
+   * operator narrows it deliberately. Errors bound to the fields just replaced
+   * would all be stale, so they go too.
+   */
+  function applyTemplate(presetId: string): void {
+    setTemplateId(presetId);
+    setTemplateForm(null);
+    setPendingReplace(null);
+
+    const preset = templates.find((candidate) => candidate.id === presetId);
+    if (!preset) return;
+
+    const { template } = preset;
+    setName(template.name);
+    setDescription(template.description ?? '');
+    setTrigger(triggerDraftFromTalon(template.trigger));
+    setCondition(conditionDraftFromTalon(template.condition));
+    setScope(newScopeDraft());
+    setOutputs(
+      template.outputs.length > 0
+        ? template.outputs.map(outputDraftFromTalon)
+        : [newOutputDraft('email')],
+    );
+    setCooldownValue(String(template.cooldownMinutes));
+    setFieldErrors([]);
+  }
+
+  /** Validate first — a template nobody can instantiate is worse than none. */
+  function openSaveTemplate(): void {
+    const result = validateDraft();
+    if (!result.ok) {
+      applyFieldErrors(result.errors);
+      return;
+    }
+    setPendingReplace(null);
+    setTemplateForm({
+      mode: 'save',
+      name: result.value.name,
+      description: result.value.description ?? '',
+    });
+  }
+
+  function openRenameTemplate(): void {
+    if (!selectedTemplate) return;
+    setPendingReplace(null);
+    setTemplateForm({
+      mode: 'rename',
+      name: selectedTemplate.name,
+      description: selectedTemplate.description ?? '',
+    });
+  }
+
+  function closeTemplateForm(): void {
+    setTemplateForm(null);
+    setPendingReplace(null);
+  }
+
+  /** Cut a template from the current draft, creating or replacing one preset. */
+  async function writeTemplate(
+    templateName: string,
+    templateDescription: string,
+    replace: TalonPreset | null,
+  ): Promise<void> {
+    const result = validateDraft();
+    if (!result.ok) {
+      closeTemplateForm();
+      applyFieldErrors(result.errors);
+      return;
+    }
+
+    const template = talonPresetTemplateFrom(result.value);
+    setTemplateBusy(true);
+    try {
+      if (replace) {
+        await updateTemplate(replace.id, {
+          name: templateName,
+          ...(templateDescription ? { description: templateDescription } : {}),
+          template,
+        });
+        setTemplateId(replace.id);
+      } else {
+        const presetId = await createTemplate({
+          name: templateName,
+          ...(templateDescription ? { description: templateDescription } : {}),
+          template,
+          isBuiltIn: false,
+          order: CUSTOM_TEMPLATE_ORDER,
+          createdBy: '',
+        });
+        setTemplateId(presetId);
+      }
+      toast.success('template saved');
+      closeTemplateForm();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'failed to save template');
+    }
+    setTemplateBusy(false);
+  }
+
+  async function submitTemplateForm(): Promise<void> {
+    if (!templateForm || templateBusy) return;
+
+    const trimmedName = templateForm.name.trim();
+    const trimmedDescription = templateForm.description.trim();
+    if (!trimmedName) {
+      toast.error('give this template a name');
+      return;
+    }
+
+    if (templateForm.mode === 'rename') {
+      if (!selectedTemplate) return;
+      setTemplateBusy(true);
+      try {
+        await updateTemplate(selectedTemplate.id, {
+          name: trimmedName,
+          ...(trimmedDescription ? { description: trimmedDescription } : {}),
+        });
+        toast.success('template renamed');
+        closeTemplateForm();
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'failed to rename template');
+      }
+      setTemplateBusy(false);
+      return;
+    }
+
+    // The name check runs against the MERGED list, so colliding with a built-in
+    // is caught too — replacing one writes the `builtin-*` override.
+    const existing = findTalonPresetByName(templates, trimmedName);
+    if (existing) {
+      setPendingReplace(existing);
+      return;
+    }
+    await writeTemplate(trimmedName, trimmedDescription, null);
+  }
+
+  async function handleDeleteTemplate(): Promise<void> {
+    if (!selectedTemplate) return;
+    setTemplateBusy(true);
+    try {
+      await deleteTemplate(selectedTemplate.id);
+      setTemplateId('');
+      closeTemplateForm();
+      toast.success('template deleted');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'failed to delete template');
+    }
+    setTemplateBusy(false);
+  }
+
   const minIntervalMinutes =
     condition.type === 'visual_check'
       ? TALON_MIN_INTERVAL_MINUTES_VISUAL_CHECK
@@ -496,8 +841,271 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
 
   return (
     <form onSubmit={handleSubmit} noValidate className="space-y-4">
+      {/* The header lives here rather than in the dialog shell so the template
+          controls can sit beside the title without lifting their state out of
+          this component. `pr-10` keeps the cluster clear of the dialog's own
+          close button, which is absolutely positioned in the same corner. */}
+      <DialogHeader className="pr-10">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1.5">
+            <DialogTitle>{talon ? 'edit talon' : 'new talon'}</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              a talon watches for something, checks a condition, then acts.
+            </DialogDescription>
+          </div>
+
+          {/* Templates ride in the header: they are chrome for the form, not a
+              field of it, and a full-width row at the top of the body read as
+              the most important control on screen when it is the most optional
+              one. Picker and save sit together so the disk icon is obviously
+              "save THIS as one of those". */}
+          {isCreate && (
+            <div className="flex shrink-0 items-center gap-2">
+              <Select value={templateId} onValueChange={applyTemplate} disabled={busy}>
+                <SelectTrigger
+                  id="talon-template"
+                  data-testid="talon-template-picker"
+                  aria-label="start from a template"
+                  className="h-9 w-56 min-w-0 bg-background border-border"
+                >
+                  <SelectValue placeholder="start from a template…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {/* Built-ins split by whether they run as-is; saved templates
+                      follow, ungrouped — a custom template has no shipped
+                      requirements to sort it by. */}
+                  {readyTemplates.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel className="text-muted-foreground">ready to use</SelectLabel>
+                      {readyTemplates.map((preset) => (
+                        <SelectItem key={preset.id} value={preset.id}>
+                          {preset.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
+                  {needsDetailTemplates.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel className="text-muted-foreground">needs a detail</SelectLabel>
+                      {needsDetailTemplates.map((preset) => (
+                        <SelectItem
+                          key={preset.id}
+                          value={preset.id}
+                          hint={requirementNote(preset.requires, hasLlmKey)}
+                        >
+                          {preset.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
+                  {savedTemplates.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel className="text-muted-foreground">saved</SelectLabel>
+                      {savedTemplates.map((preset) => (
+                        <SelectItem key={preset.id} value={preset.id}>
+                          {preset.name}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
+                </SelectContent>
+              </Select>
+
+              {/* Rename and delete belong to a saved template only — the shipped
+                  catalog is managed elsewhere, not mid-authoring. */}
+              {canManageSelected && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    data-testid="talon-template-rename"
+                    onClick={openRenameTemplate}
+                    disabled={busy || templateBusy}
+                    aria-label="rename template"
+                    title="rename template"
+                    className="shrink-0 cursor-pointer border-border"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    data-testid="talon-template-delete"
+                    onClick={() => setConfirmDeleteTemplate(true)}
+                    disabled={busy || templateBusy}
+                    aria-label="delete template"
+                    title="delete template"
+                    className="shrink-0 cursor-pointer border-border text-red-400 hover:bg-red-950 hover:text-red-300"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </>
+              )}
+
+              {/* Deliberately not behind ProTierGate: PRESET_MANAGE is not
+                  billing-locked, and curating templates a site cannot yet
+                  instantiate is a legitimate state. */}
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                data-testid="talon-template-save"
+                onClick={openSaveTemplate}
+                disabled={busy || templateBusy}
+                aria-label="save as template"
+                title="save as template"
+                className="shrink-0 cursor-pointer border-border"
+              >
+                <Save className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+        </div>
+      </DialogHeader>
+
       <div className="max-h-[65vh] overflow-y-auto space-y-5 pr-1">
-        <div className="grid gap-4 sm:grid-cols-2">
+        {isCreate && (
+          <div className="space-y-2">
+
+            {/* Inline, and a `div` rather than a `form`: this sits INSIDE the
+                talon form, where a nested form is invalid html and an enter
+                keypress would submit the talon instead of the template. Enter
+                is bound here explicitly for that reason. A nested dialog was
+                the other option, and it would trap focus twice over one name
+                and one sentence. */}
+            {templateForm && (
+              <div
+                role="group"
+                aria-label={templateForm.mode === 'rename' ? 'rename template' : 'save as template'}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void submitTemplateForm();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeTemplateForm();
+                  }
+                }}
+                className="rounded-lg border border-border bg-background/40 p-4 space-y-3"
+              >
+                {/* Labelled, not placeholder-only: two bare boxes side by side
+                    gave no way to tell which was the name and which the
+                    description once either had text in it. */}
+                <p className="text-xs font-medium">
+                  {templateForm.mode === 'rename' ? 'rename template' : 'save as template'}
+                </p>
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="talon-template-name" className="text-xs">
+                      template name
+                    </Label>
+                    <Input
+                      id="talon-template-name"
+                      value={templateForm.name}
+                      onChange={(e) =>
+                        setTemplateForm({ ...templateForm, name: e.target.value })
+                      }
+                      disabled={templateBusy}
+                      maxLength={TALON_NAME_MAX_LENGTH}
+                      data-testid="talon-template-name"
+                      placeholder="morning wall check"
+                      autoFocus
+                      className="h-9 bg-background border-border"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="talon-template-description" className="text-xs">
+                      description <span className="text-muted-foreground">(optional)</span>
+                    </Label>
+                    <Input
+                      id="talon-template-description"
+                      value={templateForm.description}
+                      onChange={(e) =>
+                        setTemplateForm({ ...templateForm, description: e.target.value })
+                      }
+                      disabled={templateBusy}
+                      maxLength={TALON_DESCRIPTION_MAX_LENGTH}
+                      placeholder="what this template is for"
+                      className="h-9 min-w-0 bg-background border-border"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    data-testid="talon-template-submit"
+                    onClick={() => void submitTemplateForm()}
+                    disabled={templateBusy}
+                    className="cursor-pointer"
+                  >
+                    {templateBusy ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Save className="h-3.5 w-3.5" />
+                    )}
+                    {templateForm.mode === 'rename' ? 'rename' : 'save template'}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={closeTemplateForm}
+                    disabled={templateBusy}
+                    className="cursor-pointer"
+                  >
+                    cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Inline replace-confirm — a template with this name already
+                exists. Name uniqueness is not enforced server-side in any
+                preset family, so this is where it is caught. */}
+            {pendingReplace && templateForm && (
+              <div className="flex flex-wrap items-center gap-2 text-[11px] leading-5">
+                <span className="text-muted-foreground">
+                  template &ldquo;{pendingReplace.name}&rdquo; already exists. replace it?
+                </span>
+                <button
+                  type="button"
+                  data-testid="talon-template-replace"
+                  onClick={() =>
+                    void writeTemplate(
+                      templateForm.name.trim(),
+                      templateForm.description.trim(),
+                      pendingReplace,
+                    )
+                  }
+                  disabled={templateBusy}
+                  className="flex items-center gap-1 rounded bg-cyan-600/20 px-2 py-0.5 font-medium text-cyan-300 transition-colors hover:bg-cyan-600/40 hover:text-cyan-200 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  <Save className="h-3 w-3" /> yes, replace
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingReplace(null)}
+                  disabled={templateBusy}
+                  className="rounded px-2 py-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground cursor-pointer disabled:cursor-not-allowed"
+                >
+                  cancel
+                </button>
+              </div>
+            )}
+
+            {selectedTemplate?.description && !templateForm && (
+              <p className="text-xs text-muted-foreground">{selectedTemplate.description}</p>
+            )}
+          </div>
+        )}
+
+        {/* name | description | cooldown on ONE row at md+. The cooldown column
+            is sized to its content (a 3-digit box plus "minutes") so the two
+            text fields keep the width that actually needs it. */}
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
           <div className="space-y-2">
             <Label htmlFor="talon-name">name</Label>
             <Input
@@ -535,6 +1143,40 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
             {errorFor('description') && (
               <p role="alert" className="text-xs text-destructive">
                 {errorFor('description')}
+              </p>
+            )}
+          </div>
+          {/* Cooldown had no control until templates arrived, and an omitted one
+              silently resets to the 60-minute default — which every event and
+              threshold template sets deliberately. Third column of the row
+              above: the hint moves into the label's title rather than sitting
+              under a narrow column, where it wrapped to three lines and made
+              this row taller than the two text fields it shares. */}
+          <div className="space-y-2">
+            <Label htmlFor="talon-cooldown" title="0 lets it run every time the trigger fires">
+              run at most once every
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="talon-cooldown"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={TALON_MAX_COOLDOWN_MINUTES}
+                value={cooldownValue}
+                onChange={(e) => handleCooldownChange(e.target.value)}
+                disabled={busy}
+                aria-invalid={!!errorFor('cooldownMinutes')}
+                aria-describedby="talon-cooldown-hint"
+                className="w-20 bg-background border-border"
+              />
+              <span id="talon-cooldown-hint" className="text-sm text-muted-foreground whitespace-nowrap">
+                minutes
+              </span>
+            </div>
+            {errorFor('cooldownMinutes') && (
+              <p role="alert" className="text-xs text-destructive">
+                {errorFor('cooldownMinutes')}
               </p>
             )}
           </div>
@@ -619,6 +1261,21 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
           )}
         </Button>
       </DialogFooter>
+
+      <ConfirmDialog
+        open={confirmDeleteTemplate}
+        onOpenChange={setConfirmDeleteTemplate}
+        title="delete template?"
+        description={
+          selectedTemplate
+            ? `"${selectedTemplate.name}" will no longer be offered when creating a talon. talons already made from it are unaffected.`
+            : ''
+        }
+        confirmText="delete"
+        cancelText="cancel"
+        variant="destructive"
+        onConfirm={() => void handleDeleteTemplate()}
+      />
     </form>
   );
 }

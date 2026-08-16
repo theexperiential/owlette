@@ -13,8 +13,8 @@
  *     writes, dotted-path updates, FieldValue.delete, serverTimestamp
  *     materialization at the real clock)
  *   - the LLM (`@/lib/llm` createModel → MockLanguageModelV3 driving real
- *     streamText; decryptApiKey stubbed so resolveLlmConfig reads a seeded
- *     site key)
+ *     streamText; decryptApiKey stubbed so resolveLlmConfig reads the turn
+ *     owner's seeded key)
  *   - the agent itself: tool results are placed directly into the mock
  *     `commands/completed` doc, exactly where a real agent writes them
  *
@@ -107,7 +107,7 @@ jest.mock('@/lib/llm', () => ({
   buildSystemPrompt: jest.fn(),
 }));
 
-// resolveLlmConfig (real) decrypts the seeded site key — stub the crypto only.
+// resolveLlmConfig (real) decrypts the seeded user key — stub the crypto only.
 jest.mock('@/lib/llm-encryption.server', () => ({
   __esModule: true,
   decryptApiKey: jest.fn(() => 'test-api-key'),
@@ -445,8 +445,9 @@ beforeEach(() => {
   );
   (categorizeNewChat as jest.Mock).mockResolvedValue({ title: 't', category: 'General' });
 
-  // resolveLlmConfig (real) falls through to the site-level key.
-  store[`sites/${SITE_ID}/settings/llm`] = {
+  // resolveLlmConfig (real) reads the turn owner's own key — the only scope
+  // there is.
+  store[`users/${USER_ID}/settings/llm`] = {
     provider: 'anthropic',
     apiKeyEncrypted: 'encrypted-blob',
   };

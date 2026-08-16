@@ -66,10 +66,12 @@ jest.mock('@/lib/jobs/talonRunner.server', () => ({
 jest.mock('@/lib/talons/visualCheck.server', () => {
   class TalonVisualCheckError extends Error {
     readonly code: string;
-    constructor(code: string, message: string) {
+    readonly disabledReason?: string;
+    constructor(code: string, message: string, disabledReason?: string) {
       super(message);
       this.name = 'TalonVisualCheckError';
       this.code = code;
+      if (disabledReason) this.disabledReason = disabledReason;
     }
   }
   return {
@@ -1084,7 +1086,7 @@ describe('visual_check condition', () => {
     const talon = visualTalon({ scope: { machineIds: ['m1'] } });
     seedMachine('m1', true);
     mockEvaluateVisualCheck.mockRejectedValue(
-      new TalonVisualCheckError('verdict_error', 'this talon needs a usable site llm key'),
+      new TalonVisualCheckError('verdict_error', 'the vision model did not return a verdict'),
     );
 
     const summaries = await runTalon(db, talon, { siteId: SITE, now: NOW });
@@ -1161,6 +1163,9 @@ describe('talon bookkeeping', () => {
       enabled: false,
       consecutiveFailures: 10,
       lastRunStatus: 'failed',
+      // The backoff states its cause too — a talon found switched off with no
+      // reason at all is the thing this field exists to stop.
+      disabledReason: 'repeated_failures',
     });
     expect(mockEmitMutation).toHaveBeenCalledTimes(1);
     expect(mockEmitMutation).toHaveBeenCalledWith({
@@ -1172,8 +1177,8 @@ describe('talon bookkeeping', () => {
         verb: 'talon.disable',
         endpoint: `/api/sites/${SITE}/talons/t1`,
         method: 'PATCH',
-        changedFields: ['enabled'],
-        reason: 'consecutive_failures',
+        changedFields: ['enabled', 'disabledReason'],
+        reason: 'repeated_failures',
         consecutiveFailures: 10,
       },
     });
@@ -1192,6 +1197,127 @@ describe('talon bookkeeping', () => {
     expect(talonDoc('t1').enabled).toBe(true);
     expect(talonDoc('t1').consecutiveFailures).toBe(9);
     expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+/*  immediate disable on an unrecoverable author problem                      */
+/* ------------------------------------------------------------------------- */
+
+describe('unrecoverable author problems', () => {
+  it.each([
+    'creator_not_a_user',
+    'creator_deleted',
+    'creator_access_revoked',
+    'creator_missing_llm_key',
+  ] as const)('disables on the FIRST %s from a hoot output', async (reason) => {
+    const talon = seedTalon('t1', {
+      outputs: [{ type: 'cortex', directive: 'find out why the wall is black' }],
+    });
+    mockRunHootOutput.mockResolvedValue({
+      status: 'failed',
+      detail: reason,
+      error: 'the author is gone',
+      disabledReason: reason,
+    });
+
+    await runTalon(db, talon, { siteId: SITE, now: NOW });
+
+    // One failure, not ten: retrying cannot bring a departed author back, so
+    // the operator is told now rather than after nine more silent firings.
+    expect(talonDoc('t1')).toMatchObject({
+      enabled: false,
+      consecutiveFailures: 1,
+      disabledReason: reason,
+    });
+    // And the run says so too, so the history explains itself.
+    expect(runDocs()[0]).toMatchObject({ status: 'failed', disabledReason: reason });
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attributes: expect.objectContaining({
+          verb: 'talon.disable',
+          reason,
+          consecutiveFailures: 1,
+        }),
+      }),
+    );
+  });
+
+  it('disables on the first author failure from a visual check', async () => {
+    const talon = seedTalon('t1', {
+      condition: { type: 'visual_check', expectation: 'the loop is playing' },
+      scope: { machineIds: ['m1'] },
+    });
+    fake.docs.set(`${MACHINES_PATH}/m1`, { name: 'LOBBY-01', online: true });
+    mockEvaluateVisualCheck.mockRejectedValue(
+      new TalonVisualCheckError(
+        'author_unavailable',
+        'author has no usable llm key',
+        'creator_missing_llm_key',
+      ),
+    );
+
+    await runTalon(db, talon, { siteId: SITE, now: NOW });
+
+    expect(talonDoc('t1')).toMatchObject({
+      enabled: false,
+      consecutiveFailures: 1,
+      disabledReason: 'creator_missing_llm_key',
+    });
+    expect(runDocs()[0]).toMatchObject({
+      status: 'failed',
+      disabledReason: 'creator_missing_llm_key',
+    });
+  });
+
+  it('does NOT disable early for a transient failure', async () => {
+    // A provider 500 is the archetype: the next run may well succeed, so it
+    // stays on the counter and the talon keeps its enabled state.
+    const talon = seedTalon('t1', {
+      outputs: [{ type: 'webhook', url: 'https://hooks.example.com/t' }],
+      consecutiveFailures: 3,
+    });
+    fake.docs.set(`sites/${SITE}/talon_secrets/t1`, { talonId: 't1', secret: 'whsec_x' });
+    mockFetch.mockResolvedValue({ ok: false, status: 500 });
+
+    await runTalon(db, talon, { siteId: SITE, now: NOW });
+
+    expect(talonDoc('t1')).toMatchObject({ enabled: true, consecutiveFailures: 4 });
+    expect(talonDoc('t1').disabledReason).toBeUndefined();
+    expect(runDocs()[0].disabledReason).toBeUndefined();
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  it('does NOT disable early when a hoot output fails for a transient reason', async () => {
+    const talon = seedTalon('t1', {
+      outputs: [{ type: 'cortex', directive: 'look' }],
+      consecutiveFailures: 3,
+    });
+    mockRunHootOutput.mockResolvedValue({
+      status: 'failed',
+      detail: 'turn_lock_failed',
+      error: 'another turn holds the lock',
+    });
+
+    await runTalon(db, talon, { siteId: SITE, now: NOW });
+
+    expect(talonDoc('t1')).toMatchObject({ enabled: true, consecutiveFailures: 4 });
+    expect(talonDoc('t1').disabledReason).toBeUndefined();
+  });
+
+  it('does NOT disable early for a machine that was simply offline', async () => {
+    const talon = seedTalon('t1', {
+      condition: { type: 'visual_check', expectation: 'the loop is playing' },
+      scope: { machineIds: ['m1'] },
+      consecutiveFailures: 2,
+    });
+    fake.docs.set(`${MACHINES_PATH}/m1`, { name: 'LOBBY-01', online: false });
+
+    await runTalon(db, talon, { siteId: SITE, now: NOW });
+
+    // A skip does not even touch the counter, let alone the enabled flag.
+    expect(talonDoc('t1')).toMatchObject({ enabled: true, consecutiveFailures: 2 });
+    expect(talonDoc('t1').disabledReason).toBeUndefined();
   });
 });
 

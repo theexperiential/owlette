@@ -5,16 +5,21 @@
  * (talons wave 3, task 3.3).
  *
  * The three collaborators that reach outside this module are mocked at their
- * boundary: the site-access check, the turn store (lock + turnId), and the
- * detached turn runner. Everything this module actually decides — whether the
- * creator may still drive a turn, what the chat doc looks like, what the
- * assistant is told, what privileges it gets, and the tee cancel that stops the
- * unread HTTP branch buffering — is exercised for real.
+ * boundary: the author pre-flight (access + llm key), the turn store (lock +
+ * turnId), and the detached turn runner. Everything this module actually
+ * decides — whether the creator may still drive a turn, what the chat doc looks
+ * like, what the assistant is told, what privileges it gets, and the tee cancel
+ * that stops the unread HTTP branch buffering — is exercised for real.
+ *
+ * `author.server` is mocked with `requireActual` spread over it so the REAL
+ * `TalonAuthorError` class is in play: this module classifies on `instanceof`,
+ * and a hand-rolled stand-in would keep passing after the real class moved.
  *
  * `Date.now` is pinned so the generated chatId is assertable verbatim.
  */
 
-const mockVerifyUserSiteAccess = jest.fn();
+const mockResolveTalonAuthor = jest.fn();
+const mockAssertTalonAuthorLlmKey = jest.fn();
 const mockStartTurn = jest.fn();
 const mockAcquireTurnLock = jest.fn();
 const mockCancel = jest.fn();
@@ -29,9 +34,11 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: jest.fn(),
   getAdminAuth: jest.fn(),
 }));
-jest.mock('@/lib/hoot-utils.server', () => ({
+jest.mock('@/lib/talons/author.server', () => ({
+  ...jest.requireActual('@/lib/talons/author.server'),
   __esModule: true,
-  verifyUserSiteAccess: (...args: unknown[]) => mockVerifyUserSiteAccess(...args),
+  resolveTalonAuthor: (...args: unknown[]) => mockResolveTalonAuthor(...args),
+  assertTalonAuthorLlmKey: (...args: unknown[]) => mockAssertTalonAuthorLlmKey(...args),
 }));
 jest.mock('@/lib/hoot/turnRunner.server', () => ({
   __esModule: true,
@@ -49,9 +56,12 @@ jest.mock('@/lib/logger', () => ({
 
 import type { Firestore } from 'firebase-admin/firestore';
 import type { StartTurnParams } from '@/lib/hoot/turnRunner.server';
+import { TalonAuthorError } from '@/lib/talons/author.server';
 import {
-  clampToUnattendedAccess,
+  READ_ONLY_TIER,
   runHootOutput,
+  UNATTENDED_MAX_TIER,
+  unattendedToolTier,
   type RunHootOutputArgs,
 } from '@/lib/talons/hootOutput.server';
 import type { StoredTalon } from '@/lib/talons/store.server';
@@ -143,12 +153,16 @@ beforeEach(() => {
   db = fake as unknown as Firestore;
   jest.spyOn(Date, 'now').mockReturnValue(NOW_MS);
 
-  mockVerifyUserSiteAccess.mockResolvedValue({
-    role: 'admin',
-    isSuperadmin: false,
-    isSiteAdmin: true,
-    isSiteOwner: true,
+  mockResolveTalonAuthor.mockResolvedValue({
+    userId: 'admin-uid',
+    access: {
+      role: 'admin',
+      isSuperadmin: false,
+      isSiteAdmin: true,
+      isSiteOwner: true,
+    },
   });
+  mockAssertTalonAuthorLlmKey.mockResolvedValue(undefined);
   mockAcquireTurnLock.mockResolvedValue(null);
   mockCancel.mockResolvedValue(undefined);
   mockStartTurn.mockReturnValue({ cancel: mockCancel });
@@ -166,18 +180,29 @@ describe('fire-time access re-resolution', () => {
   it('re-resolves the creator against the site on every run', async () => {
     await runHootOutput(db, args());
 
-    expect(mockVerifyUserSiteAccess).toHaveBeenCalledWith(db, 'admin-uid', SITE);
+    expect(mockResolveTalonAuthor).toHaveBeenCalledWith(db, SITE, args().talon);
   });
 
-  it('fails without starting a turn when the creator lost site access', async () => {
-    mockVerifyUserSiteAccess.mockRejectedValue(new Error('You do not have access to this site'));
+  /**
+   * Every unrecoverable author problem, in one table. Each one must fail the
+   * run AND carry `disabledReason` — that field is the whole difference between
+   * "this talon is switched off because its author left" and ten more silent
+   * 3am failures ending in a disable nobody can explain.
+   */
+  it.each([
+    ['creator_not_a_user', 'Talon t1 has no user author'],
+    ['creator_deleted', 'Talon t1 author admin-uid can no longer run it: User is deleted'],
+    ['creator_access_revoked', 'Talon t1 author admin-uid can no longer run it: no access'],
+  ] as const)('disables the talon immediately on %s', async (reason, message) => {
+    mockResolveTalonAuthor.mockRejectedValue(new TalonAuthorError(reason, message));
 
     const result = await runHootOutput(db, args());
 
     expect(result).toEqual({
       status: 'failed',
-      detail: 'creator_access_revoked',
-      error: 'You do not have access to this site',
+      detail: reason,
+      error: message,
+      disabledReason: reason,
     });
     expect(mockStartTurn).not.toHaveBeenCalled();
     expect(mockAcquireTurnLock).not.toHaveBeenCalled();
@@ -185,24 +210,38 @@ describe('fire-time access re-resolution', () => {
     expect(fake.docs.size).toBe(0);
   });
 
-  it('fails when the creator was deleted', async () => {
-    mockVerifyUserSiteAccess.mockRejectedValue(new Error('User is deleted or inactive'));
+  it('disables the talon immediately when the creator has no llm key', async () => {
+    mockAssertTalonAuthorLlmKey.mockRejectedValue(
+      new TalonAuthorError('creator_missing_llm_key', 'Talon author admin-uid has no usable llm key'),
+    );
 
     const result = await runHootOutput(db, args());
 
-    expect(result).toMatchObject({ status: 'failed', detail: 'creator_access_revoked' });
-    expect(mockStartTurn).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      status: 'failed',
+      detail: 'creator_missing_llm_key',
+      disabledReason: 'creator_missing_llm_key',
+    });
+    // Pre-flighted BEFORE the chat and the lock, so a keyless creator does not
+    // leave an empty conversation and a claimed lock behind on every firing.
+    expect(mockAssertTalonAuthorLlmKey).toHaveBeenCalledWith(db, 'admin-uid');
+    expect(fake.docs.size).toBe(0);
+    expect(mockAcquireTurnLock).not.toHaveBeenCalled();
   });
 
-  it('refuses a talon with no attributable creator', async () => {
-    const result = await runHootOutput(
-      db,
-      args({ talon: talonFixture({ createdBy: 'system:talon_runner' }) }),
-    );
+  it('leaves a transient author-check failure on the failure counter', async () => {
+    // A Firestore outage is NOT a TalonAuthorError, and must never disable a
+    // talon — the database being unreachable says nothing about the author.
+    mockResolveTalonAuthor.mockRejectedValue(new Error('DEADLINE_EXCEEDED'));
 
-    expect(result).toEqual({ status: 'failed', detail: 'no_attributable_creator' });
-    // There is no uid to check, so the access lookup is never even attempted.
-    expect(mockVerifyUserSiteAccess).not.toHaveBeenCalled();
+    const result = await runHootOutput(db, args());
+
+    expect(result).toEqual({
+      status: 'failed',
+      detail: 'author_check_failed',
+      error: 'DEADLINE_EXCEEDED',
+    });
+    expect(result).not.toHaveProperty('disabledReason');
     expect(mockStartTurn).not.toHaveBeenCalled();
   });
 });
@@ -345,44 +384,44 @@ describe('the turn', () => {
 /*  privilege clamp                                                           */
 /* ------------------------------------------------------------------------- */
 
-describe('privilege clamp', () => {
-  it('strips the admin flags a tier-3 tool set would be derived from', async () => {
-    mockVerifyUserSiteAccess.mockResolvedValue({
+describe('privilege ceiling', () => {
+  it('caps a turn at read-only tools by default', async () => {
+    mockResolveTalonAuthor.mockResolvedValue({
+      userId: 'admin-uid',
+      access: {
+        role: 'superadmin',
+        isSuperadmin: true,
+        isSiteAdmin: true,
+        isSiteOwner: true,
+      },
+    });
+
+    await runHootOutput(db, args());
+
+    // The ceiling is explicit, NOT laundered through a degraded access object:
+    // `startTurn` intersects it with what the access earns, so the resolved
+    // access is forwarded verbatim and still governs the upper bound.
+    expect(startTurnParams().maxToolTier).toBe(READ_ONLY_TIER);
+    expect(startTurnParams().access).toEqual({
       role: 'superadmin',
       isSuperadmin: true,
       isSiteAdmin: true,
       isSiteOwner: true,
     });
-
-    await runHootOutput(db, args());
-
-    // `resolveHootMaxTier` reads ONLY `isSiteAdmin` (superadmin implies it):
-    // false on both is what puts an unattended turn below tier 3, where a tool
-    // call could otherwise block forever on an approval nobody will grant.
-    expect(startTurnParams().access).toEqual({
-      role: 'superadmin',
-      isSuperadmin: false,
-      isSiteAdmin: false,
-      isSiteOwner: true,
-    });
   });
 
-  it('preserves the role for audit attribution', async () => {
-    // The runner forwards `access.role` to buildExecutableTools as `userRole`;
-    // rewriting it would misreport who the turn acted as.
-    expect(
-      clampToUnattendedAccess({
-        role: 'admin',
-        isSuperadmin: false,
-        isSiteAdmin: true,
-        isSiteOwner: false,
-      }),
-    ).toEqual({
-      role: 'admin',
-      isSuperadmin: false,
-      isSiteAdmin: false,
-      isSiteOwner: false,
-    });
+  it('raises the ceiling to tier 2 when the output opted into acting', async () => {
+    await runHootOutput(db, args({ allowActions: true }));
+
+    expect(startTurnParams().maxToolTier).toBe(UNATTENDED_MAX_TIER);
+  });
+
+  it('never reaches tier 3, whatever the opt-in says', () => {
+    // Tier-3 tools (powershell, file writes, deploys, reboots) can require an
+    // in-chat approval, and nobody is in this conversation to grant one.
+    expect(unattendedToolTier(true)).toBeLessThan(3);
+    expect(unattendedToolTier(false)).toBeLessThan(3);
+    expect(UNATTENDED_MAX_TIER).toBe(2);
   });
 });
 

@@ -204,6 +204,14 @@
       ]
     },
     {
+      "collectionGroup": "talons",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "createdBy", "order": "ASCENDING" },
+        { "fieldPath": "name", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "talon_runs",
       "queryScope": "COLLECTION",
       "fields": [

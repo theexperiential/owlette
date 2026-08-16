@@ -10,10 +10,13 @@
  * ## fire-time access re-resolution
  *
  * The creator's site access is re-resolved on EVERY run and never trusted from
- * authoring time. A talon written by an admin who has since left the site, been
- * demoted, or been soft-deleted must not keep executing with the privileges
- * they held the day they wrote it. `verifyUserSiteAccess` throwing is a hard
- * `failed`, never a degraded run.
+ * authoring time (`resolveTalonAuthor`). A talon written by an admin who has
+ * since left the site, been demoted, or been soft-deleted must not keep
+ * executing with the privileges they held the day they wrote it. That is a hard
+ * `failed`, never a degraded run — and, because no amount of retrying brings a
+ * departed author back, it carries a {@link TalonDisabledReason} the engine
+ * uses to switch the talon off on the spot instead of after ten silent
+ * failures.
  *
  * ## one fresh chat per run
  *
@@ -25,25 +28,39 @@
  *
  * ## tier ceiling
  *
- * `startTurn` derives its tool tier from the `access` it is handed
- * (`resolveHootMaxTier`), and that mapping is binary — site admin → tier 3,
- * everyone else → tier 1. Tier-3 tools can require an in-chat approval
- * (`getHootRequireTier3Approval`) and an unattended turn has nobody to grant
- * one, so the call would sit until the turn was declared stale. The resolved
- * access is therefore clamped to non-admin before it reaches the runner, which
- * puts a hoot turn on read-only tools. Talons that need to ACT on a machine use
- * a `command` output, which is separately gated on `MACHINE_EXEC_COMMAND` when
- * the talon is authored.
+ * The turn's tool tier is set EXPLICITLY here (`maxToolTier`), never by
+ * degrading the access object. `startTurn` intersects the ceiling with the tier
+ * the re-resolved access already earns, so the ceiling can only ever lower the
+ * tool set — a creator who has been demoted since authoring still drops to
+ * tier 1, which is the whole point of re-resolving.
+ *
+ * Two ceilings, decided by the output's `allowActions` flag:
+ *
+ *   - default (`allowActions` absent or false) — {@link READ_ONLY_TIER}. Hoot
+ *     can look at the machine and report; it cannot touch it. Talons that need
+ *     to act use a `command` output.
+ *   - opted in (`allowActions: true`) — {@link UNATTENDED_MAX_TIER}: process
+ *     control, service management, screenshots. Authoring the flag takes
+ *     `MACHINE_EXEC_COMMAND`, the same privilege a `command` output takes
+ *     (`store.server.ts`), because it is the same power over the same machine.
+ *
+ * Tier 3 is unreachable on this path in either case, and
+ * {@link unattendedToolTier} caps it rather than trusting the call sites: a
+ * tier-3 tool can require an in-chat approval (`getHootRequireTier3Approval`)
+ * and an unattended turn has nobody to grant one, so the call would sit there
+ * until the turn was declared stale. Nothing about powershell, file writes,
+ * deploys, or reboots belongs on a turn nobody is watching.
  *
  * ## llm key
  *
  * `startTurn` resolves its own config internally — `resolveLlmConfig(db,
- * userId, siteId)` — and accepts no override, so a hoot turn uses the
- * CREATOR's personal key when they have one and falls back to the site key
- * otherwise. The store refuses to save a hoot-output talon unless a site key
- * exists (`assertSiteLlmKeyAvailable`, resolved with `autonomous: true`), so
- * the fallback is always present: a creator who later removes their personal
- * key does not silently break the talon.
+ * userId)` — and accepts no override, so a hoot turn always runs on the
+ * CREATOR's own key. There is no shared site key to fall back to any more, so
+ * the key is PRE-FLIGHTED here (`assertTalonAuthorLlmKey`) before a chat doc or
+ * a turn lock is created: a creator who removed their key would otherwise leave
+ * an empty chat and a claimed lock behind on every firing, and the failure
+ * would surface deep inside a detached runner where the talon cannot hear it.
+ * The pre-flight deliberately never receives the key itself.
  *
  * ## dispatch, not completion
  *
@@ -56,25 +73,21 @@
  */
 import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import type { UIMessage } from 'ai';
-import {
-  verifyUserSiteAccess,
-  type SiteAccessLevel,
-} from '@/lib/hoot-utils.server';
+import type { ToolTier } from '@/lib/mcp-tools';
 import { startTurn } from '@/lib/hoot/turnRunner.server';
 import { acquireTurnLock, generateTurnId } from '@/lib/hoot/turnStore.server';
 import logger from '@/lib/logger';
+import {
+  TalonAuthorError,
+  assertTalonAuthorLlmKey,
+  resolveTalonAuthor,
+  type TalonAuthor,
+} from './author.server';
 import type { StoredTalon } from './store.server';
-import type { TalonRunCondition } from './types';
+import type { TalonDisabledReason, TalonRunCondition } from './types';
 
 /** Sentinel `machineId` for site-wide mode (mirrors /api/hoot + the runner). */
 const SITE_TARGET_ID = '__site__';
-
-/**
- * `createdBy` prefix the store writes for a non-user author
- * (`authorIdentifier` in `store.server.ts`). Such a talon has no uid whose
- * access could be re-resolved, so it can never drive a hoot turn.
- */
-const SYSTEM_AUTHOR_PREFIX = 'system:';
 
 /** Everything a hoot turn needs about the run that is firing it. */
 export interface RunHootOutputArgs {
@@ -85,6 +98,13 @@ export interface RunHootOutputArgs {
   correlationId: string;
   /** The operator's instruction, verbatim. */
   directive: string;
+  /**
+   * The output's `allowActions` opt-in. `true` raises the ceiling from
+   * read-only to tier 2 — see the tier-ceiling note at the top of this file.
+   * Defaults to false, which is the behaviour every talon had before the flag
+   * existed.
+   */
+  allowActions?: boolean;
   /** Human-readable, lowercase trigger description, e.g. `cpu_percent > 90`. */
   triggerSummary: string;
   /** Set on a machine-scoped run; absent runs go site-wide. */
@@ -97,27 +117,40 @@ export interface RunHootOutputArgs {
 /**
  * `sent` carries the chat the turn is running in — the observable artifact.
  * `failed` carries a stable machine-readable reason, matching the vocabulary
- * the other output executors record.
+ * the other output executors record, plus `disabledReason` on the subset of
+ * failures that retrying can never fix.
  */
 export type RunHootOutputResult =
   | { status: 'sent'; chatId: string }
-  | { status: 'failed'; detail: string; error?: string };
+  | {
+      status: 'failed';
+      detail: string;
+      error?: string;
+      /** Present iff this failure must switch the talon off immediately. */
+      disabledReason?: TalonDisabledReason;
+    };
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Look, don't touch — every read-only tool, and nothing else. */
+export const READ_ONLY_TIER: ToolTier = 1;
+
 /**
- * Clamp resolved access to what an UNATTENDED turn may drive.
- *
- * `resolveHootMaxTier` reads exactly two flags, so dropping both admin flags
- * is what caps the turn — the same clamp `/api/hoot` applies to api-key
- * callers. Keep `role` / `isSiteOwner` intact: the runner passes `role` through
- * to `buildExecutableTools` for audit attribution, and rewriting it would
- * misreport who the turn is acting as.
+ * The highest tier ANY unattended turn may reach, whatever it asks for. Tier 3
+ * is approval-gated and there is nobody here to approve.
  */
-export function clampToUnattendedAccess(access: SiteAccessLevel): SiteAccessLevel {
-  return { ...access, isSuperadmin: false, isSiteAdmin: false };
+export const UNATTENDED_MAX_TIER: ToolTier = 2;
+
+/**
+ * The tool ceiling for an unattended turn. `startTurn` intersects it with the
+ * tier the creator's re-resolved access earns, so this is a ceiling, not a
+ * grant: a non-admin author's opted-in talon still lands on tier 1.
+ */
+export function unattendedToolTier(allowActions: boolean): ToolTier {
+  const requested = allowActions ? UNATTENDED_MAX_TIER : READ_ONLY_TIER;
+  return Math.min(UNATTENDED_MAX_TIER, requested) as ToolTier;
 }
 
 /**
@@ -176,22 +209,31 @@ export async function runHootOutput(
 ): Promise<RunHootOutputResult> {
   const { siteId, talon, runId } = args;
 
-  // No uid, no access check — and a hoot turn without an attributable creator
-  // is exactly the unbounded-privilege case the re-resolution exists to stop.
-  if (!talon.createdBy || talon.createdBy.startsWith(SYSTEM_AUTHOR_PREFIX)) {
-    return { status: 'failed', detail: 'no_attributable_creator' };
-  }
-
-  let access: SiteAccessLevel;
+  // Both pre-flights before ANY document is written: a creator who can no
+  // longer back this talon must not leave a chat and a turn lock behind on
+  // every firing. A `TalonAuthorError` is terminal by construction, so its
+  // reason travels up and the engine disables the talon on this run.
+  let author: TalonAuthor;
   try {
-    access = await verifyUserSiteAccess(db, talon.createdBy, siteId);
+    author = await resolveTalonAuthor(db, siteId, talon);
+    await assertTalonAuthorLlmKey(db, author.userId);
   } catch (error) {
-    // Creator deleted, unassigned from the site, or the site is gone. Recording
-    // the reason rather than the raw message keeps the run list readable; the
-    // message goes in `error` for whoever has to diagnose it.
-    return { status: 'failed', detail: 'creator_access_revoked', error: errorText(error) };
+    if (error instanceof TalonAuthorError) {
+      // The reason is the readable half; the raw message goes in `error` for
+      // whoever has to diagnose it.
+      return {
+        status: 'failed',
+        detail: error.reason,
+        error: error.message,
+        disabledReason: error.reason,
+      };
+    }
+    // Anything else — a failed read, a missing site — is transient and stays on
+    // the consecutive-failure counter.
+    return { status: 'failed', detail: 'author_check_failed', error: errorText(error) };
   }
 
+  const access = author.access;
   const isSiteMode = !args.machineId;
   const machineId = args.machineId ?? SITE_TARGET_ID;
   const machineName = args.machineName || args.machineId || '';
@@ -208,7 +250,7 @@ export async function runHootOutput(
       .set({
         source: 'talon',
         siteId,
-        userId: talon.createdBy,
+        userId: author.userId,
         targetType: isSiteMode ? 'site' : 'machine',
         targetMachineId: isSiteMode ? null : machineId,
         machineName: isSiteMode ? 'All Machines' : machineName,
@@ -243,8 +285,9 @@ export async function runHootOutput(
       machineId,
       machineName: isSiteMode ? '' : machineName,
       messages: [buildDirectiveMessage(args)],
-      userId: talon.createdBy,
-      access: clampToUnattendedAccess(access),
+      userId: author.userId,
+      access,
+      maxToolTier: unattendedToolTier(args.allowActions === true),
       priorToolCommands,
       source: 'talon',
     });

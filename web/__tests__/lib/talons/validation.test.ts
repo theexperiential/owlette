@@ -580,11 +580,59 @@ describe('validateTalonInput — outputs', () => {
     });
   });
 
+  it('keeps an opted-in hoot output flagged', () => {
+    expect(
+      expectOk(withOutputs([{ type: 'cortex', directive: 'fix it', allowActions: true }]))
+        .outputs[0],
+    ).toEqual({ type: 'cortex', directive: 'fix it', allowActions: true });
+  });
+
+  it.each([undefined, false])(
+    'normalizes an unset hoot opt-in away (%p)',
+    (allowActions) => {
+      // `false` IS the default, so it must not persist as a second
+      // representation of "hoot only looks".
+      expect(
+        expectOk(withOutputs([{ type: 'cortex', directive: 'look', allowActions }])).outputs[0],
+      ).toEqual({ type: 'cortex', directive: 'look' });
+    },
+  );
+
+  it('rejects a non-boolean hoot opt-in', () => {
+    const result = withOutputs([{ type: 'cortex', directive: 'look', allowActions: 'yes' }]);
+    expect(errorFor(result, 'outputs[0].allowActions')?.code).toBe('invalid_field');
+  });
+
   it.each(TALON_COMMAND_TYPES)('accepts command type %s', (commandType) => {
-    expect(expectOk(withOutputs([{ type: 'command', commandType }])).outputs[0]).toEqual({
+    expect(
+      expectOk(withOutputs([{ type: 'command', commandType, processName: 'TouchDesigner' }]))
+        .outputs[0],
+    ).toEqual({
       type: 'command',
       commandType,
+      processName: 'TouchDesigner',
     });
+  });
+
+  it.each(TALON_COMMAND_TYPES)(
+    'rejects command type %s with no process target',
+    (commandType) => {
+      // Without a target the agent resolves `<unspecified>` and every run
+      // fails, until the tenth consecutive failure auto-disables the talon.
+      const error = errorFor(
+        withOutputs([{ type: 'command', commandType }]),
+        'outputs[0].processId',
+      );
+      expect(error?.code).toBe('missing_field');
+      expect(error?.message).toBe('choose a process');
+    },
+  );
+
+  it('accepts a command output targeted by id alone', () => {
+    expect(
+      expectOk(withOutputs([{ type: 'command', commandType: 'stop_process', processId: 'p1' }]))
+        .outputs[0],
+    ).toEqual({ type: 'command', commandType: 'stop_process', processId: 'p1' });
   });
 
   it.each(['reboot_machine', 'kill_process', 'update_owlette', 'capture_screenshot', ''])(
@@ -757,6 +805,8 @@ const EVERY_REJECTION: unknown[] = [
   validTalon({ outputs: [{ type: 'cortex', directive: '' }] }),
   validTalon({ outputs: [{ type: 'cortex', directive: 'x'.repeat(TALON_DIRECTIVE_MAX_LENGTH + 1) }] }),
   validTalon({ outputs: [{ type: 'command', commandType: 'reboot_machine' }] }),
+  validTalon({ outputs: [{ type: 'command', commandType: 'restart_process' }] }),
+  validTalon({ outputs: [{ type: 'cortex', directive: 'look', allowActions: 'yes' }] }),
   validTalon({ outputs: [{ type: 'command', commandType: 'stop_process', processName: 42 }] }),
   validTalon({ outputs: [{ type: 'command', commandType: 'stop_process', processId: 'x'.repeat(257) }] }),
   validTalon({ outputs: [{ type: 'command', commandType: 'stop_process', processName: 'x'.repeat(257) }] }),

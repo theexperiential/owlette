@@ -28,6 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import {
   TALON_COMMAND_TYPES,
@@ -49,6 +50,12 @@ export interface OutputDraft {
   type: TalonOutputType;
   url: string;
   directive: string;
+  /**
+   * hoot outputs only — whether hoot may use its repair tools on the machine
+   * rather than only investigating. Off by default: an automation that acts
+   * without being asked to is the one thing an operator has to opt into.
+   */
+  allowActions: boolean;
   commandType: TalonCommandType;
   processId: string;
   processName: string;
@@ -85,6 +92,7 @@ export function newOutputDraft(type: TalonOutputType = 'email'): OutputDraft {
     type,
     url: '',
     directive: '',
+    allowActions: false,
     commandType: 'restart_process',
     processId: '',
     processName: '',
@@ -95,7 +103,11 @@ export function newOutputDraft(type: TalonOutputType = 'email'): OutputDraft {
 export function outputDraftFromTalon(output: TalonOutput): OutputDraft {
   const draft = newOutputDraft(output.type);
   if (output.type === 'webhook') draft.url = output.url;
-  if (output.type === 'cortex') draft.directive = output.directive;
+  if (output.type === 'cortex') {
+    draft.directive = output.directive;
+    // Absent means "investigate only" — the same talon as an explicit false.
+    draft.allowActions = output.allowActions === true;
+  }
   if (output.type === 'command') {
     draft.commandType = output.commandType;
     draft.processId = output.processId ?? '';
@@ -113,7 +125,13 @@ export function outputDraftToInput(draft: OutputDraft): TalonOutput {
     case 'webhook':
       return { type: 'webhook', url: draft.url };
     case 'cortex':
-      return { type: 'cortex', directive: draft.directive };
+      // Sent only when on, so "investigate only" persists as the absence of the
+      // permission rather than a stored `false` — same shape a template stores.
+      return {
+        type: 'cortex',
+        directive: draft.directive,
+        ...(draft.allowActions ? { allowActions: true } : {}),
+      };
     case 'command':
       return {
         type: 'command',
@@ -314,6 +332,31 @@ export function OutputsCard({
                       instruction in a new chat you can watch.
                     </p>
                   )}
+
+                  {/* The one permission this output carries, so it says plainly
+                      what it does and does not extend to. */}
+                  <div className="space-y-1 rounded-md border border-border p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label
+                        htmlFor={`talon-output-${index}-allow-actions`}
+                        className="text-xs text-foreground"
+                      >
+                        let hoot act
+                      </Label>
+                      <Switch
+                        id={`talon-output-${index}-allow-actions`}
+                        checked={draft.allowActions}
+                        onCheckedChange={(checked) => patch(index, { allowActions: checked === true })}
+                        disabled={disabled}
+                        aria-label={`output ${index + 1} let hoot act`}
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      off, hoot investigates and writes up what it found. on, it can also restart
+                      processes, restart services and free disk space on that machine. either way it
+                      can never run scripts, write files, deploy, or reboot.
+                    </p>
+                  </div>
                 </div>
               )}
 

@@ -49,6 +49,26 @@ class FakeDb {
     return new FakeCollection(this, path);
   }
 
+  /**
+   * Collection-group reads, for `deleteUser`'s fleet-wide talon lookup. Matches
+   * on the last collection segment of a path rather than a prefix, and exposes
+   * `ref.parent.parent.id` so the caller can recover the owning site.
+   */
+  collectionGroup(id: string): FakeCollectionGroup {
+    return new FakeCollectionGroup(this, id);
+  }
+
+  /** Write batch, for the talon store's all-or-nothing reassign commit. */
+  batch() {
+    const ops: Array<{ ref: FakeDoc; patch: Record<string, unknown> }> = [];
+    return {
+      update: (ref: FakeDoc, patch: Record<string, unknown>) => ops.push({ ref, patch }),
+      commit: async () => {
+        for (const op of ops) await op.ref.update(op.patch);
+      },
+    };
+  }
+
   async runTransaction<T>(
     callback: (tx: {
       get: (ref: FakeDoc | FakeCollection) => Promise<unknown>;
@@ -131,12 +151,73 @@ class FakeCollection {
   }
 }
 
+/**
+ * Collection-group query fake. Equality filters only; `orderBy` sorts by the
+ * field's string form, matching the `createdBy == uid, orderBy name` shape the
+ * talon store issues.
+ */
+class FakeCollectionGroup {
+  constructor(
+    private readonly db: FakeDb,
+    private readonly collectionId: string,
+    private readonly filters: Array<[string, unknown]> = [],
+    private readonly order: string | null = null,
+  ) {}
+
+  where(field: string, op: string, value: unknown): FakeCollectionGroup {
+    if (op !== '==') throw new Error(`FakeCollectionGroup.where: unsupported operator ${op}`);
+    return new FakeCollectionGroup(
+      this.db,
+      this.collectionId,
+      [...this.filters, [field, value]],
+      this.order,
+    );
+  }
+
+  orderBy(field: string): FakeCollectionGroup {
+    return new FakeCollectionGroup(this.db, this.collectionId, this.filters, field);
+  }
+
+  async get() {
+    const docs = [...this.db.docs.entries()]
+      .filter(([, data]) => data !== null)
+      .filter(([path]) => {
+        const segments = path.split('/');
+        return segments.length >= 2 && segments[segments.length - 2] === this.collectionId;
+      })
+      .filter(([, data]) =>
+        this.filters.every(([field, value]) => (data as Record<string, unknown>)[field] === value),
+      )
+      .map(([path, data]) => {
+        const segments = path.split('/');
+        const grandparentId =
+          segments.length >= 3 ? segments[segments.length - 3] : undefined;
+        return {
+          id: segments[segments.length - 1],
+          data: () => ({ ...(data as Record<string, unknown>) }),
+          ref: { parent: { parent: grandparentId ? { id: grandparentId } : null } },
+        };
+      });
+
+    if (this.order) {
+      const field = this.order;
+      docs.sort((a, b) => String(a.data()[field] ?? '').localeCompare(String(b.data()[field] ?? '')));
+    }
+    return { docs, empty: docs.length === 0 };
+  }
+}
+
 class FakeDoc {
   constructor(
     private readonly db: FakeDb,
     private readonly path: string,
     readonly id: string,
   ) {}
+
+  /** Subcollection, e.g. `sites/{siteId}` → `talons`. */
+  collection(name: string): FakeCollection {
+    return new FakeCollection(this.db, `${this.path}/${name}`);
+  }
 
   async get(): Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }> {
     const data = this.db.docs.get(this.path);
@@ -189,6 +270,9 @@ function isFieldOp(
 
 const ctx = {
   auditActor: 'user:admin',
+  // `deleteUser` carries the authorized caller into the talon store's audit
+  // context; the other action cores ignore the extra field.
+  actor: { type: 'user' as const, userId: 'admin', role: 'superadmin' as const, sites: [] },
   endpoint: '/test',
   method: 'POST',
 };
@@ -297,6 +381,25 @@ describe('removeSiteFromUser', () => {
 });
 
 describe('deleteUser', () => {
+  /** A db holding one soft-deletable author, one successor, and their talons. */
+  function talonDb(): FakeDb {
+    const db = new FakeDb();
+    db.seed('users/bob', { role: 'admin', sites: ['site-a'] });
+    db.seed('sites/site-a/talons/t1', {
+      name: 'nightly restart',
+      enabled: true,
+      outputs: [{ type: 'email' }],
+      createdBy: 'alice',
+    });
+    db.seed('sites/site-a/talons/t2', {
+      name: 'morning check',
+      enabled: true,
+      outputs: [{ type: 'email' }],
+      createdBy: 'alice',
+    });
+    return db;
+  }
+
   it('delegates to the user-delete cascade and audits successful deletes', async () => {
     mockDeleteCascade.mockResolvedValue({
       kind: 'deleted',
@@ -308,6 +411,7 @@ describe('deleteUser', () => {
     const result = await deleteUser(ctx, {
       uid: 'alice',
       successorUid: 'bob',
+      db: new FakeDb().asFirestore(),
     });
 
     expect(result.kind).toBe('deleted');
@@ -321,6 +425,106 @@ describe('deleteUser', () => {
         attributes: expect.objectContaining({ verb: 'soft_deleted' }),
       }),
     );
+  });
+
+  it('reports the authored-talon count without touching them by default', async () => {
+    mockDeleteCascade.mockResolvedValue({
+      kind: 'deleted',
+      deletedAt: 123,
+      transferredSites: [],
+      revokedKeyIds: [],
+    });
+    const db = talonDb();
+
+    const result = await deleteUser(ctx, {
+      uid: 'alice',
+      successorUid: 'bob',
+      db: db.asFirestore(),
+    });
+
+    // The count is the warning; without `reassignTalons` nothing moves. This is
+    // the deliberate half: an api client that has always passed `successorUid`
+    // must not discover it now rewrites authorship.
+    expect(result).toMatchObject({
+      kind: 'deleted',
+      authoredTalonCount: 2,
+      reassignedTalonIds: [],
+      talonReassignFailures: [],
+    });
+    expect(db.docs.get('sites/site-a/talons/t1')?.createdBy).toBe('alice');
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'user_mutated',
+        attributes: expect.objectContaining({
+          authoredTalonCount: 2,
+          reassignedTalonCount: 0,
+        }),
+      }),
+    );
+  });
+
+  it('hands the talons to the successor when asked', async () => {
+    mockDeleteCascade.mockResolvedValue({
+      kind: 'deleted',
+      deletedAt: 123,
+      transferredSites: [],
+      revokedKeyIds: [],
+    });
+    const db = talonDb();
+
+    const result = await deleteUser(ctx, {
+      uid: 'alice',
+      successorUid: 'bob',
+      reassignTalons: true,
+      db: db.asFirestore(),
+    });
+
+    expect(result).toMatchObject({
+      kind: 'deleted',
+      authoredTalonCount: 2,
+      talonReassignFailures: [],
+    });
+    expect((result as { reassignedTalonIds: string[] }).reassignedTalonIds.sort()).toEqual([
+      't1',
+      't2',
+    ]);
+    expect(db.docs.get('sites/site-a/talons/t1')?.createdBy).toBe('bob');
+    expect(db.docs.get('sites/site-a/talons/t2')?.createdBy).toBe('bob');
+  });
+
+  it('records the site when the successor cannot author there, and still deletes', async () => {
+    mockDeleteCascade.mockResolvedValue({
+      kind: 'deleted',
+      deletedAt: 123,
+      transferredSites: [],
+      revokedKeyIds: [],
+    });
+    const db = talonDb();
+    // bob is an admin of site-a only; the talon on site-b is out of his reach.
+    db.seed('sites/site-b/talons/t3', {
+      name: 'atrium sweep',
+      enabled: true,
+      outputs: [{ type: 'email' }],
+      createdBy: 'alice',
+    });
+
+    const result = await deleteUser(ctx, {
+      uid: 'alice',
+      successorUid: 'bob',
+      reassignTalons: true,
+      db: db.asFirestore(),
+    });
+
+    // The account is already gone by this point, so a per-site refusal is
+    // reported rather than thrown — otherwise the operator would have no way
+    // to learn which automations were left behind.
+    expect(result).toMatchObject({ kind: 'deleted', authoredTalonCount: 3 });
+    const failures = (result as { talonReassignFailures: { siteId: string }[] })
+      .talonReassignFailures;
+    expect(failures).toHaveLength(1);
+    expect(failures[0].siteId).toBe('site-b');
+    expect(db.docs.get('sites/site-b/talons/t3')?.createdBy).toBe('alice');
+    expect(db.docs.get('sites/site-a/talons/t1')?.createdBy).toBe('bob');
   });
 });
 

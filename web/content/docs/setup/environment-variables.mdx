@@ -191,7 +191,7 @@ Generate:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Required only if you want autonomous Cortex (AI auto-investigates process crashes). Also requires a site-level LLM API key configured in Firestore (`sites/{siteId}/settings/llm`) and autonomous mode enabled (`sites/{siteId}/settings/cortex` → `autonomousEnabled: true`).
+Required only if you want autonomous Cortex (AI auto-investigates process crashes). Also requires the site owner to have saved an LLM API key in their account settings — autonomous runs spend the owner's key — and autonomous mode enabled (`sites/{siteId}/settings/cortex` → `autonomousEnabled: true`).
 
 ---
 

@@ -35,6 +35,8 @@ const mockGetTalon = jest.fn();
 const mockUpdateTalon = jest.fn();
 const mockSetTalonEnabled = jest.fn();
 const mockDeleteTalon = jest.fn();
+const mockReassignTalons = jest.fn();
+const mockListTalonsAuthoredBy = jest.fn();
 
 jest.mock('@sentry/nextjs', () => ({
   captureException: jest.fn(),
@@ -117,6 +119,8 @@ jest.mock('@/lib/talons/store.server', () => {
     updateTalon: (...args: unknown[]) => mockUpdateTalon(...args),
     setTalonEnabled: (...args: unknown[]) => mockSetTalonEnabled(...args),
     deleteTalon: (...args: unknown[]) => mockDeleteTalon(...args),
+    reassignTalons: (...args: unknown[]) => mockReassignTalons(...args),
+    listTalonsAuthoredBy: (...args: unknown[]) => mockListTalonsAuthoredBy(...args),
   };
 });
 
@@ -127,6 +131,8 @@ import {
   PATCH as itemPATCH,
   DELETE as itemDELETE,
 } from '@/app/api/sites/[siteId]/talons/[talonId]/route';
+import { POST as reassignPOST } from '@/app/api/sites/[siteId]/talons/reassign/route';
+import { GET as authoredGET } from '@/app/api/sites/[siteId]/talons/authored/route';
 
 /* -------------------------------------------------------------------------- */
 /*  fixtures                                                                  */
@@ -186,6 +192,13 @@ beforeEach(() => {
   mockUpdateTalon.mockResolvedValue(storedTalon());
   mockSetTalonEnabled.mockResolvedValue(storedTalon({ enabled: false }));
   mockDeleteTalon.mockResolvedValue(undefined);
+  mockReassignTalons.mockResolvedValue({
+    siteId: SITE,
+    toUid: 'successor-uid',
+    reassignedTalonIds: [TALON],
+    skippedTalonIds: [],
+  });
+  mockListTalonsAuthoredBy.mockResolvedValue([]);
   // Trialing accounts run at the pro feature level, so create is allowed.
   seedBilling({ siteId: SITE, state: 'trialing' });
 });
@@ -629,6 +642,180 @@ describe('DELETE /api/sites/{siteId}/talons/{talonId}', () => {
 
     expect(res.status).toBe(204);
     expect(mockDeleteTalon).toHaveBeenCalled();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/*  POST /api/sites/{siteId}/talons/reassign                                  */
+/* -------------------------------------------------------------------------- */
+
+function reassignRequest(body: Record<string, unknown>) {
+  return createMockRequest(`http://localhost/api/sites/${SITE}/talons/reassign`, {
+    method: 'POST',
+    body,
+  });
+}
+
+describe('POST /api/sites/{siteId}/talons/reassign', () => {
+  it('registers TALON_MANAGE — the same capability that authors a talon', () => {
+    expect(optionsOf(reassignPOST)).toMatchObject({
+      capability: 'TALON_MANAGE',
+      siteIdParam: 'path',
+      targetKind: 'talon',
+    });
+    // No `apiKeyPermission: 'read'` — this is a write.
+    expect(optionsOf(reassignPOST).apiKeyPermission).toBeUndefined();
+  });
+
+  it('forwards the whole selection in one call', async () => {
+    const res = await reassignPOST(
+      reassignRequest({ toUid: 'successor-uid', fromUid: 'leaver-uid' }),
+      routeParams(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      toUid: 'successor-uid',
+      reassignedTalonIds: [TALON],
+      reassignedCount: 1,
+    });
+    // One store call for the whole departure, not one per talon.
+    expect(mockReassignTalons).toHaveBeenCalledTimes(1);
+    expect(mockReassignTalons).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ siteId: SITE, via: 'ui', method: 'POST' }),
+      'successor-uid',
+      { fromUid: 'leaver-uid' },
+    );
+  });
+
+  it('passes an explicit talon list through untouched', async () => {
+    await reassignPOST(
+      reassignRequest({ toUid: 'successor-uid', talonIds: [TALON] }),
+      routeParams(),
+    );
+
+    expect(mockReassignTalons).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'successor-uid',
+      { talonIds: [TALON] },
+    );
+  });
+
+  it('rejects a body with no successor before touching the store', async () => {
+    const res = await reassignPOST(reassignRequest({ fromUid: 'leaver-uid' }), routeParams());
+
+    expect(res.status).toBe(400);
+    expect(mockReassignTalons).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-array talonIds', async () => {
+    const res = await reassignPOST(
+      reassignRequest({ toUid: 'successor-uid', talonIds: TALON }),
+      routeParams(),
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockReassignTalons).not.toHaveBeenCalled();
+  });
+
+  it('renders a refused successor as problem+json, not a 500', async () => {
+    mockReassignTalons.mockRejectedValue(
+      new TalonStoreError(400, 'successor_invalid', 'the successor is a deleted account.'),
+    );
+
+    const res = await reassignPOST(
+      reassignRequest({ toUid: 'ghost-uid', fromUid: 'leaver-uid' }),
+      routeParams(),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe('successor_invalid');
+    expect(body.title).toBe('invalid successor');
+  });
+
+  it('replays an idempotent retry without calling the store twice', async () => {
+    mockCheckIdempotency.mockResolvedValue({
+      mode: 'replay',
+      response: NextResponse.json({ replayed: true }),
+    });
+
+    const res = await reassignPOST(
+      reassignRequest({ toUid: 'successor-uid', fromUid: 'leaver-uid' }),
+      routeParams(),
+    );
+
+    expect(await res.json()).toEqual({ replayed: true });
+    expect(mockReassignTalons).not.toHaveBeenCalled();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/*  GET /api/sites/{siteId}/talons/authored                                   */
+/* -------------------------------------------------------------------------- */
+
+describe('GET /api/sites/{siteId}/talons/authored', () => {
+  it('takes read-class api-key scope, like listing talons', () => {
+    expect(optionsOf(authoredGET)).toMatchObject({
+      capability: 'TALON_MANAGE',
+      apiKeyPermission: 'read',
+    });
+  });
+
+  it('returns the count and names of what the departing member wrote', async () => {
+    mockListTalonsAuthoredBy.mockResolvedValue([
+      { id: 't1', name: 'nightly restart', enabled: true, createdBy: 'leaver-uid' },
+      { id: 't2', name: 'morning check', enabled: false, createdBy: 'leaver-uid' },
+    ]);
+
+    const res = await authoredGET(
+      createMockRequest(
+        `http://localhost/api/sites/${SITE}/talons/authored?uid=leaver-uid`,
+      ),
+      routeParams(),
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toEqual({
+      siteId: SITE,
+      uid: 'leaver-uid',
+      count: 2,
+      // Names only — the preview must not become a second way to read a talon.
+      talons: [
+        { id: 't1', name: 'nightly restart', enabled: true },
+        { id: 't2', name: 'morning check', enabled: false },
+      ],
+    });
+    expect(mockListTalonsAuthoredBy).toHaveBeenCalledWith(
+      expect.anything(),
+      SITE,
+      'leaver-uid',
+    );
+  });
+
+  it('rejects a missing uid', async () => {
+    const res = await authoredGET(
+      createMockRequest(`http://localhost/api/sites/${SITE}/talons/authored`),
+      routeParams(),
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockListTalonsAuthoredBy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a uid that would escape the document path', async () => {
+    const res = await authoredGET(
+      createMockRequest(
+        `http://localhost/api/sites/${SITE}/talons/authored?uid=${encodeURIComponent('../escape')}`,
+      ),
+      routeParams(),
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockListTalonsAuthoredBy).not.toHaveBeenCalled();
   });
 });
 

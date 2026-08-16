@@ -1,8 +1,8 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.7.0 - talons collections: talons + talon_runs (client read-only), talon_secrets (server-only, no client read)
-// Last Updated: 2026-08-11
+// Version: 2.8.0 - talon presets: config/{siteId}/talon_presets (client read, server-managed writes)
+// Last Updated: 2026-08-15
 //
 // Security Model:
 // - Role-based access control (RBAC): user | admin | agent
@@ -593,6 +593,13 @@ service cloud.firestore {
 
     match /config/{siteId}/project_distribution_presets/{presetId} {
       // Project distribution presets shared across a site
+      // Users with site access can read presets; server APIs manage them
+      allow read: if canAccessSite(siteId);
+      allow write, delete: if isServiceAccount();
+    }
+
+    match /config/{siteId}/talon_presets/{presetId} {
+      // Reusable talon templates shared across a site
       // Users with site access can read presets; server APIs manage them
       allow read: if canAccessSite(siteId);
       allow write, delete: if isServiceAccount();

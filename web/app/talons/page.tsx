@@ -17,6 +17,7 @@ import { useRouter } from 'next/navigation';
 import { Loader2, Plus, Zap } from 'lucide-react';
 
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
+import ConfirmDialog from '@/components/ConfirmDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import DownloadButton from '@/components/DownloadButton';
 import { LoadingWord } from '@/components/LoadingWord';
@@ -28,7 +29,10 @@ import { Card } from '@/components/ui/card';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMachines, useSites } from '@/hooks/useFirestore';
 import { useSiteTier } from '@/hooks/useSiteTier';
+import { useTalonPresets, type TalonPreset } from '@/hooks/useTalonPresets';
 import { useTalons } from '@/hooks/useTalons';
+import { findTalonPresetByName, talonPresetTemplateFrom } from '@/lib/talons/presetTemplate';
+import { toast } from '@/lib/toast';
 
 import { TALON_ROW_GRID, TalonCard } from './components/TalonCard';
 import { TalonEditorDialog } from './components/TalonEditorDialog';
@@ -39,6 +43,9 @@ import { TalonEditorDialog } from './components/TalonEditorDialog';
  * definition — the hook owns it.
  */
 type TalonListEntry = ReturnType<typeof useTalons>['talons'][number];
+
+/** Custom presets sort after every built-in, as in every other preset family. */
+const CUSTOM_TEMPLATE_ORDER = 100;
 
 export default function TalonsPage() {
   const router = useRouter();
@@ -77,6 +84,13 @@ export default function TalonsPage() {
   const { machines } = useMachines(currentSiteId);
   const { talons, loading: talonsLoading, error } = useTalons(currentSiteId);
   const siteTier = useSiteTier(currentSiteId);
+  // One subscription for the whole list — the rows raise "save as template"
+  // here rather than each opening their own.
+  const {
+    presets: talonPresets,
+    createPreset: createTalonPreset,
+    updatePreset: updateTalonPreset,
+  } = useTalonPresets(currentSiteId || null);
 
   const [manageDialogOpen, setManageDialogOpen] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -84,6 +98,11 @@ export default function TalonsPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   // The talon the editor is opened on. `null` = create mode.
   const [editingTalon, setEditingTalon] = useState<TalonListEntry | null>(null);
+  // Set when "save as template" hit an existing template of the same name.
+  const [pendingTemplate, setPendingTemplate] = useState<{
+    talon: TalonListEntry;
+    existing: TalonPreset;
+  } | null>(null);
 
   const handleSiteChange = (siteId: string) => {
     setUserPickedSiteId(siteId);
@@ -98,6 +117,48 @@ export default function TalonsPage() {
   const openEdit = (talon: TalonListEntry) => {
     setEditingTalon(talon);
     setEditorOpen(true);
+  };
+
+  /**
+   * Write a talon out as a reusable template. `replace` is set only after the
+   * operator confirms a name collision — nothing overwrites silently, and name
+   * uniqueness is not enforced server-side in any preset family.
+   */
+  const writeTalonTemplate = async (talon: TalonListEntry, replace: TalonPreset | null) => {
+    const description = talon.description?.trim();
+    const template = talonPresetTemplateFrom(talon);
+    try {
+      if (replace) {
+        await updateTalonPreset(replace.id, {
+          name: talon.name,
+          ...(description ? { description } : {}),
+          template,
+        });
+      } else {
+        await createTalonPreset({
+          name: talon.name,
+          ...(description ? { description } : {}),
+          template,
+          isBuiltIn: false,
+          order: CUSTOM_TEMPLATE_ORDER,
+          createdBy: '',
+        });
+      }
+      toast.success('template saved');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'failed to save template');
+    }
+  };
+
+  const handleSaveAsTemplate = async (talon: TalonListEntry) => {
+    // Checked against the MERGED list, so a collision with a built-in is caught
+    // too — replacing one writes the `builtin-*` override the api expects.
+    const existing = findTalonPresetByName(talonPresets, talon.name);
+    if (existing) {
+      setPendingTemplate({ talon, existing });
+      return;
+    }
+    await writeTalonTemplate(talon, null);
   };
 
   useEffect(() => {
@@ -260,6 +321,7 @@ export default function TalonsPage() {
                   siteId={currentSiteId}
                   machines={machines}
                   onEdit={() => openEdit(talon)}
+                  onSaveAsTemplate={() => handleSaveAsTemplate(talon)}
                 />
               ))}
             </div>
@@ -284,6 +346,27 @@ export default function TalonsPage() {
           isSiteAdmin={isSiteAdmin(currentSiteId)}
         />
       )}
+
+      <ConfirmDialog
+        open={pendingTemplate !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingTemplate(null);
+        }}
+        title="replace template?"
+        description={
+          pendingTemplate
+            ? `a template named "${pendingTemplate.existing.name}" already exists. replace it with this talon?`
+            : ''
+        }
+        confirmText="replace"
+        cancelText="cancel"
+        onConfirm={() => {
+          if (!pendingTemplate) return;
+          const { talon, existing } = pendingTemplate;
+          setPendingTemplate(null);
+          void writeTalonTemplate(talon, existing);
+        }}
+      />
     </div>
   );
 }

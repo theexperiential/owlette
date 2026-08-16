@@ -30,6 +30,7 @@ import { createModel, buildAutonomousSystemPrompt } from '@/lib/llm';
 import { getToolsByTier, EXISTING_COMMAND_MAPPINGS, type McpToolDefinition } from '@/lib/mcp-tools';
 import {
   resolveLlmConfig,
+  resolveSiteKeyOwner,
   isMachineOnline,
   isHootEnabled,
   executeServerSideTool,
@@ -63,7 +64,6 @@ interface HootSettings {
   autonomousEnabled?: boolean;
   directive?: string;
   maxTier?: number;
-  autonomousModel?: string;
   maxEventsPerHour?: number;
   cooldownMinutes?: number;
   escalationEmail?: boolean;
@@ -386,8 +386,11 @@ async function runAutonomousInvestigation(
       return;
     }
 
-    // Resolve LLM config (site-level only)
-    const llmConfig = await resolveLlmConfig(db, null, siteId, { autonomous: true });
+    // Whose key this investigation spends. There is no shared site key any
+    // more (see `resolveLlmConfig`), and a machine-triggered investigation has
+    // no author, so it runs on the SITE OWNER's key — the one uid that is
+    // durable for the life of the site and already carries its billing.
+    const llmConfig = await resolveLlmConfig(db, await resolveSiteKeyOwner(db, siteId));
 
     // Build tools (tier-capped)
     const maxTier = settings.maxTier ?? 2;

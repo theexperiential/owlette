@@ -393,33 +393,22 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
     }
   };
 
-  // Check if user or site has an LLM API key configured
+  // Has this user configured an LLM API key? Their OWN key is the only one a
+  // chat can run on — there is no shared site key to fall back to, so a
+  // leftover `sites/{siteId}/settings/llm` doc must not answer this question.
   useEffect(() => {
     if (!user || !db) return;
     async function checkApiKey() {
       try {
-        // Check user-level key
         const userKeyDoc = await getDoc(doc(db!, 'users', user!.uid, 'settings', 'llm'));
-        if (userKeyDoc.exists()) {
-          setHasApiKey(true);
-          return;
-        }
-        // Check site-level key
-        if (currentSiteId) {
-          const siteKeyDoc = await getDoc(doc(db!, 'sites', currentSiteId, 'settings', 'llm'));
-          if (siteKeyDoc.exists()) {
-            setHasApiKey(true);
-            return;
-          }
-        }
-        setHasApiKey(false);
+        setHasApiKey(userKeyDoc.exists());
       } catch {
         // If we can't read the settings doc, assume no key configured
         setHasApiKey(false);
       }
     }
     checkApiKey();
-  }, [user, currentSiteId, accountSettingsOpen]);
+  }, [user, accountSettingsOpen]);
 
   // Auth guard
   useEffect(() => {

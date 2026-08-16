@@ -177,6 +177,21 @@ function makeCollectionRef(parts: string[]): unknown {
   const path = pathFor(parts);
   const wheres: WhereClause[] = [];
 
+  const filtered = () => {
+    let docs = (collectionDocs[path] || []).slice();
+    for (const w of wheres) {
+      if (w.op === '==') {
+        docs = docs.filter((d) => d.data[w.field] === w.value);
+      } else if (w.op === 'array-contains') {
+        docs = docs.filter((d) => {
+          const arr = d.data[w.field];
+          return Array.isArray(arr) && arr.includes(w.value);
+        });
+      }
+    }
+    return docs;
+  };
+
   const ref: Record<string, unknown> = {
     doc: (id: string) => makeDocRef([...parts, id]),
     where: (field: string, op: string, value: unknown) => {
@@ -186,27 +201,19 @@ function makeCollectionRef(parts: string[]): unknown {
     orderBy: () => ref,
     limit: () => ref,
     startAfter: () => ref,
-    get: jest.fn(async () => {
-      let docs = (collectionDocs[path] || []).slice();
-      for (const w of wheres) {
-        if (w.op === '==') {
-          docs = docs.filter((d) => d.data[w.field] === w.value);
-        } else if (w.op === 'array-contains') {
-          docs = docs.filter((d) => {
-            const arr = d.data[w.field];
-            return Array.isArray(arr) && arr.includes(w.value);
-          });
-        }
-      }
-      return {
-        docs: docs.map((d) => ({
-          id: d.id,
-          exists: true,
-          data: () => d.data,
-          ref: makeDocRef([...parts, d.id]),
-        })),
-      };
+    // Aggregate read — the member-removal route counts the departing member's
+    // talons this way before it touches `sites[]`.
+    count: () => ({
+      get: jest.fn(async () => ({ data: () => ({ count: filtered().length }) })),
     }),
+    get: jest.fn(async () => ({
+      docs: filtered().map((d) => ({
+        id: d.id,
+        exists: true,
+        data: () => d.data,
+        ref: makeDocRef([...parts, d.id]),
+      })),
+    })),
   };
   return ref;
 }
@@ -229,10 +236,28 @@ const mockRunTransaction = jest.fn(
   },
 );
 
+/** Write batch — the talon store commits a reassignment through one. */
+function makeBatch() {
+  const ops: Array<() => Promise<void>> = [];
+  return {
+    set: (ref: { set: (d: Record<string, unknown>) => Promise<void> }, data: Record<string, unknown>) =>
+      ops.push(() => ref.set(data)),
+    update: (
+      ref: { update: (p: Record<string, unknown>) => Promise<void> },
+      patch: Record<string, unknown>,
+    ) => ops.push(() => ref.update(patch)),
+    delete: (ref: { delete: () => Promise<void> }) => ops.push(() => ref.delete()),
+    commit: async () => {
+      for (const op of ops) await op();
+    },
+  };
+}
+
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
     collection: (name: string) => makeCollectionRef([name]),
     runTransaction: mockRunTransaction,
+    batch: makeBatch,
   }),
   getAdminAuth: () => ({
     verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')),
@@ -584,5 +609,123 @@ describe('DELETE /api/sites/{siteId}/members/{uid}', () => {
     });
 
     expect(res.status).toBe(404);
+  });
+
+  /* ---------------------------------------------------------------------- */
+  /*  talons the departing member authored                                   */
+  /* ---------------------------------------------------------------------- */
+
+  describe('authored talons', () => {
+    function seedTalon(talonId: string, data: Record<string, unknown>): void {
+      const path = `sites/${SITE}/talons/${talonId}`;
+      const merged = {
+        name: talonId,
+        enabled: true,
+        outputs: [{ type: 'email' }],
+        ...data,
+      };
+      docStore[path] = { data: merged };
+      const colPath = `sites/${SITE}/talons`;
+      if (!collectionDocs[colPath]) collectionDocs[colPath] = [];
+      collectionDocs[colPath].push({ id: talonId, data: merged });
+    }
+
+    it('reports the count of talons the member wrote, and leaves them alone', async () => {
+      authedAsSuperadminWithKey();
+      seedSite(SITE);
+      seedUser('alice', { role: 'admin', sites: [SITE] });
+      seedTalon('t1', { createdBy: 'alice' });
+      seedTalon('t2', { createdBy: 'alice' });
+      seedTalon('t3', { createdBy: 'bob' });
+
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/members/alice`,
+        { method: 'DELETE' },
+      );
+      const res = await memberDELETE(req, {
+        params: Promise.resolve({ siteId: SITE, uid: 'alice' }),
+      });
+      const body = await res.json();
+
+      // The count is the warning a blind api client still gets; nothing moves
+      // without an explicit successor.
+      expect(res.status).toBe(200);
+      expect(body.talonCount).toBe(2);
+      expect(body.reassignedTalonIds).toEqual([]);
+      expect(docStore[`sites/${SITE}/talons/t1`]?.data?.createdBy).toBe('alice');
+      expect(mockEmitMutation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'site_member_mutated',
+          attributes: expect.objectContaining({
+            verb: 'member_removed',
+            talonCount: 2,
+            reassignedTalonCount: 0,
+          }),
+        }),
+      );
+    });
+
+    it('reassigns to the named successor before removing membership', async () => {
+      authedAsSuperadminWithKey();
+      seedSite(SITE);
+      seedUser('alice', { role: 'admin', sites: [SITE] });
+      seedUser('bob', { role: 'admin', sites: [SITE] });
+      seedTalon('t1', { createdBy: 'alice' });
+
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/members/alice?talonSuccessorUid=bob`,
+        { method: 'DELETE' },
+      );
+      const res = await memberDELETE(req, {
+        params: Promise.resolve({ siteId: SITE, uid: 'alice' }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.reassignedTalonIds).toEqual(['t1']);
+      expect(docStore[`sites/${SITE}/talons/t1`]?.data?.createdBy).toBe('bob');
+      expect(docStore['users/alice']?.data?.sites).toEqual([]);
+    });
+
+    it('leaves membership intact when the successor is refused', async () => {
+      authedAsSuperadminWithKey();
+      seedSite(SITE);
+      seedUser('alice', { role: 'admin', sites: [SITE] });
+      // A member cannot author a talon, so they cannot inherit one either.
+      seedUser('carol', { role: 'member', sites: [SITE] });
+      seedTalon('t1', { createdBy: 'alice' });
+
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/members/alice?talonSuccessorUid=carol`,
+        { method: 'DELETE' },
+      );
+      const res = await memberDELETE(req, {
+        params: Promise.resolve({ siteId: SITE, uid: 'alice' }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(body.code).toBe('successor_invalid');
+      // Order matters: reassign fails, so the removal never happens.
+      expect(docStore['users/alice']?.data?.sites).toEqual([SITE]);
+      expect(docStore[`sites/${SITE}/talons/t1`]?.data?.createdBy).toBe('alice');
+    });
+
+    it('rejects a malformed talonSuccessorUid', async () => {
+      authedAsSuperadminWithKey();
+      seedSite(SITE);
+      seedUser('alice', { role: 'admin', sites: [SITE] });
+
+      const req = createMockRequest(
+        `http://localhost/api/sites/${SITE}/members/alice?talonSuccessorUid=${encodeURIComponent('../escape')}`,
+        { method: 'DELETE' },
+      );
+      const res = await memberDELETE(req, {
+        params: Promise.resolve({ siteId: SITE, uid: 'alice' }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(docStore['users/alice']?.data?.sites).toEqual([SITE]);
+    });
   });
 });
