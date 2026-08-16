@@ -11,12 +11,35 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-08-16
+
+### added
+
+- **A new desktop app replaces the old agent window.** Process management now lives in a proper application: add a process by dragging its file onto the window, edit schedules inline, watch live status, and reach pairing, the recovery menu, and start-on-login from the tray. It ships with the installer and replaces the Python interface entirely.
+- **talons — automation that runs on your machines.** Build a rule as trigger → condition → outputs: react to a crash, a display change, a schedule, or a webhook, then restart something, send an alert, run a command, or ask hoot to look at a screenshot and decide. Presets cover the common cases, and you can bring your own LLM key per site.
+- **The dashboard works on a phone.** Machines, logs, hoot conversations, dialogs, and site management are all usable on a small screen, with touch-sized controls throughout.
+
+### changed
+
+- **Breaking: the agent runs under a new service host.** Owlette no longer uses NSSM; it is hosted by our own supervisor, which stops cleanly through Windows' own service controls with a grace period, backs off after a crash loop instead of restarting forever, registers real Windows failure actions, and writes its own log at `logs\service_host.log`. Upgrades migrate the service registration in place and remove `nssm.exe` — no reinstall, and supervised processes keep running through the migration. Agents older than 3.0.0 are not compatible with this host.
+- **Cortex is now hoot.** Routes, screens, and documentation use the new name, and `/cortex` links redirect permanently. The API keeps its `/api/cortex/*` paths working, so existing CLI and SDK integrations need no changes.
+- **The installer is much smaller.** The Claude CLI is downloaded and checksum-verified on first use rather than shipped inside the installer, and machines that already have a matching copy reuse it.
+- **One Start-menu entry.** "Owlette" opens the app. The old tray-only launcher, which appeared to do nothing when clicked, and the separate "Owlette Configuration" entry are both retired and removed on upgrade.
+
+### removed
+
+- **The legacy Python interface is gone**, and upgrading prunes its leftover files and logs.
+- **Site tiers and billing are removed.** The `core`/`pro` distinction no longer gates anything — every feature, including talons, is available to all sites.
+
 ### fixed
 
 - **Starting a process that is already running no longer launches a second copy.** Starting a process from the dashboard, or from hoot's self-healing, decided whether it was already running by looking only at the PID Owlette itself last launched. A process that was live but untracked — anything with its launch mode set to off, or an instance that outlived a service restart — looked absent, so the start landed a duplicate on top of it. Both paths now search for a matching instance first and adopt it instead. Matching is project-aware: several instances of one application are normal, so a TouchDesigner instance is identified by the `.toe` it has open, not just by `TouchDesigner.exe`, and Owlette declines to adopt rather than guess when a process entry has no file configured to tell instances apart.
 - **Two launches can no longer race each other.** The monitoring loop, dashboard commands, and remote config updates each run on their own thread, and nothing stopped two of them from deciding a process needed launching at the same moment. Launches are now serialised per process, a restart holds that claim across both the stop and the start, and a launch that loses the race adopts the winner's process instead of starting another.
 - **Leftover scheduled tasks from old agents are cleaned up.** Agents older than 2.1.1 started supervised processes through Windows Task Scheduler and created one task per launch, which were meant to be deleted moments later but survived whenever a launch was interrupted. Long-lived machines accumulated dozens, where they were easily mistaken for a second Owlette autostart. The agent now removes them once, on first start after upgrading. Only the two task shapes Owlette generated are matched, and only when they carry no trigger that could still fire — update tasks, and anything named by a technician, are left alone.
 - **Display alerts actually arrive again.** Display events — a monitor disappearing, a layout apply failing, genlock dropping, resolution drifting — were written to the dashboard event feed but never handed to the alert pipeline, so the emails and webhooks they were supposed to trigger had been silent fleet-wide. The agent now sends them, and the `display alerts` preference, the display digest, and display webhooks work as documented. Requires the new agent; older agents keep logging the events to the dashboard as before.
+- **roost deployments finish, roll back, and report honestly.** A rollout to a single machine could sit at in-progress after the file sync had actually completed, rollback restored a version record without restoring the files it named, and a deployment that failed part-way could still read as successful. Rollouts now complete, rollback returns the machine to the exact files it ran before, failures say so, and the `rolled_back` webhook fires. Abandoned transfers are cleaned up rather than left occupying disk.
+- **A site you create yourself is visible to you.** Signing up and creating your first site wrote the site but never added it to your own account, so the dashboard came up empty until someone else invited you to it.
+- **The online badge respects a stale heartbeat.** A machine could show as online from a cached snapshot after it had stopped reporting; the badge now checks how recent the heartbeat is before showing green.
 
 ## [2.12.21] - 2026-08-12
 
