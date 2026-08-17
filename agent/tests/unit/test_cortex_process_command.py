@@ -64,7 +64,10 @@ def test_kill_passes_int_pid_not_config_dict(graceful_terminate):
     result = svc._handle_cortex_process_command('kill_process', 'TouchDesigner')
 
     assert result['status'] == 'completed'
-    graceful_terminate.assert_called_once_with(1234)
+    # The contract under test is the first argument: an int pid, never the
+    # config dict. exe_path rides along so a .bat/.cmd target's payload is
+    # reaped with its wrapper; it is None here because PROC has no exe_path.
+    graceful_terminate.assert_called_once_with(1234, exe_path=None)
     # The regression guard: the arg is an int PID, not the process config dict.
     (called_arg,), _ = graceful_terminate.call_args
     assert isinstance(called_arg, int) and not isinstance(called_arg, dict)

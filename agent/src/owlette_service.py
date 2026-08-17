@@ -1653,7 +1653,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         last_pid = fallback_pid
                         discovered = True
                 if last_pid and Util.is_pid_running(last_pid):
-                    shared_utils.graceful_terminate(last_pid)
+                    shared_utils.graceful_terminate(
+                        last_pid, exe_path=target.get('exe_path'))
                     shared_utils.update_process_status_in_json(
                         last_pid, 'KILLED', self.firebase_client, process_id=process_list_id)
                     # Mark as killed (not deleted) so the main loop doesn't treat
@@ -2607,8 +2608,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # Mark as KILLED before terminating so crash detection skips the alert
                 shared_utils.update_process_status_in_json(pid, 'KILLED', self.firebase_client, process_id=process.get('id'))
 
-                # Gracefully terminate (WM_CLOSE then hard kill)
-                shared_utils.graceful_terminate(pid)
+                # Gracefully terminate (WM_CLOSE then hard kill). exe_path
+                # lets it reap a cmd.exe wrapper's payload — see its docstring.
+                shared_utils.graceful_terminate(pid, exe_path=process.get('exe_path'))
 
                 # Log process kill event
                 if self.firebase_client and self.firebase_client.is_connected():
@@ -3677,7 +3679,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 last_pid = fallback_pid
                                 discovered = True
                         if last_pid and Util.is_pid_running(last_pid):
-                            shared_utils.graceful_terminate(last_pid)
+                            shared_utils.graceful_terminate(
+                                last_pid, exe_path=process.get('exe_path'))
                             status = 'STOPPED' if cmd_type == 'stop_process' else 'KILLED'
                             action = 'process_stopped' if cmd_type == 'stop_process' else 'process_killed'
                             discovered_note = ' (PID discovered by exe/file_path lookup)' if discovered else ''

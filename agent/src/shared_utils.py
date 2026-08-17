@@ -2266,10 +2266,58 @@ def find_windows_by_pid(pid):
     return windows
 
 
-def graceful_terminate(pid, timeout=5):
+def _reap_orphaned_descendants(snapshot, pid):
+    """Kill descendants that outlived the process they belonged to.
+
+    `snapshot` must have been taken while the parent was still alive — once it
+    exits, the parent/child link is gone and the survivors are unattributable.
+
+    Only called after the parent is confirmed dead, so this can never kill a
+    child out from under a running process. Matching on (pid, create_time)
+    rather than pid alone: Windows recycles pids aggressively, and a bare pid
+    match could terminate an unrelated process that inherited the number
+    between the snapshot and here.
+    """
+    reaped = []
+    for child_pid, created in snapshot:
+        try:
+            child = psutil.Process(child_pid)
+            if child.create_time() != created:
+                continue  # pid was recycled — not our child
+            name = child.name()
+            child.terminate()
+            try:
+                child.wait(timeout=3)
+            except psutil.TimeoutExpired:
+                child.kill()
+            reaped.append(f'{name} ({child_pid})')
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    if reaped:
+        logging.info(
+            f"Reaped {len(reaped)} orphaned child process(es) of {pid}: "
+            f"{', '.join(reaped)}")
+    return reaped
+
+
+def graceful_terminate(pid, timeout=5, exe_path=None):
     """Attempt graceful shutdown via WM_CLOSE, then fall back to hard terminate.
 
     Returns True if the process was terminated, False if it was already gone.
+
+    `exe_path` is the configured target, used only to decide whether surviving
+    children need reaping. A .bat/.cmd target runs through a cmd.exe wrapper
+    (see process_launcher.build_hidden_batch_command), so the pid Owlette
+    tracks is the wrapper, not the payload. Killing the wrapper leaves the
+    real process running and untracked — the supervisor reports the restart as
+    successful while the old instance is still holding its port, its GPU, or
+    its files. Children are snapshotted before the kill and reaped after.
+
+    Deliberately NOT unconditional. For a normal .exe the tracked pid is the
+    application itself, and its children are its own business — TouchDesigner
+    spawns TouchEngine.exe and TouchDesignerWebRender.exe, and a well-behaved
+    app tears those down during WM_CLOSE. Reaping there would only race that
+    cleanup.
     """
     import win32gui
     import win32con
@@ -2278,6 +2326,26 @@ def graceful_terminate(pid, timeout=5):
         proc = psutil.Process(pid)
     except psutil.NoSuchProcess:
         return False
+
+    # Snapshot descendants while the parent still exists, so orphans stay
+    # attributable after it is gone. Cheap, and only for wrapper targets.
+    wrapper_target = bool(exe_path) and exe_path.replace('/', '\\').lower().endswith(('.bat', '.cmd'))
+    child_snapshot = []
+    if wrapper_target:
+        try:
+            child_snapshot = [
+                (c.pid, c.create_time()) for c in proc.children(recursive=True)
+            ]
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            logging.debug(f"Could not enumerate children of {pid}: {e}")
+
+    def _finish(result):
+        # Reap regardless of `result`: a False here means the wrapper exited on
+        # its own between the snapshot and the kill, which orphans its children
+        # just the same. Every path that reaches _finish has a dead parent.
+        if wrapper_target:
+            _reap_orphaned_descendants(child_snapshot, pid)
+        return result
 
     # Try graceful shutdown: send WM_CLOSE to all visible windows
     windows = find_windows_by_pid(pid)
@@ -2292,7 +2360,7 @@ def graceful_terminate(pid, timeout=5):
         try:
             proc.wait(timeout=timeout)
             logging.info(f"Process {pid} exited gracefully after WM_CLOSE")
-            return True
+            return _finish(True)
         except psutil.TimeoutExpired:
             logging.info(f"Process {pid} did not exit after WM_CLOSE ({timeout}s), forcing terminate")
 
@@ -2300,15 +2368,15 @@ def graceful_terminate(pid, timeout=5):
     try:
         proc.terminate()
         proc.wait(timeout=3)
-        return True
+        return _finish(True)
     except psutil.NoSuchProcess:
-        return False
+        return _finish(False)
     except psutil.TimeoutExpired:
         try:
             proc.kill()
-            return True
+            return _finish(True)
         except psutil.NoSuchProcess:
-            return False
+            return _finish(False)
 
 
 # PROCESSES
