@@ -25,7 +25,7 @@ owlette roost push ./my-project --to rst_my_project_id --site site-1
 - `machine` - list machines, inspect machine state, view deployments, and run supported machine actions.
 - `audit-log` - list and inspect site audit-log records for operational history.
 - `quota` - inspect current quota usage and usage history for a site.
-- `chat` - create, list, send, rename, and delete cortex chat sessions.
+- `chat` - create, list, send, rename, and delete hoot chat sessions.
 - `deploy` - manage classic installer deploys; use `roost deploy` for content-addressed project deploys.
 - `process` - manage process lifecycle on site machines.
 - `key` - create, list, rotate, and revoke api keys.

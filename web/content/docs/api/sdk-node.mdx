@@ -177,7 +177,7 @@ const stream = await owlette.chat.send(conversation.conversationId, 'summarize m
 await stream.complete;
 ```
 
-The SDK uses canonical `/api/cortex/conversations` routes. API-key callers are capped to read-only hoot tools during streamed replies.
+The SDK currently calls the `/api/cortex/conversations` compatibility aliases; `/api/hoot/conversations` is the canonical family. Both reach the same handlers. API-key callers are capped to read-only hoot tools during streamed replies.
 
 ### chunks — low-level data plane
 

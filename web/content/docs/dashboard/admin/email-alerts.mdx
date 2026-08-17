@@ -14,7 +14,7 @@ description: "Owlette sends email notifications for machine health, process, thr
 | **Process crashed** | The agent posts `process_crash` for a monitored process | `processAlerts` | `POST /api/agent/alert` queues the event; `GET /api/cron/process-alerts` sends a digest |
 | **Process failed to start** | The agent posts `process_start_failed` | `processAlerts` | Same process-alert queue and digest path |
 | **Threshold alert** | A saved metric rule is breached | `thresholdAlerts` | Cloud Functions evaluates rules and calls `POST /api/alerts/trigger` |
-| **hoot escalation** | Autonomous hoot cannot resolve an issue and marks an escalation pending | `cortexAlerts` | `POST /api/cortex/escalation` or cron-style `GET /api/cortex/escalation` sends escalation emails |
+| **hoot escalation** | Autonomous hoot cannot resolve an issue and marks an escalation pending | `cortexAlerts` | `POST /api/hoot/escalation` or cron-style `GET /api/hoot/escalation` sends escalation emails |
 | **Display event** | A routed display event needs email delivery | `displayAlerts` | `POST /api/agent/alert` sends critical display emails immediately or queues a display digest |
 
 Display email delivery is not enabled for every display event. The current email-routed events are `display_monitor_removed`, `display_apply_failed`, `display_auto_revert_fired`, and `display_sync_lost`. `display_monitor_removed` and `display_auto_revert_fired` bypass the digest queue and send immediately; other routed display emails are drained by `GET /api/cron/display-alerts`.
@@ -83,7 +83,7 @@ Configure the cron caller to include the expected secret header for each route:
 | `GET /api/cron/health-check` | every 5 minutes | `X-Cron-Secret: <CRON_SECRET>` | detects stale machine heartbeats |
 | `GET /api/cron/process-alerts` | every 3 minutes | `X-Cron-Secret: <CRON_SECRET>` | drains `pending_process_alerts` after a 2-minute accumulation window |
 | `GET /api/cron/display-alerts` | every 3 minutes | `X-Cron-Secret: <CRON_SECRET>` | drains `pending_display_alerts` after a 2-minute accumulation window |
-| `GET /api/cortex/escalation` | cron-style polling | `Authorization: Bearer <CRON_SECRET>` | processes pending hoot escalation events |
+| `GET /api/hoot/escalation` | cron-style polling | `Authorization: Bearer <CRON_SECRET>` | processes pending hoot escalation events (`/api/cortex/escalation` is a working alias) |
 
 Threshold alerts are not drained by a cron route. The metrics Cloud Function evaluates stored rules and calls `POST /api/alerts/trigger` with `x-internal-secret: <CORTEX_INTERNAL_SECRET>`.
 

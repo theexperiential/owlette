@@ -67,7 +67,7 @@ export function buildProgram(): Command {
   registerMachineCommands(program);
   registerAuditLogCommands(program);
 
-  // c-tier nouns (wave 3): chat is backed by canonical Cortex routes;
+  // c-tier nouns (wave 3): chat is backed by canonical hoot routes;
   // user / deploy / process / installer are progressively filled in.
   // top-level `deploy` is the classic-installer group; the real
   // content-addressed deploy lives at `roost deploy` above.

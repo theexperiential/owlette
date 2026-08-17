@@ -865,7 +865,7 @@ describe('owlette.processes (factory)', () => {
 });
 
 describe('owlette.chat', () => {
-  it('new -> POST /api/cortex/conversations with siteId', async () => {
+  it('new -> POST /api/hoot/conversations with siteId', async () => {
     const { owlette, calls } = makeOwlette([
       {
         status: 201,
@@ -876,7 +876,7 @@ describe('owlette.chat', () => {
       },
     ]);
     const result = await owlette.chat.new({ siteId: 'site-1', title: 'help me' });
-    expect(calls[0]!.url).toBe('https://dev.test/api/cortex/conversations');
+    expect(calls[0]!.url).toBe('https://dev.test/api/hoot/conversations');
     expect(calls[0]!.init.method).toBe('POST');
     const body = JSON.parse(String(calls[0]!.init.body));
     expect(body.siteId).toBe('site-1');
@@ -886,18 +886,18 @@ describe('owlette.chat', () => {
     expect(headers['Idempotency-Key']).toMatch(/^sdk-chat-new-/);
   });
 
-  it('list -> GET /api/cortex/conversations?page_size=...', async () => {
+  it('list -> GET /api/hoot/conversations?page_size=...', async () => {
     const { owlette, calls } = makeOwlette([
       { status: 200, body: { ok: true, data: { conversations: [], nextPageToken: '' } } },
     ]);
     await owlette.chat.list({ siteId: 'site-1', pageSize: 25, ownerOnly: true });
-    expect(calls[0]!.url).toContain('/api/cortex/conversations?');
+    expect(calls[0]!.url).toContain('/api/hoot/conversations?');
     expect(calls[0]!.url).toContain('siteId=site-1');
     expect(calls[0]!.url).toContain('page_size=25');
     expect(calls[0]!.url).toContain('owner=me');
   });
 
-  it('rename -> PATCH /api/cortex/conversations/{id}', async () => {
+  it('rename -> PATCH /api/hoot/conversations/{id}', async () => {
     const { owlette, calls } = makeOwlette([
       {
         status: 200,
@@ -906,11 +906,11 @@ describe('owlette.chat', () => {
     ]);
     await owlette.chat.rename('conv-1', 'renamed');
     expect(calls[0]!.init.method).toBe('PATCH');
-    expect(calls[0]!.url).toBe('https://dev.test/api/cortex/conversations/conv-1');
+    expect(calls[0]!.url).toBe('https://dev.test/api/hoot/conversations/conv-1');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ title: 'renamed' });
   });
 
-  it('delete -> DELETE /api/cortex/conversations/{id} returns alreadyDeleted', async () => {
+  it('delete -> DELETE /api/hoot/conversations/{id} returns alreadyDeleted', async () => {
     const { owlette } = makeOwlette([
       {
         status: 200,

@@ -1,11 +1,11 @@
 /**
- * `owlette.chat` — cortex chat noun (wave 3A).
+ * `owlette.chat` — hoot chat noun (wave 3A).
  *
- *   POST   /api/cortex/conversations                  — create a conversation
- *   GET    /api/cortex/conversations                  — list conversations
- *   POST   /api/cortex/conversations/{conversationId} — append a message + stream the response
- *   PATCH  /api/cortex/conversations/{conversationId} — rename
- *   DELETE /api/cortex/conversations/{conversationId} — soft delete
+ *   POST   /api/hoot/conversations                  — create a conversation
+ *   GET    /api/hoot/conversations                  — list conversations
+ *   POST   /api/hoot/conversations/{conversationId} — append a message + stream the response
+ *   PATCH  /api/hoot/conversations/{conversationId} — rename
+ *   DELETE /api/hoot/conversations/{conversationId} — soft delete
  *
  * `send` consumes the AI-SDK v3 line-prefixed stream protocol the server
  * emits from `result.toUIMessageStreamResponse()`:
@@ -108,7 +108,7 @@ export class Chat {
     const res = await this.client.request<{
       ok: true;
       data: CreateConversationResult;
-    }>('/api/cortex/conversations', {
+    }>('/api/hoot/conversations', {
       method: 'POST',
       body,
       idempotencyKey: opts.idempotencyKey ?? `sdk-chat-new-${randomUUID()}`,
@@ -130,7 +130,7 @@ export class Chat {
     const res = await this.client.request<{
       ok: true;
       data: ListConversationsResult;
-    }>('/api/cortex/conversations', { query });
+    }>('/api/hoot/conversations', { query });
     return res.data.data ?? (res.data as unknown as ListConversationsResult);
   }
 
@@ -142,7 +142,7 @@ export class Chat {
     const res = await this.client.request<{
       ok: true;
       data: { conversationId: string; title: string };
-    }>(`/api/cortex/conversations/${encodeURIComponent(conversationId)}`, {
+    }>(`/api/hoot/conversations/${encodeURIComponent(conversationId)}`, {
       method: 'PATCH',
       body: { title },
       idempotencyKey: opts.idempotencyKey ?? `sdk-chat-rename-${randomUUID()}`,
@@ -157,7 +157,7 @@ export class Chat {
     const res = await this.client.request<{
       ok: true;
       data: { conversationId: string; alreadyDeleted: boolean };
-    }>(`/api/cortex/conversations/${encodeURIComponent(conversationId)}`, {
+    }>(`/api/hoot/conversations/${encodeURIComponent(conversationId)}`, {
       method: 'DELETE',
       idempotencyKey: opts.idempotencyKey ?? `sdk-chat-delete-${randomUUID()}`,
     });
@@ -195,7 +195,7 @@ export class Chat {
       'Idempotency-Key': opts.idempotencyKey ?? `sdk-chat-send-${randomUUID()}`,
     };
 
-    const url = `${this.client.apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`;
+    const url = `${this.client.apiUrl}/api/hoot/conversations/${encodeURIComponent(conversationId)}`;
     const init: RequestInit = {
       method: 'POST',
       headers,
@@ -315,7 +315,7 @@ function parseAiSdkStream(
       } catch {
         /* keep raw */
       }
-      streamError = new Error(`cortex stream error: ${detail}`);
+      streamError = new Error(`hoot stream error: ${detail}`);
     }
     // `d:` and any other prefix → ignore (end markers / tool frames).
   };

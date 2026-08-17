@@ -164,7 +164,7 @@ returns 401.
 | `/api/cron/status-ping` | every 60s | `X-Cron-Secret` | writes status pings, publishes to Instatus |
 | `/api/cron/retention` | daily | `X-Cron-Secret` | deletes metrics + logs past 400 days |
 | `/api/cron/talons` | every 60s | `X-Cron-Secret` | claims due talons (schedule triggers), missed-fire grace, stale-run recovery |
-| `/api/cortex/escalation` | every 5 min | `Authorization: Bearer` | hoot autonomous-mode backstop poller |
+| `/api/hoot/escalation` | every 5 min | `Authorization: Bearer` | hoot autonomous-mode backstop poller |
 
 <Callout type="warning" title={"Two failure modes that are silent"}>
 
@@ -173,8 +173,12 @@ never happens. The alert digests just let the queue grow. `/api/cron/retention`
 leaves data past its stated retention window, which contradicts the privacy
 policy rather than merely degrading a feature.
 
-`/api/cortex/escalation` is the odd one out: it takes
+`/api/hoot/escalation` is the odd one out: it takes
 `Authorization: Bearer <CRON_SECRET>`, **not** `X-Cron-Secret`.
+
+Existing schedules pointing at `/api/cortex/escalation` keep working — it is a
+thin alias onto the same handler — so there is nothing to migrate urgently.
+Use the `/api/hoot/` path for anything you set up from now on.
 
 </Callout>
 
@@ -235,7 +239,7 @@ Only needed when autonomous hoot is enabled for a site. It is a backstop poller,
 so a missed run delays escalations rather than losing them. Every 5 minutes:
 
 ```text
-GET https://<your-app>/api/cortex/escalation
+GET https://<your-app>/api/hoot/escalation
 Authorization: Bearer <CRON_SECRET value>
 ```
 

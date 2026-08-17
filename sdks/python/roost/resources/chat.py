@@ -1,12 +1,12 @@
-"""``roost.chat`` — cortex AI chat (wave 3A).
+"""``roost.chat`` — hoot AI chat (wave 3A).
 
 Drives the conversation routes:
 
-  POST   /api/cortex/conversations                       — start a conversation
-  GET    /api/cortex/conversations?siteId=&page_size=... — list conversations
-  POST   /api/cortex/conversations/{conversationId}      — append message + stream reply
-  PATCH  /api/cortex/conversations/{conversationId}      — rename
-  DELETE /api/cortex/conversations/{conversationId}      — soft delete
+  POST   /api/hoot/conversations                       — start a conversation
+  GET    /api/hoot/conversations?siteId=&page_size=... — list conversations
+  POST   /api/hoot/conversations/{conversationId}      — append message + stream reply
+  PATCH  /api/hoot/conversations/{conversationId}      — rename
+  DELETE /api/hoot/conversations/{conversationId}      — soft delete
 
 ``send()`` is the streaming verb. It returns an async iterator that
 yields the text deltas (utf-8 strings) parsed out of the AI-SDK v3
@@ -63,7 +63,7 @@ def _parse_summary(raw: dict[str, Any]) -> ConversationSummary:
 
 
 class Chat:
-    """Cortex AI chat (wave 3A)."""
+    """hoot AI chat (wave 3A)."""
 
     def __init__(self, client: "RoostClient") -> None:
         self._client = client
@@ -83,7 +83,7 @@ class Chat:
         if title is not None:
             body["title"] = title
         resp = await self._client.request(
-            "/api/cortex/conversations",
+            "/api/hoot/conversations",
             method="POST",
             body=body,
             idempotency_key=idempotency_key,
@@ -105,7 +105,7 @@ class Chat:
             query["page_size"] = page_size
         if page_token:
             query["page_token"] = page_token
-        resp = await self._client.request("/api/cortex/conversations", query=query)
+        resp = await self._client.request("/api/hoot/conversations", query=query)
         envelope = resp.data if isinstance(resp.data, dict) else {}
         payload = envelope.get("data") if isinstance(envelope.get("data"), dict) else envelope
         if not isinstance(payload, dict):
@@ -155,7 +155,7 @@ class Chat:
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         resp = await self._client.request(
-            f"/api/cortex/conversations/{conversation_id}",
+            f"/api/hoot/conversations/{conversation_id}",
             method="PATCH",
             body={"title": title},
             idempotency_key=idempotency_key,
@@ -174,7 +174,7 @@ class Chat:
         # generic py-sdk DELETE key.
         idem = idempotency_key or f"py-sdk-chat-delete-{uuid.uuid4()}"
         resp = await self._client.request(
-            f"/api/cortex/conversations/{conversation_id}",
+            f"/api/hoot/conversations/{conversation_id}",
             method="DELETE",
             headers={"Idempotency-Key": idem},
         )
@@ -220,7 +220,7 @@ class _SendIterator:
         # `_http.stream()` directly — `request()` would buffer the full
         # body before returning, which defeats streaming.
         idem = self._idempotency_key or f"py-sdk-chat-send-{uuid.uuid4()}"
-        path = f"/api/cortex/conversations/{self._conversation_id}"
+        path = f"/api/hoot/conversations/{self._conversation_id}"
         body = {"role": self._role, "content": self._message}
         headers = {
             "Content-Type": "application/json",
@@ -286,7 +286,7 @@ def _consume_line(line: str) -> str | None:
             detail = parsed if isinstance(parsed, str) else raw
         except ValueError:
             detail = raw
-        msg = f"cortex stream error: {detail}"
+        msg = f"hoot stream error: {detail}"
         raise RuntimeError(msg)
     # `d:` end markers + any unknown prefix → ignore.
     return None

@@ -136,7 +136,7 @@ For a single-machine chat, the web server runs the model loop and relays tool ca
 
 ```text
 dashboard chat
-  -> POST /api/cortex
+  -> POST /api/hoot
   -> resolve the signed-in user's key
   -> web server runs the turn (detached from your connection)
   -> tier-1/2 tool calls are relayed to the agent through Firestore commands
@@ -153,7 +153,7 @@ When a site admin turns the tier-3 approval gate **off**, single-machine admin c
 
 ```text
 dashboard chat
-  -> POST /api/cortex
+  -> POST /api/hoot
   -> Firestore active-chat pending message
   -> local hoot on the agent runs the LLM and local tools
   -> local hoot writes response updates to Firestore
@@ -168,7 +168,7 @@ When **All Machines** is selected, the web server runs the LLM request directly 
 
 ```text
 dashboard chat
-  -> POST /api/cortex with machineId "__site__"
+  -> POST /api/hoot with machineId "__site__"
   -> web server resolves online machines
   -> web server calls the LLM provider
   -> tools either run server-side or fan out through Firestore commands
@@ -188,7 +188,7 @@ Autonomous hoot can investigate process crashes or process-start failures withou
 ```text
 agent alert
   -> POST /api/agent/alert
-  -> internal POST /api/cortex/autonomous with x-cortex-secret
+  -> internal POST /api/hoot/autonomous with x-cortex-secret
   -> check site autonomous settings
   -> deduplicate by machine/process cooldown and nonce
   -> enforce per-site concurrency

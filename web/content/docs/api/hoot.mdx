@@ -1,6 +1,6 @@
 ---
 title: "hoot conversations"
-description: "The public hoot API uses the canonical /api/cortex/conversations route family. The older /api/chat/* routes remain compatibility aliases, but new clients should not depend on them."
+description: "The canonical public hoot API is the /api/hoot/conversations route family. The /api/cortex/* and /api/chat/* routes still work as compatibility aliases — the shipped CLI and SDKs currently call the cortex ones — but new clients should target /api/hoot/*."
 ---
 
 ## scopes
@@ -12,7 +12,7 @@ API-key callers are intentionally capped to read-only hoot tools during streamed
 ## list
 
 ```bash
-curl -fsS "$OWLETTE_API_URL/api/cortex/conversations?siteId=$SITE_ID&page_size=20" \
+curl -fsS "$OWLETTE_API_URL/api/hoot/conversations?siteId=$SITE_ID&page_size=20" \
   -H "Authorization: Bearer $OWLETTE_TOKEN"
 ```
 
@@ -32,7 +32,7 @@ Response:
 ## create
 
 ```bash
-curl -fsS -X POST "$OWLETTE_API_URL/api/cortex/conversations" \
+curl -fsS -X POST "$OWLETTE_API_URL/api/hoot/conversations" \
   -H "Authorization: Bearer $OWLETTE_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: $(uuidgen)" \
@@ -44,7 +44,7 @@ curl -fsS -X POST "$OWLETTE_API_URL/api/cortex/conversations" \
 ## send
 
 ```bash
-curl -fsS -N -X POST "$OWLETTE_API_URL/api/cortex/conversations/$CONVERSATION_ID" \
+curl -fsS -N -X POST "$OWLETTE_API_URL/api/hoot/conversations/$CONVERSATION_ID" \
   -H "Authorization: Bearer $OWLETTE_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: $(uuidgen)" \
@@ -62,7 +62,7 @@ Public send accepts only `role` and `content`. To change machines, create a new 
 ## rename
 
 ```bash
-curl -fsS -X PATCH "$OWLETTE_API_URL/api/cortex/conversations/$CONVERSATION_ID" \
+curl -fsS -X PATCH "$OWLETTE_API_URL/api/hoot/conversations/$CONVERSATION_ID" \
   -H "Authorization: Bearer $OWLETTE_TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: $(uuidgen)" \
@@ -74,7 +74,7 @@ Only `title` is mutable.
 ## delete
 
 ```bash
-curl -fsS -X DELETE "$OWLETTE_API_URL/api/cortex/conversations/$CONVERSATION_ID" \
+curl -fsS -X DELETE "$OWLETTE_API_URL/api/hoot/conversations/$CONVERSATION_ID" \
   -H "Authorization: Bearer $OWLETTE_TOKEN" \
   -H "Idempotency-Key: $(uuidgen)"
 ```
@@ -83,4 +83,4 @@ Delete is a soft delete. A repeated delete returns success with `alreadyDeleted:
 
 ## internal routes
 
-`/api/cortex/categorize`, `/api/cortex/provision-key`, `/api/cortex/autonomous`, and `/api/cortex/escalation` are dashboard, agent, or scheduler internals. They are not public API surfaces.
+`/api/hoot/categorize`, `/api/hoot/provision-key`, `/api/hoot/autonomous`, and `/api/hoot/escalation` are dashboard, agent, or scheduler internals. They are not public API surfaces. Each also answers on its `/api/cortex/*` alias, which is what fleet agents and the shipped clients still call.
