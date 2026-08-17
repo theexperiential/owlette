@@ -18,6 +18,7 @@ export const PROCESS_STATUSES = [
   'RUNNING',
   'LAUNCHING',
   'RESTARTING',
+  'STALLED',
   'QUEUED',
   'LAUNCH_FAILED',
   'KILLED',
@@ -102,11 +103,19 @@ export function statusForProcess(states: AppStates, processId: string): ProcessS
 /**
  * The statuses whose pid generation is the one running right now.
  *
+ * `STALLED` belongs here: the service writes it when a process stops answering
+ * but before it decides to kill anything (`owlette_service.py:2828-2829`), so
+ * the process is very much alive and is precisely the one an operator wants to
+ * restart. Omitting it made a hung process read `INACTIVE` — an unrecognised
+ * status falls through {@link statusForProcess}'s default — and greyed out the
+ * restart control that answers it. The dashboard has always treated it as
+ * actionable (`MachineListView.tsx`, `MachineCardView.tsx`).
+ *
  * Everything else describes a generation that has ended (`KILLED`, `STOPPED`,
  * `LAUNCH_FAILED`), one that never began (`QUEUED`), or an entry owlette is not
  * managing (`INACTIVE`) — none of which there is a live process to act on.
  */
-const LIVE_STATUSES: readonly ProcessStatus[] = ['RUNNING', 'LAUNCHING', 'RESTARTING']
+const LIVE_STATUSES: readonly ProcessStatus[] = ['RUNNING', 'LAUNCHING', 'RESTARTING', 'STALLED']
 
 /** Whether there is a process behind this status to stop. */
 export function isLive(status: ProcessStatus): boolean {
@@ -202,6 +211,7 @@ export const STATUS_DOT: Record<ProcessStatus, string> = {
   RUNNING: 'bg-green-500',
   LAUNCHING: 'bg-yellow-400',
   RESTARTING: 'bg-yellow-400',
+  STALLED: 'bg-orange-400',
   QUEUED: 'bg-orange-400',
   LAUNCH_FAILED: 'bg-red-500',
   KILLED: 'bg-red-400',
@@ -214,6 +224,7 @@ export const STATUS_TEXT: Record<ProcessStatus, string> = {
   RUNNING: 'text-green-500',
   LAUNCHING: 'text-yellow-400',
   RESTARTING: 'text-yellow-400',
+  STALLED: 'text-orange-400',
   QUEUED: 'text-orange-400',
   LAUNCH_FAILED: 'text-red-500',
   KILLED: 'text-red-400',

@@ -139,8 +139,25 @@ describe('picking a pid to act on', () => {
 })
 
 describe('whether there is a process to act on', () => {
-  it('accepts the three statuses that describe a live generation', () => {
-    expect(PROCESS_STATUSES.filter(isLive)).toEqual(['RUNNING', 'LAUNCHING', 'RESTARTING'])
+  it('accepts the four statuses that describe a live generation', () => {
+    expect(PROCESS_STATUSES.filter(isLive)).toEqual([
+      'RUNNING',
+      'LAUNCHING',
+      'RESTARTING',
+      'STALLED',
+    ])
+  })
+
+  it('treats a stalled process as live, because it is', () => {
+    // The service writes STALLED while a process is hung but before it decides
+    // to kill anything (owlette_service.py:2828-2829). It was missing from
+    // PROCESS_STATUSES, so statusForProcess fell through to its INACTIVE
+    // default and isLive said false — the app showed "inactive" for a hung
+    // process and disabled the restart button that answers it.
+    const states: AppStates = { '900': { id: 'a', status: 'STALLED', timestamp: 5 } }
+    expect(statusForProcess(states, 'a')).toBe('STALLED')
+    expect(isLive('STALLED')).toBe(true)
+    expect(statusLabel('STALLED')).toBe('stalled')
   })
 
   it('refuses the ones that describe a generation that ended or never began', () => {

@@ -549,7 +549,14 @@ export default function DashboardPage() {
       visibility: visibilityValue,
       time_delay: process.time_delay || '0',
       time_to_init: process.time_to_init || '10',
-      relaunch_attempts: process.relaunch_attempts || '3',
+      // 0 means unlimited relaunches; `|| '3'` would show the operator a 3
+      // they never set and save it back on the next edit.
+      relaunch_attempts:
+        process.relaunch_attempts === undefined ||
+        process.relaunch_attempts === null ||
+        process.relaunch_attempts === ''
+          ? '3'
+          : String(process.relaunch_attempts),
       autolaunch: process.autolaunch || false,
       launch_mode: process.launch_mode || (process.autolaunch ? 'always' : 'off'),
       schedules: process.schedules || null,

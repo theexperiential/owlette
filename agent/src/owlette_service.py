@@ -2520,20 +2520,43 @@ class OwletteService(win32serviceutil.ServiceFramework):
             attempts = self.relaunch_attempts.get(process_name, 0 if self.first_start else 1)
 
             process_list_id = shared_utils.fetch_process_id_by_name(process_name, shared_utils.read_config())
-            relaunches_to_attempt = int(shared_utils.read_config(keys=['relaunch_attempts'], process_list_id=process_list_id))
-            if not relaunches_to_attempt:
+            # 0 means "relaunch forever, never escalate to a machine restart" —
+            # the escalation guard below is written for it (`!= 0`) and the
+            # operator-facing tooltip promises it. Only an absent or unparseable
+            # value falls back to the default: `not 0` is True, so defaulting on
+            # falsiness turned every explicit 0 into MAX_RELAUNCH_ATTEMPTS and
+            # made both the guard and the promise unreachable — a kiosk set to
+            # 0 specifically to avoid unattended reboots got one after 3 crashes.
+            raw_attempts = shared_utils.read_config(
+                keys=['relaunch_attempts'], process_list_id=process_list_id)
+            try:
+                relaunches_to_attempt = MAX_RELAUNCH_ATTEMPTS if raw_attempts in (None, '') \
+                    else int(raw_attempts)
+            except (TypeError, ValueError):
+                logging.warning(
+                    f"relaunch_attempts for '{process_name}' is not a number "
+                    f"({raw_attempts!r}) - falling back to {MAX_RELAUNCH_ATTEMPTS}")
                 relaunches_to_attempt = MAX_RELAUNCH_ATTEMPTS
+            if relaunches_to_attempt < 0:
+                relaunches_to_attempt = MAX_RELAUNCH_ATTEMPTS
+            unlimited = relaunches_to_attempt == 0
 
             # Check if restart prompt is running
             if not self._is_restart_prompt_active():
                 # If attempts are less than or equal to the relaunch attempts, log it
-                if 0 < attempts <= relaunches_to_attempt:
+                if unlimited and attempts > 0:
+                    self.log_and_notify(
+                        process,
+                        f'Process relaunch attempt: {attempts} (unlimited)'
+                    )
+                elif 0 < attempts <= relaunches_to_attempt:
                     self.log_and_notify(
                         process,
                         f'Process relaunch attempt: {attempts} of {relaunches_to_attempt}'
                     )
-                # If this is more than the maximum number of attempts allowed
-                if attempts > relaunches_to_attempt and relaunches_to_attempt != 0:
+                # If this is more than the maximum number of attempts allowed.
+                # `unlimited` never escalates — that is the whole point of 0.
+                if not unlimited and attempts > relaunches_to_attempt:
                     # Write reboot_pending to Firestore so dashboard can approve/dismiss remotely
                     if self.firebase_client and self.firebase_client.is_connected():
                         self.firebase_client.set_reboot_pending(
