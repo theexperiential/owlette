@@ -26,6 +26,7 @@ import {
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HootIcon } from '@/components/icons/HootIcon';
+import type { ApiKeyListItem } from '@/lib/apiKeyTypes';
 
 type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'hoot' | 'security' | 'api' | 'danger';
 
@@ -60,12 +61,15 @@ const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[
   { id: 'danger', label: 'danger zone', icon: Trash2 },
 ];
 
-interface ApiKeyEntry {
-  id: string;
-  name: string;
-  keyPrefix: string;
-  createdAt: number;
-  lastUsedAt: number | null;
+// Shared with the route so a field the UI reads can't silently go unsent —
+// `expired` used to be declared only on the settings page and never returned,
+// so an expired key rendered as active here and there.
+type ApiKeyEntry = ApiKeyListItem;
+
+/** Epoch millis -> short local date, or an em dash when the field is absent. */
+function formatKeyDate(ms: number | null): string {
+  if (ms === null) return '—';
+  return new Date(ms).toLocaleDateString();
 }
 
 interface AccountSettingsDialogProps {
@@ -1258,12 +1262,28 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                         {apiKeys.map((k) => (
                           <div key={k.id} className="flex items-center justify-between rounded-md border border-border bg-card/50 px-4 py-3">
                             <div className="space-y-0.5 min-w-0">
-                              <p className="text-sm text-white truncate">{k.name}</p>
+                              <div className="flex items-center gap-2 min-w-0">
+                                <p className="text-sm text-white truncate">{k.name}</p>
+                                {k.expired ? (
+                                  <span className="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-red-500/15 text-red-400">
+                                    expired
+                                  </span>
+                                ) : k.retired ? (
+                                  <span className="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground">
+                                    retired
+                                  </span>
+                                ) : null}
+                              </div>
                               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                                 <code className="font-mono">{k.keyPrefix}•••</code>
-                                <span>created {new Date(k.createdAt).toLocaleDateString()}</span>
+                                <span>created {formatKeyDate(k.createdAt)}</span>
                                 {k.lastUsedAt && (
-                                  <span>last used {new Date(k.lastUsedAt).toLocaleDateString()}</span>
+                                  <span>last used {formatKeyDate(k.lastUsedAt)}</span>
+                                )}
+                                {k.expiresAt !== null && (
+                                  <span className={k.expired ? 'text-red-400' : undefined}>
+                                    {k.expired ? 'expired' : 'expires'} {formatKeyDate(k.expiresAt)}
+                                  </span>
                                 )}
                               </div>
                             </div>

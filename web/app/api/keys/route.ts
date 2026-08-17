@@ -25,8 +25,10 @@ import {
   type ApiKeyLookup,
   type ApiKeyPermission,
   type ApiKeyRecord,
+  type ApiKeyListItem,
   type ApiKeyResource,
   type ApiKeyScope,
+  buildApiKeyListItem,
   DEFAULT_TTL_DAYS,
   MAX_TTL_DAYS,
   SUPERADMIN_ONLY_RESOURCES,
@@ -294,23 +296,12 @@ export const GET = withRateLimit(
         .orderBy('createdAt', 'desc')
         .get();
 
-      const keys = snap.docs.map((doc) => {
-        const data = doc.data() as Partial<ApiKeyRecord>;
-        return {
-          id: doc.id,
-          name: data.name ?? null,
-          keyPrefix: data.keyPrefix ?? null,
-          environment: data.environment ?? null,
-          scopes: data.scopes ?? null,
-          expiresAt: data.expiresAt ?? null,
-          createdAt: data.createdAt ?? null,
-          lastUsedAt: data.lastUsedAt ?? null,
-          rotatedAt: data.rotatedAt ?? null,
-          rotatedFromKeyId: data.rotatedFromKeyId ?? null,
-          retiresAt: data.retiresAt ?? null,
-          revokedAt: data.revokedAt ?? null,
-        };
-      });
+      // One instant for the whole listing, so two keys either side of the
+      // boundary can't be classified against different "now"s.
+      const listedAt = Date.now();
+      const keys: ApiKeyListItem[] = snap.docs.map((doc) =>
+        buildApiKeyListItem(doc.id, doc.data() as Record<string, unknown>, listedAt)
+      );
 
       return NextResponse.json({ success: true, keys });
     } catch (error: unknown) {

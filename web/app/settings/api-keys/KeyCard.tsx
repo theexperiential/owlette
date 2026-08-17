@@ -6,25 +6,9 @@ import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Loader2, RefreshCw, Trash2, AlertTriangle, Clock, KeyRound } from 'lucide-react';
 import { toast } from '@/lib/toast';
-import type { ApiKeyScope } from '@/lib/apiKeyTypes';
+import type { ApiKeyListItem, ApiKeyScope } from '@/lib/apiKeyTypes';
 
-export interface ApiKeyListItem {
-  id: string;
-  name: string | null;
-  keyPrefix: string | null;
-  environment: 'live' | 'test' | null;
-  scopes: ApiKeyScope[] | null;
-  expiresAt: number | null;
-  createdAt: number | null;
-  lastUsedAt: number | null;
-  rotatedAt: number | null;
-  rotatedFromKeyId: string | null;
-  retiresAt: number | null;
-  revokedAt: number | null;
-  expiredMarkedAt: unknown;
-  expired: boolean;
-  retired: boolean;
-}
+export type { ApiKeyListItem } from '@/lib/apiKeyTypes';
 
 const EXPIRATION_WARNING_MS = 14 * 24 * 60 * 60 * 1000;
 

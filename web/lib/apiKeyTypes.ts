@@ -136,3 +136,113 @@ export function scopeMatches(
       s.permissions.includes(permission)
   );
 }
+
+/**
+ * The shape `GET /api/keys` returns, and the only shape the key UIs read.
+ *
+ * Declared here rather than beside a component on purpose. It used to live in
+ * KeyCard.tsx, where it described fields the route never actually sent —
+ * `expired`, `retired` and `expiredMarkedAt` were always `undefined`, so the
+ * "expired" badge could not render, and an expired key sat under a heading
+ * that called it active. Sharing the type makes that a compile error instead.
+ *
+ * Every instant here is epoch milliseconds. The stored record is not
+ * consistent — `createdAt` is a Firestore Timestamp (written with
+ * serverTimestamp()) while `lastUsedAt` is a plain number (written with
+ * Date.now()) — so the route normalises through {@link toEpochMillis} before
+ * serialising. Returning the raw Timestamp made `new Date(...)` yield
+ * "Invalid Date" in the dashboard for every key created after the switch to
+ * serverTimestamp().
+ */
+export interface ApiKeyListItem {
+  id: string;
+  name: string | null;
+  keyPrefix: string | null;
+  environment: ApiKeyEnvironment | null;
+  scopes: ApiKeyScope[] | null;
+  expiresAt: number | null;
+  createdAt: number | null;
+  lastUsedAt: number | null;
+  rotatedAt: number | null;
+  rotatedFromKeyId: string | null;
+  retiresAt: number | null;
+  revokedAt: number | null;
+  expiredMarkedAt: number | null;
+  /** Derived: past its expiry at the moment the list was built. */
+  expired: boolean;
+  /** Derived: a rotated key whose grace window has closed. */
+  retired: boolean;
+}
+
+/**
+ * Coerce any instant this codebase has ever stored into epoch milliseconds.
+ *
+ * Handles the three shapes that reach it: a plain number, a live
+ * Firestore Timestamp (Admin SDK, has `toMillis()`), and a Timestamp that has
+ * already been through JSON (`{_seconds, _nanoseconds}` or `{seconds, ...}`).
+ * Anything else — including a FieldValue sentinel read back before the write
+ * lands — returns null rather than a nonsense date.
+ */
+export function toEpochMillis(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'object') {
+    const t = value as {
+      toMillis?: unknown;
+      _seconds?: unknown;
+      seconds?: unknown;
+      _nanoseconds?: unknown;
+      nanoseconds?: unknown;
+    };
+    if (typeof t.toMillis === 'function') {
+      const ms = (t.toMillis as () => unknown)();
+      return typeof ms === 'number' && Number.isFinite(ms) ? ms : null;
+    }
+    const secs = typeof t._seconds === 'number' ? t._seconds
+      : typeof t.seconds === 'number' ? t.seconds : null;
+    if (secs !== null) {
+      const nanos = typeof t._nanoseconds === 'number' ? t._nanoseconds
+        : typeof t.nanoseconds === 'number' ? t.nanoseconds : 0;
+      return secs * 1000 + Math.floor(nanos / 1e6);
+    }
+  }
+  return null;
+}
+
+/**
+ * Build the list item the UIs consume from a stored record.
+ *
+ * `now` is injected so a single listing classifies every key against one
+ * instant, and so the derivation is testable without faking the clock.
+ */
+export function buildApiKeyListItem(
+  id: string,
+  data: Record<string, unknown>,
+  now: number
+): ApiKeyListItem {
+  const expiresAt = toEpochMillis(data.expiresAt);
+  const retiresAt = toEpochMillis(data.retiresAt);
+  const rotatedAt = toEpochMillis(data.rotatedAt);
+  return {
+    id,
+    name: typeof data.name === 'string' ? data.name : null,
+    keyPrefix: typeof data.keyPrefix === 'string' ? data.keyPrefix : null,
+    environment:
+      data.environment === 'live' || data.environment === 'test' ? data.environment : null,
+    scopes: Array.isArray(data.scopes) ? (data.scopes as ApiKeyScope[]) : null,
+    expiresAt,
+    createdAt: toEpochMillis(data.createdAt),
+    lastUsedAt: toEpochMillis(data.lastUsedAt),
+    rotatedAt,
+    rotatedFromKeyId:
+      typeof data.rotatedFromKeyId === 'string' ? data.rotatedFromKeyId : null,
+    retiresAt,
+    revokedAt: toEpochMillis(data.revokedAt),
+    expiredMarkedAt: toEpochMillis(data.expiredMarkedAt),
+    expired: expiresAt !== null && expiresAt <= now,
+    // A rotated key stops working once its grace window closes. Without
+    // rotatedAt there is no grace window and the key is simply live.
+    retired: rotatedAt !== null && retiresAt !== null && retiresAt <= now,
+  };
+}
