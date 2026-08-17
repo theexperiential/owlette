@@ -1,6 +1,6 @@
 ---
 title: "owlette API overview"
-description: "the owlette public API lets you automate fleet operations from scripts, CI, internal tools, and SDKs. use it to inspect sites and machines, queue commands, manage deployments, publish roost content, run Cortex diagnostics, manage webhooks, and read logs."
+description: "the owlette public API lets you automate fleet operations from scripts, CI, internal tools, and SDKs. use it to inspect sites and machines, queue commands, manage deployments, publish roost content, run hoot diagnostics, manage webhooks, and read logs."
 ---
 
 The dashboard and API operate on the same underlying resources. Use the dashboard for exploration and one-off admin work; use the API when the workflow should be repeatable, audited, or integrated into another system.
@@ -30,7 +30,7 @@ Public API paths are rooted at `/api`. The rendered endpoint reference is availa
 | commands | async work queued to a machine, such as screenshots or process actions |
 | deployments | classic installer fan-out records and per-target status |
 | roosts | content-addressed project bundles, versions, chunks, rollouts, and rollback |
-| Cortex | site and machine diagnostics over `/api/cortex/conversations` |
+| hoot | site and machine diagnostics over `/api/cortex/conversations` |
 | webhooks | outbound event subscriptions and delivery history |
 | API keys | scoped credentials for automation |
 
@@ -52,4 +52,4 @@ Public API paths are rooted at `/api`. The rendered endpoint reference is availa
 2. Read the shared convention pages: [authentication](/docs/api/authentication), [pagination](/docs/api/pagination), [idempotency](/docs/api/idempotency), [errors](/docs/api/errors), and [rate limits](/docs/api/rate-limits).
 3. Use the [interactive reference](/docs/api) for operation-level scopes, parameters, required idempotency headers, and response shapes.
 4. Check the [SDK/CLI distribution gate](/docs/api/distribution), then use the SDK docs for [Node](/docs/api/sdk-node) and [Python](/docs/api/sdk-python) when you want typed clients.
-5. Move to the resource guide you need: [chunks](/docs/api/chunks), [versions](/docs/api/versions), [cortex](/docs/api/cortex), or [webhooks](/docs/api/webhooks).
+5. Move to the resource guide you need: [chunks](/docs/api/chunks), [versions](/docs/api/versions), [hoot](/docs/api/hoot), or [webhooks](/docs/api/webhooks).

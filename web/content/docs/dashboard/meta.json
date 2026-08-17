@@ -7,7 +7,7 @@
     "process-management",
     "deployments",
     "roost",
-    "cortex",
+    "hoot",
     "activity-logs",
     "timezones",
     "admin"

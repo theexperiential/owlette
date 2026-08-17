@@ -124,11 +124,11 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 
 ---
 
-## cortex not responding
+## hoot not responding
 
-1. **No LLM key configured** — Check Cortex settings for API key
+1. **No LLM key configured** — Check hoot settings for API key
 2. **Invalid API key** — Verify the key is correct and has credits
-3. **Machine offline** — Cortex checks machine status before executing tools
+3. **Machine offline** — hoot checks machine status before executing tools
 4. **A tool is stuck** — A turn keeps running even if you reload the page (the chat reattaches to it), so you rarely lose work. If a tool call is taking too long, use the **cancel** control on its tool card to kill it, or **stop** the whole turn from the chat.
 5. **Rate limited** — The API may be rate-limiting requests
 
@@ -170,7 +170,7 @@ Contact an admin to disable MFA on your account by clearing the `mfaEnabled`, `m
 |-----|------|
 | Service | `C:\ProgramData\Owlette\logs\service.log` |
 | Desktop app | `%LOCALAPPDATA%\app.owlette.desktop\logs\owlette-desktop.log` (per-user, not under ProgramData) |
-| Cortex | `C:\ProgramData\Owlette\logs\cortex.log` |
+| hoot | `C:\ProgramData\Owlette\logs\cortex.log` |
 | Pairing | `C:\ProgramData\Owlette\logs\pairing_debug.log` |
 | Self-update installer | `C:\ProgramData\Owlette\logs\installer_update.log` |
 | Interactive installer | Only where Inno Setup is launched with `/LOG=<path>`; use `/LOG="C:\ProgramData\Owlette\logs\setup.log"` to write a setup log there |

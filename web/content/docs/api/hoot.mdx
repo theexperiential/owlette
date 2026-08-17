@@ -1,13 +1,13 @@
 ---
-title: "cortex conversations"
-description: "The public Cortex API uses the canonical /api/cortex/conversations route family. The older /api/chat/* routes remain compatibility aliases, but new clients should not depend on them."
+title: "hoot conversations"
+description: "The public hoot API uses the canonical /api/cortex/conversations route family. The older /api/chat/* routes remain compatibility aliases, but new clients should not depend on them."
 ---
 
 ## scopes
 
 Use `chat=<siteId>:read` to list conversations and `chat=<siteId>:write` to create, rename, soft-delete, or send a message.
 
-API-key callers are intentionally capped to read-only Cortex tools during streamed replies. A `chat` key can ask Cortex to inspect state, but it cannot inherit the owning user's admin role to dispatch destructive machine, process, or deployment tools. Use the dashboard/session flow for operator-approved destructive tool execution until per-tool API-key scopes are introduced.
+API-key callers are intentionally capped to read-only hoot tools during streamed replies. A `chat` key can ask hoot to inspect state, but it cannot inherit the owning user's admin role to dispatch destructive machine, process, or deployment tools. Use the dashboard/session flow for operator-approved destructive tool execution until per-tool API-key scopes are introduced.
 
 ## list
 
@@ -55,7 +55,7 @@ The response is `text/plain; charset=utf-8` with `X-Vercel-AI-Data-Stream: v1`. 
 
 - `0:"text"`: assistant text delta
 - `d:{...}`: stream completion metadata
-- `3:"message"`: upstream Cortex error
+- `3:"message"`: upstream hoot error
 
 Public send accepts only `role` and `content`. To change machines, create a new conversation pinned to the desired machine instead of overriding a conversation target mid-stream.
 

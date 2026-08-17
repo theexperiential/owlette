@@ -66,7 +66,7 @@ Unknown fields are forward-compatible extensions. Ignore fields you do not recog
 | `quota_exceeded` | 402 | Site storage quota would be exceeded. | Free usage or delete old roost versions. |
 | `rate_limited` | 429 | Request or concurrency bucket exhausted. | Honor `Retry-After`; reduce concurrency. |
 | `machine_offline` | 409 | Machine command cannot be queued or completed because the target is offline. | Wait for the machine to reconnect or target another machine. |
-| `cortex_unavailable` | 400/423/503 | Cortex could not stream because the target was missing, disabled, or offline. | Fix the target/enablement issue or retry after the machine reconnects. |
+| `cortex_unavailable` | 400/423/503 | hoot could not stream because the target was missing, disabled, or offline. | Fix the target/enablement issue or retry after the machine reconnects. |
 | `service_unavailable` | 503 | Required dependency is temporarily unavailable. | Retry with backoff. |
 | `internal_error` | 500 | Unexpected server error. | Retry with backoff; quote `requestId` if it persists. |
 
@@ -108,7 +108,7 @@ The `Roost-Version` header was present but is not supported by the server. The r
 
 ### forbidden_field
 
-The request body included fields that are not accepted by that operation, such as extra fields on public Cortex send or rename requests.
+The request body included fields that are not accepted by that operation, such as extra fields on public hoot send or rename requests.
 
 ### version_ref_malformed
 
@@ -164,7 +164,7 @@ The requested machine command cannot proceed because the target machine is offli
 
 ### cortex_unavailable
 
-Cortex could not stream for the requested conversation because the target was invalid, disabled, or offline.
+hoot could not stream for the requested conversation because the target was invalid, disabled, or offline.
 
 ### service_unavailable
 

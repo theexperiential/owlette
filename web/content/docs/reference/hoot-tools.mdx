@@ -1,6 +1,6 @@
 ---
-title: "cortex tools reference"
-description: "Complete reference for all 46 public web Cortex tools from web/lib/mcp-tools.ts, organized by tier."
+title: "hoot tools reference"
+description: "Complete reference for all 46 public web hoot tools from web/lib/mcp-tools.ts, organized by tier."
 ---
 
 ---
@@ -19,9 +19,9 @@ description: "Complete reference for all 46 public web Cortex tools from web/lib
 
 ## execution-mode matrix
 
-Web Cortex chooses an execution path by tool name in `web/lib/cortex-utils.server.ts`. Server-side tools run in the Next.js server process. Legacy command tools write existing machine command types. Firestore tools create `mcp_tool_call` entries for the agent to execute. Local Agent SDK MCP is separate: `agent/src/cortex_tools.py` exposes only the tools returned by `_make_tier1_tools`, `_make_tier2_tools`, and `_make_tier3_tools`.
+Web hoot chooses an execution path by tool name in `web/lib/hoot-utils.server.ts`. Server-side tools run in the Next.js server process. Legacy command tools write existing machine command types. Firestore tools create `mcp_tool_call` entries for the agent to execute. Local Agent SDK MCP is separate: `agent/src/cortex_tools.py` exposes only the tools returned by `_make_tier1_tools`, `_make_tier2_tools`, and `_make_tier3_tools`.
 
-| tool | tier | web Cortex execution | local Agent SDK MCP |
+| tool | tier | web hoot execution | local Agent SDK MCP |
 |------|------|----------------------|---------------------|
 | `get_site_logs` | 1 | Server-side | Not exposed |
 | `get_system_info` | 1 | Firestore `mcp_tool_call` | Yes, direct |
@@ -70,7 +70,7 @@ Web Cortex chooses an execution path by tool name in `web/lib/cortex-utils.serve
 | `shutdown_machine` | 3 | Legacy command-mapped | Not exposed |
 | `cancel_reboot` | 3 | Legacy command-mapped | Not exposed |
 
-Local Agent SDK coverage is intentionally smaller than the web registry: at maximum tier it returns 21 tools, and at the default `max_tier=2` it returns 15. `agent/src/cortex_tools.py` defines a `get_gpu_processes` wrapper, but the function is omitted from the returned tier-1 list, so local Agent SDK Cortex does not expose it today. `agent/src/mcp_tools.py` also contains internal handlers that are not public web Cortex tools, including `get_display_layout` and `apply_display_topology`.
+Local Agent SDK coverage is intentionally smaller than the web registry: at maximum tier it returns 21 tools, and at the default `max_tier=2` it returns 15. `agent/src/cortex_tools.py` defines a `get_gpu_processes` wrapper, but the function is omitted from the returned tier-1 list, so local Agent SDK hoot does not expose it today. `agent/src/mcp_tools.py` also contains internal handlers that are not public web hoot tools, including `get_display_layout` and `apply_display_topology`.
 
 ---
 
@@ -638,7 +638,7 @@ Timeouts are capped at **3300 seconds (55 minutes)** so a result stays retrievab
 
 Deploy and install software on the remote machine using the full deployment pipeline: download installer, run silent install, verify installation, and track progress. Creates a tracked deployment visible on the Deployments page. **Server-side** — orchestrated by the server, not the agent directly.
 
-**Requires user confirmation before execution.** Cortex will summarize the deployment plan (software, version, install path, parallel install status, processes to close) and wait for explicit approval before proceeding.
+**Requires user confirmation before execution.** hoot will summarize the deployment plan (software, version, install path, parallel install status, processes to close) and wait for explicit approval before proceeding.
 
 | parameter | type | required | description |
 |-----------|------|----------|-------------|

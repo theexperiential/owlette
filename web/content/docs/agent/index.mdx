@@ -50,7 +50,7 @@ Launched on demand:
         for join / leave site, bug reports and reboot control)
 ```
 
-See [Cortex tools reference](/docs/reference/cortex-tools) for the current tool list.
+See [hoot tools reference](/docs/reference/hoot-tools) for the current tool list.
 
 ---
 
@@ -64,7 +64,7 @@ See [Cortex tools reference](/docs/reference/cortex-tools) for the current tool 
 4. **Classify the previous session's end** (see below) and emit a warning event if the machine came back up in an unexpected way
 5. Recover running processes (adopt PIDs from previous session)
 6. Launch the desktop app (tray icon) as a user process
-7. Launch Cortex process as user process (if enabled)
+7. Launch hoot process as user process (if enabled)
 8. Enter main loop
 
 ### session state classification
@@ -84,15 +84,15 @@ The classifier depends only on `shared_utils` and stdlib — no Firebase, no log
 
 1. Check all configured processes — detect crashes, stalls, exits
 2. Auto-restart crashed processes when launch mode is active
-3. Firestore commands are processed by the Firebase command listener; the 5-second service loop handles process monitoring, Cortex IPC, Firebase enable/disable checks, and periodic maintenance
-4. Ensure Cortex is running (if enabled)
-5. Process Cortex IPC commands (Tier 2 tool calls)
+3. Firestore commands are processed by the Firebase command listener; the 5-second service loop handles process monitoring, hoot IPC, Firebase enable/disable checks, and periodic maintenance
+4. Ensure hoot is running (if enabled)
+5. Process hoot IPC commands (Tier 2 tool calls)
 6. Check for Firebase state changes (enable/disable)
 
 ### shutdown
 
 1. Mark machine offline in Firestore
-2. Terminate Cortex process
+2. Terminate hoot process
 3. Stop Firebase client and background threads
 4. Clean up resources
 
