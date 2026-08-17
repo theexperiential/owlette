@@ -28,6 +28,7 @@ import {
   MAX_TTL_DAYS,
   SCOPE_PRESETS,
   SCOPE_PRESET_KEYS,
+  SCOPE_PRESET_LABELS,
   SCOPE_PRESET_DESCRIPTIONS,
   type ApiKeyEnvironment,
   type ApiKeyPermission,
@@ -235,7 +236,7 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: Props) {
               <SelectContent>
                 {SCOPE_PRESET_KEYS.map((p) => (
                   <SelectItem key={p} value={p}>
-                    {p}
+                    {SCOPE_PRESET_LABELS[p]}
                   </SelectItem>
                 ))}
                 <SelectItem value="custom">custom</SelectItem>

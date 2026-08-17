@@ -8861,23 +8861,60 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Scope' }
         lastUsedAt:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
+          description: Epoch milliseconds. Null until the key is first used.
         lastUsedIp:
           type: string
           nullable: true
         expiresAt:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
+          description: Epoch milliseconds. Keys always expire (default 90d, max 365d).
         createdAt:
-          type: string
-          format: date-time
-        revokedAt:
-          type: string
-          format: date-time
+          type: integer
+          format: int64
           nullable: true
+          description: |
+            Epoch milliseconds. Stored inconsistently — a Firestore Timestamp on
+            keys created after the switch to `serverTimestamp()`, a number before
+            it — and normalised by the route, so clients always receive a number.
+        revokedAt:
+          type: integer
+          format: int64
+          nullable: true
+          description: Epoch milliseconds. Set on revocation.
+        rotatedAt:
+          type: integer
+          format: int64
+          nullable: true
+          description: Epoch milliseconds. Set when this key was rotated.
+        rotatedFromKeyId:
+          type: string
+          nullable: true
+        retiresAt:
+          type: integer
+          format: int64
+          nullable: true
+          description: |
+            Epoch milliseconds. When a rotated key stops working
+            (`rotatedAt` + 24h grace).
+        expiredMarkedAt:
+          type: integer
+          format: int64
+          nullable: true
+        expired:
+          type: boolean
+          description: |
+            Derived server-side against the moment the list was built: true once
+            `expiresAt` has passed. Matches the `<=` boundary the API enforces,
+            so a key shown as expired is exactly a key the API will reject with
+            `token_expired`.
+        retired:
+          type: boolean
+          description: Derived. A rotated key whose grace window has closed.
     ApiKeyWithSecret:
       description: |
         Returned **only** on create or rotate — the one and only time

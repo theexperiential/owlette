@@ -20,6 +20,7 @@ import { getBrowserTimezone } from '@/lib/timeUtils';
 import {
   SCOPE_PRESETS,
   SCOPE_PRESET_KEYS,
+  SCOPE_PRESET_LABELS,
   SCOPE_PRESET_DESCRIPTIONS,
   type ApiKeyScopePreset,
 } from '@/lib/apiKeyTypes';
@@ -1197,7 +1198,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                         <SelectContent className="border-border bg-secondary text-white">
                           {SCOPE_PRESET_KEYS.map((p) => (
                             <SelectItem key={p} value={p} className="cursor-pointer hover:bg-muted">
-                              {p}
+                              {SCOPE_PRESET_LABELS[p]}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1257,34 +1258,70 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                   {/* Existing keys list */}
                   {apiKeys.length > 0 && (
                     <div className="space-y-2">
-                      <Label className="text-white">active keys</Label>
+                      {/* Not "active keys" — the list is every key the account
+                          has, expired ones included, and calling a lapsed key
+                          active is how one sat here looking healthy while the
+                          API was rejecting it. */}
+                      <Label className="text-white">your keys</Label>
                       <div className="space-y-2">
-                        {apiKeys.map((k) => (
-                          <div key={k.id} className="flex items-center justify-between rounded-md border border-border bg-card/50 px-4 py-3">
-                            <div className="space-y-0.5 min-w-0">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <p className="text-sm text-white truncate">{k.name}</p>
-                                {k.expired ? (
-                                  <span className="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-red-500/15 text-red-400">
-                                    expired
-                                  </span>
-                                ) : k.retired ? (
-                                  <span className="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground">
-                                    retired
-                                  </span>
-                                ) : null}
+                        {/* Usable keys first; the route already sorts by
+                            createdAt desc, and Array.prototype.sort is stable,
+                            so that ordering survives inside each group. */}
+                        {[...apiKeys]
+                          .sort(
+                            (a, b) =>
+                              Number(a.expired || a.retired) - Number(b.expired || b.retired)
+                          )
+                          .map((k) => (
+                          <div key={k.id} className="flex items-center justify-between gap-3 rounded-md border border-border bg-card/50 px-3 py-2">
+                            {/* One horizontal band per card, with each date column
+                                stacking its label over its value. Two text lines
+                                rather than four, and the labels sit above the dates
+                                instead of beside them — which is what stops the
+                                dates truncating. Lifecycle state rides in the last
+                                column: a red "expired / <date>" carries what a
+                                separate badge did, without another row. */}
+                            {/* Fixed tracks for the prefix and the three date
+                                columns so they line up down the list — max-content
+                                sized each row to its own text, which is exactly why
+                                they didn't. The name is the only flexible track, so
+                                it absorbs the slack and truncates when short. */}
+                            <div className="grid min-w-0 flex-1 grid-cols-2 items-center gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,1fr)_9rem_5.25rem_5.25rem_5.25rem]">
+                              <span className="truncate text-sm text-white">{k.name}</span>
+                              <code className="truncate font-mono text-xs text-muted-foreground">
+                                {k.keyPrefix}•••
+                              </code>
+                              <div className="min-w-0">
+                                <div className="text-[11px] leading-tight text-muted-foreground/60">
+                                  created
+                                </div>
+                                <div className="text-xs leading-tight text-muted-foreground tabular-nums">
+                                  {formatKeyDate(k.createdAt)}
+                                </div>
                               </div>
-                              <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                                <code className="font-mono">{k.keyPrefix}•••</code>
-                                <span>created {formatKeyDate(k.createdAt)}</span>
-                                {k.lastUsedAt && (
-                                  <span>last used {formatKeyDate(k.lastUsedAt)}</span>
-                                )}
-                                {k.expiresAt !== null && (
-                                  <span className={k.expired ? 'text-red-400' : undefined}>
-                                    {k.expired ? 'expired' : 'expires'} {formatKeyDate(k.expiresAt)}
-                                  </span>
-                                )}
+                              <div className="min-w-0">
+                                <div className="text-[11px] leading-tight text-muted-foreground/60">
+                                  last used
+                                </div>
+                                <div className="text-xs leading-tight text-muted-foreground tabular-nums">
+                                  {k.lastUsedAt === null ? 'never' : formatKeyDate(k.lastUsedAt)}
+                                </div>
+                              </div>
+                              <div className="min-w-0">
+                                <div
+                                  className={`text-[11px] leading-tight ${
+                                    k.expired ? 'text-red-400/70' : 'text-muted-foreground/60'
+                                  }`}
+                                >
+                                  {k.expired ? 'expired' : k.retired ? 'retired' : 'expires'}
+                                </div>
+                                <div
+                                  className={`text-xs leading-tight tabular-nums ${
+                                    k.expired ? 'text-red-400' : 'text-muted-foreground'
+                                  }`}
+                                >
+                                  {formatKeyDate(k.retired ? k.retiresAt : k.expiresAt)}
+                                </div>
                               </div>
                             </div>
                             {confirmRevokeKeyId === k.id ? (

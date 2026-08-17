@@ -106,6 +106,23 @@ export const SCOPE_PRESET_KEYS: readonly ApiKeyScopePreset[] = [
   'admin',
 ];
 
+/**
+ * Display labels for the presets.
+ *
+ * The keys are code identifiers — they index SCOPE_PRESETS, back the
+ * `ApiKeyScopePreset` union, and are the `<SelectItem value>` in every picker.
+ * Rendering them raw leaked `readonly` into the UI as a scope's name. The
+ * identifier stays; only what a human reads changes. Nothing persists or
+ * transmits the preset name (a preset expands to `scopes` before the POST),
+ * so this is purely presentational.
+ */
+export const SCOPE_PRESET_LABELS: Record<ApiKeyScopePreset, string> = {
+  readonly: 'read only',
+  publisher: 'publisher',
+  operator: 'operator',
+  admin: 'admin',
+};
+
 /** Human-readable descriptions of each preset, shared across every scope picker. */
 export const SCOPE_PRESET_DESCRIPTIONS: Record<ApiKeyScopePreset, string> = {
   readonly: 'read access to roosts, sites, machines, and hoot chats — no mutations',
