@@ -9,7 +9,27 @@ export type ApiKeyResource =
   | 'process' // machine-scoped process management
   | 'user' // platform-wide user administration (superadmin)
   | 'installer'; // platform-wide installer-binary management (superadmin)
+/**
+ * The union keeps `test` even though nothing mints it any more.
+ *
+ * `test` never gated authorization or data access — auth reads the field and
+ * never branches on it — so it promised a sandbox it did not provide, and the
+ * option is gone from every create surface. But it is NOT inert: it is the
+ * second component of the idempotency cache key
+ * (`hashCacheKey(userId, environment, key, routeScope)`, lib/idempotency.ts),
+ * so narrowing this union would re-namespace idempotency for every existing
+ * `owk_test_*` key and orphan its cached responses. Existing test keys keep
+ * working; only new mints are forced to `live`.
+ */
 export type ApiKeyEnvironment = 'live' | 'test';
+
+/**
+ * The environment every newly minted key gets. Never read from user input —
+ * requests may still send `environment` (the shipped CLI and both SDKs do) and
+ * it is accepted and ignored rather than rejected, so older clients keep
+ * working. Rotation is the one exception: it inherits the old key's value.
+ */
+export const MINTED_API_KEY_ENVIRONMENT: ApiKeyEnvironment = 'live';
 
 /**
  * Canonical list of every accepted resource type. Imported by route

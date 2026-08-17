@@ -29,7 +29,7 @@ description: "manage your own api keys — mint scoped owk_* keys, rotate with a
 
 mint a new scoped api key. server returns the raw key in the response body **once**.
 
-**synopsis** — `owlette key create --name <name> (--scope <spec>... | --preset <p>) [--ttl-days <n>] [--environment <env>]`
+**synopsis** — `owlette key create --name <name> (--scope <spec>... | --preset <p>) [--ttl-days <n>]`
 
 | flag | required | purpose |
 |---|---|---|
@@ -37,7 +37,6 @@ mint a new scoped api key. server returns the raw key in the response body **onc
 | `--scope <spec>` | one of | repeatable scope spec (mutually exclusive with `--preset`) |
 | `--preset <p>` | one of | `readonly` \| `publisher` \| `operator` \| `admin` (mutually exclusive with `--scope`) |
 | `--ttl-days <n>` | no | lifetime in days (default 90, min 1, max 365) |
-| `--environment <env>` | no | `live` or `test` (default `live`) |
 
 ```bash
 # mint a deploy-capable key for one specific roost, 30-day ttl
@@ -119,7 +118,6 @@ owlette key revoke k_abc123 --yes --json
 ## exit codes
 
 - `0` — success
-- `1` — generic error (network, api 5xx, unexpected response shape) and all usage errors (missing required flag, both `--scope` and `--preset` passed, bad scope spec, invalid `--ttl-days`, invalid `--environment`, refusing to revoke without `--yes` from a non-tty)
 - `2` — no token configured for the active profile
 
 `key` has no stub verbs and no exit-3 paths.

@@ -29,7 +29,7 @@ New clients should use `Authorization: Bearer`. Query-string keys are easy to le
 | prefix | environment | use |
 |---|---|---|
 | `owk_live_` | live | production fleets, production audit records, billable usage |
-| `owk_test_` | test | sandbox/dev integrations and non-production automation |
+| `owk_test_` | test | legacy — no longer issued. Existing keys remain valid and authenticate identically to `owk_live_` keys; `test` never provided isolation. |
 
 The raw key suffix is a 32-byte random value encoded as base64url, currently 43 characters. Treat the full key as opaque. The API only returns the raw key once, at creation.
 
@@ -44,9 +44,11 @@ Stored and list responses expose a `keyPrefix` for display and audit correlation
 Use **Settings -> API Keys** in the dashboard for normal key creation. Choose:
 
 - name
-- environment: `live` or `test`
 - scopes
 - expiration
+
+Every key is minted `live`. The API still accepts an `environment` field so
+older clients keep working, but it is ignored.
 
 Copy the raw key immediately into a secrets manager.
 

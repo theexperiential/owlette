@@ -255,13 +255,15 @@ describe('/api/keys POST', () => {
   it('still validates explicit site scopes against caller site access', async () => {
     const res = await makePost({
       name: 'Site key',
+      // Still sent, because the shipped CLI and both SDKs still send it. The
+      // route accepts and ignores it rather than 400-ing, and mints live.
       environment: 'test',
       scopes: [{ resource: 'site', id: 'site-1', permissions: ['read'] }],
     });
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.environment).toBe('test');
+    expect(body.environment).toBe('live');
     expect(body.scopes).toEqual([
       { resource: 'site', id: 'site-1', permissions: ['read'] },
     ]);

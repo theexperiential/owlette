@@ -534,7 +534,7 @@ def handler(request: httpx.Request) -> httpx.Response:
     assert request.headers["authorization"].startswith("Bearer owk_")
     return httpx.Response(200, json={"sites": []})
 
-async with Roost(token="owk_test_...", transport=httpx.MockTransport(handler)) as client:
+async with Roost(token="owk_live_...", transport=httpx.MockTransport(handler)) as client:
     assert (await client.sites.list()) == []
 ```
 

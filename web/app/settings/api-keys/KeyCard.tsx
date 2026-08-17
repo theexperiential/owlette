@@ -131,16 +131,17 @@ export function KeyCard({ apiKey, onRotated, onRevoked, now }: Props) {
             <p className="text-sm text-white font-medium truncate">
               {apiKey.name || '(unnamed key)'}
             </p>
-            {apiKey.environment && (
+            {/* Only legacy `test` keys get a badge. Now that live is the sole
+                environment minted, a "live" badge on every row is noise — but
+                this is the one place a lingering test key is visible, and it
+                still authenticates exactly like a live one, so it stays
+                called out. */}
+            {apiKey.environment === 'test' && (
               <Badge
                 variant="outline"
-                className={
-                  apiKey.environment === 'live'
-                    ? 'border-accent-cyan/50 text-accent-cyan text-xs'
-                    : 'border-amber-500/50 text-amber-400 text-xs'
-                }
+                className="border-amber-500/50 text-amber-400 text-xs"
               >
-                {apiKey.environment}
+                legacy test
               </Badge>
             )}
             <Badge

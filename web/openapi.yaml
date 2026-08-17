@@ -5419,6 +5419,13 @@ paths:
                   type: string
                   enum: [live, test]
                   default: live
+                  deprecated: true
+                  description: |
+                    Ignored. Every key is minted `live`. Still accepted (and
+                    still validated against this enum) so shipped clients that
+                    send it are not broken; the value has no effect.
+                    Rotation is the one exception — a rotated key inherits the
+                    original key's environment.
                 scopes:
                   type: array
                   minItems: 1
@@ -8854,6 +8861,11 @@ components:
         environment:
           type: string
           enum: [live, test]
+          nullable: true
+          description: |
+            `live` for every key minted now. `test` appears only on legacy keys
+            issued before the option was withdrawn; they authenticate
+            identically. Null on pre-scoping keys, which stored no environment.
         keyPrefix:
           type: string
           description: Display-safe prefix of the raw key; current keys store the first 15 characters.
@@ -8984,6 +8996,10 @@ components:
           type: string
           enum: [live, test]
           default: live
+          deprecated: true
+          description: |
+            Ignored. Every key is minted `live`. Still accepted so shipped
+            clients that send it are not broken.
         scopes:
           type: array
           minItems: 1

@@ -30,7 +30,6 @@ import {
   SCOPE_PRESET_KEYS,
   SCOPE_PRESET_LABELS,
   SCOPE_PRESET_DESCRIPTIONS,
-  type ApiKeyEnvironment,
   type ApiKeyPermission,
   type ApiKeyResource,
   type ApiKeyScope,
@@ -54,7 +53,6 @@ interface Props {
 
 export function CreateKeyDialog({ open, onOpenChange, onCreated }: Props) {
   const [name, setName] = useState('');
-  const [environment, setEnvironment] = useState<ApiKeyEnvironment>('live');
   const [ttlDays, setTtlDays] = useState(DEFAULT_TTL_DAYS);
   const [preset, setPreset] = useState<ApiKeyScopePreset | 'custom'>('publisher');
   const [customScopes, setCustomScopes] = useState<ApiKeyScope[]>([
@@ -64,7 +62,6 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: Props) {
 
   function reset() {
     setName('');
-    setEnvironment('live');
     setTtlDays(DEFAULT_TTL_DAYS);
     setPreset('publisher');
     setCustomScopes([{ resource: 'site', id: '*', permissions: ['read', 'write'] }]);
@@ -107,7 +104,6 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: Props) {
           name: name.trim(),
           scopes,
           ttlDays,
-          environment,
         }),
       });
       const data = (await res.json()) as CreateKeyResponse | { detail?: string; error?: string };
@@ -189,23 +185,10 @@ export function CreateKeyDialog({ open, onOpenChange, onCreated }: Props) {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-2">
-              <Label className="text-white">environment</Label>
-              <Select
-                value={environment}
-                onValueChange={(v) => setEnvironment(v as ApiKeyEnvironment)}
-                disabled={creating}
-              >
-                <SelectTrigger className="bg-background border-border text-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="live">live</SelectItem>
-                  <SelectItem value="test">test</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          {/* environment selector removed — every key is minted live. The
+              server ignores an incoming `environment`, so older clients that
+              still send one keep working. */}
+          <div className="grid grid-cols-1 gap-3">
             <div className="space-y-2">
               <Label htmlFor="ttlDays" className="text-white">
                 ttl (days)

@@ -21,7 +21,6 @@ import {
 } from '@/lib/apiErrors';
 import {
   ALL_RESOURCES,
-  type ApiKeyEnvironment,
   type ApiKeyLookup,
   type ApiKeyPermission,
   type ApiKeyRecord,
@@ -29,6 +28,7 @@ import {
   type ApiKeyResource,
   type ApiKeyScope,
   buildApiKeyListItem,
+  MINTED_API_KEY_ENVIRONMENT,
   DEFAULT_TTL_DAYS,
   MAX_TTL_DAYS,
   SUPERADMIN_ONLY_RESOURCES,
@@ -42,7 +42,6 @@ const VALID_PERMISSIONS: readonly ApiKeyPermission[] = [
   'rollback',
   'admin',
 ];
-const VALID_ENVIRONMENTS: readonly ApiKeyEnvironment[] = ['live', 'test'];
 const MAX_NAME_LENGTH = 100;
 const MAX_SCOPES = 50;
 const SITE_SCOPED_RESOURCES = new Set<ApiKeyResource>(['site', 'chat', 'deploy']);
@@ -103,7 +102,7 @@ function validateScopes(raw: unknown): ApiKeyScope[] | string {
  *     name: string,
  *     scopes: [{resource, id, permissions[]}],
  *     ttlDays?: number (1-365, default 90),
- *     environment?: 'live' | 'test' (default 'live')
+ *     environment?: ignored — every key is minted 'live'
  *   }
  *
  * Returns the raw key once — only the SHA-256 hash is stored.
@@ -167,13 +166,11 @@ export const POST = withRateLimit(
       }
       const ttlDays = rawTtl;
 
-      const rawEnv = body.environment ?? 'live';
-      if (!VALID_ENVIRONMENTS.includes(rawEnv as ApiKeyEnvironment)) {
-        return problemValidation(
-          `environment must be one of ${VALID_ENVIRONMENTS.join(', ')}`
-        );
-      }
-      const environment = rawEnv as ApiKeyEnvironment;
+      // Every new key is minted live. `body.environment` is accepted and
+      // ignored rather than rejected: the shipped @owlette/cli and both SDKs
+      // still send it, and 400-ing them would break clients over a field that
+      // never controlled anything they could observe.
+      const environment = MINTED_API_KEY_ENVIRONMENT;
 
       // Defense-in-depth: validate site-scoped ids against caller's own access.
       // Runtime requireScope() also enforces this; doing it here catches typos
@@ -184,7 +181,7 @@ export const POST = withRateLimit(
         }
       }
 
-      // owk_live_<43 base64url chars> or owk_test_<43 base64url chars>
+      // owk_live_<43 base64url chars>
       const keyRandom = crypto.randomBytes(32).toString('base64url');
       const rawKey = `owk_${environment}_${keyRandom}`;
       const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
