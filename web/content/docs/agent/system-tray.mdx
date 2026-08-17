@@ -14,10 +14,12 @@ The tray icon appears in the Windows notification area (system tray). It's a HAL
 | state | how it looks | what it means |
 |-------|--------------|---------------|
 | **connected** | the eye lit warm amber | service running and connected to the cloud — everything healthy |
-| **connection issues** | the same eye dimmed almost to black | service running but not reaching the cloud (offline, or still starting up). Disabled cloud/site configuration looks the same. |
-| **error** | red, alternating with the amber eye about every 0.8 seconds | service stopped or crashed, or the health probe reports a failure |
+| **connection issues** | the same eye dimmed almost to black | service running but not reaching the cloud (offline, or still starting up) |
+| **error** | red, alternating with the amber eye about every 0.8 seconds | service stopped or crashed, the health probe reports a failure, the service is running but has stopped publishing its status (*not responding*), or no cloud/site is configured so nothing is being monitored (*disabled*) |
 
 The warm center and dark rim keep the icon legible on both light and dark taskbars.
+
+Left-clicking the icon opens the owlette window. The menu below is the right-click surface.
 
 ---
 
@@ -44,17 +46,17 @@ The four rows at the top are read-only status; the four below the separator are 
 
 ## notifications
 
-The app raises a Windows toast when the machine's state changes in a way an operator standing at it would want to know about. Two rules keep them rare:
+The app raises a Windows toast when the machine's state changes in a way an operator standing at it would want to know about. Three rules keep them rare:
 
-- A degraded state must **hold for 5 seconds** before it is worth a toast, and each episode raises **one** — a flapping connection does not produce a stream of them.
+- Only the **error** tier notifies. The dim *connection issues* state — which every routine service restart passes through — shows in the icon and the tooltip, but never raises a toast.
+- An error must **hold for 5 seconds** before it is worth a toast, and each episode raises **one** — a flapping service does not produce a stream of them.
 - Nothing is raised in the **first 10 seconds** after launch, so a service that is still starting is not reported as an incident.
 
-When the state clears, a single **owlette — back online** toast confirms it.
+When the error clears — all the way back to connected, not merely back to *connection issues* — a single **owlette — back online** toast confirms it.
 
 | state | toast | what to do |
 |-------|-------|------------|
-| cloud unreachable | **owlette — reconnecting** | Nothing — local monitoring continues, and the agent reconnects on its own. |
-| service stopped | **owlette — service stopped** | Use `restart service` from the menu. |
+| service stopped, not responding, or disabled | **owlette — service stopped** | Use `restart service` from the menu; if the machine is unpaired, pair it again. |
 | `config_error` | **owlette — config error** | `config.json` is missing or corrupt — reinstall. |
 | `auth_error` | **owlette — not registered** | No token stored — pair the machine again. |
 | `network_error` | **owlette — network unreachable** | Check the machine's internet connection. |
@@ -93,6 +95,7 @@ The service attempts status updates from its main loop, but writes are throttled
     "enabled": true,
     "connected": true,
     "site_id": "my-site",
+    "site_name": "my site",
     "last_heartbeat": 1777053595
   },
   "health": {
@@ -109,6 +112,8 @@ The service attempts status updates from its main loop, but writes are throttled
   }
 }
 ```
+
+`firebase.site_name` is the site's display name, published once the service can resolve it. It is what the tooltip and the `status:` row name in `connected to <site>` — when it is empty, the tray falls back to `site_id`.
 
 ---
 

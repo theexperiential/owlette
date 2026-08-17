@@ -14,7 +14,7 @@ When the desktop app is open, launch mode and schedule labels refresh from exter
 The desktop app runs as a separate process from the service. Launch it from:
 
 - **System tray** -> Right-click -> `open owlette`
-- **Start Menu** -> `Owlette Configuration`
+- **Start Menu** -> `Owlette`
 - **Directly**: `C:\ProgramData\Owlette\app\owlette-desktop.exe`
 
 ![the owlette desktop app — the process list on the left, the selected process's settings on the right](/docs-screens/agent.png)
@@ -23,10 +23,10 @@ The desktop app runs as a separate process from the service. Launch it from:
 
 | area | contents |
 |---------|----------|
-| **Processes list** | Every monitored process, in launch order, with a status dot from the service's live table. Drag a row to reorder; right-click one for restart, kill, duplicate, and delete. Drop an app, a script, a TouchDesigner project, or a Unity build folder anywhere in the window to add it. |
-| **Process settings** | Launch mode and schedule, name, executable path, file path or arguments, working directory, startup delay, priority, initialization wait, visibility, and relaunch attempts. There is no save button — a field writes itself when it loses focus or takes an enter key. |
-| **Menu** (top right) | Join or leave a site, open `config.json`, open the logs folder, open these docs, and submit a bug report. |
-| **Footer** | One sentence saying whether this machine is being supervised and which site it belongs to, plus the version of the *service* that is running. A `start service` button appears here when the service is not. |
+| **Processes list** | Every monitored process, in launch order, with a status dot from the service's live table. Drag a row to reorder; right-click one for restart, kill, duplicate, and delete. Add an entry with the `+` button in the list header, or drop an app, a script, a TouchDesigner project, or a Unity build folder anywhere in the window. |
+| **Process settings** | Name, then three groups: *what to run* (executable path, file path or arguments, working directory), *when to run* (launch mode and schedule), and *recovery* (startup delay, initialization wait, relaunch attempts). Priority and visibility sit behind an `advanced` disclosure at the bottom of the form. There is no save button — a field writes itself when it loses focus or takes an enter key. |
+| **Menu** (top right) | Join or leave a site, open `config.json`, open the logs folder, open these docs, submit a bug report, toggle `start on login`, restart the service, and reload the window. |
+| **Footer** | One sentence saying whether this machine is being supervised and which site it belongs to, plus the version of the *service* that is running. One button sits beside the sentence when the state calls for it: `start service` when nothing is supervising this machine, or `join site` when the service is running but the machine belongs to no site. The two are mutually exclusive. |
 
 Nothing has been configured yet on a freshly enrolled machine:
 
@@ -132,7 +132,7 @@ A process's launch mode is the first thing to set: `off` leaves it alone, `alway
 
 ![the process settings panel with the launch mode set to scheduled](/docs-screens/agent-launch-mode.png)
 
-`edit` beside a scheduled process opens the schedule editor. Times follow the site's timezone, or this machine's local time when it is not paired to one:
+The pencil button on the right edge of the launch-mode control opens the schedule editor. It is offered in every launch mode — editing from `off` or `always on` stores the windows without changing the mode. Times follow the site's timezone, or this machine's local time when it is not paired to one:
 
 ![the schedule editor, with one weekday block from 9am to 6pm](/docs-screens/agent-schedule-editor.png)
 

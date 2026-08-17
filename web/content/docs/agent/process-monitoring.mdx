@@ -24,6 +24,7 @@ flowchart TD
 |-------|-------------|---------------------|
 | **RUNNING** | Process is alive and responsive | Green |
 | **LAUNCHING** | Launch is in progress | Yellow |
+| **RESTARTING** | Operator-initiated restart in flight — written by the desktop app before it terminates the PID, so the exit is logged as `process_restarted` rather than raising a crash alert | Yellow |
 | **QUEUED** | Launch is queued or waiting for a delay | Yellow |
 | **LAUNCH_FAILED** | Launch failed | Red |
 | **STALLED** | Process exists but is not responding (hang detected) | Yellow |
@@ -111,12 +112,13 @@ This prevents duplicate instances after service restarts or crashes.
 
 ## relaunch limits
 
-Each process has a configurable `relaunch_attempts` limit (default: 3). When the limit is reached:
+Each process has a configurable `relaunch_attempts` limit. The desktop app creates new processes with 5 attempts, the dashboard with 3, and the service falls back to `MAX_RELAUNCH_ATTEMPTS` (3) when the stored value is missing or `0`. When the limit is reached:
 
 1. The agent stops trying to restart the process
-2. A **reboot countdown prompt** appears on screen (the desktop app, launched with `--restart-prompt`)
-3. The user can dismiss the prompt or allow the reboot
-4. The relaunch counter resets after a successful process start or manual intervention
+2. A **reboot countdown prompt** appears on screen (the desktop app, launched with `--restart-prompt`), and the agent writes a `rebootPending` flag so the dashboard can dismiss it remotely
+3. The prompt starts at 2:00 and has three controls: a **pause the countdown** switch, **cancel**, and **restart now**. It cannot be dismissed by clicking away or pressing escape
+4. If the countdown reaches 0:00 untouched, the machine restarts automatically
+5. The relaunch counter resets when the prompt opens, when an operator starts or restarts the process, when launch mode is switched from `off` back to `always` or `scheduled`, and when an admin dismisses the reboot banner from the dashboard — a successful auto-restart does not reset it
 
 <Callout type="idea" title={"Crash alerts"}>
 

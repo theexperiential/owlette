@@ -38,7 +38,7 @@ flowchart LR
 
 ### python agent (windows service)
 
-The agent runs as a Windows service managed by [NSSM](https://nssm.cc/) (Non-Sucking Service Manager). It:
+The agent runs as a Windows service hosted by **owlette-host** (`tools\owlette-host.exe`), a small Rust supervisor written for owlette that replaced NSSM in 3.0.0. It:
 
 - **Monitors processes** every 5 seconds — detects crashes, stalls, and exits
 - **Auto-restarts** crashed applications with `CreateProcessAsUser`, so they land in the logged-in user's session
@@ -48,6 +48,10 @@ The agent runs as a Windows service managed by [NSSM](https://nssm.cc/) (Non-Suc
 - **Runs offline** — continues monitoring even without internet, syncs when reconnected
 
 The agent uses a **custom Firestore REST API client** (not the Firebase Admin SDK) with an OAuth two-token authentication system.
+
+**owlette-host** is registered as the `OwletteService` image, so it is what the Windows Service Control Manager actually starts. It launches the bundled interpreter (`python\python.exe`) on `agent\src\owlette_runner.py` with no console window, pumps the agent's stdout and stderr into `service_stdout.log` / `service_stderr.log` (10 MiB each, with a single `.1` rotation sibling), and records its own spawns, exit codes, stops, and backoff in `service_host.log`.
+
+Restart policy: exit 42 (restart flag) and exit 43 (self-restart watchdog) relaunch immediately, exit 0 is a clean exit that stops the service, and any other code is a crash that relaunches after 5s — backing off to 60s once five exits land inside a 5-minute window. On a stop the host reports `STOP_PENDING` to the SCM; the agent polls that state every 250 ms and answers by flushing `online: false`. Only after a 20s grace window does the host terminate, and it terminates **only the process it launched** — never the process tree, so managed applications and the desktop app survive a service restart. `owlette-host install` is also the migration path: it stops and removes any existing registration, including an NSSM one, before registering its own.
 
 <Callout type="info" title={"Key directories"}>
 
@@ -66,7 +70,7 @@ The dashboard is a Next.js 16 application deployed to Railway. It:
 - **Deploys software** — push installers to machines with progress tracking
 - **Publishes roost versions** — content-addressed project sync through R2 chunks, immutable version history, resync, and rollback
 - **Manages users** — role-based access control with site-level permissions
-- **Provides Cortex** — AI chat interface for machine interaction, plus autonomous cluster management (auto-investigates crashes)
+- **Provides hoot** — AI chat interface for machine interaction, plus autonomous cluster management (auto-investigates crashes)
 
 ### firebase backend
 
@@ -379,7 +383,7 @@ stateDiagram-v2
 
 ### in-process / firestore boundaries
 
-Module-state held by `display_manager.py`: `_apply_in_flight`, `_apply_lock`, `_current_apply_id`, `_last_apply_time`, `_last_apply_finished_at`, `_ack_event`. These coordinate the apply path and the suppression window across threads but never touch Firestore directly — Firestore writes go through `firebase_client` helpers (`_ensure_display_profile`, `_ensure_display_modes_catalogue`, `update_display_autorestore_state`, `log_event`). Service-class state held by `OwletteService`: `_drift_pending_tick_count` (per-tick counter for the persistence gate). The `MockService` in `owlette_runner.py` mirrors every new instance attribute so NSSM-mode startup doesn't crash on a missing field.
+Module-state held by `display_manager.py`: `_apply_in_flight`, `_apply_lock`, `_current_apply_id`, `_last_apply_time`, `_last_apply_finished_at`, `_ack_event`. These coordinate the apply path and the suppression window across threads but never touch Firestore directly — Firestore writes go through `firebase_client` helpers (`_ensure_display_profile`, `_ensure_display_modes_catalogue`, `update_display_autorestore_state`, `log_event`). Service-class state held by `OwletteService`: `_drift_pending_tick_count` (per-tick counter for the persistence gate). The `MockService` in `owlette_runner.py` mirrors every new instance attribute so startup under owlette-host doesn't crash on a missing field.
 
 ---
 
@@ -484,7 +488,7 @@ The current checked-in agent version is `3.0.0`, and that agent registers the ro
 
 | layer | technology |
 |-------|-----------|
-| **Agent** | Python 3.9+, pywin32, psutil, NSSM |
+| **Agent** | Python 3.9+, pywin32, psutil, owlette-host (Rust service host) |
 | **Desktop app** | Tauri 2 (Rust + WebView2), React 19, TypeScript |
 | **Web** | Next.js 16, React 19, TypeScript 5, Tailwind CSS 4 |
 | **UI Components** | shadcn/ui (Radix UI), Recharts, Lucide React |
@@ -493,6 +497,6 @@ The current checked-in agent version is `3.0.0`, and that agent registers the ro
 | **Auth** | Firebase Authentication, iron-session, TOTP (2FA) |
 | **Email** | Resend API |
 | **Cloud Functions** | Firebase Functions (2nd Gen, Node.js 20) |
-| **Hosting** | Railway (web), Windows Service via NSSM (agent) |
+| **Hosting** | Railway (web), Windows service via owlette-host (agent) |
 | **Build** | Inno Setup (agent installer), Nixpacks (web) |
 | **AI** | Vercel AI SDK, Anthropic Claude / OpenAI |

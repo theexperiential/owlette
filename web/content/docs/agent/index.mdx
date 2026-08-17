@@ -19,11 +19,11 @@ description: "The owlette agent is a Python Windows service that runs in the bac
 
 ## how it runs
 
-The agent runs as a Windows service managed by [NSSM](https://nssm.cc/) (Non-Sucking Service Manager). NSSM ensures the service starts automatically on boot and restarts on failure.
+The agent runs as a Windows service hosted by `owlette-host.exe`, a small Rust supervisor that ships in `tools\` and replaced NSSM in 3.0.0. It registers the service to start automatically on boot, relaunches the agent if it crashes (5 seconds, backing off to 60 seconds once five crashes land inside a five-minute window), and honours the agent's own exit codes: 42 (restart flag) and 43 (self-restart watchdog) relaunch immediately, while a clean exit 0 stops the service.
 
 ```
-NSSM (Service Manager)
-  └── owlette_runner.py (Bridge)
+tools\owlette-host.exe (Service Host)
+  └── python\python.exe agent\src\owlette_runner.py (Bridge)
         └── owlette_service.py (Main Service Loop)
               ├── firebase_client.py (Cloud Sync)
               │     ├── auth_manager.py (OAuth Tokens)
@@ -76,7 +76,7 @@ On every startup the agent reads `C:\ProgramData\Owlette\tmp\session_state.json`
 | _(silent)_ | Previous session recorded an **Owlette-initiated** reboot/shutdown (scheduled reboot, dashboard command, deploy-triggered reboot) | Startup proceeds without alerts — the reboot was intentional |
 | `external_reboot` | Previous session ended with a **clean shutdown signal** but no Owlette intent (operator restart, Windows Update reboot, shutdown command from another tool) | Warning event emitted so the operator can audit why |
 | `unexpected_reboot` | **No alive heartbeat for long enough to be a reboot**, with no clean shutdown signal (BSOD, power loss, hard reset) | Warning event emitted; the gap is reported |
-| `unexpected_service_restart` | Service-only restart with no shutdown intent (NSSM auto-restart after crash, `taskkill`, OOM) — the OS stayed up but the service died | Warning event emitted distinguishing it from a full reboot |
+| `unexpected_service_restart` | Service-only restart with no shutdown intent (host relaunch after crash, `taskkill`, OOM) — the OS stayed up but the service died | Warning event emitted distinguishing it from a full reboot |
 
 The classifier depends only on `shared_utils` and stdlib — no Firebase, no logging config — so it is safe to import from any agent context (main loop, metrics thread, signal handler, user-space dialogs). Source: `agent/src/session_state.py`.
 
@@ -104,8 +104,9 @@ The classifier depends only on `shared_utils` and stdlib — no Firebase, no log
 |------|----------|
 | `C:\ProgramData\Owlette\` | Installation root |
 | `C:\ProgramData\Owlette\agent\src\` | Python source code |
+| `C:\ProgramData\Owlette\app\` | Desktop app — `owlette-desktop.exe` (tray icon, configuration window) |
 | `C:\ProgramData\Owlette\config\` | Agent configuration, including `config.json` |
 | `C:\ProgramData\Owlette\logs\` | Service, pairing, and installer log files. The desktop app logs per-user, elsewhere — see [agent troubleshooting](/docs/agent/troubleshooting). |
 | `C:\ProgramData\Owlette\python\` | Embedded Python interpreter |
 | `C:\ProgramData\Owlette\.tokens.enc` | Encrypted OAuth tokens |
-| `C:\ProgramData\Owlette\tools\nssm.exe` | NSSM service manager binary |
+| `C:\ProgramData\Owlette\tools\owlette-host.exe` | Service host binary — registers the service and supervises the agent |

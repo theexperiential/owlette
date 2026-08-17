@@ -14,8 +14,9 @@ Logs live in two trees. The service and everything it launches write machine-wid
 | log | file | contents |
 |-----|------|----------|
 | **Service** | `service.log` | Main service operations, Firebase sync, command execution |
-| **Service stdout** | `service_stdout.log` | NSSM-captured stdout from the service runner |
-| **Service stderr** | `service_stderr.log` | NSSM-captured stderr — interpreter-level tracebacks that never reach the logger land here |
+| **Service stdout** | `service_stdout.log` | The service runner's stdout, captured verbatim by owlette-host |
+| **Service stderr** | `service_stderr.log` | The service runner's stderr, captured verbatim by owlette-host — interpreter-level tracebacks that never reach the logger land here |
+| **Service host** | `service_host.log` | owlette-host's own narration — service registration, agent spawns, exit codes, restart backoff, stop escalations |
 | **Cortex** | `cortex.log` | Cortex runtime and CLI fetch. Only written when Cortex is enabled. |
 | **Pairing** | `pairing_debug.log` | Device-code pairing and token setup |
 | **Self-update installer** | `installer_update.log` | Inno Setup log written during remote agent updates |
@@ -23,7 +24,7 @@ Logs live in two trees. The service and everything it launches write machine-wid
 | **roost scrub reports** | `roost_scrub_reports\` | One JSON report per roost integrity scrub |
 | **Interactive installer** | Path passed with `/LOG=...` | Inno Setup log for manual installs; no fixed ProgramData installer log is written by default |
 
-Main shared-logger files use rotating file handlers: 10 MB per file, 5 backups. NSSM rotates the two stdout/stderr files itself, daily or at 10 MB. `tmp/status_writer.log` rotates at 100 KB with 2 backups, and `pairing_debug.log` uses plain writes. Old main logs are auto-deleted after 90 days by default.
+Main shared-logger files use rotating file handlers: 10 MB per file, 5 backups. owlette-host rotates the three files it writes by size, keeping exactly one `.1` sibling each: 10 MB for `service_stdout.log` and `service_stderr.log`, 2 MB for `service_host.log`. `tmp/status_writer.log` rotates at 100 KB with 2 backups, and `pairing_debug.log` uses plain writes. Old main logs are auto-deleted after 90 days by default.
 
 ### per-user — `%LOCALAPPDATA%\app.owlette.desktop\logs\`
 
@@ -70,7 +71,7 @@ Debug mode must be run from an elevated command prompt.
     cd C:\ProgramData\Owlette\agent\src
     python owlette_service.py debug
     ```
-2. Check `service.log` for startup errors.
+2. Check `service.log` for startup errors, and `service_host.log` for what owlette-host saw — the spawn, the exit code the agent returned, and any crash-loop backoff. A traceback that never reached the logger lands in `service_stderr.log`.
 3. Verify Python is installed: `C:\ProgramData\Owlette\python\python.exe --version`.
 4. Verify `C:\ProgramData\Owlette\config\config.json` is valid JSON.
 
@@ -286,9 +287,12 @@ sc qc OwletteService
 
 All commands require **Administrator** privileges.
 
+The desktop app restarts the service without one. `restart service` in the app's menu writes `tmp/restart.flag`; the service picks it up on its next loop and exits 42, and owlette-host relaunches it immediately — no UAC prompt. The tray icon's right-click menu carries the same item, with one difference: a service that is already stopped has no loop to read the flag, so the tray starts it through the SCM instead, which is the one path that can prompt for elevation.
+
 ---
 
 ## getting help
 
+- Use `submit bug report` in the desktop app's menu — it also takes feature requests and general feedback. The agent attaches the machine's system metrics and the last 100 lines of `service.log` automatically, along with the hostname and site id, so the report arrives diagnosable.
 - Email us at [support@owlette.app](mailto:support@owlette.app)
 - File a bug or feature request on [GitHub](https://github.com/theexperiential/owlette/issues)
