@@ -69,11 +69,13 @@ interface Props {
   onRotated: (raw: string, newKeyId: string) => void;
   onRevoked: () => void;
   onEditScopes: (apiKey: ApiKeyListItem) => void;
+  /** True while this row's scope editor is open directly beneath it. */
+  editing: boolean;
   /** Snapshot of Date.now() passed down from the parent on each tick. Injected so the render stays pure (lint rule). */
   now: number;
 }
 
-export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, now }: Props) {
+export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, editing, now }: Props) {
   const [rotating, setRotating] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [revoking, setRevoking] = useState(false);
@@ -125,7 +127,13 @@ export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, now }: Pro
   }
 
   return (
-    <div className="rounded-md border border-border bg-card/50 p-4 space-y-3">
+    <div
+      className={
+        editing
+          ? 'rounded-md rounded-b-none border border-b-0 border-accent-cyan/50 bg-card/50 p-4 space-y-3'
+          : 'rounded-md border border-border bg-card/50 p-4 space-y-3'
+      }
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -203,13 +211,18 @@ export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, now }: Pro
                   variant="outline"
                   onClick={() => onEditScopes(apiKey)}
                   aria-label="edit scopes"
-                  className="h-8 px-2 border-border text-muted-foreground hover:text-white cursor-pointer"
+                  aria-expanded={editing}
+                  className={
+                    editing
+                      ? 'h-8 px-2 border-accent-cyan/50 bg-accent-cyan/10 text-accent-cyan hover:text-accent-cyan cursor-pointer'
+                      : 'h-8 px-2 border-border text-muted-foreground hover:text-white cursor-pointer'
+                  }
                 >
                   <SlidersHorizontal className="h-3.5 w-3.5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                <p>edit scopes — keeps the same key</p>
+                <p>{editing ? 'close the editor' : 'edit scopes — keeps the same key'}</p>
               </TooltipContent>
             </Tooltip>
           )}

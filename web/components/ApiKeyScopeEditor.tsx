@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,12 +9,14 @@ import { toast } from '@/lib/toast';
 import type { UpdateKeyInput } from '@/hooks/useApiKeys';
 import {
   ApiKeyScopeFields,
-  presetForScopes,
-  resolveScopes,
-  type ScopeSelection,
-  validateScopeSelection,
+  buildScopeRows,
+  reconcileVisibility,
+  type ScopeRow,
+  serializeScopeRows,
+  summarizeScopeDiff,
+  validateScopeRows,
 } from '@/components/ApiKeyScopeFields';
-import type { ApiKeyListItem, ApiKeyScope } from '@/lib/apiKeyTypes';
+import type { ApiKeyListItem } from '@/lib/apiKeyTypes';
 
 /**
  * Edit an existing key's name and scopes in place.
@@ -34,25 +36,40 @@ interface Props {
   apiKey: ApiKeyListItem;
   onSubmit: (input: UpdateKeyInput) => Promise<void>;
   onCancel: () => void;
+  /** From useAuth().isSuperadmin — gates the platform-wide scope rows. */
+  canGrantPlatformScopes: boolean;
 }
 
-export function ApiKeyScopeEditor({ apiKey, onSubmit, onCancel }: Props) {
+export function ApiKeyScopeEditor({
+  apiKey,
+  onSubmit,
+  onCancel,
+  canGrantPlatformScopes,
+}: Props) {
   const [name, setName] = useState(apiKey.name || '');
-  // A key minted from a preset reopens on that preset; anything else (or a
-  // legacy key with no scopes at all) starts in the custom builder.
-  const [preset, setPreset] = useState<ScopeSelection>(() => presetForScopes(apiKey.scopes));
-  const [customScopes, setCustomScopes] = useState<ApiKeyScope[]>(() =>
-    apiKey.scopes && apiKey.scopes.length > 0
-      ? apiKey.scopes.map((s) => ({ ...s, permissions: [...s.permissions] }))
-      : [{ resource: 'site', id: '*', permissions: ['read'] }],
+  const [rows, setRows] = useState<ScopeRow[]>(() =>
+    buildScopeRows(apiKey.scopes, canGrantPlatformScopes),
   );
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setRows((prev) => reconcileVisibility(prev, canGrantPlatformScopes));
+  }, [canGrantPlatformScopes]);
+
+  // Editor-only: on create every grant is new, so a diff would just restate the
+  // table. Here the operator is mutating a credential whose consumers are
+  // already running, and PATCH's audit event exists precisely to make a widening
+  // visible — showing it before the write beats only recording it after.
+  const pending = useMemo(
+    () => summarizeScopeDiff(apiKey.scopes, serializeScopeRows(rows)),
+    [apiKey.scopes, rows],
+  );
   // A key predating scoped auth stores no scopes at all and authenticates as
   // full access. Editing it is a narrowing, not an adjustment.
   const isLegacy = !apiKey.scopes || apiKey.scopes.length === 0;
 
   async function handleSave() {
-    const validationError = validateScopeSelection(preset, customScopes);
+    const validationError = validateScopeRows(rows);
     if (validationError) {
       toast.error(validationError);
       return;
@@ -66,7 +83,7 @@ export function ApiKeyScopeEditor({ apiKey, onSubmit, onCancel }: Props) {
     try {
       await onSubmit({
         name: name.trim(),
-        scopes: resolveScopes(preset, customScopes),
+        scopes: serializeScopeRows(rows),
       });
     } finally {
       setSaving(false);
@@ -74,8 +91,13 @@ export function ApiKeyScopeEditor({ apiKey, onSubmit, onCancel }: Props) {
   }
 
   return (
-    <div className="space-y-4 rounded-md border border-border bg-background/40 p-3">
-      <h3 className="text-sm font-medium text-white">edit api key</h3>
+    /* Square top, no top border: this is the lower half of the row above it,
+       not a second card. With several keys listed, a detached panel gives no
+       indication of which one it is editing. */
+    <div className="space-y-4 rounded-md rounded-t-none border border-t-0 border-accent-cyan/50 bg-background/40 p-3">
+      <h3 className="text-sm font-medium text-white">
+        editing <span className="text-accent-cyan">{apiKey.name || '(unnamed key)'}</span>
+      </h3>
       <p className="text-xs text-muted-foreground">
         the key itself does not change — anything already using{' '}
         <code className="font-mono">{apiKey.keyPrefix || 'owk_'}•••</code> keeps working with the
@@ -108,12 +130,29 @@ export function ApiKeyScopeEditor({ apiKey, onSubmit, onCancel }: Props) {
       </div>
 
       <ApiKeyScopeFields
-        preset={preset}
-        onPresetChange={setPreset}
-        customScopes={customScopes}
-        onCustomScopesChange={setCustomScopes}
+        rows={rows}
+        onRowsChange={setRows}
+        canGrantPlatformScopes={canGrantPlatformScopes}
         disabled={saving}
       />
+
+      {(pending.added.length > 0 || pending.removed.length > 0) && (
+        <div className="space-y-1 rounded-md border border-border bg-card/40 p-2">
+          <span className="text-xs text-white">pending changes</span>
+          <ul className="space-y-0.5">
+            {pending.added.map((line) => (
+              <li key={line} className="text-xs text-accent-cyan">
+                + {line}
+              </li>
+            ))}
+            {pending.removed.map((line) => (
+              <li key={line} className="text-xs text-amber-400">
+                − {line}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="flex justify-end gap-2">
         <Button

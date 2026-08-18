@@ -54,6 +54,30 @@ export const ALL_RESOURCES: readonly ApiKeyResource[] = [
  */
 export const SUPERADMIN_ONLY_RESOURCES: readonly ApiKeyResource[] = ['user', 'installer'];
 
+/**
+ * Display labels for the resources, mirroring SCOPE_PRESET_LABELS.
+ *
+ * The identifiers are code — they back the ApiKeyResource union, are the wire
+ * value in every stored scope, and are what _shared.ts validates against.
+ * These are what a human reads. Purely presentational; nothing persists or
+ * transmits them. They live here rather than beside the picker for the same
+ * reason ALL_RESOURCES does: the allowlist and its labels cannot drift apart.
+ *
+ * `deploy` is spelled out as "all classic deploys" on purpose — the resource
+ * and the `deploy` permission are distinct things, and the union's own comment
+ * above flags the collision.
+ */
+export const SCOPE_RESOURCE_LABELS: Record<ApiKeyResource, string> = {
+  roost: 'all roosts',
+  site: 'all sites',
+  machine: 'all machines',
+  chat: 'all hoot chats',
+  deploy: 'all classic deploys',
+  process: 'all processes',
+  user: 'all users',
+  installer: 'all installer binaries',
+};
+
 export interface ApiKeyScope {
   resource: ApiKeyResource;
   /** Specific resource ID or '*' for all resources of this type */

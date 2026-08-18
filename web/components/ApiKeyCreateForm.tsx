@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,15 +9,13 @@ import { toast } from '@/lib/toast';
 import type { CreateKeyInput } from '@/hooks/useApiKeys';
 import {
   ApiKeyScopeFields,
-  resolveScopes,
-  type ScopeSelection,
-  validateScopeSelection,
+  buildScopeRows,
+  reconcileVisibility,
+  type ScopeRow,
+  serializeScopeRows,
+  validateScopeRows,
 } from '@/components/ApiKeyScopeFields';
-import {
-  type ApiKeyScope,
-  DEFAULT_TTL_DAYS,
-  MAX_TTL_DAYS,
-} from '@/lib/apiKeyTypes';
+import { DEFAULT_TTL_DAYS, MAX_TTL_DAYS, SCOPE_PRESETS } from '@/lib/apiKeyTypes';
 
 /**
  * The create-key form, inline rather than in its own modal.
@@ -32,19 +30,26 @@ import {
 interface Props {
   onSubmit: (input: CreateKeyInput) => Promise<void>;
   onCancel: () => void;
+  /** From useAuth().isSuperadmin — gates the platform-wide scope rows. */
+  canGrantPlatformScopes: boolean;
 }
 
-export function ApiKeyCreateForm({ onSubmit, onCancel }: Props) {
+export function ApiKeyCreateForm({ onSubmit, onCancel, canGrantPlatformScopes }: Props) {
   const [name, setName] = useState('');
   const [ttlDays, setTtlDays] = useState(DEFAULT_TTL_DAYS);
-  const [preset, setPreset] = useState<ScopeSelection>('publisher');
-  const [customScopes, setCustomScopes] = useState<ApiKeyScope[]>([
-    { resource: 'site', id: '*', permissions: ['read', 'write'] },
-  ]);
+  const [rows, setRows] = useState<ScopeRow[]>(() =>
+    buildScopeRows(SCOPE_PRESETS.publisher, canGrantPlatformScopes),
+  );
   const [creating, setCreating] = useState(false);
 
+  // isSuperadmin resolves after mount from the user-doc listener, so the
+  // platform rows have to be able to appear late without losing what is ticked.
+  useEffect(() => {
+    setRows((prev) => reconcileVisibility(prev, canGrantPlatformScopes));
+  }, [canGrantPlatformScopes]);
+
   async function handleCreate() {
-    const validationError = validateScopeSelection(preset, customScopes);
+    const validationError = validateScopeRows(rows);
     if (validationError) {
       toast.error(validationError);
       return;
@@ -62,7 +67,7 @@ export function ApiKeyCreateForm({ onSubmit, onCancel }: Props) {
     try {
       await onSubmit({
         name: name.trim(),
-        scopes: resolveScopes(preset, customScopes),
+        scopes: serializeScopeRows(rows),
         ttlDays,
       });
     } finally {
@@ -110,10 +115,9 @@ export function ApiKeyCreateForm({ onSubmit, onCancel }: Props) {
       </div>
 
       <ApiKeyScopeFields
-        preset={preset}
-        onPresetChange={setPreset}
-        customScopes={customScopes}
-        onCustomScopesChange={setCustomScopes}
+        rows={rows}
+        onRowsChange={setRows}
+        canGrantPlatformScopes={canGrantPlatformScopes}
         disabled={creating}
       />
 
