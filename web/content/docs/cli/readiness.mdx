@@ -100,10 +100,10 @@ Legend:
 
 | command | status | reference page | public route or reason |
 |---|---|---|---|
-| `owlette key create` | ready | [key](/docs/cli/reference/key) | `POST /api/keys` |
-| `owlette key list` | ready | [key](/docs/cli/reference/key) | `GET /api/keys` |
-| `owlette key rotate <keyId>` | ready | [key](/docs/cli/reference/key) | `POST /api/keys/{keyId}/rotate` |
-| `owlette key revoke <keyId>` | ready | [key](/docs/cli/reference/key) | `DELETE /api/keys/{keyId}` |
+| `owlette key list` | ready (superadmin keys only) | [key](/docs/cli/reference/key) | `GET /api/account/api-keys` |
+| `owlette key create` | ready (superadmin keys only; scopes inherited) | [key](/docs/cli/reference/key) | `POST /api/account/api-keys` |
+| `owlette key rotate <keyId>` | not available | [key](/docs/cli/reference/key) | session-only — `POST /api/keys/{keyId}/rotate` rejects api-key auth |
+| `owlette key revoke <keyId>` | not available | [key](/docs/cli/reference/key) | session-only — `DELETE /api/keys/{keyId}` rejects api-key auth |
 | `owlette user list` | ready | [user](/docs/cli/reference/user) | `GET /api/users` |
 | `owlette user get <uid>` | ready | [user](/docs/cli/reference/user) | `GET /api/users/{uid}` |
 | `owlette user promote <uid>` | ready | [user](/docs/cli/reference/user) | `POST /api/users/{uid}/promote` |

@@ -16,6 +16,7 @@ import { registerDeployCommands } from './commands/deploy';
 import { registerListenCommand } from './commands/listen';
 import { registerTriggerCommand } from './commands/trigger';
 import { registerSiteCommands } from './commands/site';
+import { registerKeyCommand } from './commands/key';
 import { registerQuotaCommands } from './commands/quota';
 import { registerMachineCommands } from './commands/machine';
 import { registerAuditLogCommands } from './commands/audit-log';
@@ -63,6 +64,7 @@ export function buildProgram(): Command {
 
   // a-tier nouns (wave 2): site / quota / machine / audit-log
   registerSiteCommands(program);
+  registerKeyCommand(program);
   registerQuotaCommands(program);
   registerMachineCommands(program);
   registerAuditLogCommands(program);
