@@ -98,8 +98,10 @@ test('api keys: create dialog and one-time reveal are operable at 390px', async 
   await revealCard.getByRole('button', { name: 'dismiss' }).click();
   await expect(revealBanner).toBeHidden();
 
-  // The list row survives the dismiss and shows the prefix only.
+  // The list row survives the dismiss; the prefix-only display is deferred
+  // behind the row's details disclosure, so expand it before asserting.
   await expect(page.getByText(keyName)).toBeVisible();
+  await page.getByRole('button', { name: `show details for ${keyName}` }).click();
   await expect(page.locator('code', { hasText: rawKey.slice(0, 15) })).toBeVisible();
   await expect(page.getByText(rawKey, { exact: true })).toHaveCount(0);
   await assertNoHorizontalOverflow(page);

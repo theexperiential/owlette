@@ -114,20 +114,24 @@ test('create key reveals raw owk_live_* once, copies to clipboard, then list sho
   await revealCard.getByRole('button', { name: 'dismiss' }).click();
   await expect(revealBanner).toBeHidden();
 
-  // List now contains the row with the prefix-only display ("owk_live_xxx•••").
-  // The raw key must NOT appear anywhere on the page.
+  // List now contains the row; the prefix-only display ("owk_live_xxx•••") is
+  // deferred behind the row's details disclosure, so expand it first. The raw
+  // key must NOT appear anywhere on the page.
   const expectedPrefix = rawKey.slice(0, 15);
   const keyRow = page.getByText(keyName);
   await expect(keyRow).toBeVisible();
+  await page.getByRole('button', { name: `show details for ${keyName}` }).click();
   await expect(page.locator('code', { hasText: expectedPrefix })).toBeVisible();
   await expect(page.getByText(rawKey, { exact: true })).toHaveCount(0);
 
-  // Reload — the one-time-reveal contract holds across navigations.
+  // Reload — the one-time-reveal contract holds across navigations. Expansion
+  // state resets with the page, so disclose the row again before asserting.
   await page.reload();
   await expect(
     page.getByRole('heading', { name: 'api keys', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText(keyName)).toBeVisible();
+  await page.getByRole('button', { name: `show details for ${keyName}` }).click();
   await expect(page.locator('code', { hasText: expectedPrefix })).toBeVisible();
   await expect(page.getByText(rawKey, { exact: true })).toHaveCount(0);
 });
@@ -152,6 +156,10 @@ test('switching to custom carries the selected preset in, rather than resetting 
   // the custom builder, so this must happen before the switch.
   await main.getByRole('combobox').click();
   await page.getByRole('option', { name: 'operator' }).click();
+  // The selection must be committed before the next transition: on a cold
+  // server, re-opening the select while the 'operator' pick is still mid-commit
+  // silently carries the DEFAULT preset into custom (1 row, not 4).
+  await expect(main.getByRole('combobox').first()).toHaveText(/operator/);
 
   // Now drop into the builder. This is the transition that used to discard the
   // preset: the rows opened on one hardcoded site scope, so 3 of 4 resources

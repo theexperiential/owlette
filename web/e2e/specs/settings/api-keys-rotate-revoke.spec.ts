@@ -203,8 +203,16 @@ test('rotate issues a new key, reveals it once, and stamps the original as rotat
   ).toBeVisible();
   await expect(page.locator('code', { hasText: rotatePayload.key })).toBeVisible();
 
-  await expect(oldRow.getByText('rotated (grace)', { exact: true })).toBeVisible();
-  await expect(oldRow.getByText(/old key stops working/)).toBeVisible();
+  // `oldRow` was `.first()` of the rows named "rotate target" — after rotation
+  // the successor (newest, still in the usable group) takes that slot, so
+  // re-locate the predecessor by its grace badge, mirroring `newRow` below.
+  const gracedRow = page
+    .locator('div.rounded-md.border')
+    .filter({ has: page.locator('p.font-medium', { hasText: 'rotate target' }) })
+    .filter({ hasText: 'rotated (grace)' })
+    .first();
+  await expect(gracedRow.getByText('rotated (grace)', { exact: true })).toBeVisible();
+  await expect(gracedRow.getByText(/old key stops working/)).toBeVisible();
 
   // Rotation carries the name across, so both rows are called "rotate target";
   // the badge is what separates the successor from its predecessor.
