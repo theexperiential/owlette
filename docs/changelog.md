@@ -11,6 +11,21 @@ All notable changes to owlette are documented here. The format is based on [Keep
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-08-17
+
+### added
+
+- **Suppress the Windows setup screens, fleet-wide.** A new hoot tool turns off the full-screen interruptions Windows shows at sign-in after updates — the privacy chooser, the Welcome Experience, "let's finish setting up your device", and the Edge first-run tour — for every profile on the machine, including accounts created later. A built-in talons preset, **update guard**, re-asserts the suppression and the update window every Sunday morning, since feature updates are known to reset these keys.
+
+### fixed
+
+- **The tray icon stops flashing red on a machine that is actually connected.** On a cold boot the agent's health check often runs seconds before Windows finishes bringing the network up and records "network not reachable" — and that verdict was never revisited, so even after the agent connected moments later (and stayed connected) the tray flashed red for the machine's entire uptime while the window footer correctly said "connected". The health state now clears the moment a connection is established — at startup, and after any mid-run outage — and the tray itself now treats a live connection as proof that a leftover error is stale.
+- **Recovering from an internet outage clears the error, not just the badge.** A machine that lost and regained its connection kept its "connection failure" health error, with the same forever-flashing icon. Reconnection now resets it.
+- **A machine that isn't registered no longer blames the network.** When the health check ran before the network was up, its "network unreachable" verdict could stand in for the real problem. Once the network gate opens, the checks now run again, so an unauthenticated machine reports "authentication required" instead of a phantom network error.
+- **A machine whose cloud client failed to start recovers on its own.** If cloud initialization failed at startup, nothing retried it and the machine stayed invisible on the dashboard until someone restarted the service. The agent now notices "cloud enabled, but nothing serving it" and reinitializes, retrying every five minutes until it succeeds.
+- **roost's hourly maintenance no longer crashes on databases from interim builds.** Some 3.0.0 machines carried a sync-state database created with the new column names but stamped with the old schema version; the migration then failed on every run, permanently killing the on-disk scrub and the orphan-chunk cleanup. The migration now checks what actually needs renaming and brings those databases forward cleanly.
+- **The local status file reports the real time of the last heartbeat** instead of always claiming there had never been one.
+
 ## [3.0.0] - 2026-08-16
 
 ### added
