@@ -12,22 +12,14 @@ import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Check, Loader2, User, Bell, BellOff, Trash2, Key, Plus, X, Code } from 'lucide-react';
-import { CopyButton } from '@/components/CopyButton';
 import Link from 'next/link';
 import { toast } from '@/lib/toast';
 import { PasskeyManager } from '@/components/PasskeyManager';
 import { getBrowserTimezone } from '@/lib/timeUtils';
-import {
-  SCOPE_PRESETS,
-  SCOPE_PRESET_KEYS,
-  SCOPE_PRESET_LABELS,
-  SCOPE_PRESET_DESCRIPTIONS,
-  type ApiKeyScopePreset,
-} from '@/lib/apiKeyTypes';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HootIcon } from '@/components/icons/HootIcon';
-import type { ApiKeyListItem } from '@/lib/apiKeyTypes';
+import { ApiKeysManager } from '@/components/ApiKeysManager';
 
 type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'hoot' | 'security' | 'api' | 'danger';
 
@@ -61,17 +53,6 @@ const SECTIONS: { id: SettingsSection; label: string; icon: React.ElementType }[
   { id: 'api', label: 'api', icon: Code },
   { id: 'danger', label: 'danger zone', icon: Trash2 },
 ];
-
-// Shared with the route so a field the UI reads can't silently go unsent —
-// `expired` used to be declared only on the settings page and never returned,
-// so an expired key rendered as active here and there.
-type ApiKeyEntry = ApiKeyListItem;
-
-/** Epoch millis -> short local date, or an em dash when the field is absent. */
-function formatKeyDate(ms: number | null): string {
-  if (ms === null) return '—';
-  return new Date(ms).toLocaleDateString();
-}
 
 interface AccountSettingsDialogProps {
   open: boolean;
@@ -123,15 +104,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
   const [llmModels, setLlmModels] = useState<{ id: string; name: string }[]>([]);
   const [llmModelsLoading, setLlmModelsLoading] = useState(false);
 
-  // API key state.
-  const [apiKeys, setApiKeys] = useState<ApiKeyEntry[]>([]);
-  const [apiKeysLoading, setApiKeysLoading] = useState(false);
-  const [newKeyName, setNewKeyName] = useState('');
-  const [keyScopePreset, setKeyScopePreset] = useState<ApiKeyScopePreset>('publisher');
-  const [createdKey, setCreatedKey] = useState<string | null>(null);
-  const [creatingKey, setCreatingKey] = useState(false);
-  const [revokingKeyId, setRevokingKeyId] = useState<string | null>(null);
-  const [confirmRevokeKeyId, setConfirmRevokeKeyId] = useState<string | null>(null);
 
   // Account deletion state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -200,18 +172,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
         })
         .catch(() => {});
 
-      // Load API keys. `apiKeysLoading` is what keeps the pro gate honest —
-      // until this settles, an empty `apiKeys` means "not fetched yet", and
-      // showing the full-card gate on it would flash the upgrade card at an
-      // account that turns out to have keys.
-      setApiKeysLoading(true);
-      fetch('/api/keys')
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success) setApiKeys(data.keys || []);
-        })
-        .catch(() => {})
-        .finally(() => setApiKeysLoading(false));
     } else {
       setFirstName('');
       setLastName('');
@@ -232,14 +192,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
       setDeletePassword('');
       setLlmApiKey('');
       setShowLlmKey(false);
-      setApiKeys([]);
-      // Cleared with the list it describes — a stale `true` from a fetch that
-      // was still in flight at close would suppress the gate on next open.
-      setApiKeysLoading(false);
-      setNewKeyName('');
-      setKeyScopePreset('publisher');
-      setCreatedKey(null);
-      setCreatingKey(false);
       setActiveSection('profile');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1140,252 +1092,18 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
               {activeSection === 'api' && (
                 <div className="space-y-5">
                   <div>
-                    <h3 className="text-base font-medium text-white">API keys</h3>
+                    <h3 className="text-base font-medium text-white">api keys</h3>
                     <p className="text-xs text-muted-foreground mt-1">
-                      create keys for programmatic access to the Owlette API
+                      scoped tokens for programmatic access to the owlette api
                     </p>
                   </div>
 
-                  {/* Show newly created key */}
-                  {createdKey && (
-                    <div className="relative rounded-md border border-accent-cyan/50 bg-accent-cyan/5 p-4 space-y-2">
-                      <button
-                        type="button"
-                        onClick={() => setCreatedKey(null)}
-                        className="absolute top-2.5 right-2.5 cursor-pointer text-muted-foreground hover:text-white"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                      <p className="text-sm text-accent-cyan font-medium pr-6">key created — copy it now, you won&apos;t see it again</p>
-                      <div className="flex items-center gap-2">
-                        <code className="flex-1 text-xs bg-background rounded px-3 py-2 text-white font-mono break-all select-all">
-                          {createdKey}
-                        </code>
-                        <CopyButton
-                          value={createdKey}
-                          successMessage="API key copied to clipboard"
-                          tooltipLabel="copy key"
-                          className="border-border text-accent-cyan hover:bg-muted h-8 flex-shrink-0"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Create new key */}
-                  <div className="rounded-md border border-border bg-card/50 p-4 space-y-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="apiKeyName" className="text-white">key name</Label>
-                      <Input
-                        id="apiKeyName"
-                        type="text"
-                        placeholder="e.g. CI/CD, monitoring script"
-                        value={newKeyName}
-                        onChange={(e) => setNewKeyName(e.target.value)}
-                        className="border-border bg-background text-white"
-                        disabled={creatingKey}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="apiKeyScope" className="text-white">scope</Label>
-                      <Select
-                        value={keyScopePreset}
-                        onValueChange={(v) => setKeyScopePreset(v as ApiKeyScopePreset)}
-                        disabled={creatingKey}
-                      >
-                        <SelectTrigger id="apiKeyScope" className="border-border bg-background text-white hover:bg-secondary">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="border-border bg-secondary text-white">
-                          {SCOPE_PRESET_KEYS.map((p) => (
-                            <SelectItem key={p} value={p} className="cursor-pointer hover:bg-muted">
-                              {SCOPE_PRESET_LABELS[p]}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-[11px] text-muted-foreground">{SCOPE_PRESET_DESCRIPTIONS[keyScopePreset]}</p>
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-[11px] text-muted-foreground">
-                        need custom scopes?{' '}
-                        <Link
-                          href="/settings/api-keys"
-                          onClick={() => onOpenChange(false)}
-                          className="hl-link text-accent-cyan"
-                        >
-                          manage api keys
-                        </Link>
-                      </p>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={async () => {
-                          setCreatingKey(true);
-                          try {
-                            const res = await fetch('/api/keys', {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json' },
-                              body: JSON.stringify({
-                                name: newKeyName.trim() || 'api key',
-                                scopes: SCOPE_PRESETS[keyScopePreset],
-                              }),
-                            });
-                            const data = await res.json();
-                            if (res.ok && data.success) {
-                              setCreatedKey(data.key);
-                              setNewKeyName('');
-                              // Refresh list
-                              const listRes = await fetch('/api/keys');
-                              const listData = await listRes.json();
-                              if (listData.success) setApiKeys(listData.keys || []);
-                              toast.success('API key created');
-                            } else {
-                              toast.error(data.detail || data.error || 'Failed to create key');
-                            }
-                          } catch {
-                            toast.error('Failed to create key');
-                          }
-                          setCreatingKey(false);
-                        }}
-                        disabled={creatingKey}
-                        className="cursor-pointer text-gray-900 h-9 flex-shrink-0"
-                      >
-                        {creatingKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <><Plus className="h-3.5 w-3.5 mr-1" /> create key</>}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {/* Existing keys list */}
-                  {apiKeys.length > 0 && (
-                    <div className="space-y-2">
-                      {/* Not "active keys" — the list is every key the account
-                          has, expired ones included, and calling a lapsed key
-                          active is how one sat here looking healthy while the
-                          API was rejecting it. */}
-                      <Label className="text-white">your keys</Label>
-                      <div className="space-y-2">
-                        {/* Usable keys first; the route already sorts by
-                            createdAt desc, and Array.prototype.sort is stable,
-                            so that ordering survives inside each group. */}
-                        {[...apiKeys]
-                          .sort(
-                            (a, b) =>
-                              Number(a.expired || a.retired) - Number(b.expired || b.retired)
-                          )
-                          .map((k) => (
-                          <div key={k.id} className="flex items-center justify-between gap-3 rounded-md border border-border bg-card/50 px-3 py-2">
-                            {/* One horizontal band per card, with each date column
-                                stacking its label over its value. Two text lines
-                                rather than four, and the labels sit above the dates
-                                instead of beside them — which is what stops the
-                                dates truncating. Lifecycle state rides in the last
-                                column: a red "expired / <date>" carries what a
-                                separate badge did, without another row. */}
-                            {/* Fixed tracks for the prefix and the three date
-                                columns so they line up down the list — max-content
-                                sized each row to its own text, which is exactly why
-                                they didn't. The name is the only flexible track, so
-                                it absorbs the slack and truncates when short. */}
-                            <div className="grid min-w-0 flex-1 grid-cols-2 items-center gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,1fr)_9rem_5.25rem_5.25rem_5.25rem]">
-                              <span className="truncate text-sm text-white">{k.name}</span>
-                              <code className="truncate font-mono text-xs text-muted-foreground">
-                                {k.keyPrefix}•••
-                              </code>
-                              <div className="min-w-0">
-                                <div className="text-[11px] leading-tight text-muted-foreground/60">
-                                  created
-                                </div>
-                                <div className="text-xs leading-tight text-muted-foreground tabular-nums">
-                                  {formatKeyDate(k.createdAt)}
-                                </div>
-                              </div>
-                              <div className="min-w-0">
-                                <div className="text-[11px] leading-tight text-muted-foreground/60">
-                                  last used
-                                </div>
-                                <div className="text-xs leading-tight text-muted-foreground tabular-nums">
-                                  {k.lastUsedAt === null ? 'never' : formatKeyDate(k.lastUsedAt)}
-                                </div>
-                              </div>
-                              <div className="min-w-0">
-                                <div
-                                  className={`text-[11px] leading-tight ${
-                                    k.expired ? 'text-red-400/70' : 'text-muted-foreground/60'
-                                  }`}
-                                >
-                                  {k.expired ? 'expired' : k.retired ? 'retired' : 'expires'}
-                                </div>
-                                <div
-                                  className={`text-xs leading-tight tabular-nums ${
-                                    k.expired ? 'text-red-400' : 'text-muted-foreground'
-                                  }`}
-                                >
-                                  {formatKeyDate(k.retired ? k.retiresAt : k.expiresAt)}
-                                </div>
-                              </div>
-                            </div>
-                            {confirmRevokeKeyId === k.id ? (
-                              <div className="flex items-center gap-1.5 flex-shrink-0">
-                                <span className="text-xs text-red-400">revoke?</span>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={async () => {
-                                    setRevokingKeyId(k.id);
-                                    try {
-                                      const res = await fetch(`/api/keys/${encodeURIComponent(k.id)}`, {
-                                        method: 'DELETE',
-                                      });
-                                      if (res.ok) {
-                                        setApiKeys((prev) => prev.filter((key) => key.id !== k.id));
-                                        toast.success('API key revoked');
-                                      } else {
-                                        const data = await res.json().catch(() => ({}));
-                                        toast.error(data.detail || data.error || 'Failed to revoke key');
-                                      }
-                                    } catch {
-                                      toast.error('Failed to revoke key');
-                                    }
-                                    setRevokingKeyId(null);
-                                    setConfirmRevokeKeyId(null);
-                                  }}
-                                  disabled={revokingKeyId === k.id}
-                                  className="cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-950/30 h-7 px-2 text-xs"
-                                >
-                                  {revokingKeyId === k.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'yes'}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  onClick={() => setConfirmRevokeKeyId(null)}
-                                  className="cursor-pointer text-muted-foreground hover:text-white hover:bg-muted h-7 px-2 text-xs"
-                                >
-                                  no
-                                </Button>
-                              </div>
-                            ) : (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setConfirmRevokeKeyId(k.id)}
-                                aria-label={`revoke ${k.name}`}
-                                className="cursor-pointer text-red-400 hover:text-red-300 hover:bg-red-950/30 h-8 flex-shrink-0"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {apiKeys.length === 0 && !apiKeysLoading && (
-                    <p className="text-xs text-muted-foreground">no API keys yet. create one to get started.</p>
-                  )}
+                  {/* One panel, shared with /settings/api-keys. This section
+                      used to carry a reduced reimplementation that could not
+                      set a ttl, build custom scopes, rotate, or show a key's
+                      scopes. If key state reappears in this file, the
+                      extraction has been undone. */}
+                  <ApiKeysManager compact />
 
                   {/* Usage example */}
                   <div className="rounded-md border border-border bg-card/50 p-4 space-y-2">

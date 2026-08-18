@@ -65,9 +65,11 @@ test('create key reveals raw owk_live_* once, copies to clipboard, then list sho
     page.getByRole('button', { name: /^create your first key$/i }),
   ).toBeVisible();
 
-  // Open the create dialog via the header action.
+  // Open the create form via the header action. It is an inline disclosure
+  // now, not a modal — nesting a dialog inside the account-settings dialog
+  // would stack two focus traps, and the same panel serves both surfaces.
   await page.getByRole('button', { name: /^create key$/i }).click();
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('main');
   await expect(dialog.getByRole('heading', { name: /^create api key$/i })).toBeVisible();
 
   const keyName = `e2e-${Date.now()}`;

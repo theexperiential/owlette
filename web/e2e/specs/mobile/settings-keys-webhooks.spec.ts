@@ -67,8 +67,10 @@ test('api keys: create dialog and one-time reveal are operable at 390px', async 
   await expect(page.getByText('no api keys yet')).toBeVisible();
   await assertNoHorizontalOverflow(page);
 
+  // Create is an inline disclosure now, not a modal — the same panel serves
+  // the account-settings dialog, where a nested modal would stack focus traps.
   await page.getByRole('button', { name: /^create key$/i }).click();
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('main');
   await expect(dialog.getByRole('heading', { name: /^create api key$/i })).toBeVisible();
 
   const keyName = `e2e-mobile-${Date.now()}`;
