@@ -1,4 +1,5 @@
 import {
+  customScopesForSelection,
   presetForScopes,
   resolveScopes,
   validateScopeSelection,
@@ -92,5 +93,65 @@ describe('validateScopeSelection', () => {
         { resource: 'installer', id: '*', permissions: ['read', 'write'] },
       ]),
     ).toBeNull();
+  });
+});
+
+describe('customScopesForSelection', () => {
+  const grants = (scopes: ApiKeyScope[]) =>
+    scopes.reduce((n, s) => n + s.permissions.length, 0);
+
+  it('carries the selected preset into the builder (regression: preset->custom scope loss)', () => {
+    const seeded = customScopesForSelection('custom', 'operator', [
+      { resource: 'site', id: '*', permissions: ['read', 'write'] },
+    ]);
+    expect(seeded).toEqual(SCOPE_PRESETS.operator);
+    expect(grants(seeded!)).toBe(16);
+  });
+
+  /**
+   * NEGATIVE CONTROL — this is the behaviour shipping today.
+   *
+   * The builder opened on a hardcoded literal regardless of the preset in
+   * effect, so the switch dropped 3 of 4 resources and 14 of 16 grants. It
+   * passed validateScopeSelection, validateScopes and assertScopesGrantable,
+   * and POST /api/keys returned 200 with scopeCount 1.
+   */
+  it('the old behaviour opened on one unrelated row, losing 14 of 16 grants', () => {
+    const OLD_SEED: ApiKeyScope[] = [
+      { resource: 'site', id: '*', permissions: ['read', 'write'] },
+    ];
+    expect(grants(resolveScopes('operator', OLD_SEED))).toBe(16);
+    expect(grants(resolveScopes('custom', OLD_SEED))).toBe(2);
+    expect(resolveScopes('custom', OLD_SEED)).toHaveLength(1);
+  });
+
+  it('leaves the builder alone when the user is already in custom', () => {
+    const edited: ApiKeyScope[] = [
+      { resource: 'installer', id: '*', permissions: ['write'] },
+    ];
+    // Re-seeding here would discard work in progress on every re-render.
+    expect(customScopesForSelection('custom', 'custom', edited)).toBeNull();
+  });
+
+  it('does nothing when moving between named presets', () => {
+    expect(customScopesForSelection('admin', 'operator', [])).toBeNull();
+  });
+
+  it('copies the preset rather than handing over the shared singleton', () => {
+    const seeded = customScopesForSelection('custom', 'publisher', [])!;
+    seeded[0].permissions.push('admin');
+    // wildcardScopes assigns ONE permissions array to all four rows of a
+    // preset, so a shallow hand-off would corrupt the constant for the tab.
+    expect(SCOPE_PRESETS.publisher[0].permissions).toEqual(['read', 'write']);
+  });
+
+  it('seeds the editor from the preset just picked, not the key it opened on', () => {
+    // The editor's own version of the bug: a publisher key, user picks
+    // operator, then custom — and was shown the original publisher rows,
+    // silently reverting the choice they had just made.
+    const keyScopes = SCOPE_PRESETS.publisher;
+    expect(customScopesForSelection('custom', 'operator', keyScopes)).toEqual(
+      SCOPE_PRESETS.operator,
+    );
   });
 });

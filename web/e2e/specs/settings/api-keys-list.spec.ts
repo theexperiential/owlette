@@ -131,3 +131,52 @@ test('create key reveals raw owk_live_* once, copies to clipboard, then list sho
   await expect(page.locator('code', { hasText: expectedPrefix })).toBeVisible();
   await expect(page.getByText(rawKey, { exact: true })).toHaveCount(0);
 });
+
+test('switching to custom carries the selected preset in, rather than resetting it', async ({
+  page,
+}) => {
+  await page.goto('/settings/api-keys');
+  await expect(
+    page.getByRole('heading', { name: 'api keys', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole('button', { name: /^create key$/i }).click();
+  const main = page.getByRole('main');
+  await expect(main.getByRole('heading', { name: /^create api key$/i })).toBeVisible();
+
+  const keyName = `e2e-inherit-${Date.now()}`;
+  await main.getByLabel('name').fill(keyName);
+
+  // Pick operator. While a named preset is selected the scope <Select> is the
+  // only combobox on the surface — the per-row resource pickers appear with
+  // the custom builder, so this must happen before the switch.
+  await main.getByRole('combobox').click();
+  await page.getByRole('option', { name: 'operator' }).click();
+
+  // Now drop into the builder. This is the transition that used to discard the
+  // preset: the rows opened on one hardcoded site scope, so 3 of 4 resources
+  // and 14 of 16 grants vanished while "operator" left the screen at the same
+  // moment — and every validator, client and server, accepted the result.
+  await main.getByRole('combobox').first().click();
+  await page.getByRole('option', { name: 'custom' }).click();
+
+  // Four rows, one per operator resource — not the single seeded row.
+  await expect(main.getByPlaceholder('id (or * for all)')).toHaveCount(4);
+
+  const responsePromise = page.waitForResponse(
+    (res) => res.url().endsWith('/api/keys') && res.request().method() === 'POST',
+    { timeout: 10_000 },
+  );
+  await main.getByRole('button', { name: /^create key$/i }).click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(200);
+
+  // The wire body is what actually matters: it must still be operator.
+  const sent = JSON.parse(response.request().postData() ?? '{}');
+  expect(sent.scopes).toEqual([
+    { resource: 'roost', id: '*', permissions: ['read', 'write', 'deploy', 'rollback'] },
+    { resource: 'site', id: '*', permissions: ['read', 'write', 'deploy', 'rollback'] },
+    { resource: 'machine', id: '*', permissions: ['read', 'write', 'deploy', 'rollback'] },
+    { resource: 'chat', id: '*', permissions: ['read', 'write', 'deploy', 'rollback'] },
+  ]);
+});

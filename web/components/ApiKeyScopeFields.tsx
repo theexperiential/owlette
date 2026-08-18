@@ -50,6 +50,35 @@ export function resolveScopes(preset: ScopeSelection, customScopes: ApiKeyScope[
   return preset === 'custom' ? customScopes : SCOPE_PRESETS[preset];
 }
 
+/**
+ * What the custom builder should be seeded with when the selection changes.
+ * Returns null when nothing needs re-seeding.
+ *
+ * Entering `custom` from a named preset carries that preset's scopes in, so
+ * the switch refines the current selection instead of resetting it. Without
+ * this, choosing `operator` and then `custom` silently replaced 4 scopes and
+ * 16 grants with one unrelated `site` row — and the word "operator" left the
+ * screen at the same instant, so nothing contradicted the belief that you were
+ * adding to it. It passed every validator and the server returned 200.
+ *
+ * Re-seeding only happens on the way IN to custom. Picking a named preset while
+ * already in custom is an explicit "replace my selection", and is left alone.
+ */
+export function customScopesForSelection(
+  next: ScopeSelection,
+  current: ScopeSelection,
+  customScopes: ApiKeyScope[],
+): ApiKeyScope[] | null {
+  if (next !== 'custom' || current === 'custom') return null;
+  return resolveScopes(current, customScopes).map((s) => ({
+    ...s,
+    // SCOPE_PRESETS entries are module-level singletons and wildcardScopes
+    // hands one permissions array to all four rows of a preset — the builder
+    // mutates what it is given, so this must be a copy.
+    permissions: [...s.permissions],
+  }));
+}
+
 /** Client-side pre-flight. Returns a message, or null when the selection is submittable. */
 export function validateScopeSelection(
   preset: ScopeSelection,
@@ -137,7 +166,12 @@ export function ApiKeyScopeFields({
         <Label className="text-white">scope</Label>
         <Select
           value={preset}
-          onValueChange={(v) => onPresetChange(v as ScopeSelection)}
+          onValueChange={(v) => {
+            const next = v as ScopeSelection;
+            const seeded = customScopesForSelection(next, preset, customScopes);
+            if (seeded) onCustomScopesChange(seeded);
+            onPresetChange(next);
+          }}
           disabled={disabled}
         >
           <SelectTrigger className="bg-background border-border text-white">
