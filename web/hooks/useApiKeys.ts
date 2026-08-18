@@ -24,6 +24,16 @@ export interface CreateKeyInput {
   ttlDays?: number;
 }
 
+/**
+ * `scopes` is a full replacement, not a merge — the route treats it that way,
+ * and a partial merge on the client would disagree with the server about what
+ * the key ends up holding.
+ */
+export interface UpdateKeyInput {
+  name?: string;
+  scopes?: ApiKeyScope[];
+}
+
 export interface CreatedKey {
   key: string;
   keyId: string;
@@ -103,6 +113,20 @@ export function useApiKeys() {
     [refresh],
   );
 
+  /** Edits an existing key in place. The secret is unchanged, so nothing is returned to reveal. */
+  const updateKey = useCallback(
+    async (keyId: string, input: UpdateKeyInput): Promise<void> => {
+      const res = await fetch(`/api/keys/${encodeURIComponent(keyId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      if (!res.ok) throw new Error(await problemMessage(res, 'failed to update key'));
+      await refresh();
+    },
+    [refresh],
+  );
+
   const revokeKey = useCallback(
     async (keyId: string): Promise<void> => {
       const res = await fetch(`/api/keys/${encodeURIComponent(keyId)}`, {
@@ -117,5 +141,5 @@ export function useApiKeys() {
     [refresh],
   );
 
-  return { keys, loading, refresh, createKey, rotateKey, revokeKey };
+  return { keys, loading, refresh, createKey, rotateKey, updateKey, revokeKey };
 }

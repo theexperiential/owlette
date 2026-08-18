@@ -18,11 +18,11 @@ api-key authentication. that route is deliberately narrow:
 - **scopes are inherited, not chosen** — `create` clones the calling key's
   scopes verbatim. a key can never widen its own privileges, so you cannot mint
   an `installer`- or `user`-scoped key unless the calling key already holds it.
-- **no rotate or revoke** — those live on `/api/keys/{keyId}`, which takes a
-  session or firebase id token and rejects api-key auth outright.
+- **no scope editing, rotate, or revoke** — those live on `/api/keys/{keyId}`,
+  which takes a session or firebase id token and rejects api-key auth outright.
 
-for custom scopes, rotation, revocation, or anything a non-superadmin needs,
-use **settings → api keys** in the dashboard.
+for custom scopes, editing an existing key's scopes, rotation, revocation, or
+anything a non-superadmin needs, use **settings → api keys** in the dashboard.
 
 </Callout>
 
@@ -40,7 +40,7 @@ owlette key list
 
 | column | meaning |
 |---|---|
-| `id` | key id, used by the dashboard's rotate/revoke actions |
+| `id` | key id, used by the dashboard's edit/rotate/revoke actions |
 | `name` | human-readable label |
 | `prefix` | first 15 characters of the raw key, for audit correlation |
 | `created` / `last used` / `expires` | dates, `—` when unset |

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Loader2, RefreshCw, Trash2, AlertTriangle, Clock, KeyRound } from 'lucide-react';
+import { Loader2, RefreshCw, SlidersHorizontal, Trash2, AlertTriangle, Clock, KeyRound } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import type { ApiKeyListItem, ApiKeyScope } from '@/lib/apiKeyTypes';
 
@@ -68,11 +68,12 @@ interface Props {
   apiKey: ApiKeyListItem;
   onRotated: (raw: string, newKeyId: string) => void;
   onRevoked: () => void;
+  onEditScopes: (apiKey: ApiKeyListItem) => void;
   /** Snapshot of Date.now() passed down from the parent on each tick. Injected so the render stays pure (lint rule). */
   now: number;
 }
 
-export function KeyCard({ apiKey, onRotated, onRevoked, now }: Props) {
+export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, now }: Props) {
   const [rotating, setRotating] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [revoking, setRevoking] = useState(false);
@@ -190,6 +191,28 @@ export function KeyCard({ apiKey, onRotated, onRevoked, now }: Props) {
           )}
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* Edit sits before rotate: changing what a key can reach is the
+              cheaper fix, and reissuing the secret to widen a scope means
+              redistributing a credential that did not need to change. */}
+          {!apiKey.expired && !apiKey.retired && !apiKey.rotatedAt && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onEditScopes(apiKey)}
+                  aria-label="edit scopes"
+                  className="h-8 px-2 border-border text-muted-foreground hover:text-white cursor-pointer"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>edit scopes — keeps the same key</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
           {!apiKey.expired && !apiKey.retired && !apiKey.rotatedAt && (
             <Tooltip>
               <TooltipTrigger asChild>

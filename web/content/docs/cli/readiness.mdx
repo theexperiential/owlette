@@ -102,6 +102,7 @@ Legend:
 |---|---|---|---|
 | `owlette key list` | ready (superadmin keys only) | [key](/docs/cli/reference/key) | `GET /api/account/api-keys` |
 | `owlette key create` | ready (superadmin keys only; scopes inherited) | [key](/docs/cli/reference/key) | `POST /api/account/api-keys` |
+| `owlette key update <keyId>` | not available | [key](/docs/cli/reference/key) | session-only — `PATCH /api/keys/{keyId}` rejects api-key auth |
 | `owlette key rotate <keyId>` | not available | [key](/docs/cli/reference/key) | session-only — `POST /api/keys/{keyId}/rotate` rejects api-key auth |
 | `owlette key revoke <keyId>` | not available | [key](/docs/cli/reference/key) | session-only — `DELETE /api/keys/{keyId}` rejects api-key auth |
 | `owlette user list` | ready | [user](/docs/cli/reference/user) | `GET /api/users` |

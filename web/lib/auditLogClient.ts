@@ -108,7 +108,7 @@ export function emitApiKeyUsed(event: ApiKeyUsedEvent): void {
  * here (and in the cloud function's recogniser) when a new track lands.
  */
 export type MutationKind =
-  | 'api_key_mutated' // api-key lifecycle: create / rotate / revoke
+  | 'api_key_mutated' // api-key lifecycle: create / update / rotate / revoke
   | 'chunk_mutated' // chunk metadata lifecycle: cross-roost mount / referrer changes
   | 'deployment_mutated' // installer-deploys-api: create / retry / cancel / uninstall / delete
   | 'distribution_mutated' // project-distribution-api: create / cancel / delete

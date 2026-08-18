@@ -48,7 +48,7 @@ A daily `GET /api/cron/api-key-expiry` on the `health-check` scan-decide-stamp s
 
 ## Waves
 
-### Wave 1 — always mint live *(server + 2 selectors; no data migration)*
+### Wave 1 — always mint live *(server + 2 selectors; no data migration)* — **SHIPPED** `de944fd`
 
 1. **Add the mint constant.** `web/lib/apiKeyTypes.ts` — export `MINTED_API_KEY_ENVIRONMENT: ApiKeyEnvironment = 'live'` near the union at `:12`. **Do not narrow the union** — it would break `buildApiKeyListItem`'s `=== 'test'` branch (`:248-249`), `e2e/helpers/apiKey.ts:57`, `e2e/specs/api-sprint/installer-deployments.spec.ts:5`, `public-api-smoke.spec.ts:103`, and the unions in `lib/idempotency.ts:41` / `lib/auditLogClient.ts:25,71`.
 2. **`POST /api/keys`.** Delete `VALID_ENVIRONMENTS` (`route.ts:45`) and the parse block (`:170-176`); keep `environment?: unknown` on the body with an accepted-and-ignored comment. Update the jsdoc at `:101-107`.
@@ -62,7 +62,7 @@ A daily `GET /api/cron/api-key-expiry` on the `health-check` scan-decide-stamp s
 
 **Verify:** `rg "owk_\$\{environment\}"` — every remaining hit resolves to the constant or the deliberate rotate inheritance; both `VALID_ENVIRONMENTS` arrays are gone.
 
-### Wave 2 — one organised panel *(UI-only; zero route, payload or document change)*
+### Wave 2 — one organised panel *(UI-only; zero route, payload or document change)* — **SHIPPED** `d12fe0c`
 
 1. **`web/hooks/useApiKeys.ts`** — per §A. Sole owner of every `/api/keys` fetch.
 2. **`web/components/ApiKeysManager.tsx`** — move `KeyCard.tsx:1-261` **verbatim**, add the `compact` prop, delete the dialog's parallel list (`AccountSettingsDialog.tsx:1259-1388`) and `formatKeyDate` (`:71-74`). This is what the dialog gains: scope display (`summarizeScopes` :24-31 / :163-166), rotate (:85-104, :192-214), the full status ladder (`keyStatusAt` :33-52), the expiry-warning + grace lines (:178-189), relative last-used (:54-65), and a loading spinner (the dialog sets `apiKeysLoading` at :207 but only uses it to suppress the empty state at :1386). Carry the Wave 1 legacy-`test` badge across — the dialog's grid `grid-cols-[minmax(0,1fr)_9rem_5.25rem_5.25rem_5.25rem]` (:1289) has no slot for it.
@@ -74,7 +74,7 @@ A daily `GET /api/cron/api-key-expiry` on the `health-check` scan-decide-stamp s
 
 **Non-negotiable:** preserve KeyCard's DOM shape. Six passing tests bind to structural selectors — `div.rounded-md.border` + `p.font-medium` (`api-keys-states.spec.ts:157-158`), `[data-slot="badge"]` (`:182,:198,:218`), `svg.lucide-refresh-cw` / `svg.lucide-trash-2` (`api-keys-rotate-revoke.spec.ts:158,:217`), `code` holding `<prefix>•••` (`:126`). Restyle in a follow-up commit, or add testids and update the specs in the same commit.
 
-### Wave 3 — editable scopes
+### Wave 3 — editable scopes — **SHIPPED**
 
 1. **`web/app/api/keys/_shared.ts`** — move `validateScopes` verbatim (`route.ts:57-94`) plus the constants (`:37-48`), and add `assertScopesGrantable(userId, activeUserData, scopes)` capturing the three gates POST does inline: SUPERADMIN_ONLY_RESOURCES must use id `*` (`:138-147`), superadmin role required (`:149-159`), and `assertUserHasSiteAccess` per site-scoped id (`:181-185`). Rewire POST through it.
 2. **PATCH handler** in `api/keys/[keyId]/route.ts`. Auth pair copied from **POST** (`route.ts:114-115` — `rejectAgentTokens: true` + `assertActiveUser`), **not** DELETE (`:31`, which has neither). Accepts `scopes?` (full replacement) and `name?`; rejects `environment` and `ttlDays`. 400 no-updatable-fields, 404 missing, 409 on `revokedAt` **and on `rotatedAt`**, 500 on missing `keyHash`. `db.batch()` writing the user doc + `api_keys/{keyHash}`. Responds with `buildApiKeyListItem(...)` so the panel patches its row without a refetch.
@@ -84,6 +84,8 @@ A daily `GET /api/cron/api-key-expiry` on the `health-check` scan-decide-stamp s
 6. **Panel wiring** — an "edit scopes" affordance on the row reusing the Wave 2 builder. Surface the grace-window caveat (below) as a lowercase warning naming the predecessor's `retiresAt`.
 7. **Docs** — a PATCH bullet at `content/docs/api/authentication.mdx:177-178`; extend `idempotency.mdx:10` to name PATCH among the key routes that ignore the header. SDK/CLI parity is a follow-on, not this wave.
 8. **Tests** — `__tests__/api/keys.test.ts`: `makePatch` copied from `makeRotate` (`:139-148`). Must assert (a) the **lookup** row carries the new scopes, (b) 403 for a non-superadmin adding user/installer scopes (reuse the `it.each` at `:166-185`), (c) 409 revoked and 409 rotated, (d) 400 no-updatable-fields, (e) one `emitMutation` with verb `update`. Implementation constraint: use `db.batch()` — the mocked docRef (`:105-118`) has no `.update()`.
+
+**Delivered beyond the plan:** the scope builder was extracted to `components/ApiKeyScopeFields.tsx` and shared by create and edit — a builder that could express less on edit than on create would strand keys in states the UI could produce but not correct. SDK parity was pulled forward rather than deferred (`keys.update` in both the node and python SDKs, with tests), since both already wrapped the other three lifecycle routes and a missing `update` would have read as "not supported". The audit event carries `scopeFingerprint{Before,After}` **and** the counts: the fingerprint is opaque, so the counts are what make a key quietly going from one scope to nine visible on a scan.
 
 **The finding that decides the design:** authorization reads scopes *exclusively* from `api_keys/{keyHash}` (`apiAuth.server.ts:185,230`); the user subcollection is never consulted on the auth path (only a fire-and-forget `lastUsedAt` write at `:241-248`). A PATCH that writes one doc leaves the credential on its old permissions indefinitely while the UI claims otherwise. There is no cache — the batch commit takes effect on the very next request.
 

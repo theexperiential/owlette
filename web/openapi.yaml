@@ -2469,6 +2469,53 @@ paths:
   /api/keys/{keyId}:
     parameters:
       - $ref: '#/components/parameters/KeyIdPath'
+    patch:
+      operationId: updateUserApiKey
+      tags: [API Keys]
+      summary: edit api key scopes
+      description: |
+        Edits an existing key's `scopes` and/or `name` in place. The raw
+        key value is **not** reissued — holders of the credential keep
+        using it and pick up the new scopes on their next request.
+        `scopes` is a full replacement, not a merge.
+
+        Scopes are validated with the same rules `POST /api/keys` uses, so
+        a key can never be edited into a scope its owner could not have
+        been issued. `environment` and `ttlDays` are rejected: rotate to
+        extend expiry.
+
+        Returns 409 for a revoked key, and for one inside a rotation grace
+        window — edit its successor instead.
+        See [authentication.md](/docs/api/authentication#editing-key-scopes).
+      security:
+        - firebaseIdToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PatchApiKeyRequest' }
+      responses:
+        '200':
+          description: Key updated; the summary reflects the new scopes.
+          headers:
+            RateLimit-Limit:    { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset:    { $ref: '#/components/headers/RateLimitReset' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, key]
+                properties:
+                  success: { type: boolean }
+                  key: { $ref: '#/components/schemas/ApiKey' }
+        '400': { $ref: '#/components/responses/Problem400' }
+        '401': { $ref: '#/components/responses/Problem401' }
+        '403': { $ref: '#/components/responses/Problem403' }
+        '404': { $ref: '#/components/responses/Problem404' }
+        '409': { $ref: '#/components/responses/Problem409' }
+        '429': { $ref: '#/components/responses/Problem429' }
+        '500': { $ref: '#/components/responses/Problem500' }
     delete:
       operationId: revokeUserApiKey
       tags: [API Keys]
@@ -9011,13 +9058,20 @@ components:
           default: 90
     PatchApiKeyRequest:
       type: object
+      minProperties: 1
       description: |
-        Any combination of `name` and `scopes` may be provided. Scopes
-        may only be narrowed; broadening returns 400.
+        At least one of `name` and `scopes` is required; sending neither
+        returns 400. `scopes` replaces the key's scope list outright — it
+        is not merged with what is already there.
+
+        Scopes may be broadened as well as narrowed, subject to the same
+        grant rules as key creation: `user` and `installer` scopes require
+        superadmin, and platform resources must use `id: "*"`.
       properties:
         name:   { type: string, maxLength: 128 }
         scopes:
           type: array
+          minItems: 1
           items: { $ref: '#/components/schemas/Scope' }
     RotateApiKeyRequest:
       type: object

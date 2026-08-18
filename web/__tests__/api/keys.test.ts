@@ -17,7 +17,11 @@ jest.mock('@/lib/withRateLimit', () => ({
   withRateLimit: (handler: unknown) => handler,
 }));
 
+// scopeFingerprint stays real: PATCH puts its output in the audit payload, and
+// the "never the raw scopes" assertion is only worth anything if what actually
+// ships is the hash rather than a stub.
 jest.mock('@/lib/auditLogClient', () => ({
+  ...jest.requireActual('@/lib/auditLogClient'),
   emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
 }));
 
@@ -118,7 +122,7 @@ function docRef(parts: string[]) {
 }
 
 import { POST } from '@/app/api/keys/route';
-import { DELETE } from '@/app/api/keys/[keyId]/route';
+import { DELETE, PATCH } from '@/app/api/keys/[keyId]/route';
 import { POST as rotatePOST } from '@/app/api/keys/[keyId]/rotate/route';
 
 function makePost(body: Record<string, unknown>) {
@@ -132,6 +136,17 @@ function makePost(body: Record<string, unknown>) {
 function makeDelete(keyId: string) {
   return DELETE(
     new NextRequest(`http://localhost/api/keys/${keyId}`, { method: 'DELETE' }),
+    { params: Promise.resolve({ keyId }) },
+  );
+}
+
+function makePatch(keyId: string, body: Record<string, unknown>) {
+  return PATCH(
+    new NextRequest(`http://localhost/api/keys/${keyId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
     { params: Promise.resolve({ keyId }) },
   );
 }
@@ -178,7 +193,7 @@ describe('/api/keys POST', () => {
       expect(res.status).toBe(403);
       expect(body.code).toBe('forbidden');
       expect(body.detail).toBe(
-        'superadmin access required to create user or installer scopes',
+        'superadmin access required to grant user or installer scopes',
       );
       expect(Array.from(store.keys()).some((p) => p.startsWith('api_keys/'))).toBe(false);
     },
@@ -376,5 +391,115 @@ describe('/api/keys/{keyId}/rotate POST', () => {
     expect(mockAssertActiveUser).toHaveBeenCalledWith('user-member');
     expect(Array.from(store.keys()).some((p) => p.startsWith('api_keys/'))).toBe(false);
     expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+});
+
+describe('/api/keys/{keyId} PATCH', () => {
+  function seedKey(extra: Record<string, unknown> = {}) {
+    store.set('users/user-member/api_keys/key-a', {
+      keyHash: 'hash-a',
+      keyPrefix: 'owk_live_aaa',
+      environment: 'live',
+      scopes: [{ resource: 'site', id: 'site-1', permissions: ['read'] }],
+      name: 'original',
+      expiresAt: Date.now() + 86_400_000,
+      ...extra,
+    });
+    store.set('api_keys/hash-a', {
+      userId: 'user-member',
+      keyId: 'key-a',
+      scopes: [{ resource: 'site', id: 'site-1', permissions: ['read'] }],
+    });
+  }
+
+  it('writes the new scopes to the LOOKUP doc, not just the user record', async () => {
+    // The one assertion that matters. Authorization reads scopes only from
+    // api_keys/{keyHash}; updating the user doc alone would leave the
+    // credential on its old permissions while the ui claimed otherwise.
+    seedKey();
+    const res = await makePatch('key-a', {
+      scopes: [{ resource: 'site', id: 'site-1', permissions: ['read', 'write'] }],
+    });
+    expect(res.status).toBe(200);
+
+    const lookup = store.get('api_keys/hash-a') as { scopes: unknown };
+    expect(lookup.scopes).toEqual([
+      { resource: 'site', id: 'site-1', permissions: ['read', 'write'] },
+    ]);
+    const record = store.get('users/user-member/api_keys/key-a') as { scopes: unknown };
+    expect(record.scopes).toEqual(lookup.scopes);
+  });
+
+  it('renames without touching the lookup — name is display-only', async () => {
+    seedKey();
+    const res = await makePatch('key-a', { name: 'renamed' });
+    expect(res.status).toBe(200);
+    expect((store.get('users/user-member/api_keys/key-a') as { name: string }).name)
+      .toBe('renamed');
+    expect(store.get('api_keys/hash-a')).not.toHaveProperty('name');
+  });
+
+  it.each(['user', 'installer'] as const)(
+    'refuses %s scopes for a non-superadmin — same gate as create',
+    async (resource) => {
+      seedKey();
+      const res = await makePatch('key-a', {
+        scopes: [{ resource, id: '*', permissions: ['admin'] }],
+      });
+      expect(res.status).toBe(403);
+      // Unchanged on rejection.
+      expect((store.get('api_keys/hash-a') as { scopes: unknown[] }).scopes).toHaveLength(1);
+    },
+  );
+
+  it('409s on a revoked key', async () => {
+    seedKey({ revokedAt: Date.now() - 1000 });
+    const res = await makePatch('key-a', { name: 'nope' });
+    expect(res.status).toBe(409);
+  });
+
+  it('409s on a rotated key — edit its successor instead', async () => {
+    seedKey({ rotatedAt: Date.now() - 1000 });
+    const res = await makePatch('key-a', { name: 'nope' });
+    expect(res.status).toBe(409);
+  });
+
+  it('400s when nothing updatable was sent', async () => {
+    seedKey();
+    const res = await makePatch('key-a', {});
+    expect(res.status).toBe(400);
+  });
+
+  it('400s on attempts to change environment or ttl', async () => {
+    seedKey();
+    expect((await makePatch('key-a', { environment: 'test' })).status).toBe(400);
+    expect((await makePatch('key-a', { ttlDays: 30 })).status).toBe(400);
+  });
+
+  it('404s for a key the caller does not own', async () => {
+    const res = await makePatch('key-missing', { name: 'x' });
+    expect(res.status).toBe(404);
+  });
+
+  it('audits the edit with verb update and never the raw scopes', async () => {
+    seedKey();
+    await makePatch('key-a', {
+      scopes: [{ resource: 'site', id: 'site-1', permissions: ['read', 'write'] }],
+    });
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'api_key_mutated',
+        targetId: 'key-a',
+        attributes: expect.objectContaining({ verb: 'update' }),
+      }),
+    );
+    const payload = JSON.stringify(mockEmitMutation.mock.calls.at(-1));
+    expect(payload).not.toContain('permissions');
+    // Fingerprints are what makes the redacted record still auditable: they
+    // must actually differ, or the event proves nothing changed.
+    const attrs = mockEmitMutation.mock.calls.at(-1)?.[0].attributes as Record<string, unknown>;
+    expect(attrs.scopeFingerprintBefore).toEqual(expect.any(String));
+    expect(attrs.scopeFingerprintAfter).not.toEqual(attrs.scopeFingerprintBefore);
+    expect(attrs.scopeCountAfter).toBe(1);
   });
 });

@@ -155,6 +155,36 @@ class Keys:
         data = resp.data if isinstance(resp.data, dict) else {}
         return [_parse_record(k) for k in data.get("keys", []) if isinstance(k, dict)]
 
+    async def update(
+        self,
+        key_id: str,
+        *,
+        name: str | None = None,
+        scopes: Sequence[ApiKeyScope] | None = None,
+    ) -> ApiKeyRecord | None:
+        """Edit a key's scopes and/or name without reissuing the secret.
+
+        ``scopes`` replaces the key's scope list outright — it is not merged
+        with what is already there. Like :meth:`rotate` and :meth:`revoke`,
+        this route takes a session or Firebase ID token; an api key cannot
+        edit itself.
+        """
+        body: dict[str, Any] = {}
+        if name is not None:
+            body["name"] = name
+        if scopes is not None:
+            body["scopes"] = [s.to_payload() for s in scopes]
+        if not body:
+            raise ValueError("update requires name and/or scopes")
+        resp = await self._client.request(
+            f"/api/keys/{key_id}",
+            method="PATCH",
+            body=body,
+        )
+        data = resp.data if isinstance(resp.data, dict) else {}
+        key = data.get("key")
+        return _parse_record(key) if isinstance(key, dict) else None
+
     async def rotate(self, key_id: str, *, ttl_days: int = 90) -> dict[str, Any]:
         resp = await self._client.request(
             f"/api/keys/{key_id}/rotate",

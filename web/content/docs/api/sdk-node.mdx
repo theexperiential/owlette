@@ -261,8 +261,15 @@ const created = await owlette.keys.create({
 });
 console.log(created.key);              // owk_live_...  <-- shown exactly once
 
-// list, rotate (24h grace), revoke on the legacy key-admin route
+// list, edit, rotate (24h grace), revoke on the legacy key-admin route
 const all = await owlette.keys.list();
+
+// widen or narrow an existing key without reissuing the secret.
+// `scopes` is a full replacement, not a merge.
+await owlette.keys.update(created.keyId, {
+  scopes: [{ resource: 'roost', id: '*', permissions: ['read', 'write', 'deploy', 'rollback'] }],
+});
+
 await owlette.keys.rotate(created.keyId, 90);
 await owlette.keys.revoke(created.keyId);
 ```

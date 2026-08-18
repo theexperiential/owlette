@@ -440,6 +440,36 @@ describe('owlette.keys', () => {
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ ttlDays: 180 });
   });
 
+  it('update → PATCH /api/keys/{id} with a full scope replacement', async () => {
+    const { owlette, calls } = makeOwlette([
+      {
+        status: 200,
+        body: {
+          success: true,
+          key: {
+            id: 'k',
+            name: 'ci',
+            keyPrefix: 'owk_live_ab',
+            environment: 'live',
+            scopes: [{ resource: 'installer', id: '*', permissions: ['read', 'write'] }],
+            expiresAt: 0,
+            lastUsedAt: null,
+          },
+        },
+      },
+    ]);
+    const updated = await owlette.keys.update('k', {
+      scopes: [{ resource: 'installer', id: '*', permissions: ['read', 'write'] }],
+    });
+    expect(calls[0]!.init.method).toBe('PATCH');
+    expect(calls[0]!.url).toBe('https://dev.test/api/keys/k');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      scopes: [{ resource: 'installer', id: '*', permissions: ['read', 'write'] }],
+    });
+    // The route returns the refreshed summary, not a raw key — nothing to reveal.
+    expect(updated.scopes?.[0]?.resource).toBe('installer');
+  });
+
   it('revoke → DELETE /api/keys/{id}', async () => {
     const { owlette, calls } = makeOwlette([{ status: 200, body: { success: true } }]);
     await owlette.keys.revoke('doomed');

@@ -286,6 +286,13 @@ print(created["key"])                         # owk_live_...  <-- once
 for k in await client.keys.list():
     print(k.id, k.key_prefix, k.environment)
 
+# edit scopes in place — the secret is untouched, and `scopes` replaces
+# the key's list outright rather than merging into it
+await client.keys.update(
+    created["id"],
+    scopes=[ApiKeyScope(resource="roost", id="*", permissions=["read", "write", "deploy"])],
+)
+
 # rotate (24h grace) + revoke
 await client.keys.rotate(created["id"], ttl_days=90)
 await client.keys.revoke(created["id"])

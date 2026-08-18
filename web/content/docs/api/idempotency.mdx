@@ -7,7 +7,7 @@ description: "Mutating public API routes that opt into idempotency use an Idempo
 
 <Callout type="warning" title={"Route-specific support"}>
 
-The `Idempotency-Key` header is honored only on routes that explicitly say so in the endpoint reference. It is ignored on `POST /api/roosts`, `POST /api/keys`, `POST /api/keys/{id}/rotate`, `DELETE /api/keys/{id}`, and `POST /api/chunks/upload-urls`.
+The `Idempotency-Key` header is honored only on routes that explicitly say so in the endpoint reference. It is ignored on `POST /api/roosts`, `POST /api/keys`, `POST /api/keys/{id}/rotate`, `PATCH /api/keys/{id}`, `DELETE /api/keys/{id}`, and `POST /api/chunks/upload-urls`.
 
 </Callout>
 Treat the route implementation as authoritative until OpenAPI is corrected; `POST /api/chunks/upload-urls` currently ignores `Idempotency-Key`. Sending the header to an unsupported route does not make that route replay-safe.

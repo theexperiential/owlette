@@ -13,11 +13,15 @@ function readRepoFile(relativePath: string): string {
   return readFileSync(path.join(repoRoot, relativePath), 'utf-8');
 }
 
+// Paths are joined with forward slashes rather than path.join: they are
+// compared against the doc-relative literals below and fed back to
+// readRepoFile, and on Windows path.join emitted backslashes that matched
+// neither.
 function mdxFilesUnder(relativeDir: string): string[] {
   const abs = path.join(repoRoot, relativeDir);
   return readdirSync(abs, { recursive: true, encoding: 'utf-8' })
     .filter((f) => f.endsWith('.mdx'))
-    .map((f) => path.join(relativeDir, f))
+    .map((f) => `${relativeDir}/${f.split(path.sep).join('/')}`)
     .sort();
 }
 

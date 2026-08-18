@@ -7,8 +7,9 @@ import { Label } from '@/components/ui/label';
 import { CopyButton } from '@/components/CopyButton';
 import { Key, KeyRound, Loader2, Plus, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
-import { useApiKeys, type CreateKeyInput } from '@/hooks/useApiKeys';
+import { useApiKeys, type CreateKeyInput, type UpdateKeyInput } from '@/hooks/useApiKeys';
 import { ApiKeyCreateForm } from '@/components/ApiKeyCreateForm';
+import { ApiKeyScopeEditor } from '@/components/ApiKeyScopeEditor';
 import { KeyCard } from '@/app/settings/api-keys/KeyCard';
 
 /**
@@ -36,8 +37,9 @@ interface Props {
 }
 
 export function ApiKeysManager({ compact = false }: Props) {
-  const { keys, loading, refresh, createKey } = useApiKeys();
+  const { keys, loading, refresh, createKey, updateKey } = useApiKeys();
   const [creating, setCreating] = useState(false);
+  const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   // One clock for the whole list so two rows can't disagree about "expiring soon".
   const [now] = useState(() => Date.now());
@@ -54,6 +56,16 @@ export function ApiKeysManager({ compact = false }: Props) {
       toast.success('api key created');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'failed to create key');
+    }
+  }
+
+  async function handleUpdate(keyId: string, input: UpdateKeyInput) {
+    try {
+      await updateKey(keyId, input);
+      setEditingKeyId(null);
+      toast.success('key updated — new scopes apply immediately');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'failed to update key');
     }
   }
 
@@ -108,7 +120,10 @@ export function ApiKeysManager({ compact = false }: Props) {
             <Button
               type="button"
               size="sm"
-              onClick={() => setCreating(true)}
+              onClick={() => {
+                setEditingKeyId(null);
+                setCreating(true);
+              }}
               className="cursor-pointer text-gray-900"
             >
               <Plus className="mr-1 h-3.5 w-3.5" /> create key
@@ -133,7 +148,10 @@ export function ApiKeysManager({ compact = false }: Props) {
               <Button
                 type="button"
                 size="sm"
-                onClick={() => setCreating(true)}
+                onClick={() => {
+                  setEditingKeyId(null);
+                  setCreating(true);
+                }}
                 className="text-gray-900 cursor-pointer"
               >
                 <Plus className="h-3.5 w-3.5 mr-1" /> create your first key
@@ -143,20 +161,35 @@ export function ApiKeysManager({ compact = false }: Props) {
         ) : (
           <div className="space-y-2">
             {keys.map((k) => (
-              <KeyCard
-                key={k.id}
-                apiKey={k}
-                now={now}
-                // KeyCard owns the rotate/revoke requests and hands back the
-                // raw value; the panel only reveals it and resyncs the list.
-                onRotated={(raw) => {
-                  setRevealedKey(raw);
-                  refresh().catch(() => {});
-                }}
-                onRevoked={() => {
-                  refresh().catch(() => {});
-                }}
-              />
+              <div key={k.id} className="space-y-2">
+                <KeyCard
+                  apiKey={k}
+                  now={now}
+                  // KeyCard owns the rotate/revoke requests and hands back the
+                  // raw value; the panel only reveals it and resyncs the list.
+                  onRotated={(raw) => {
+                    setRevealedKey(raw);
+                    refresh().catch(() => {});
+                  }}
+                  onRevoked={() => {
+                    if (editingKeyId === k.id) setEditingKeyId(null);
+                    refresh().catch(() => {});
+                  }}
+                  onEditScopes={(target) => {
+                    // Only one form open at a time — the create form and an
+                    // editor side by side both claim to be "the" scope picker.
+                    setCreating(false);
+                    setEditingKeyId((current) => (current === target.id ? null : target.id));
+                  }}
+                />
+                {editingKeyId === k.id && (
+                  <ApiKeyScopeEditor
+                    apiKey={k}
+                    onSubmit={(input) => handleUpdate(k.id, input)}
+                    onCancel={() => setEditingKeyId(null)}
+                  />
+                )}
+              </div>
             ))}
           </div>
         )}
