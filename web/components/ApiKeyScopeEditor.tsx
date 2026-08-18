@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,14 +9,12 @@ import { toast } from '@/lib/toast';
 import type { UpdateKeyInput } from '@/hooks/useApiKeys';
 import {
   ApiKeyScopeFields,
-  buildScopeRows,
-  reconcileVisibility,
-  type ScopeRow,
-  serializeScopeRows,
-  summarizeScopeDiff,
-  validateScopeRows,
+  presetForScopes,
+  resolveScopes,
+  type ScopeSelection,
+  validateScopeSelection,
 } from '@/components/ApiKeyScopeFields';
-import type { ApiKeyListItem } from '@/lib/apiKeyTypes';
+import type { ApiKeyListItem, ApiKeyScope } from '@/lib/apiKeyTypes';
 
 /**
  * Edit an existing key's name and scopes in place.
@@ -36,40 +34,25 @@ interface Props {
   apiKey: ApiKeyListItem;
   onSubmit: (input: UpdateKeyInput) => Promise<void>;
   onCancel: () => void;
-  /** From useAuth().isSuperadmin — gates the platform-wide scope rows. */
-  canGrantPlatformScopes: boolean;
 }
 
-export function ApiKeyScopeEditor({
-  apiKey,
-  onSubmit,
-  onCancel,
-  canGrantPlatformScopes,
-}: Props) {
+export function ApiKeyScopeEditor({ apiKey, onSubmit, onCancel }: Props) {
   const [name, setName] = useState(apiKey.name || '');
-  const [rows, setRows] = useState<ScopeRow[]>(() =>
-    buildScopeRows(apiKey.scopes, canGrantPlatformScopes),
+  // A key minted from a preset reopens on that preset; anything else (or a
+  // legacy key with no scopes at all) starts in the custom builder.
+  const [preset, setPreset] = useState<ScopeSelection>(() => presetForScopes(apiKey.scopes));
+  const [customScopes, setCustomScopes] = useState<ApiKeyScope[]>(() =>
+    apiKey.scopes && apiKey.scopes.length > 0
+      ? apiKey.scopes.map((s) => ({ ...s, permissions: [...s.permissions] }))
+      : [{ resource: 'site', id: '*', permissions: ['read'] }],
   );
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setRows((prev) => reconcileVisibility(prev, canGrantPlatformScopes));
-  }, [canGrantPlatformScopes]);
-
-  // Editor-only: on create every grant is new, so a diff would just restate the
-  // table. Here the operator is mutating a credential whose consumers are
-  // already running, and PATCH's audit event exists precisely to make a widening
-  // visible — showing it before the write beats only recording it after.
-  const pending = useMemo(
-    () => summarizeScopeDiff(apiKey.scopes, serializeScopeRows(rows)),
-    [apiKey.scopes, rows],
-  );
   // A key predating scoped auth stores no scopes at all and authenticates as
   // full access. Editing it is a narrowing, not an adjustment.
   const isLegacy = !apiKey.scopes || apiKey.scopes.length === 0;
 
   async function handleSave() {
-    const validationError = validateScopeRows(rows);
+    const validationError = validateScopeSelection(preset, customScopes);
     if (validationError) {
       toast.error(validationError);
       return;
@@ -83,7 +66,7 @@ export function ApiKeyScopeEditor({
     try {
       await onSubmit({
         name: name.trim(),
-        scopes: serializeScopeRows(rows),
+        scopes: resolveScopes(preset, customScopes),
       });
     } finally {
       setSaving(false);
@@ -130,29 +113,12 @@ export function ApiKeyScopeEditor({
       </div>
 
       <ApiKeyScopeFields
-        rows={rows}
-        onRowsChange={setRows}
-        canGrantPlatformScopes={canGrantPlatformScopes}
+        preset={preset}
+        onPresetChange={setPreset}
+        customScopes={customScopes}
+        onCustomScopesChange={setCustomScopes}
         disabled={saving}
       />
-
-      {(pending.added.length > 0 || pending.removed.length > 0) && (
-        <div className="space-y-1 rounded-md border border-border bg-card/40 p-2">
-          <span className="text-xs text-white">pending changes</span>
-          <ul className="space-y-0.5">
-            {pending.added.map((line) => (
-              <li key={line} className="text-xs text-accent-cyan">
-                + {line}
-              </li>
-            ))}
-            {pending.removed.map((line) => (
-              <li key={line} className="text-xs text-amber-400">
-                − {line}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       <div className="flex justify-end gap-2">
         <Button

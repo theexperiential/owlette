@@ -7,7 +7,6 @@ import { Label } from '@/components/ui/label';
 import { CopyButton } from '@/components/CopyButton';
 import { Key, KeyRound, Loader2, Plus, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
-import { useAuth } from '@/contexts/AuthContext';
 import { useApiKeys, type CreateKeyInput, type UpdateKeyInput } from '@/hooks/useApiKeys';
 import { ApiKeyCreateForm } from '@/components/ApiKeyCreateForm';
 import { ApiKeyScopeEditor } from '@/components/ApiKeyScopeEditor';
@@ -39,10 +38,6 @@ interface Props {
 
 export function ApiKeysManager({ compact = false }: Props) {
   const { keys, loading, refresh, createKey, updateKey } = useApiKeys();
-  // Gates the two platform-wide scope rows. The server is authoritative
-  // (_shared.ts rejects them for non-superadmins); hiding them here turns a
-  // guaranteed 403 into something the UI cannot construct in the first place.
-  const { isSuperadmin } = useAuth();
   const [creating, setCreating] = useState(false);
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
@@ -193,7 +188,6 @@ export function ApiKeysManager({ compact = false }: Props) {
                     apiKey={k}
                     onSubmit={(input) => handleUpdate(k.id, input)}
                     onCancel={() => setEditingKeyId(null)}
-                    canGrantPlatformScopes={isSuperadmin}
                   />
                 )}
               </div>
@@ -205,11 +199,7 @@ export function ApiKeysManager({ compact = false }: Props) {
       {showForm && (
         <div className="space-y-2">
           <Label className="text-white">create key</Label>
-          <ApiKeyCreateForm
-            onSubmit={handleCreate}
-            onCancel={() => setCreating(false)}
-            canGrantPlatformScopes={isSuperadmin}
-          />
+          <ApiKeyCreateForm onSubmit={handleCreate} onCancel={() => setCreating(false)} />
         </div>
       )}
     </div>

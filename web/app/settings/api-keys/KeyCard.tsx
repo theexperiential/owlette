@@ -3,12 +3,43 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Loader2, RefreshCw, SlidersHorizontal, Trash2, AlertTriangle, Clock, KeyRound } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  AlertTriangle,
+  ChevronRight,
+  KeyRound,
+  Loader2,
+  MoreHorizontal,
+  RefreshCw,
+  SlidersHorizontal,
+  Trash2,
+} from 'lucide-react';
 import { toast } from '@/lib/toast';
 import type { ApiKeyListItem, ApiKeyScope } from '@/lib/apiKeyTypes';
 
 export type { ApiKeyListItem } from '@/lib/apiKeyTypes';
+
+/**
+ * One key, as a collapsible row.
+ *
+ * The row carries what you scan for — name, state, and the three dates — and
+ * defers what you only need occasionally: the key prefix and the scope summary
+ * open on demand. That is what buys the name a readable column. The previous
+ * layout spent ~7rem on a prefix nobody reads at a glance and ~7.5rem on three
+ * always-visible icon buttons, which together left the name under 100px inside
+ * the account-settings dialog.
+ *
+ * The actions moved into one overflow menu for the same reason, and that fixes
+ * an alignment bug with it: three buttons on an active row versus one on an
+ * expired row is an 80px difference, and it came out of the only flexible
+ * column, so no two rows agreed on where their columns started.
+ */
 
 const EXPIRATION_WARNING_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -79,11 +110,15 @@ export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, editing, n
   const [rotating, setRotating] = useState(false);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [revoking, setRevoking] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const status = keyStatusAt(apiKey, now);
   const daysUntilExpiry =
     typeof apiKey.expiresAt === 'number'
       ? Math.max(1, Math.ceil((apiKey.expiresAt - now) / (24 * 60 * 60 * 1000)))
       : null;
+  // Rotate and edit are meaningless once a key is terminal — the server 409s on
+  // both. Revoke stays, which is why an expired row still has a menu.
+  const actionable = !apiKey.expired && !apiKey.retired && !apiKey.rotatedAt;
 
   async function handleRotate() {
     setRotating(true);
@@ -130,169 +165,206 @@ export function KeyCard({ apiKey, onRotated, onRevoked, onEditScopes, editing, n
     <div
       className={
         editing
-          ? 'rounded-md rounded-b-none border border-b-0 border-accent-cyan/50 bg-card/50 p-4 space-y-3'
-          : 'rounded-md border border-border bg-card/50 p-4 space-y-3'
+          ? 'rounded-md rounded-b-none border border-b-0 border-accent-cyan/50 bg-card/50 px-3 py-2 space-y-2'
+          : 'rounded-md border border-border bg-card/50 px-3 py-2 space-y-2'
       }
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm text-white font-medium truncate">
-              {apiKey.name || '(unnamed key)'}
-            </p>
-            {/* Only legacy `test` keys get a badge. Now that live is the sole
-                environment minted, a "live" badge on every row is noise — but
-                this is the one place a lingering test key is visible, and it
-                still authenticates exactly like a live one, so it stays
-                called out. */}
-            {apiKey.environment === 'test' && (
-              <Badge
-                variant="outline"
-                className="border-amber-500/50 text-amber-400 text-xs"
-              >
-                legacy test
-              </Badge>
-            )}
+      {/* Fixed tracks for the three date columns, so every column lands at the
+          same x on every row. The name is the only flexible column and now has
+          room to be read. Each date column stacks its label over its value —
+          two text lines rather than four, and labels above the dates is what
+          stops the dates truncating. */}
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[auto_minmax(6rem,1fr)_5.25rem_5.25rem_5.25rem_auto]">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-label={`${expanded ? 'hide' : 'show'} details for ${apiKey.name}`}
+          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-white cursor-pointer"
+        >
+          <ChevronRight
+            className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-90' : ''}`}
+          />
+        </button>
+
+        <div className="flex min-w-0 items-center gap-2">
+          {/* p.font-medium is load-bearing: rowFor() in api-keys-states.spec.ts
+              locates the row by it. */}
+          <p className="min-w-0 truncate text-sm text-white font-medium">
+            {apiKey.name || '(unnamed key)'}
+          </p>
+          {/* Only legacy `test` keys get a badge. Now that live is the sole
+              environment minted, a "live" badge on every row is noise — but this
+              is the one place a lingering test key is visible, and it still
+              authenticates exactly like a live one, so it stays called out. */}
+          {apiKey.environment === 'test' && (
             <Badge
               variant="outline"
-              className={
-                status.tone === 'ok'
-                  ? 'border-green-500/50 text-green-400 text-xs'
-                  : status.tone === 'warn'
-                    ? 'border-amber-500/50 text-amber-400 text-xs'
-                    : status.tone === 'error'
-                      ? 'border-red-500/50 text-red-400 text-xs'
-                      : 'border-border text-muted-foreground text-xs'
-              }
+              className="border-amber-500/50 text-amber-400 text-xs flex-shrink-0"
             >
-              {status.label}
+              legacy test
             </Badge>
+          )}
+          <Badge
+            variant="outline"
+            className={
+              status.tone === 'ok'
+                ? 'border-green-500/50 text-green-400 text-xs flex-shrink-0'
+                : status.tone === 'warn'
+                  ? 'border-amber-500/50 text-amber-400 text-xs flex-shrink-0'
+                  : status.tone === 'error'
+                    ? 'border-red-500/50 text-red-400 text-xs flex-shrink-0'
+                    : 'border-border text-muted-foreground text-xs flex-shrink-0'
+            }
+          >
+            {status.label}
+          </Badge>
+        </div>
+
+        <div className="hidden min-w-0 sm:block">
+          <div className="text-[11px] leading-tight text-muted-foreground/60">created</div>
+          <div className="text-xs leading-tight text-muted-foreground tabular-nums">
+            {formatDate(apiKey.createdAt)}
           </div>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
-            <code className="font-mono">{apiKey.keyPrefix || 'owk_'}•••</code>
-            <span className="flex items-center gap-1">
-              <KeyRound className="h-3 w-3" />
-              {summarizeScopes(apiKey.scopes)}
-            </span>
+        </div>
+
+        <div className="hidden min-w-0 sm:block">
+          <div className="text-[11px] leading-tight text-muted-foreground/60">last used</div>
+          <div className="text-xs leading-tight text-muted-foreground tabular-nums">
+            {formatRelativeAt(apiKey.lastUsedAt, now)}
           </div>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+        </div>
+
+        <div className="hidden min-w-0 sm:block">
+          <div
+            className={`text-[11px] leading-tight ${
+              apiKey.expired ? 'text-red-400/70' : 'text-muted-foreground/60'
+            }`}
+          >
+            {apiKey.expired ? 'expired' : apiKey.retired ? 'retired' : 'expires'}
+          </div>
+          <div
+            className={`text-xs leading-tight tabular-nums ${
+              apiKey.expired ? 'text-red-400' : 'text-muted-foreground'
+            }`}
+          >
+            {formatDate(apiKey.retired ? apiKey.retiresAt : apiKey.expiresAt)}
+          </div>
+        </div>
+
+        {confirmRevoke ? (
+          <div className="flex items-center justify-end gap-1.5">
+            <span className="text-xs text-red-400">revoke?</span>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={handleRevoke}
+              disabled={revoking}
+              className="h-7 px-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
+            >
+              {revoking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'yes'}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setConfirmRevoke(false)}
+              disabled={revoking}
+              className="h-7 px-2 text-xs text-muted-foreground cursor-pointer"
+            >
+              no
+            </Button>
+          </div>
+        ) : !actionable ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setConfirmRevoke(true)}
+            aria-label={`revoke ${apiKey.name}`}
+            className="h-7 w-7 justify-self-end p-0 text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        ) : (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                aria-label={`actions for ${apiKey.name}`}
+                className="h-7 w-7 justify-self-end p-0 text-muted-foreground hover:text-white cursor-pointer"
+              >
+                {rotating ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <MoreHorizontal className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem onSelect={() => onEditScopes(apiKey)} className="cursor-pointer">
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                {editing ? 'close editor' : 'edit scopes'}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={handleRotate}
+                disabled={rotating}
+                className="cursor-pointer"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                rotate
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={() => setConfirmRevoke(true)}
+                variant="destructive"
+                className="cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                revoke
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
+
+      {expanded && (
+        <div className="space-y-1 pl-8 pt-1">
+          <code className="block truncate font-mono text-xs text-muted-foreground">
+            {apiKey.keyPrefix || 'owk_'}•••
+          </code>
+          <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <KeyRound className="mt-0.5 h-3 w-3 flex-shrink-0" />
+            <span className="min-w-0 break-words">{summarizeScopes(apiKey.scopes)}</span>
+          </div>
+          {/* The date columns are hidden below sm: — this is where they surface
+              on a phone. */}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground sm:hidden">
             <span>created {formatDate(apiKey.createdAt)}</span>
             <span>last used {formatRelativeAt(apiKey.lastUsedAt, now)}</span>
-            {apiKey.expiresAt && (
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                expires {formatDate(apiKey.expiresAt)}
-              </span>
-            )}
+            <span>
+              {apiKey.expired ? 'expired' : apiKey.retired ? 'retired' : 'expires'}{' '}
+              {formatDate(apiKey.retired ? apiKey.retiresAt : apiKey.expiresAt)}
+            </span>
           </div>
-          {status.tone === 'warn' && status.label === 'expiring soon' && daysUntilExpiry !== null && (
-            <div className="flex items-center gap-2 text-xs text-amber-400 pt-1">
-              <AlertTriangle className="h-3.5 w-3.5" />
-              this key expires in {daysUntilExpiry} day(s). rotate it soon.
-            </div>
-          )}
-          {status.label === 'rotated (grace)' && apiKey.retiresAt && (
-            <div className="flex items-center gap-2 text-xs text-amber-400 pt-1">
-              <AlertTriangle className="h-3.5 w-3.5" />
-              old key stops working {formatDate(apiKey.retiresAt)}
-            </div>
-          )}
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {/* Edit sits before rotate: changing what a key can reach is the
-              cheaper fix, and reissuing the secret to widen a scope means
-              redistributing a credential that did not need to change. */}
-          {!apiKey.expired && !apiKey.retired && !apiKey.rotatedAt && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => onEditScopes(apiKey)}
-                  aria-label="edit scopes"
-                  aria-expanded={editing}
-                  className={
-                    editing
-                      ? 'h-8 px-2 border-accent-cyan/50 bg-accent-cyan/10 text-accent-cyan hover:text-accent-cyan cursor-pointer'
-                      : 'h-8 px-2 border-border text-muted-foreground hover:text-white cursor-pointer'
-                  }
-                >
-                  <SlidersHorizontal className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{editing ? 'close the editor' : 'edit scopes — keeps the same key'}</p>
-              </TooltipContent>
-            </Tooltip>
-          )}
-          {!apiKey.expired && !apiKey.retired && !apiKey.rotatedAt && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={handleRotate}
-                  disabled={rotating}
-                  className="h-8 px-2 border-border text-muted-foreground hover:text-white cursor-pointer"
-                >
-                  {rotating ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>rotate — issues new key, old works 24h</p>
-              </TooltipContent>
-            </Tooltip>
-          )}
-          {!confirmRevoke ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setConfirmRevoke(true)}
-                  className="h-8 px-2 border-border text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>revoke this key immediately</p>
-              </TooltipContent>
-            </Tooltip>
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-red-400">revoke?</span>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={handleRevoke}
-                disabled={revoking}
-                className="h-7 px-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
-              >
-                {revoking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'yes'}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setConfirmRevoke(false)}
-                disabled={revoking}
-                className="h-7 px-2 text-xs text-muted-foreground cursor-pointer"
-              >
-                no
-              </Button>
-            </div>
-          )}
+      )}
+
+      {status.tone === 'warn' && status.label === 'expiring soon' && daysUntilExpiry !== null && (
+        <div className="flex items-center gap-2 pl-8 text-xs text-amber-400">
+          <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+          this key expires in {daysUntilExpiry} day(s). rotate it soon.
         </div>
-      </div>
+      )}
+      {status.label === 'rotated (grace)' && apiKey.retiresAt && (
+        <div className="flex items-center gap-2 pl-8 text-xs text-amber-400">
+          <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+          old key stops working {formatDate(apiKey.retiresAt)}
+        </div>
+      )}
     </div>
   );
 }
