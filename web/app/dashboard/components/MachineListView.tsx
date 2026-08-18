@@ -27,7 +27,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Copy, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff, RotateCw } from 'lucide-react';
+import { ChevronDown, Pencil, Copy, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff, RotateCw } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -380,11 +380,9 @@ export function MachineRow({
       >
         <TableCell className="w-8 p-2">
           <div className="flex items-center justify-center">
-            {isExpanded ? (
-              <ChevronUp className="h-4 w-4 text-foreground/70" />
-            ) : (
-              <ChevronDown className="h-4 w-4 text-foreground/70" />
-            )}
+            <ChevronDown
+              className={`h-4 w-4 text-foreground/70 transition-transform duration-150 ease-out motion-reduce:transition-none ${isExpanded ? '-rotate-180' : 'rotate-0'}`}
+            />
           </div>
         </TableCell>
         <TableCell className="w-[140px] font-medium text-white select-text overflow-hidden">
