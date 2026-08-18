@@ -658,6 +658,22 @@ const tier2Tools: McpToolDefinition[] = [
     },
   },
   {
+    name: 'suppress_setup_screens',
+    description: 'Suppress the full-screen Windows setup screens that hijack the display at sign-in after updates: the "Choose privacy settings" experience, the Windows Welcome Experience ("Hi! We\'ve got some updates"), "Let\'s finish setting up your device" (SCOOBE), and the Edge first-run tour. Covers every existing user profile (mounting signed-out profiles\' hives) plus the Default profile so future accounts inherit the suppression. apply is idempotent and safe to re-run — feature updates are known to reset these keys, so re-assert on a schedule. get_status reports per-profile drift without writing anything.',
+    tier: 2,
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['get_status', 'apply'],
+          description: 'get_status: read-only drift report per profile. apply: write all suppression keys machine-wide and for every user profile.',
+        },
+      },
+      required: ['action'],
+    },
+  },
+  {
     name: 'manage_notifications',
     description: 'Control Windows toast notifications and Focus Assist. Essential for kiosks and video walls where a surprise "Updates are ready" or "Teams call" toast would appear on the display during an exhibit. Use disable_all_toasts to fully silence the system, enable_focus_assist with alarms_only for total silence, or disable_for_app to silence a specific app.',
     tier: 2,

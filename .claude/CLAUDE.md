@@ -17,7 +17,7 @@ Owlette is a cloud-connected Windows process management and remote deployment sy
 - **Never import `firebase_admin`** — we use a custom REST client
 - **Never log OAuth tokens** — not even in debug, not even partially
 - **Never modify the `firebase` section** of `config.json` during remote config updates — breaks agent registration
-- **Never use blocking operations** in the 10-second main service loop — stalls all monitoring
+- **Never use blocking operations** in the 5-second main service loop (`SLEEP_INTERVAL = 5`) — stalls all monitoring
 - **Never spawn reconnection logic** outside `ConnectionManager` — it has circuit breaker and backoff
 
 **Web landmines:**

@@ -243,6 +243,7 @@ def execute_tool(tool_name, tool_params, config=None, command_id=None):
         'manage_windows_service': _manage_windows_service,
         'configure_gpu_tdr': _configure_gpu_tdr,
         'manage_windows_update': _manage_windows_update,
+        'suppress_setup_screens': _suppress_setup_screens,
         'manage_notifications': _manage_notifications,
         'configure_power_plan': _configure_power_plan,
         'manage_scheduled_task': _manage_scheduled_task,
@@ -1656,6 +1657,197 @@ def _manage_windows_update(params, config):
             return {'error': f'set_quality_deferral failed: {e}'}
 
     return {'error': f"Unknown action '{action}'. See tool description for valid actions."}
+
+
+def _suppress_setup_screens(params, config):
+    """Suppress the full-screen Windows setup/OOBE screens that hijack the
+    display after updates: the privacy-settings experience, the Windows
+    Welcome Experience, SCOOBE ("Let's finish setting up your device") and
+    the Edge first-run tour.
+
+    The service runs as SYSTEM, so "HKCU" here would be SYSTEM's own hive.
+    The per-user keys are therefore written under HKEY_USERS\\<SID> for every
+    real profile — mounting not-loaded hives with reg.exe — plus the Default
+    profile so future accounts inherit the suppression.
+    """
+    action = (params.get('action') or '').lower()
+    logger.info(f"[MCP-AUDIT] suppress_setup_screens: action={action}")
+
+    try:
+        import winreg
+    except ImportError:
+        return {'error': 'winreg not available'}
+
+    # Machine-wide policies: (key_path, value_name, dword_value)
+    MACHINE_KEYS = {
+        'privacy_experience': (r'SOFTWARE\Policies\Microsoft\Windows\OOBE', 'DisablePrivacyExperience', 1),
+        'edge_first_run': (r'SOFTWARE\Policies\Microsoft\Edge', 'HideFirstRunExperience', 1),
+    }
+    # Per-user keys, relative to each user hive root
+    USER_KEYS = {
+        'scoobe': (r'Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement', 'ScoobeSystemSettingEnabled', 0),
+        'welcome_experience': (r'Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager', 'SubscribedContent-310093Enabled', 0),
+        'welcome_experience_policy': (r'Software\Policies\Microsoft\Windows\CloudContent', 'DisableWindowsSpotlightWindowsWelcomeExperience', 1),
+    }
+    PROFILE_LIST_KEY = r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
+    MOUNT_NAME = 'OwletteSetupScreens'
+
+    def _read_dword(root, path, name):
+        try:
+            with winreg.OpenKey(root, path) as k:
+                val, _ = winreg.QueryValueEx(k, name)
+                return val
+        except (FileNotFoundError, OSError):
+            return None
+
+    def _write_dword(root, path, name, value):
+        """Create-or-set. Returns 'set' if the value changed, 'ok' if already right."""
+        if _read_dword(root, path, name) == value:
+            return 'ok'
+        with winreg.CreateKey(root, path) as k:
+            winreg.SetValueEx(k, name, 0, winreg.REG_DWORD, value)
+        return 'set'
+
+    def _enumerate_profiles():
+        """Real user profiles from ProfileList: [(sid, ntuser_dat_path)]."""
+        profiles = []
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, PROFILE_LIST_KEY) as k:
+                i = 0
+                while True:
+                    try:
+                        sid = winreg.EnumKey(k, i)
+                    except OSError:
+                        break
+                    i += 1
+                    if not sid.startswith('S-1-5-21-'):
+                        continue
+                    try:
+                        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, f'{PROFILE_LIST_KEY}\\{sid}') as pk:
+                            image_path, _ = winreg.QueryValueEx(pk, 'ProfileImagePath')
+                        expanded = winreg.ExpandEnvironmentStrings(image_path)
+                        profiles.append((sid, os.path.join(expanded, 'NTUSER.DAT')))
+                    except (FileNotFoundError, OSError):
+                        continue
+        except (FileNotFoundError, OSError) as e:
+            logger.warning(f"suppress_setup_screens: ProfileList enumeration failed: {e}")
+        return profiles
+
+    def _hive_loaded(sid):
+        try:
+            with winreg.OpenKey(winreg.HKEY_USERS, sid):
+                return True
+        except (FileNotFoundError, OSError):
+            return False
+
+    def _reg_exe(args):
+        result = subprocess.run(
+            ['reg.exe'] + list(args),
+            capture_output=True, text=True, shell=False, timeout=15,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        return result.returncode, (result.stderr or result.stdout or '').strip()
+
+    def _unmount_hive():
+        """Unload the temp hive. Handles must be closed first; retry briefly."""
+        import gc
+        gc.collect()
+        for attempt in range(3):
+            code, msg = _reg_exe(['unload', f'HKU\\{MOUNT_NAME}'])
+            if code == 0:
+                return None
+            time.sleep(0.5)
+        return f'reg unload failed: {msg}'
+
+    def _apply_user_keys(hive_root_path):
+        """Write all USER_KEYS under HKU\\<hive_root_path>. Returns (set, ok, errors)."""
+        wrote, already, errors = [], [], []
+        for label, (path, name, value) in USER_KEYS.items():
+            try:
+                outcome = _write_dword(winreg.HKEY_USERS, f'{hive_root_path}\\{path}', name, value)
+                (wrote if outcome == 'set' else already).append(label)
+            except Exception as e:
+                errors.append(f'{label}: {e}')
+        return wrote, already, errors
+
+    def _apply_mounted(ntuser_path, target_desc):
+        """Mount an offline NTUSER.DAT, write the keys, and always unload."""
+        if not os.path.isfile(ntuser_path):
+            return {'target': target_desc, 'error': f'hive file not found: {ntuser_path}'}
+        code, msg = _reg_exe(['load', f'HKU\\{MOUNT_NAME}', ntuser_path])
+        if code != 0:
+            return {'target': target_desc, 'error': f'reg load failed: {msg}'}
+        try:
+            wrote, already, errors = _apply_user_keys(MOUNT_NAME)
+        finally:
+            unload_error = _unmount_hive()
+        entry = {'target': target_desc, 'hive': 'mounted', 'applied': wrote, 'already_ok': already}
+        problems = errors + ([unload_error] if unload_error else [])
+        if problems:
+            entry['error'] = '; '.join(problems)
+        return entry
+
+    def _default_profile_hive():
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, PROFILE_LIST_KEY) as k:
+                path, _ = winreg.QueryValueEx(k, 'Default')
+            return os.path.join(winreg.ExpandEnvironmentStrings(path), 'NTUSER.DAT')
+        except (FileNotFoundError, OSError):
+            return os.path.join(os.environ.get('SystemDrive', 'C:') + os.sep, 'Users', 'Default', 'NTUSER.DAT')
+
+    if action == 'get_status':
+        machine = {}
+        for label, (path, name, value) in MACHINE_KEYS.items():
+            machine[label + '_suppressed'] = _read_dword(winreg.HKEY_LOCAL_MACHINE, path, name) == value
+        users = []
+        for sid, ntuser_path in _enumerate_profiles():
+            entry = {'sid': sid, 'profile_path': os.path.dirname(ntuser_path), 'loaded': _hive_loaded(sid)}
+            if entry['loaded']:
+                for label, (path, name, value) in USER_KEYS.items():
+                    entry[label + '_suppressed'] = _read_dword(winreg.HKEY_USERS, f'{sid}\\{path}', name) == value
+            # Not-loaded hives are not mounted just for a read — apply is
+            # idempotent and reports per-key state, so use it to close gaps.
+            users.append(entry)
+        return {
+            'machine': machine,
+            'users': users,
+            'all_machine_keys_suppressed': all(machine.values()),
+        }
+
+    if action == 'apply':
+        results = {'machine': [], 'users': [], 'errors': []}
+
+        for label, (path, name, value) in MACHINE_KEYS.items():
+            try:
+                outcome = _write_dword(winreg.HKEY_LOCAL_MACHINE, path, name, value)
+                results['machine'].append({'key': label, 'outcome': 'applied' if outcome == 'set' else 'already_ok'})
+            except Exception as e:
+                results['errors'].append(f'machine {label}: {e}')
+
+        for sid, ntuser_path in _enumerate_profiles():
+            target = os.path.dirname(ntuser_path)
+            if _hive_loaded(sid):
+                wrote, already, errors = _apply_user_keys(sid)
+                entry = {'target': target, 'sid': sid, 'hive': 'loaded', 'applied': wrote, 'already_ok': already}
+                if errors:
+                    entry['error'] = '; '.join(errors)
+                results['users'].append(entry)
+            else:
+                entry = _apply_mounted(ntuser_path, target)
+                entry['sid'] = sid
+                results['users'].append(entry)
+            if entry.get('error'):
+                results['errors'].append(f"{target}: {entry['error']}")
+
+        default_entry = _apply_mounted(_default_profile_hive(), 'default profile (future users)')
+        results['default_profile'] = default_entry
+        if default_entry.get('error'):
+            results['errors'].append(f"default profile: {default_entry['error']}")
+
+        results['status'] = 'partial' if results['errors'] else 'ok'
+        return results
+
+    return {'error': f"Unknown action '{action}'. Use: get_status/apply"}
 
 
 def _manage_notifications(params, config):

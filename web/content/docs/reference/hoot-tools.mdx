@@ -49,6 +49,7 @@ Web hoot chooses an execution path by tool name in `web/lib/hoot-utils.server.ts
 | `manage_windows_service` | 2 | Firestore `mcp_tool_call` | Not exposed |
 | `configure_gpu_tdr` | 2 | Firestore `mcp_tool_call` | Not exposed |
 | `manage_windows_update` | 2 | Firestore `mcp_tool_call` | Not exposed |
+| `suppress_setup_screens` | 2 | Firestore `mcp_tool_call` | Not exposed |
 | `manage_notifications` | 2 | Firestore `mcp_tool_call` | Not exposed |
 | `configure_power_plan` | 2 | Firestore `mcp_tool_call` | Not exposed |
 | `manage_scheduled_task` | 2 | Firestore `mcp_tool_call` | Not exposed |
@@ -404,6 +405,16 @@ Pause, resume, or schedule Windows Update. Pause before live events; use `set_ac
 | `hour` | number | For `set_scheduled_install` | Hour of day (0-23) |
 | `deadline_days` | number | For `set_restart_deadline` | Days before force reboot (2-14) |
 | `days` | number | For deferral actions | Feature (0-365) or quality (0-30) deferral days |
+
+---
+
+### suppress_setup_screens
+
+Suppress the full-screen Windows setup screens that hijack the display at sign-in after updates: the "Choose privacy settings" experience, the Windows Welcome Experience, "Let's finish setting up your device" (SCOOBE), and the Edge first-run tour. Writes the machine-wide policies plus the per-user keys for every existing profile (mounting signed-out profiles' hives) and the Default profile, so future accounts inherit the suppression. `apply` is idempotent — feature updates are known to reset these keys, so re-assert on a schedule (the `update guard` talon preset does exactly this).
+
+| parameter | type | required | description |
+|-----------|------|----------|-------------|
+| `action` | string | **Yes** | `get_status` (read-only per-profile drift report) or `apply` (write all suppression keys) |
 
 ---
 

@@ -185,4 +185,43 @@ export const BUILT_IN_TALON_PRESETS: TalonTemplateDefinition[] = [
       cooldownMinutes: EVENT_COOLDOWN_MINUTES,
     },
   },
+  {
+    id: 'builtin-update-guard',
+    name: 'update guard',
+    description: 'every sunday at 7 am, re-assert the update window and the setup-screen suppression',
+    summary: 'windows update and its full-screen nag screens never interrupt the exhibit',
+    requires: ['llm_key'],
+    template: {
+      name: 'update guard',
+      description: 'every sunday at 7 am, re-assert the update window and the setup-screen suppression',
+      trigger: {
+        type: 'schedule',
+        entries: [{ id: 'tpl-update-guard', days: ['sun'], time: '07:00' }],
+      },
+      condition: { type: 'none' },
+      outputs: [
+        {
+          type: 'cortex',
+          // Ships un-armed like every built-in: the tools this directive names
+          // (manage_windows_update, suppress_setup_screens) are tier 2, so the
+          // talon only fixes drift once a site admin turns on "let hoot act".
+          // The directive's first instruction makes the un-armed state
+          // self-explaining instead of a confusing half-failure.
+          directive:
+            'keep windows update and its setup screens from ever interrupting the exhibit. ' +
+            'if the manage_windows_update and suppress_setup_screens tools are not available ' +
+            'in this session, this talon is not armed to act: report that a site admin needs ' +
+            'to turn on "let hoot act" on this talon, then stop. otherwise: 1) call ' +
+            'manage_windows_update get_status — if no install schedule, active hours or ' +
+            'restart deadline is configured, set installs for tuesday 3 am, active hours 7 ' +
+            'to 23, and a 7-day restart deadline; if they are already configured, leave ' +
+            'them alone and note them. 2) call suppress_setup_screens with action apply — ' +
+            'it is idempotent — and name any profile that had drifted. 3) call ' +
+            'check_pending_reboot and say plainly whether a reboot is waiting. finish with ' +
+            'a short summary of what drifted, what you fixed, and anything needing a human.',
+        },
+      ],
+      cooldownMinutes: DEFAULT_COOLDOWN_MINUTES,
+    },
+  },
 ];

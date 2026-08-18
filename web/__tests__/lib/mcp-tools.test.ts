@@ -45,6 +45,7 @@ const EXPECTED_TIER2 = [
   'manage_windows_service',
   'configure_gpu_tdr',
   'manage_windows_update',
+  'suppress_setup_screens',
   'manage_notifications',
   'configure_power_plan',
   // Wave 2
