@@ -8,10 +8,13 @@ surfaces prefer over the site id ("default_site").
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 import owlette_service
+from connection_manager import ConnectionState
+from health_probe import HealthState
 
 
 class FakeFirebaseClient:
@@ -25,6 +28,20 @@ class FakeFirebaseClient:
 
     def is_connected(self):
         return self.connected
+
+    def write_health_to_firestore(self, status, error_code, message):
+        """_update_health_state mirrors health to Firestore when connected."""
+
+
+class FakeConnectionManager:
+    """The two things `_wire_connection_status_listener` touches."""
+
+    def __init__(self, state):
+        self.state = state
+        self.listeners = []
+
+    def add_state_listener(self, listener):
+        self.listeners.append(listener)
 
 
 def make_service(tmp_path, monkeypatch, firebase_client=None, enabled=True):
@@ -125,3 +142,94 @@ class TestSiteName:
         section = firebase_section(path)
         assert section['site_name'] == ''
         assert section['site_id'] == ''
+
+
+def stale_network_error():
+    """The verdict TEC-B4A's boot-time probe recorded seconds before DHCP
+    finished — the snapshot that used to outlive the condition it described."""
+    return HealthState(
+        status='network_error',
+        error_code='network_error',
+        error_message='Network not reachable at startup (host: dev.owlette.app).',
+        checked_at=1_786_680_000,
+    )
+
+
+def make_wired_service(tmp_path, monkeypatch, manager_state):
+    """A service + fake client whose connection manager starts in `manager_state`."""
+    client = FakeFirebaseClient()
+    client.connection_manager = FakeConnectionManager(manager_state)
+    service, path = make_service(tmp_path, monkeypatch, client)
+    service._connection_status_manager = None
+    service._health_state = stale_network_error()
+    return service, client.connection_manager, path
+
+
+def health_section(path):
+    with open(path) as handle:
+        return json.load(handle)['health']
+
+
+class TestHealthClearsOnConnect:
+    """The connect-clears-health seam (TEC-B4A regression, 2026-08-17).
+
+    Health fields are snapshots — the boot-time probe, or the last outage.
+    A live connection disproves them, and the connection status listener is
+    the one place both hosting paths and every re-init converge, so that is
+    where the clear lives. Without it the tray flashed red for the machine's
+    whole uptime while `firebase.connected` sat true in the same document.
+    """
+
+    def test_wiring_against_an_already_connected_manager_clears_the_stale_error(
+        self, tmp_path, monkeypatch
+    ):
+        # The constructor connects before anything is listening — by the time
+        # the listener is wired, the CONNECTED transition has already happened.
+        # This is exactly how the cold-boot probe error used to survive.
+        service, _, path = make_wired_service(
+            tmp_path, monkeypatch, ConnectionState.CONNECTED)
+
+        service._wire_connection_status_listener()
+
+        assert health_section(path)['status'] == 'ok'
+        assert firebase_section(path)['connected'] is True
+
+    def test_a_connected_transition_clears_the_outage_verdict(
+        self, tmp_path, monkeypatch
+    ):
+        service, manager, path = make_wired_service(
+            tmp_path, monkeypatch, ConnectionState.DISCONNECTED)
+        service._wire_connection_status_listener()
+        assert health_section(path)['status'] == 'network_error'
+
+        manager.state = ConnectionState.CONNECTED
+        for listener in manager.listeners:
+            listener(SimpleNamespace(new_state=ConnectionState.CONNECTED))
+
+        assert health_section(path)['status'] == 'ok'
+
+    def test_a_disconnect_transition_leaves_the_error_standing(
+        self, tmp_path, monkeypatch
+    ):
+        # Only a live connection is evidence. BACKOFF must not launder the
+        # error the health callback just recorded.
+        service, manager, path = make_wired_service(
+            tmp_path, monkeypatch, ConnectionState.DISCONNECTED)
+        service._wire_connection_status_listener()
+
+        for listener in manager.listeners:
+            listener(SimpleNamespace(new_state=ConnectionState.BACKOFF))
+
+        assert health_section(path)['status'] == 'network_error'
+
+    def test_wiring_while_disconnected_leaves_the_error_standing(
+        self, tmp_path, monkeypatch
+    ):
+        # A re-init whose connect failed must keep its verdict — the old
+        # unconditional clear after re-init stamped ok here regardless.
+        service, _, path = make_wired_service(
+            tmp_path, monkeypatch, ConnectionState.DISCONNECTED)
+
+        service._wire_connection_status_listener()
+
+        assert health_section(path)['status'] == 'network_error'

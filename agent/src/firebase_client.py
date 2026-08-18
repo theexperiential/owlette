@@ -276,6 +276,12 @@ class FirebaseClient:
         # Track last synced software inventory hash to prevent unnecessary writes
         self._last_software_inventory_hash: Optional[str] = None
 
+        # Wall-clock time of the last heartbeat write that landed (presence or
+        # metrics — both carry lastHeartbeat). Published by the service into
+        # tmp/service_status.json for the desktop surfaces; 0.0 until the
+        # first write lands.
+        self._last_heartbeat_time: float = 0.0
+
         # Hardware profile state (schemaVersion 1)
         # _last_profile_check: monotonic timestamp of the last build_profile() call
         # _cached_profile: most recent profile dict returned by _ensure_profile
@@ -1132,6 +1138,7 @@ class FirebaseClient:
             }, merge=True)
 
             if online:
+                self._last_heartbeat_time = time.time()
                 self.logger.debug("Heartbeat: Machine online")
             else:
                 self.logger.info(f"[OK] Machine marked OFFLINE in Firestore (site: {self.site_id}, machine: {self.machine_id})")
@@ -1681,6 +1688,7 @@ class FirebaseClient:
                 'metrics.gpu': DELETE_FIELD,
             })
 
+            self._last_heartbeat_time = time.time()
             return True
 
         except Exception as e:

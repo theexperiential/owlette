@@ -110,10 +110,23 @@ def _migrate_1_to_2(conn: sqlite3.Connection) -> None:
     access — e.g. the hourly scrub, and any real sync against those rows.
     SQLite 3.25+ RENAME COLUMN updates the column plus every constraint/index
     that references it (the UNIQUE natural key included), preserving all rows.
+
+    idempotent per column: interim dev builds created DBs with the NEW column
+    names while still stamping user_version 1 (the version bump and the rename
+    did not land together). renaming a column that is already gone raises
+    OperationalError, the failed txn rolls back the version stamp, and the
+    same crash then repeats on every open (TEC-B4A's hourly scrub,
+    2026-08-17) — so each rename first checks its source column exists.
     """
-    conn.execute('ALTER TABLE distributions RENAME COLUMN folder_id TO roost_id')
-    conn.execute('ALTER TABLE distributions RENAME COLUMN manifest_id TO version_id')
-    conn.execute('ALTER TABLE distributions RENAME COLUMN manifest_url TO version_url')
+    columns = {row[1] for row in conn.execute('PRAGMA table_info(distributions)')}
+    renames = (
+        ('folder_id', 'roost_id'),
+        ('manifest_id', 'version_id'),
+        ('manifest_url', 'version_url'),
+    )
+    for old, new in renames:
+        if old in columns:
+            conn.execute(f'ALTER TABLE distributions RENAME COLUMN {old} TO {new}')
 
 
 # numbered migration steps: {target_version: fn(conn)}. applied in order for an

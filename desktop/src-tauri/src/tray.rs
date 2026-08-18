@@ -506,9 +506,13 @@ fn smoothed(doc: &StatusDoc, cache: &mut Option<(Value, Instant)>) -> StatusDoc 
 /// same way — `serviceHealth.deriveFooterState` checks `isServiceDown` before
 /// anything else, and so does this.
 ///
-/// After that the original precedence stands: a failed health probe outranks
-/// everything, a stopped service outranks the cloud state, and firebase being
-/// switched off counts as an error because nothing is being monitored.
+/// After that the original precedence stands with one amendment: a failed
+/// health probe outranks everything *except a live cloud connection* — the
+/// health fields are a snapshot (the boot-time probe, or the last outage)
+/// while `firebase.connected` is the live fact, and an agent that predates
+/// the connect-clears-health fix can publish both at once. A stopped service
+/// outranks the cloud state, and firebase being switched off counts as an
+/// error because nothing is being monitored.
 fn determine_status(doc: &StatusDoc, service_running: bool) -> Status {
   // The SCM's verdict outranks the file's, in both directions.
   if !service_running {
@@ -544,12 +548,20 @@ fn determine_status(doc: &StatusDoc, service_running: bool) -> Status {
     }
   };
 
+  let firebase = data.get("firebase");
+  let connected = firebase
+    .and_then(|firebase| firebase.get("connected"))
+    .and_then(Value::as_bool)
+    .unwrap_or(false);
+
   let health = data.get("health");
   let health_status = health
     .and_then(|health| health.get("status"))
     .and_then(Value::as_str);
   if let Some(health_status) = health_status {
-    if !matches!(health_status, "ok" | "unknown") {
+    // A live connection disproves whatever the snapshot recorded — see the
+    // precedence note above. Only flash the error while it can still be true.
+    if !matches!(health_status, "ok" | "unknown") && !connected {
       let error_code = health
         .and_then(|health| health.get("error_code"))
         .and_then(Value::as_str)
@@ -572,13 +584,8 @@ fn determine_status(doc: &StatusDoc, service_running: bool) -> Status {
     .and_then(|service| service.get("running"))
     .and_then(Value::as_bool)
     .unwrap_or(false);
-  let firebase = data.get("firebase");
   let enabled = firebase
     .and_then(|firebase| firebase.get("enabled"))
-    .and_then(Value::as_bool)
-    .unwrap_or(false);
-  let connected = firebase
-    .and_then(|firebase| firebase.get("connected"))
     .and_then(Value::as_bool)
     .unwrap_or(false);
   let site_id = firebase
@@ -1012,6 +1019,51 @@ mod tests {
   }
 
   #[test]
+  fn a_live_connection_outranks_a_stale_health_error() {
+    // TEC-B4A, 2026-08-17: the boot-time probe recorded network_error seconds
+    // before DHCP finished, the agent connected eight seconds later and stayed
+    // connected — and the icon flashed red for the rest of the uptime while
+    // the window footer said "connected to TEC". Connected is the live fact;
+    // the health fields are a memory.
+    let data = json!({
+      "service": { "running": true },
+      "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
+      "health": {
+        "status": "network_error",
+        "error_code": "network_error",
+        "error_message": "Network not reachable at startup"
+      }
+    });
+
+    let status = determine_status(&fresh(data), RUNNING);
+
+    assert_eq!(status.code, StatusCode::Normal);
+    assert_eq!(status.status, "status: connected to hq");
+    assert!(status.health.is_none());
+  }
+
+  #[test]
+  fn a_health_error_still_flashes_while_disconnected() {
+    // The amendment above must not soften the real alarm: not connected and
+    // a failed probe is exactly the state the error flash exists for.
+    let data = json!({
+      "service": { "running": true },
+      "firebase": { "enabled": true, "connected": false, "site_id": "hq" },
+      "health": {
+        "status": "auth_error",
+        "error_code": "auth_error",
+        "error_message": "no token"
+      }
+    });
+
+    let status = determine_status(&fresh(data), RUNNING);
+
+    assert_eq!(status.code, StatusCode::Error);
+    assert_eq!(status.status, "status: auth_error");
+    assert!(status.health.is_some());
+  }
+
+  #[test]
   fn a_service_that_stopped_publishing_is_not_reported_as_starting() {
     // "starting" is for a service with no file yet. A file that has gone stale
     // means the service is wedged, which is what the footer calls out, and
@@ -1144,10 +1196,13 @@ mod tests {
   }
 
   #[test]
-  fn a_failed_health_probe_outranks_a_healthy_connection() {
+  fn a_failed_health_probe_shapes_the_error_rows() {
+    // Precedence itself is specified by a_live_connection_outranks_a_stale_
+    // health_error and a_health_error_still_flashes_while_disconnected; this
+    // one holds the shape of the rows the error state renders.
     let data = json!({
       "service": { "running": true },
-      "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
+      "firebase": { "enabled": true, "connected": false, "site_id": "hq" },
       "health": { "status": "error", "error_code": "auth_error", "error_message": "no token" }
     });
     let status = determine_status(&fresh(data), RUNNING);
@@ -1162,7 +1217,7 @@ mod tests {
     let message = "x".repeat(200);
     let data = json!({
       "service": { "running": true },
-      "firebase": { "enabled": true, "connected": true, "site_id": "hq" },
+      "firebase": { "enabled": true, "connected": false, "site_id": "hq" },
       "health": { "status": "error", "error_code": "config_error", "error_message": message }
     });
     let status = determine_status(&fresh(data), RUNNING);

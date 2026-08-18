@@ -272,6 +272,24 @@ class HealthProbe:
         return extract_host(api_base)
 
 
+def reprobe_if_network_error(state: Optional[HealthState],
+                             config_path: str,
+                             api_base: str) -> Optional[HealthState]:
+    """
+    Re-run the startup probe after wait_for_network() reports the host reachable.
+
+    The startup probe runs before the network gate, so on a cold boot it
+    routinely records network_error moments before the NIC comes up — a
+    snapshot the desktop surfaces then render for the rest of the uptime.
+    Only a network_error verdict (or a missing state, when the probe itself
+    crashed) is refreshed; config_error / auth_error / ok say something the
+    gate's success cannot contradict, so those are returned unchanged.
+    """
+    if state is not None and state.status != STATUS_NETWORK_ERROR:
+        return state
+    return HealthProbe(config_path=config_path, api_base=api_base).run()
+
+
 def wait_for_network(api_base: str,
                      max_wait: float = NETWORK_GATE_MAX_WAIT,
                      connect_timeout: float = NETWORK_PROBE_TIMEOUT) -> bool:

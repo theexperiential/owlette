@@ -52,7 +52,7 @@ except ImportError as e:
     # Note: logging not initialized yet, so we can't log here
 
 # Health probe (stdlib-only module, safe to import unconditionally)
-from health_probe import HealthProbe, HealthState, STATUS_OK, wait_for_network
+from health_probe import HealthProbe, HealthState, STATUS_OK, reprobe_if_network_error, wait_for_network
 
 # Error monitoring (optional, no-ops if not configured)
 import sentry_utils
@@ -293,6 +293,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # terminate plus a launch.
         self._launch_locks = {}
         self._launch_locks_guard = threading.Lock()
+        # Earliest time.monotonic() at which the main loop's Case-4 recovery
+        # (Firebase enabled but no running client) may try a reinit. Armed to
+        # now+300s after each failed attempt.
+        self._firebase_reinit_not_before = 0.0
         # ConnectionManager the status-file listener is registered against, so
         # re-initialising the Firebase client re-wires it against the new one.
         self._connection_status_manager = None
@@ -423,7 +427,17 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # and non-fatal — we always proceed. Same helper the
                     # hosted path (owlette_runner.MockService) calls.
                     try:
-                        wait_for_network(api_base)
+                        if wait_for_network(api_base):
+                            # The startup probe ran before this gate, so on a
+                            # cold boot its network_error verdict predates the
+                            # NIC coming up. Refresh it now that the host
+                            # answered, and republish so the tray isn't left
+                            # rendering the stale snapshot.
+                            refreshed = reprobe_if_network_error(
+                                self._health_state, shared_utils.CONFIG_PATH, api_base)
+                            if refreshed is not self._health_state:
+                                self._health_state = refreshed
+                                self._write_service_status_early()
                     except Exception as e:
                         logging.warning(f"Network gate error (proceeding anyway): {e}")
 
@@ -542,8 +556,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Cache site timezone for schedule evaluation
             self._cached_site_timezone = self.firebase_client.site_timezone
 
-            # Clear any stale health errors (e.g. config_error from startup before site was joined)
-            self._update_health_state('ok', 'ok', 'Firebase connected successfully')
+            # Stale health errors (e.g. config_error from before the site was
+            # joined) are cleared by _wire_connection_status_listener above —
+            # state-driven, so a re-init whose connect FAILED keeps its error
+            # instead of being stamped ok unconditionally here.
 
             return True
 
@@ -739,6 +755,23 @@ class OwletteService(win32serviceutil.ServiceFramework):
             except Exception:
                 pass
 
+    def _clear_health_error_on_connect(self):
+        """Reset the health state to ok — call only when the connection is live.
+
+        A live Firestore connection disproves every verdict the health state
+        can carry: the boot-time probe's config_error / auth_error /
+        network_error, and the connection_failure the health callback records
+        during an outage. Those are snapshots of a past moment; without this
+        reset they outlive the condition they described — a machine that booted
+        before DHCP finished kept flashing a red tray icon for the rest of its
+        uptime while `firebase.connected` sat true in the same status document
+        (TEC-B4A, 2026-08-17). Idempotent: an ok state is left untouched.
+        """
+        health = getattr(self, '_health_state', None)
+        if health is not None and health.status == STATUS_OK:
+            return
+        self._update_health_state(STATUS_OK, STATUS_OK, 'Connected to owlette cloud')
+
     def _wire_connection_status_listener(self):
         """Keep tmp/service_status.json in step with the cloud connection.
 
@@ -752,6 +785,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
         the first main-loop status write, ~25s after the connection was
         actually established. The immediate write below is what closes that gap.
 
+        The same two moments also settle the health state: a transition to
+        CONNECTED — and a manager that is already CONNECTED when the listener
+        is wired, which is how the constructor-time connect arrives here —
+        clears whatever error the startup probe or a past outage recorded.
+        The failure direction is symmetric and already lives on this manager:
+        set_health_callback records connection_failure on BACKOFF/FATAL_ERROR.
+
         Idempotent per connection manager, so _initialize_firebase_client can
         call it again after replacing the client and get the new one wired.
         """
@@ -762,6 +802,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
         if manager is None:
             return
 
+        from connection_manager import ConnectionState
+
         if manager is not self._connection_status_manager:
             def _on_connection_change(event):
                 # Fires on every transition, so a disconnect turns the badge red
@@ -769,6 +811,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # by content signature (MIN_STATUS_WRITE_INTERVAL), and
                 # `connected` is part of that signature, so a transition always
                 # writes and a steady state still costs nothing.
+                try:
+                    if event.new_state == ConnectionState.CONNECTED:
+                        self._clear_health_error_on_connect()
+                except Exception as e:
+                    logging.debug(f"Health clear on connection change failed: {e}")
                 try:
                     self._write_service_status()
                 except Exception as e:
@@ -779,6 +826,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # Publish the state that is already current — the transition this
         # listener exists for has usually happened by now.
+        try:
+            if manager.state == ConnectionState.CONNECTED:
+                self._clear_health_error_on_connect()
+        except Exception as e:
+            logging.debug(f"Health clear on listener wire failed: {e}")
         try:
             self._write_service_status()
         except Exception as e:
@@ -970,9 +1022,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self._health_state.status = status
                 self._health_state.error_code = error_code
                 self._health_state.error_message = message
+                # checked_at answers "when was this verdict reached", not
+                # "when did the boot-time probe run" — refresh it on every
+                # update so a cleared or re-raised state carries its own time.
+                self._health_state.checked_at = int(_time.time())
 
             self._write_service_status()
-            logging.warning(f"[HEALTH] Status updated: {status} — {error_code}: {message}")
+            # Recovery to ok is routine; anything else is worth a warning.
+            level = logging.INFO if status == STATUS_OK else logging.WARNING
+            logging.log(level, f"[HEALTH] Status updated: {status} — {error_code}: {message}")
 
         except Exception as e:
             logging.debug(f"_update_health_state write failed: {e}")
@@ -7517,6 +7575,33 @@ with open(out_path, 'wb') as f:
                                 except Exception as e:
                                     logging.error(f"[ERROR] Failed to stop Firebase client: {e}")
                             last_firebase_state = current_firebase_state
+
+                        # Case 4: Enabled with a site, but nothing serving it.
+                        # Reached when FirebaseClient construction raised at
+                        # startup, or when main()'s wiring block threw before
+                        # client.start() ran — the config transitions above
+                        # never fire for either (nothing about the config
+                        # changed), so without this the machine stays cloud-
+                        # dead until a service restart. A failed attempt arms
+                        # a 5-minute hold so an offline or unauthenticated
+                        # machine is retried calmly, not every 10 seconds.
+                        elif is_enabled and not self._shutting_down and (
+                            self.firebase_client is None
+                            or not getattr(self.firebase_client, 'running', False)
+                        ):
+                            if time.monotonic() >= self._firebase_reinit_not_before:
+                                logging.warning(
+                                    "Firebase is enabled but no running client is serving it - "
+                                    "attempting recovery reinitialization"
+                                )
+                                if self._initialize_or_restart_firebase_client():
+                                    logging.info("[OK] Firebase client recovered")
+                                    last_firebase_state = current_firebase_state
+                                else:
+                                    self._firebase_reinit_not_before = time.monotonic() + 300.0
+                                    logging.error(
+                                        "[ERROR] Firebase client recovery failed - next attempt in 300s"
+                                    )
 
                     except Exception as e:
                         logging.error(f"Error checking Firebase state: {e}")

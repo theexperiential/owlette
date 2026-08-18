@@ -207,6 +207,10 @@ if __name__ == '__main__':
             # to fire under the host.
             self._last_status_signature = None
             self._last_status_write_time = 0.0
+            # Case-4 recovery throttle (mirror OwletteService.__init__).
+            # The main loop reads it whenever Firebase is enabled but no
+            # running client is serving it.
+            self._firebase_reinit_not_before = 0.0
             # Once-only guard for graceful_shutdown() (mirror
             # OwletteService.__init__). The console control handler and the SCM
             # stop watcher both call it for the same stop; without the lock and
@@ -246,8 +250,17 @@ if __name__ == '__main__':
                         # refresh and arms a backoff for nothing. Bounded (90s)
                         # and non-fatal — we always proceed.
                         try:
-                            from health_probe import wait_for_network
-                            wait_for_network(api_base or self._api_base)
+                            from health_probe import wait_for_network, reprobe_if_network_error
+                            if wait_for_network(api_base or self._api_base):
+                                # The startup probe ran before this gate, so on
+                                # a cold boot its network_error verdict predates
+                                # the NIC coming up. Refresh it so the early
+                                # status write below publishes the truth.
+                                self._health_state = reprobe_if_network_error(
+                                    self._health_state,
+                                    shared_utils.CONFIG_PATH,
+                                    api_base or self._api_base,
+                                )
                         except Exception as e:
                             logging.warning(f"Network gate error (proceeding anyway): {e}")
 
