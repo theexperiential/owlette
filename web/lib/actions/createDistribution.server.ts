@@ -10,7 +10,7 @@
  *
  * The action is the single source of truth for create-distribution business
  * logic. The route shim parses the body, runs auth + idempotency, then calls
- * this action; cortex / cron callers reach the same logic via `invokeAsSystem`
+ * this action; hoot / cron callers reach the same logic via `invokeAsSystem`
  * (wave 3.12).
  *
  * Validation is internal so the route shim doesn't have to repeat it. Returns

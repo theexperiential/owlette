@@ -94,9 +94,13 @@ try {
   // Jest tests for web changes
   if (hasWeb) {
     try {
+      // 300s: the suite outgrew the original 90s budget during the billing
+      // sprint (~2900 tests, ~100-140s wall-clock warm) — user-approved bump
+      // 2026-08-01. execSync's timeout kill surfaces as a bare "Jest tests
+      // failed" with no summary, which reads like a red suite when it isn't.
       execSync('npx jest --bail --forceExit', {
         cwd: join(PROJECT_ROOT, 'web'),
-        timeout: 90000,
+        timeout: 300000,
         stdio: 'pipe'
       })
     } catch (err) {

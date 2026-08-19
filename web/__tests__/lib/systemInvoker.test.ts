@@ -134,10 +134,10 @@ describe('captureCallerFingerprint', () => {
     const stack = [
       'Error',
       '    at invokeAsSystem (/repo/web/lib/systemInvoker.server.ts:120:45)',
-      '    at handler (/repo/web/lib/cortex/foo.ts:42:7)',
+      '    at handler (/repo/web/lib/hoot/foo.ts:42:7)',
     ].join('\n');
     const fp = captureCallerFingerprint(stack);
-    expect(fp).toBe('web/lib/cortex/foo.ts:42:7');
+    expect(fp).toBe('web/lib/hoot/foo.ts:42:7');
   });
 
   it('returns "unknown" when stack has no parseable frames', () => {
@@ -148,9 +148,9 @@ describe('captureCallerFingerprint', () => {
     const stack = [
       'Error',
       '    at invokeAsSystem (C:\\repo\\web\\lib\\systemInvoker.server.ts:1:1)',
-      '    at fn (C:\\repo\\web\\lib\\cortex\\bar.ts:7:3)',
+      '    at fn (C:\\repo\\web\\lib\\hoot\\bar.ts:7:3)',
     ].join('\n');
-    expect(captureCallerFingerprint(stack)).toBe('web/lib/cortex/bar.ts:7:3');
+    expect(captureCallerFingerprint(stack)).toBe('web/lib/hoot/bar.ts:7:3');
   });
 
   it('handles file:// urls (esm)', () => {
@@ -164,8 +164,8 @@ describe('captureCallerFingerprint', () => {
 });
 
 describe('isAllowedCaller', () => {
-  it('accepts cortex paths', () => {
-    expect(__testables.isAllowedCaller('web/lib/cortex/foo.ts:1:1')).toBe(true);
+  it('accepts hoot paths', () => {
+    expect(__testables.isAllowedCaller('web/lib/hoot/foo.ts:1:1')).toBe(true);
   });
   it('accepts jobs paths', () => {
     expect(__testables.isAllowedCaller('web/lib/jobs/cleanup.ts:1:1')).toBe(true);

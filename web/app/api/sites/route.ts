@@ -223,7 +223,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
             code: 'site_already_exists',
           });
         }
-
         return applyScopedAuthDeprecations(
           NextResponse.json(
             {
@@ -231,7 +230,6 @@ export const POST = withRateLimit(async (request: NextRequest) => {
               name: result.name,
               timezone: result.timezone,
               owner: result.owner,
-              tier: result.tier,
               createdAt: result.createdAt,
             },
             { status: 201 },
@@ -264,20 +262,15 @@ function summariseSite(d: FirebaseFirestore.QueryDocumentSnapshot): {
   id: string;
   name: string;
   plan: string | null;
-  tier: 'core' | 'pro' | null;
   timezone: string | null;
   owner: string | null;
   createdAt: string | null;
 } {
   const data = d.data();
-  const rawTier = data.tier;
-  const tier: 'core' | 'pro' | null =
-    rawTier === 'core' || rawTier === 'pro' ? rawTier : null;
   return {
     id: d.id,
     name: typeof data.name === 'string' ? data.name : d.id,
     plan: typeof data.plan === 'string' ? data.plan : null,
-    tier,
     timezone: typeof data.timezone === 'string' ? data.timezone : null,
     owner: typeof data.owner === 'string' ? data.owner : null,
     createdAt: timestampToIso(data.createdAt),

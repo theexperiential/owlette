@@ -102,8 +102,12 @@ def test_restart_running_process_terminates_then_relaunches():
     assert "restarted" in result.lower()
     assert "1111" in result and "2222" in result
     # graceful terminate was called with the default timeout
+    # exe_path is threaded through so a .bat/.cmd target's payload is reaped
+    # with its cmd.exe wrapper (shared_utils.graceful_terminate).
     shared.graceful_terminate.assert_called_once_with(
-        1111, timeout=DEFAULT_RESTART_TIMEOUT_SECONDS
+        1111,
+        timeout=DEFAULT_RESTART_TIMEOUT_SECONDS,
+        exe_path=SAMPLE_PROCESS["exe_path"],
     )
     # status was updated to KILLED before terminate
     shared.update_process_status_in_json.assert_any_call(
@@ -133,7 +137,9 @@ def test_restart_uses_custom_timeout_seconds():
             "cmd-1", svc,
         )
 
-    shared.graceful_terminate.assert_called_once_with(1111, timeout=12)
+    shared.graceful_terminate.assert_called_once_with(
+        1111, timeout=12, exe_path=SAMPLE_PROCESS["exe_path"]
+    )
 
 
 def test_restart_clamps_timeout_at_30_seconds():
@@ -151,7 +157,9 @@ def test_restart_clamps_timeout_at_30_seconds():
             "cmd-1", svc,
         )
 
-    shared.graceful_terminate.assert_called_once_with(1111, timeout=30)
+    shared.graceful_terminate.assert_called_once_with(
+        1111, timeout=30, exe_path=SAMPLE_PROCESS["exe_path"]
+    )
 
 
 # ─── restart when not running ────────────────────────────────────────
@@ -228,7 +236,9 @@ def test_restart_stuck_process_relies_on_graceful_terminate_escalation():
             "cmd-1", svc,
         )
 
-    shared.graceful_terminate.assert_called_once_with(1111, timeout=2)
+    shared.graceful_terminate.assert_called_once_with(
+        1111, timeout=2, exe_path=SAMPLE_PROCESS["exe_path"]
+    )
     svc.handle_process_launch.assert_called_once_with(SAMPLE_PROCESS)
     assert "1111" in result and "5555" in result
 

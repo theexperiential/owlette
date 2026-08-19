@@ -1,11 +1,9 @@
 /**
- * Pure logic for roost per-customer storage quota enforcement (wave 2b.5).
+ * Pure logic for roost per-site storage quota enforcement.
  *
- * Plans (authoritative: roost project memory):
- *   - free       : 5 GB
- *   - starter    : 25 GB  ($8/mo)
- *   - pro        : 100 GB ($15/mo)
- *   - enterprise : BYO-bucket (no Owlette-side cap; returns Infinity)
+ * A flat capacity limit — `SITE_STORAGE_BYTES` per site, applied to every
+ * site identically. This bounds what one site may hold in R2; it is not an
+ * entitlement, and nothing here consults a plan.
  *
  * Alarm thresholds fire at 50 / 80 / 100 % of cap. The transition — not
  * the absolute level — is what an alerting caller wants, so the pure
@@ -20,23 +18,22 @@
  * the signed URL.
  */
 
-export type PlanTier = 'free' | 'starter' | 'pro' | 'enterprise';
+const TIB = 1024 ** 4;
 
-/** Tier byte caps. Infinity for BYO-bucket enterprise. */
-export const PLAN_LIMITS_BYTES: Record<PlanTier, number> = {
-  free: 5 * 1024 ** 3,
-  starter: 25 * 1024 ** 3,
-  pro: 100 * 1024 ** 3,
-  enterprise: Infinity,
-};
+/**
+ * Included storage per site, in bytes.
+ *
+ * Mirrored by `SITE_STORAGE_BYTES` in `web/lib/roostStorage.ts` — web can't
+ * import from functions/, so the number exists on both sides and the two
+ * must stay in sync.
+ */
+export const SITE_STORAGE_BYTES = 1 * TIB;
 
 /** Alarm threshold levels, ordered low → high. 0 means "under 50 %". */
 export const ALARM_LEVELS = [0, 0.5, 0.8, 1.0] as const;
 export type AlarmLevel = (typeof ALARM_LEVELS)[number];
 
 export interface QuotaState {
-  /** Plan tier, determines the cap. */
-  tier: PlanTier;
   /** Bytes already finalised in R2 for this site. */
   usedBytes: number;
   /**
@@ -48,37 +45,23 @@ export interface QuotaState {
 }
 
 export interface QuotaReport {
+  /** Included storage per site. */
   planLimitBytes: number;
   /** usedBytes + pendingBytes */
   committedBytes: number;
   remainingBytes: number;
-  /** committedBytes / planLimitBytes (0..1). NaN for unlimited plans. */
+  /** committedBytes / planLimitBytes (0..1). */
   fractionUsed: number;
   /** Highest threshold strictly crossed by committedBytes. */
   alarmLevel: AlarmLevel;
-  /** `true` once committedBytes ≥ planLimitBytes (free tier hits 402). */
+  /** `true` once committedBytes ≥ planLimitBytes. */
   atCap: boolean;
-  /** Unlimited-plan short-circuit flag. */
-  unlimited: boolean;
 }
 
 /** Compute the quota snapshot for a site without any other side-effect. */
 export function reportQuota(state: QuotaState): QuotaReport {
-  const planLimitBytes = PLAN_LIMITS_BYTES[state.tier];
+  const planLimitBytes = SITE_STORAGE_BYTES;
   const committedBytes = Math.max(0, state.usedBytes + state.pendingBytes);
-  const unlimited = !isFinite(planLimitBytes);
-
-  if (unlimited) {
-    return {
-      planLimitBytes,
-      committedBytes,
-      remainingBytes: Infinity,
-      fractionUsed: NaN,
-      alarmLevel: 0,
-      atCap: false,
-      unlimited: true,
-    };
-  }
 
   const fractionUsed = committedBytes / planLimitBytes;
   const alarmLevel = currentAlarmLevel(fractionUsed);
@@ -91,7 +74,6 @@ export function reportQuota(state: QuotaState): QuotaReport {
     fractionUsed,
     alarmLevel,
     atCap,
-    unlimited: false,
   };
 }
 
@@ -139,25 +121,18 @@ export interface UploadAdmission {
   /** HTTP status the pre-upload hook should return. */
   status: 200 | 400 | 402;
   /** Machine-readable reason for logs + UI. */
-  reason?:
-    | 'invalid_request'
-    | 'quota_exceeded'
-    | 'quota_would_exceed';
+  reason?: 'invalid_request' | 'quota_exceeded' | 'quota_would_exceed';
   report: QuotaReport;
   /** UX hint for the dashboard when denied. */
-  upgradeCta?: {
-    currentTier: PlanTier;
-    suggestedTier: PlanTier;
-    message: string;
-  };
+  denialHint?: { message: string };
 }
 
 /**
  * Decide if a new upload may proceed.
  *
- * Returns 402 ("Payment Required") with a suggested upgrade CTA when a
- * free/starter/pro tenant would cross their cap. Returns 400 when the
- * caller sent a non-positive `requestedBytes` (malformed).
+ * Returns 402 ("Payment Required") when the site would cross its storage
+ * allowance, and 400 when the caller sent a non-positive `requestedBytes`
+ * (malformed).
  *
  * The caller reserves `requestedBytes` as pendingBytes on admission and
  * releases on chunk upload success/failure. This is the backpressure
@@ -178,9 +153,6 @@ export function admitUpload(input: UploadAdmissionInput): UploadAdmission {
   }
 
   const report = reportQuota(input.state);
-  if (report.unlimited) {
-    return { allowed: true, status: 200, report };
-  }
 
   // already at cap: straight 402.
   if (report.atCap) {
@@ -189,7 +161,7 @@ export function admitUpload(input: UploadAdmissionInput): UploadAdmission {
       status: 402,
       reason: 'quota_exceeded',
       report,
-      upgradeCta: suggestUpgrade(input.state.tier, report.committedBytes),
+      denialHint: denialHint(report.planLimitBytes),
     };
   }
 
@@ -201,44 +173,16 @@ export function admitUpload(input: UploadAdmissionInput): UploadAdmission {
       status: 402,
       reason: 'quota_would_exceed',
       report,
-      upgradeCta: suggestUpgrade(input.state.tier, afterBytes),
+      denialHint: denialHint(report.planLimitBytes),
     };
   }
 
   return { allowed: true, status: 200, report };
 }
 
-/**
- * Suggest the cheapest tier that would admit the current/projected
- * usage. If we're already on `pro`, suggest `enterprise` (BYO bucket).
- */
-function suggestUpgrade(
-  currentTier: PlanTier,
-  targetBytes: number,
-): UploadAdmission['upgradeCta'] {
-  const progression: PlanTier[] = ['free', 'starter', 'pro', 'enterprise'];
-  const currentIdx = progression.indexOf(currentTier);
-  for (let i = currentIdx + 1; i < progression.length; i++) {
-    const tier = progression[i];
-    if (targetBytes <= PLAN_LIMITS_BYTES[tier]) {
-      return {
-        currentTier,
-        suggestedTier: tier,
-        message: messageFor(currentTier, tier),
-      };
-    }
-  }
-  // nothing large enough — suggest enterprise (BYO).
+/** Build the hint the dashboard / CLI shows on a denial. */
+function denialHint(limitBytes: number): UploadAdmission['denialHint'] {
   return {
-    currentTier,
-    suggestedTier: 'enterprise',
-    message: messageFor(currentTier, 'enterprise'),
+    message: `storage full (${limitBytes / TIB} TB per site) — delete old roost versions to free space.`,
   };
-}
-
-function messageFor(from: PlanTier, to: PlanTier): string {
-  if (to === 'enterprise') {
-    return `storage cap exceeded on ${from} — contact us for an enterprise plan (bring your own bucket).`;
-  }
-  return `storage cap exceeded on ${from} — upgrade to ${to} to continue uploading.`;
 }

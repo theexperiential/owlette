@@ -7,7 +7,7 @@ import { Plus, Minus } from 'lucide-react';
 const faqs: { q: string; a: React.ReactNode }[] = [
   {
     q: "is it actually free?",
-    a: "during beta, yes — both tiers, no credit card, no trial clock. after beta: core is $10/machine/month for monitoring, control, deploy, displays, and cortex on a single site. pro is $50/machine/month (3-machine minimum) and adds the public API, CLI, SDK, webhooks, unlimited sites, and roost — incremental project sync with 1 TB included storage per site. no per-user fees on either.",
+    a: "during beta, yes — both tiers, no credit card, no trial clock. after beta: core is $10/machine/month for monitoring, control, deploy, displays, and hoot on a single site. pro is $50/machine/month (3-machine minimum) and adds the public API, CLI, SDK, webhooks, unlimited sites, and roost — incremental project sync with 1 TB included storage per site. no per-user fees on either.",
   },
   {
     q: "does it work on mac or linux?",
@@ -22,8 +22,8 @@ const faqs: { q: string; a: React.ReactNode }[] = [
     a: "no inbound ports, no vpn. agents connect outbound over https (port 443) to google's firebase infrastructure. if your network allows general internet access, it just works. locked-down environments may need to whitelist *.googleapis.com and *.firebaseio.com.",
   },
   {
-    q: "what's cortex?",
-    a: "cortex is owlette's ai fleet assistant — ask it the questions you ask yourself every day: \"which nvidia driver are we running?\", \"restart the media server on node 3\", \"what crashed at 3am?\" it translates natural language into real commands across your fleet. you bring your own api key (openai, anthropic, or any compatible provider).",
+    q: "what's hoot?",
+    a: "hoot is owlette's ai fleet assistant — ask it the questions you ask yourself every day: \"which nvidia driver are we running?\", \"restart the media server on node 3\", \"what crashed at 3am?\" it translates natural language into real commands across your fleet. you bring your own api key (openai, anthropic, or any compatible provider).",
   },
   {
     q: "what's roost?",

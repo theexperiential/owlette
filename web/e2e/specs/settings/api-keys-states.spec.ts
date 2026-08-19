@@ -202,14 +202,13 @@ test('rotated-in-grace row renders amber "rotated (grace)" badge with retire-by 
   await expect(row.getByText(/old key stops working /i)).toBeVisible();
 });
 
-test.fixme(
+test(
   'expired key row renders the red "expired" badge',
   async ({ page }) => {
-    // GAP: keyStatusAt() reads only the (currently always-undefined)
-    // `expired` flag. A past expiresAt routes to the "expiring soon"
-    // branch instead of a terminal "expired" badge. Promote this fixme
-    // once GET /api/keys derives `expired` or KeyCard reads `expiresAt`
-    // directly.
+    // Promoted from fixme: GET /api/keys now derives `expired` server-side
+    // (buildApiKeyListItem in lib/apiKeyTypes.ts), so keyStatusAt()'s
+    // terminal branch is reachable and a past-due key no longer renders as
+    // "expiring soon" — or, in the account dialog, as plain "active".
     await page.goto('/settings/api-keys');
     await expect(
     page.getByRole('heading', { name: 'api keys', exact: true }),

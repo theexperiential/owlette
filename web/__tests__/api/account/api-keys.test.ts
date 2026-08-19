@@ -69,17 +69,24 @@ function mockDb() {
   };
 }
 
-function collectionRef(parts: string[]) {
+function collectionRef(parts: string[], filters: Array<[string, unknown]> = []) {
   const path = collectionPath(parts);
   const ref = {
     doc: (id: string) => docRef([...parts, id]),
     collection: (name: string) => collectionRef([...parts, name]),
     orderBy: () => ref,
+    // Equality-only `where`, enough for the account billing gate's
+    // `sites where owner == uid` lookup. Filters accumulate so chaining works.
+    where: (field: string, _op: string, value: unknown) =>
+      collectionRef(parts, [...filters, [field, value]]),
     get: async () => {
       if (collectionGetError) throw collectionGetError;
       return {
         docs: Array.from(store.entries())
           .filter(([docPath, data]) => data && docPath.startsWith(`${path}/`))
+          .filter(([, data]) =>
+            filters.every(([field, value]) => (data as Record<string, unknown>)[field] === value),
+          )
           .map(([docPath, data]) => ({
             id: docPath.slice(path.length + 1).split('/')[0],
             data: () => data,

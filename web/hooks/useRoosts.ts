@@ -39,14 +39,21 @@ export interface Roost {
   createdBy?: string;
 }
 
+/** Stable identity for the not-loaded case, so consumers' deps don't churn. */
+const EMPTY_ROOSTS: Roost[] = [];
+
 export function useRoosts(siteId: string) {
-  const [roosts, setRoosts] = useState<Roost[]>([]);
-  // Stay in `loading` until onSnapshot delivers its first batch. If
-  // siteId hasn't resolved yet, we can't possibly know what's in
-  // firestore — "not loading" with an empty list would let the page
-  // flash the welcome/empty state before real data arrives.
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  // `loading` is derived from "the listener has not delivered THIS site yet"
+  // rather than latched in state. A latched `useState(true)` never cleared
+  // when there was no siteId to subscribe to, so a caller with no sites sat
+  // on a spinner forever instead of being told it had none. Deriving it also
+  // keeps the flicker guarantee the latch was there for: an unresolved siteId
+  // still reads as loading, never as a real empty result.
+  const [state, setState] = useState<{
+    roosts: Roost[];
+    loadedSiteId: string | null;
+    error: string | null;
+  }>({ roosts: [], loadedSiteId: null, error: null });
 
   useEffect(() => {
     if (!db || !siteId) return;
@@ -99,16 +106,24 @@ export function useRoosts(siteId: string) {
           };
         });
         next.sort((a, b) => firestoreTsToMs(b.createdAt) - firestoreTsToMs(a.createdAt));
-        setRoosts(next);
-        setLoading(false);
+        setState({ roosts: next, loadedSiteId: siteId, error: null });
       },
       (err) => {
-        setError(err.message);
-        setLoading(false);
+        // Pin loadedSiteId here too: the error callback ends the
+        // subscription, so leaving it null would hold consumers in `loading`
+        // forever instead of letting them render the error.
+        setState({ roosts: [], loadedSiteId: siteId, error: err.message });
       },
     );
     return () => unsub();
   }, [siteId]);
+
+  const loaded = !!siteId && state.loadedSiteId === siteId;
+  const roosts = loaded ? state.roosts : EMPTY_ROOSTS;
+  const loading = !!db && !!siteId && !loaded;
+  // Only ever report an error for the site currently in view, so one site's
+  // permission failure can't leak onto the next.
+  const error = !db ? 'Firebase not configured' : loaded ? state.error : null;
 
   return { roosts, loading, error };
 }

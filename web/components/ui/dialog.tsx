@@ -38,7 +38,11 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50",
+        // Matches the PERCEIVED blur of the nav/menu surfaces (PageHeader
+        // MENU_SURFACE): the menus run blur-sm behind an 85%-opaque panel,
+        // which reads far softer than the same radius through this overlay's
+        // 50% black — so the overlay takes the xs step (4px in Tailwind v4).
+        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50 backdrop-blur-xs",
         className
       )}
       {...props}

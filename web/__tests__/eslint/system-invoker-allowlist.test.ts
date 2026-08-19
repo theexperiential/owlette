@@ -12,7 +12,7 @@
  *   1. A global block restricts `@/lib/systemInvoker.server` (and
  *      relative-path equivalents).
  *   2. An override block re-allows the import inside the allowlist:
- *      `lib/cortex/**`, `lib/jobs/**`, `lib/systemInvoker.server.ts`
+ *      `lib/hoot/**`, `lib/jobs/**`, `lib/systemInvoker.server.ts`
  *      (the file itself, for re-export-style usage), and `__tests__/**`.
  *
  * The companion runtime + ci checks own the deeper end-to-end behavior:
@@ -50,18 +50,18 @@ describe('eslint config — no-system-invoker-outside-allowlist', () => {
   });
 
   it('explains the allowlist in the rule message', () => {
-    expect(configText).toMatch(/cortex/);
+    expect(configText).toMatch(/hoot/);
     expect(configText).toMatch(/jobs/);
     expect(configText).toMatch(/check-system-invoker-callers\.mjs/);
   });
 
   it('re-allows imports in the allowlist directories', () => {
-    // Confirm cortex / jobs / __tests__ paths each appear in an override block
+    // Confirm hoot / jobs / __tests__ paths each appear in an override block
     // that turns the rule off. Order is asserted by the regex spanning across
     // the override block's `files` array and the `"no-restricted-imports": "off"`
     // entry that follows.
     const overrideBlock = configText.match(
-      /files:\s*\[[\s\S]*?cortex[\s\S]*?jobs[\s\S]*?__tests__[\s\S]*?\][\s\S]*?"no-restricted-imports":\s*"off"/,
+      /files:\s*\[[\s\S]*?hoot[\s\S]*?jobs[\s\S]*?__tests__[\s\S]*?\][\s\S]*?"no-restricted-imports":\s*"off"/,
     );
     expect(overrideBlock).not.toBeNull();
   });

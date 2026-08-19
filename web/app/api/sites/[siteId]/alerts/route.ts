@@ -16,6 +16,7 @@ import {
   setAlertRules,
   AlertRulesValidationError,
 } from '@/lib/actions/setAlertRules.server';
+import { siteAuditActor } from '@/lib/actions/auditActor.server';
 
 type RouteParams = {
   siteId: string;
@@ -43,7 +44,7 @@ export const PUT = authorizedSiteHandler<RouteParams>({
 
     try {
       const result = await setAlertRules(
-        { actor: ctx.actor, siteId: ctx.siteId },
+        { actor: ctx.actor, siteId: ctx.siteId, auditActor: siteAuditActor(ctx) },
         // The action core does exhaustive per-rule validation.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         { rules: body.rules as any[] },

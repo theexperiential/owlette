@@ -109,7 +109,7 @@ describe('wrapEmailLayout — manage alerts / unsubscribe footer', () => {
     const html = wrapEmailLayout('<p>x</p>', {
       unsubscribeUrl: 'https://dev.owlette.app/api/unsubscribe?token=t',
     });
-    expect(html).not.toContain('attention is all you need');
+    expect(html).not.toContain('keep your installation running');
     expect(html).not.toContain('is made by');
     expect(html).not.toContain('automated message');
     expect(html).toContain('owlette.app');

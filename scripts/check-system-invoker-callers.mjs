@@ -7,7 +7,7 @@
  * any import of `web/lib/systemInvoker.server` originates from one of
  * the allowlisted directories:
  *
- *   web/lib/cortex/**
+ *   web/lib/hoot/**
  *   web/lib/jobs/**
  *   web/__tests__/**
  *   web/lib/systemInvoker.server.ts (the file itself, transitively from re-exports)
@@ -75,7 +75,7 @@ const ABSOLUTE_ALIAS = '@/lib/systemInvoker.server';
 // Allowlist patterns matched against the *posix* repo-relative path of
 // the importing file. Order doesn't matter; any match passes.
 const ALLOWED_PATTERNS = [
-  /^web\/lib\/cortex\//,
+  /^web\/lib\/hoot\//,
   /^web\/lib\/jobs\//,
   /^web\/__tests__\//,
   /^web\/lib\/systemInvoker\.server\.ts$/,
@@ -255,7 +255,7 @@ function runMain() {
     process.stderr.write(`  ${v.file} imports "${v.specifier}"\n`);
   }
   process.stderr.write(
-    '\nsystemInvoker.server may only be imported from web/lib/cortex/**, web/lib/jobs/**, web/__tests__/**.\n',
+    '\nsystemInvoker.server may only be imported from web/lib/hoot/**, web/lib/jobs/**, web/__tests__/**.\n',
   );
   process.exit(1);
 }
@@ -268,7 +268,7 @@ function runSelfTest() {
   const tempRoot = mkdtempSync(join(tmpdir(), 'sysinv-test-'));
   try {
     // Build a fake repo layout under tempRoot/web/...
-    const okDir = join(tempRoot, 'web', 'lib', 'cortex');
+    const okDir = join(tempRoot, 'web', 'lib', 'hoot');
     const badDir = join(tempRoot, 'web', 'app', 'api', 'foo');
     mkdirP(okDir);
     mkdirP(badDir);

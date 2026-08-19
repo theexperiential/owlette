@@ -14,6 +14,7 @@ export const Capability = {
   SITE_MEMBER_MANAGE: 'SITE_MEMBER_MANAGE',
   WEBHOOK_MANAGE: 'WEBHOOK_MANAGE',
   SITE_LOGS_MANAGE: 'SITE_LOGS_MANAGE',
+  TALON_MANAGE: 'TALON_MANAGE',
   USER_ROLE_MANAGE: 'USER_ROLE_MANAGE',
   USER_DELETE: 'USER_DELETE',
   SYSTEM_PRESET_MANAGE: 'SYSTEM_PRESET_MANAGE',
@@ -30,7 +31,8 @@ export type Role = 'member' | 'admin' | 'superadmin';
 export type SystemActorName =
   | 'cortex_autonomous'
   | 'cortex_provisioning'
-  | 'scheduled_cleanup';
+  | 'scheduled_cleanup'
+  | 'talon_runner';
 
 export type UserActor = {
   type: 'user';
@@ -71,6 +73,7 @@ const SITE_ADMIN_CAPABILITIES: readonly Capability[] = [
   Capability.WEBHOOK_MANAGE,
   Capability.SITE_LOGS_MANAGE,
   Capability.SITE_MEMBER_MANAGE,
+  Capability.TALON_MANAGE,
 ];
 
 const SUPERADMIN_CAPABILITIES: readonly Capability[] = Object.values(Capability);
@@ -87,6 +90,7 @@ const SITE_SCOPED_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   Capability.SITE_MEMBER_MANAGE,
   Capability.WEBHOOK_MANAGE,
   Capability.SITE_LOGS_MANAGE,
+  Capability.TALON_MANAGE,
 ]);
 
 export const RoleCapabilityMatrix: Readonly<Record<Role, readonly Capability[]>> = {
@@ -107,6 +111,7 @@ export const SystemCapabilityMatrix: Readonly<
     Capability.MACHINE_REMOVE,
     Capability.DEPLOYMENT_MANAGE,
   ],
+  talon_runner: [Capability.MACHINE_EXEC_COMMAND],
 };
 
 export function isSiteScopedCapability(capability: Capability): boolean {

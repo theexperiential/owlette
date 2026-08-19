@@ -21,7 +21,6 @@ import {
   DEFAULT_TTL_DAYS,
   MAX_TTL_DAYS,
   SCOPE_PRESETS,
-  type ApiKeyEnvironment,
   type ApiKeyScopePreset,
 } from '@/lib/apiKeyTypes';
 
@@ -35,7 +34,6 @@ function CliAuthorizeInner() {
   const [name, setName] = useState('my cli');
   const [preset, setPreset] = useState<ApiKeyScopePreset>('publisher');
   const [ttlDays, setTtlDays] = useState(DEFAULT_TTL_DAYS);
-  const [environment, setEnvironment] = useState<ApiKeyEnvironment>('live');
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
 
@@ -66,7 +64,6 @@ function CliAuthorizeInner() {
           name: name.trim(),
           scopes: SCOPE_PRESETS[preset],
           ttlDays,
-          environment,
         }),
       });
       const data = await res.json();
@@ -138,23 +135,9 @@ function CliAuthorizeInner() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label className="text-foreground">environment</Label>
-                <Select
-                  value={environment}
-                  onValueChange={(v) => setEnvironment(v as ApiKeyEnvironment)}
-                  disabled={submitting}
-                >
-                  <SelectTrigger className="bg-background border-border text-foreground">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="live">live</SelectItem>
-                    <SelectItem value="test">test</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            {/* environment selector removed — every key is minted live; the
+                server ignores an incoming `environment`. */}
+            <div className="grid grid-cols-1 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="cliTtlDays" className="text-foreground">
                   ttl (days)

@@ -100,8 +100,9 @@ export const POST = withRateLimit(
   authorizedPlatformHandler({
     capability: 'GLOBAL_SETTINGS_WRITE',
   })(async (request: NextRequest, ctx) => {
+    const userId = ctx.actor.userId;
+
     try {
-      const userId = ctx.actor.userId;
       const body = await request.json().catch(() => ({}));
       const name = body.name || 'API Key';
       const environment: ApiKeyEnvironment = 'live';

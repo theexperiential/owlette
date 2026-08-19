@@ -4,23 +4,20 @@
  * When an agent/src/*.py file is edited, this hook:
  * 1. Copies the changed file to C:\ProgramData\Owlette\agent\src\
  * 2. Kills the GUI if running
- * 3. Restarts the OwletteService (if a service file was changed)
- * 4. Relaunches the GUI (if it was running)
+ * 3. Restarts the OwletteService
  *
- * GUI-only files (owlette_gui.py) skip the service restart.
+ * Since 3.0.0 the local UI is the Tauri desktop app (desktop/, deployed as
+ * owlette-desktop.exe) — agent/src has no GUI modules, so every mirrored file
+ * is service-side. The service relaunches the desktop tray itself after a
+ * restart; this hook never touches it.
  */
 
 import { copyFileSync, existsSync, unlinkSync, readdirSync } from 'fs'
 import { basename, join } from 'path'
-import { execSync, exec } from 'child_process'
+import { execSync } from 'child_process'
 
 const PROG_DATA = process.env.PROGRAMDATA || 'C:\\ProgramData'
 const PROD_SRC = `${PROG_DATA}\\Owlette\\agent\\src`
-const PROD_PYTHON = `${PROG_DATA}\\Owlette\\python\\pythonw.exe`
-const GUI_SCRIPT = `${PROG_DATA}\\Owlette\\agent\\src\\owlette_gui.py`
-
-// Files that only affect the GUI (no service restart needed)
-const GUI_ONLY_FILES = new Set(['owlette_gui.py', 'custom_messagebox.py'])
 
 // Read JSON from stdin
 let input = ''
@@ -74,40 +71,8 @@ try {
     }
   }
 
-  const needsServiceRestart = !GUI_ONLY_FILES.has(filename)
-
-  // Check if GUI is running
-  let guiWasRunning = false
-  try {
-    const tasklist = execSync(
-      'wmic process where "name=\'pythonw.exe\'" get CommandLine,ProcessId /FORMAT:CSV',
-      { encoding: 'utf-8', timeout: 5000 }
-    )
-    const lines = tasklist.split('\n').filter(l => l.includes('owlette_gui.py'))
-    if (lines.length > 0) {
-      guiWasRunning = true
-    }
-  } catch {
-    // wmic may fail — that's fine
-  }
-
-  // Step 1: Kill GUI if running
-  if (guiWasRunning) {
-    try {
-      execSync(
-        'taskkill /F /IM pythonw.exe /FI "WINDOWTITLE eq Owlette*"',
-        { timeout: 5000, stdio: 'ignore' }
-      )
-      process.stderr.write('[deploy-agent] Killed running GUI\n')
-    } catch {
-      // May fail if already exited
-    }
-    // Brief pause for cleanup
-    await new Promise(resolve => setTimeout(resolve, 300))
-  }
-
-  // Step 2: Restart service (if needed)
-  if (needsServiceRestart) {
+  // Step 2: Restart service — every mirrored file is service-side since 3.0.0.
+  {
     try {
       execSync(
         'powershell -Command "Start-Process cmd -ArgumentList \'/c net stop OwletteService && net start OwletteService\' -Verb RunAs -Wait"',
@@ -119,20 +84,6 @@ try {
     }
     // Wait for service to initialize
     await new Promise(resolve => setTimeout(resolve, 1000))
-  }
-
-  // Step 3: Relaunch GUI if it was running
-  if (guiWasRunning) {
-    exec(
-      `start "" "${PROD_PYTHON}" "${GUI_SCRIPT}"`,
-      {
-        env: { ...process.env, PYTHONPATH: PROD_SRC },
-        shell: true
-      },
-      () => {}
-    )
-    process.stderr.write('[deploy-agent] Relaunched GUI\n')
-    await new Promise(resolve => setTimeout(resolve, 500))
   }
 } catch (err) {
   process.stderr.write(`[deploy-agent] Error: ${err.message}\n`)

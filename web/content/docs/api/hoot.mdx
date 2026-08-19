@@ -1,0 +1,86 @@
+---
+title: "hoot conversations"
+description: "The canonical public hoot API is the /api/hoot/conversations route family. The /api/cortex/* and /api/chat/* routes still work as compatibility aliases — the shipped CLI and SDKs currently call the cortex ones — but new clients should target /api/hoot/*."
+---
+
+## scopes
+
+Use `chat=<siteId>:read` to list conversations and `chat=<siteId>:write` to create, rename, soft-delete, or send a message.
+
+API-key callers are intentionally capped to read-only hoot tools during streamed replies. A `chat` key can ask hoot to inspect state, but it cannot inherit the owning user's admin role to dispatch destructive machine, process, or deployment tools. Use the dashboard/session flow for operator-approved destructive tool execution until per-tool API-key scopes are introduced.
+
+## list
+
+```bash
+curl -fsS "$OWLETTE_API_URL/api/hoot/conversations?siteId=$SITE_ID&page_size=20" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN"
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "conversations": [],
+    "next_page_token": "",
+    "nextPageToken": ""
+  }
+}
+```
+
+## create
+
+```bash
+curl -fsS -X POST "$OWLETTE_API_URL/api/hoot/conversations" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d "{\"siteId\":\"$SITE_ID\",\"machineId\":\"$MACHINE_ID\",\"title\":\"diagnostics\"}"
+```
+
+`machineId` is optional. Omit it for a site-wide conversation. `initial_message`, when supplied, must use `role: "user"`.
+
+## send
+
+```bash
+curl -fsS -N -X POST "$OWLETTE_API_URL/api/hoot/conversations/$CONVERSATION_ID" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"role":"user","content":"summarize the current machine health"}'
+```
+
+The response is `text/plain; charset=utf-8` with `X-Vercel-AI-Data-Stream: v1`. Frames follow the AI SDK line-prefixed protocol:
+
+- `0:"text"`: assistant text delta
+- `d:{...}`: stream completion metadata
+- `3:"message"`: upstream hoot error
+
+Public send accepts only `role` and `content`. To change machines, create a new conversation pinned to the desired machine instead of overriding a conversation target mid-stream.
+
+## rename
+
+```bash
+curl -fsS -X PATCH "$OWLETTE_API_URL/api/hoot/conversations/$CONVERSATION_ID" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"title":"morning diagnostics"}'
+```
+
+Only `title` is mutable.
+
+## delete
+
+```bash
+curl -fsS -X DELETE "$OWLETTE_API_URL/api/hoot/conversations/$CONVERSATION_ID" \
+  -H "Authorization: Bearer $OWLETTE_TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)"
+```
+
+Delete is a soft delete. A repeated delete returns success with `alreadyDeleted: true`.
+
+## internal routes
+
+`/api/hoot/categorize`, `/api/hoot/provision-key`, `/api/hoot/autonomous`, and `/api/hoot/escalation` are dashboard, agent, or scheduler internals. They are not public API surfaces. Each also answers on its `/api/cortex/*` alias, which is what fleet agents and the shipped clients still call.

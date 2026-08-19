@@ -1,0 +1,178 @@
+/**
+ * `owlette key list | create`.
+ *
+ * Drives:
+ *   GET  /api/account/api-keys
+ *   POST /api/account/api-keys
+ *
+ * Deliberately NOT /api/keys, which the docs used to claim. That route takes a
+ * session or Firebase ID token only (`requireSessionOrIdToken`), so a CLI
+ * holding an `owk_*` key gets a flat 401 from it. `/api/account/api-keys` is
+ * the api-key-compatible surface.
+ *
+ * Two consequences the docs must state plainly rather than imply away:
+ *
+ *   - **No custom scopes.** POST clones the calling key's scopes verbatim
+ *     (`cloneScopes(ctx.auth.keyContext?.scopes)`), so a key can never widen
+ *     its own privileges. That is an anti-escalation rule, not an oversight —
+ *     it also means the CLI cannot mint a platform-scoped (`user`,
+ *     `installer`) key unless the calling key already carries that scope.
+ *     Use the dashboard for anything broader than what you already hold.
+ *   - **No rotate or revoke.** The route implements GET and POST only; those
+ *     verbs live on the session-authenticated `/api/keys/{keyId}` routes.
+ *   - **Superadmin only.** The route is wrapped in
+ *     `authorizedPlatformHandler({ capability: 'GLOBAL_SETTINGS_WRITE' })`, so
+ *     the calling key needs `user=*:admin`. Anything less gets
+ *     403 `scope_insufficient`. That makes this command a platform-operator
+ *     tool, not a general-purpose one — most users manage keys in the
+ *     dashboard.
+ *
+ * `create` prints the raw `owk_*` value exactly once — the server never
+ * returns it again. In table mode it is the final line, so
+ * `owlette key create --name ci | tail -1` is a usable idiom; `--json`
+ * round-trips the whole response for scripting.
+ */
+
+import { Command } from 'commander';
+import { loadConfig } from '../config';
+import { fetchWithTimeout } from '../lib/http';
+import { isJson, printJson, printLine, renderTable } from '../lib/output';
+
+interface Scope {
+  resource: string;
+  id: string;
+  permissions: string[];
+}
+
+interface KeyRow {
+  id: string;
+  name: string | null;
+  keyPrefix: string | null;
+  scopes: Scope[] | null;
+  createdAt: number | null;
+  lastUsedAt: number | null;
+  expiresAt: number | null;
+}
+
+function formatDate(ms: number | null): string {
+  if (!ms) return '—';
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+function describeScopes(scopes: Scope[] | null): string {
+  if (!scopes || scopes.length === 0) return 'legacy (full access)';
+  return scopes.map((s) => `${s.resource}=${s.id}:${s.permissions.join(',')}`).join(' ');
+}
+
+export function registerKeyCommand(program: Command): void {
+  const key = program
+    .command('key')
+    .description('manage your own api keys (inherits the calling key\'s scopes)');
+
+  /* -------------------- list -------------------- */
+
+  key
+    .command('list')
+    .description('list your api keys — never shows raw key values')
+    .action(async (_opts, cmd) => {
+      const { apiUrl, token, json } = resolveAuth(cmd);
+      if (!token) return;
+
+      const res = await fetchWithTimeout(`${apiUrl}/api/account/api-keys`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        keys?: KeyRow[];
+        detail?: string;
+        code?: string;
+      };
+      if (!res.ok) {
+        fatal(
+          `GET /api/account/api-keys failed (${res.status}, ${data.code ?? 'unknown'}): ${data.detail ?? JSON.stringify(data)}`,
+        );
+        return;
+      }
+
+      if (json) {
+        printJson(data);
+        return;
+      }
+      const keys = data.keys ?? [];
+      if (keys.length === 0) {
+        printLine('no api keys');
+        return;
+      }
+      printLine(
+        renderTable(
+          ['id', 'name', 'prefix', 'created', 'last used', 'expires', 'scopes'],
+          keys.map((k) => [
+            k.id,
+            k.name ?? '—',
+            k.keyPrefix ?? '—',
+            formatDate(k.createdAt),
+            formatDate(k.lastUsedAt),
+            formatDate(k.expiresAt),
+            describeScopes(k.scopes),
+          ]),
+        ),
+      );
+    });
+
+  /* -------------------- create -------------------- */
+
+  key
+    .command('create')
+    .description(
+      'mint a key with the same scopes as the calling key — the raw value prints once',
+    )
+    .option('--name <name>', 'human-readable label', 'API Key')
+    .action(async (opts, cmd) => {
+      const { apiUrl, token, json } = resolveAuth(cmd);
+      if (!token) return;
+
+      const res = await fetchWithTimeout(`${apiUrl}/api/account/api-keys`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: opts.name }),
+      });
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
+        detail?: string;
+        code?: string;
+      };
+      if (!res.ok) {
+        fatal(
+          `POST /api/account/api-keys failed (${res.status}, ${data.code ?? 'unknown'}): ${data.detail ?? JSON.stringify(data)}`,
+        );
+        return;
+      }
+
+      if (json) {
+        printJson(data);
+        return;
+      }
+      printLine(`created ${String(data.name ?? opts.name)} (${String(data.keyId ?? '')})`);
+      printLine('scopes inherited from the calling key — widen them in the dashboard');
+      printLine('copy this now — it is not shown again:');
+      printLine(String(data.key ?? ''));
+    });
+}
+
+function resolveAuth(cmd: Command): { apiUrl: string; token: string | null; json: boolean } {
+  const { apiUrl, token } = loadConfig({ profile: cmd.optsWithGlobals().profile });
+  if (!token) {
+    process.stderr.write(
+      'owlette: no token configured. run `owlette auth login` or set OWLETTE_TOKEN.\n',
+    );
+    process.exitCode = 2;
+    return { apiUrl, token: null, json: isJson(cmd) };
+  }
+  return { apiUrl, token, json: isJson(cmd) };
+}
+
+function fatal(msg: string, exitCode = 1): void {
+  process.stderr.write(`owlette: ${msg}\n`);
+  process.exitCode = exitCode;
+}

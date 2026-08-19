@@ -1,8 +1,8 @@
 /**
- * Screenshot - docs cortex chat panel.
+ * Screenshot - docs hoot chat panel.
  *
  * Output: `web/public/docs-screens/cortex-chat.png`
- * Used by: `web/content/docs/dashboard/cortex.mdx`
+ * Used by: `web/content/docs/dashboard/hoot.mdx`
  */
 import { test, expect } from '@playwright/test';
 import { roleState } from '../helpers/roles';
@@ -16,7 +16,7 @@ import {
 
 test.use({ ...roleState('admin'), viewport: { width: 1440, height: 1000 } });
 
-test('cortex chat docs screenshot', async ({ page }) => {
+test('hoot chat docs screenshot', async ({ page }) => {
   const ctx = await seedScreenshotFixtures('diagnose-cortex-chat');
   const conversationId = `screenshot-cortex-${ctx.siteId}`;
 
@@ -24,7 +24,7 @@ test('cortex chat docs screenshot', async ({ page }) => {
     await pinAdminSiteContext(ctx.siteId);
     await installFixedClock(page);
 
-    await page.goto(`/cortex/${conversationId}`);
+    await page.goto(`/hoot/${conversationId}`);
 
     await expect(
       page.getByText('03:14 incident', { exact: false }).first(),

@@ -15,7 +15,7 @@
  *     name: string,
  *     scopes: ApiKeyScope[],
  *     ttlDays?: number (default 90, max 365),
- *     environment?: 'live'|'test' (default 'live')
+ *     environment?: ignored — every key is minted 'live'
  *   }
  *
  * Returns:
@@ -38,7 +38,6 @@ import {
 } from '@/lib/deviceCodeCrypto';
 import {
   ALL_RESOURCES,
-  type ApiKeyEnvironment,
   type ApiKeyLookup,
   type ApiKeyPermission,
   type ApiKeyRecord,
@@ -46,6 +45,7 @@ import {
   type ApiKeyScope,
   DEFAULT_TTL_DAYS,
   MAX_TTL_DAYS,
+  MINTED_API_KEY_ENVIRONMENT,
   SUPERADMIN_ONLY_RESOURCES,
 } from '@/lib/apiKeyTypes';
 import {
@@ -67,7 +67,6 @@ const VALID_PERMISSIONS: readonly ApiKeyPermission[] = [
   'rollback',
   'admin',
 ];
-const VALID_ENVIRONMENTS: readonly ApiKeyEnvironment[] = ['live', 'test'];
 const MAX_SCOPES = 50;
 const SITE_SCOPED_RESOURCES = new Set<ApiKeyResource>(['site', 'chat', 'deploy']);
 
@@ -187,18 +186,10 @@ export const POST = withRateLimit(
       }
       const ttlDays = rawTtl;
 
-      const rawEnv = body.environment ?? 'live';
-      if (!VALID_ENVIRONMENTS.includes(rawEnv as ApiKeyEnvironment)) {
-        return problemValidation(
-          `environment must be one of ${VALID_ENVIRONMENTS.join(', ')}`,
-          {
-            'body.environment': [
-              `must be one of ${VALID_ENVIRONMENTS.join(', ')}`,
-            ],
-          },
-        );
-      }
-      const environment = rawEnv as ApiKeyEnvironment;
+      // Minted live like every other key. `body.environment` is accepted and
+      // ignored rather than rejected — the shipped @owlette/cli still sends it
+      // (cli/src/config.ts) and nothing on either side branches on the value.
+      const environment = MINTED_API_KEY_ENVIRONMENT;
 
       // Defense-in-depth: validate site-scoped ids against the caller's access.
       for (const scope of scopes) {

@@ -182,7 +182,7 @@ deploy = await client.roosts.deploy(
 )
 ```
 
-### cortex
+### hoot
 
 ```python
 conversation = await client.chat.new(
@@ -200,7 +200,7 @@ async for delta in client.chat.send(
     print(delta, end="", flush=True)
 ```
 
-The SDK uses canonical `/api/cortex/conversations` routes. API-key callers are capped to read-only Cortex tools during streamed replies.
+The SDK currently calls the `/api/cortex/conversations` compatibility aliases; `/api/hoot/conversations` is the canonical family. Both reach the same handlers. API-key callers are capped to read-only hoot tools during streamed replies.
 
 ### chunks — low-level data plane
 
@@ -285,6 +285,13 @@ print(created["key"])                         # owk_live_...  <-- once
 # list returns typed ApiKeyRecord values
 for k in await client.keys.list():
     print(k.id, k.key_prefix, k.environment)
+
+# edit scopes in place — the secret is untouched, and `scopes` replaces
+# the key's list outright rather than merging into it
+await client.keys.update(
+    created["id"],
+    scopes=[ApiKeyScope(resource="roost", id="*", permissions=["read", "write", "deploy"])],
+)
 
 # rotate (24h grace) + revoke
 await client.keys.rotate(created["id"], ttl_days=90)
@@ -534,7 +541,7 @@ def handler(request: httpx.Request) -> httpx.Response:
     assert request.headers["authorization"].startswith("Bearer owk_")
     return httpx.Response(200, json={"sites": []})
 
-async with Roost(token="owk_test_...", transport=httpx.MockTransport(handler)) as client:
+async with Roost(token="owk_live_...", transport=httpx.MockTransport(handler)) as client:
     assert (await client.sites.list()) == []
 ```
 

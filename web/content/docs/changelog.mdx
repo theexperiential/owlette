@@ -5,6 +5,74 @@ description: "All notable changes to owlette are documented here. The format is 
 
 ---
 
+## [3.0.1] - 2026-08-17
+
+### added
+
+- **Suppress the Windows setup screens, fleet-wide.** A new hoot tool turns off the full-screen interruptions Windows shows at sign-in after updates — the privacy chooser, the Welcome Experience, "let's finish setting up your device", and the Edge first-run tour — for every profile on the machine, including accounts created later. A built-in talons preset, **update guard**, re-asserts the suppression and the update window every Sunday morning, since feature updates are known to reset these keys.
+
+### fixed
+
+- **The tray icon stops flashing red on a machine that is actually connected.** On a cold boot the agent's health check often runs seconds before Windows finishes bringing the network up and records "network not reachable" — and that verdict was never revisited, so even after the agent connected moments later (and stayed connected) the tray flashed red for the machine's entire uptime while the window footer correctly said "connected". The health state now clears the moment a connection is established — at startup, and after any mid-run outage — and the tray itself now treats a live connection as proof that a leftover error is stale.
+- **Recovering from an internet outage clears the error, not just the badge.** A machine that lost and regained its connection kept its "connection failure" health error, with the same forever-flashing icon. Reconnection now resets it.
+- **A machine that isn't registered no longer blames the network.** When the health check ran before the network was up, its "network unreachable" verdict could stand in for the real problem. Once the network gate opens, the checks now run again, so an unauthenticated machine reports "authentication required" instead of a phantom network error.
+- **A machine whose cloud client failed to start recovers on its own.** If cloud initialization failed at startup, nothing retried it and the machine stayed invisible on the dashboard until someone restarted the service. The agent now notices "cloud enabled, but nothing serving it" and reinitializes, retrying every five minutes until it succeeds.
+- **roost's hourly maintenance no longer crashes on databases from interim builds.** Some 3.0.0 machines carried a sync-state database created with the new column names but stamped with the old schema version; the migration then failed on every run, permanently killing the on-disk scrub and the orphan-chunk cleanup. The migration now checks what actually needs renaming and brings those databases forward cleanly.
+- **The local status file reports the real time of the last heartbeat** instead of always claiming there had never been one.
+
+## [3.0.0] - 2026-08-16
+
+### added
+
+- **A new desktop app replaces the old agent window.** Process management now lives in a proper application: add a process by dragging its file onto the window, edit schedules inline, watch live status, and reach pairing, the recovery menu, and start-on-login from the tray. It ships with the installer and replaces the Python interface entirely.
+- **talons — automation that runs on your machines.** Build a rule as trigger → condition → outputs: react to a crash, a display change, a schedule, or a webhook, then restart something, send an alert, run a command, or ask hoot to look at a screenshot and decide. Presets cover the common cases, and you can bring your own LLM key per site.
+- **The dashboard works on a phone.** Machines, logs, hoot conversations, dialogs, and site management are all usable on a small screen, with touch-sized controls throughout.
+
+### changed
+
+- **Breaking: the agent runs under a new service host.** Owlette no longer uses NSSM; it is hosted by our own supervisor, which stops cleanly through Windows' own service controls with a grace period, backs off after a crash loop instead of restarting forever, registers real Windows failure actions, and writes its own log at `logs\service_host.log`. Upgrades migrate the service registration in place and remove `nssm.exe` — no reinstall, and supervised processes keep running through the migration. Agents older than 3.0.0 are not compatible with this host.
+- **Cortex is now hoot.** Routes, screens, and documentation use the new name, and `/cortex` links redirect permanently. The API keeps its `/api/cortex/*` paths working, so existing CLI and SDK integrations need no changes.
+- **The installer is much smaller.** The Claude CLI is downloaded and checksum-verified on first use rather than shipped inside the installer, and machines that already have a matching copy reuse it.
+- **One Start-menu entry.** "Owlette" opens the app. The old tray-only launcher, which appeared to do nothing when clicked, and the separate "Owlette Configuration" entry are both retired and removed on upgrade.
+
+### removed
+
+- **The legacy Python interface is gone**, and upgrading prunes its leftover files and logs.
+- **Site tiers and billing are removed.** The `core`/`pro` distinction no longer gates anything — every feature, including talons, is available to all sites.
+
+### fixed
+
+- **Starting a process that is already running no longer launches a second copy.** Starting a process from the dashboard, or from hoot's self-healing, decided whether it was already running by looking only at the PID Owlette itself last launched. A process that was live but untracked — anything with its launch mode set to off, or an instance that outlived a service restart — looked absent, so the start landed a duplicate on top of it. Both paths now search for a matching instance first and adopt it instead. Matching is project-aware: several instances of one application are normal, so a TouchDesigner instance is identified by the `.toe` it has open, not just by `TouchDesigner.exe`, and Owlette declines to adopt rather than guess when a process entry has no file configured to tell instances apart.
+- **Restarting a `.bat` or `.cmd` process no longer leaves the old one running.** Scripts start through a `cmd.exe` wrapper, so the process Owlette tracked was the wrapper rather than the script's real work. Stopping or restarting killed the wrapper and reported success while the actual process kept running — still holding its files, its port, or its GPU — and invisible to Owlette from then on. The payload is now shut down along with its wrapper. Ordinary `.exe` processes are unaffected: applications that manage their own helpers, like TouchDesigner, still close them in their own time.
+- **A hung process no longer reads as "inactive" in the local app.** When a process stops responding, the agent marks it stalled — but the desktop app didn't recognise that state, so it displayed the process as inactive and greyed out the restart button, at exactly the moment an operator would want it. It now shows as stalled and stays actionable, matching how the dashboard has always treated it.
+- **Setting relaunch attempts to 0 really does mean unlimited.** The field is documented as "0 is unlimited", and the agent's reboot-escalation check was written to honour it, but a zero was being read as "not set" and silently replaced with the default of 3 — so a machine configured never to reboot itself would reboot after three failed relaunches. A zero is now preserved end to end, through the agent, the API, and the dashboard's edit form. A blank or non-numeric value still falls back to 3.
+- **Two launches can no longer race each other.** The monitoring loop, dashboard commands, and remote config updates each run on their own thread, and nothing stopped two of them from deciding a process needed launching at the same moment. Launches are now serialised per process, a restart holds that claim across both the stop and the start, and a launch that loses the race adopts the winner's process instead of starting another.
+- **Leftover scheduled tasks from old agents are cleaned up.** Agents older than 2.1.1 started supervised processes through Windows Task Scheduler and created one task per launch, which were meant to be deleted moments later but survived whenever a launch was interrupted. Long-lived machines accumulated dozens, where they were easily mistaken for a second Owlette autostart. The agent now removes them once, on first start after upgrading. Only the two task shapes Owlette generated are matched, and only when they carry no trigger that could still fire — update tasks, and anything named by a technician, are left alone.
+- **Display alerts actually arrive again.** Display events — a monitor disappearing, a layout apply failing, genlock dropping, resolution drifting — were written to the dashboard event feed but never handed to the alert pipeline, so the emails and webhooks they were supposed to trigger had been silent fleet-wide. The agent now sends them, and the `display alerts` preference, the display digest, and display webhooks work as documented. Requires the new agent; older agents keep logging the events to the dashboard as before.
+- **roost deployments finish, roll back, and report honestly.** A rollout to a single machine could sit at in-progress after the file sync had actually completed, rollback restored a version record without restoring the files it named, and a deployment that failed part-way could still read as successful. Rollouts now complete, rollback returns the machine to the exact files it ran before, failures say so, and the `rolled_back` webhook fires. Abandoned transfers are cleaned up rather than left occupying disk.
+- **A site you create yourself is visible to you.** Signing up and creating your first site wrote the site but never added it to your own account, so the dashboard came up empty until someone else invited you to it.
+- **The online badge respects a stale heartbeat.** A machine could show as online from a cached snapshot after it had stopped reporting; the badge now checks how recent the heartbeat is before showing green.
+
+## [2.12.21] - 2026-08-12
+
+### fixed
+
+- **Machines come online seconds after power-on, not minutes.** The agent previously waited out a blind two-minute startup delay, and a first connection attempt made before the network was ready could lock it out for several more minutes even after the network came up. The service now checks for real network readiness at startup and, when the network isn't up yet, retries every few seconds instead of backing off — longer waits are reserved for genuine server errors.
+- **Restarting the agent no longer flickers the machine offline.** Owlette-initiated restarts (a tray restart or the agent's own recovery watchdog) return within seconds, but used to mark the machine offline on the way out — producing a visible offline/online flap and sometimes a spurious alert. The dashboard now stays green through these restarts. Stopping the service yourself, or shutting the machine down, still marks it offline immediately.
+- **A single slow heartbeat no longer greys out a healthy machine.** The offline threshold was three minutes against a two-minute idle heartbeat — one delayed beat away from a false alarm. The dashboard and the offline-alert email now both wait five minutes, so a machine has to miss more than two consecutive heartbeats before it is called offline.
+
+## [2.12.20] - 2026-08-08
+
+### security
+
+- **The agent's bundled dependencies are updated and trimmed.** setuptools and requests move to versions clearing several published advisories, and three unused Google API libraries left over from an old Firebase integration are removed entirely — 17 fewer packages, and a smaller installer. None of the advisories were reachable from owlette; this is dependency hygiene rather than a fix for anything exploitable.
+- **A fresh install now reports its bundled libraries accurately.** Earlier installers could record two conflicting versions of the same library, so a vulnerability scanner reading a machine might report one version while different code was what actually ran. A new install now carries exactly one version of each library, and the build fails outright if its dependencies disagree.
+- **Known limitation — upgrading in place does not clear the old versions.** Installing over an existing agent replaces files but leaves the previous version's records behind, so a machine upgraded several times still reports stale versions to a scanner even though the current code is what runs. Only a fresh install gives an accurate reading today. Uninstalling first preserves your configuration, tokens, and logs.
+
+### changed
+
+- **The agent's HTTP layer moves off an end-of-life release.** One of the removed Google libraries had been holding the networking stack on a 2024 version that no longer receives fixes. Nothing about how the agent talks to owlette changes — it is simply maintained again.
+
 ## [2.12.19] - 2026-08-07
 
 ### added

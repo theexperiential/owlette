@@ -38,6 +38,9 @@ jest.mock('@/lib/apiAuth.server', () => {
 });
 jest.mock('@/lib/r2Client.server', () => ({
   hasChunk: (...a: unknown[]) => mockHasChunk(...a),
+  missingChunks: jest.fn(async () => []),
+  presignPutChunk: jest.fn(async (_site: string, hash: string) => `https://r2.test/put/${hash}`),
+  PUT_URL_TTL_SECONDS: 900,
 }));
 
 import { POST as mountPOST } from '@/app/api/chunks/[digest]/mount/route';
@@ -189,3 +192,7 @@ describe('GET /api/chunks/{digest}/referrers', () => {
     expect(body.nextPageToken).toBe('');
   });
 });
+
+/* ========================================================================== */
+/*  billing gate — the chunk upload surfaces are pro-only (wave 0.6)          */
+/* ========================================================================== */

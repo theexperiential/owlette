@@ -17,7 +17,7 @@ import {
   ProcessConfigError,
   PublicProcessConfig,
 } from '@/lib/processConfig.server';
-import { requireMachineAuthAndScope } from '@/app/api/_shared';
+import { applyAuthDeprecations, requireMachineAuthAndScope } from '@/app/api/_shared';
 import { ActionInputError } from '@/lib/actions/createProcess.server';
 import { updateProcess } from '@/lib/actions/updateProcess.server';
 import { deleteProcess } from '@/lib/actions/deleteProcess.server';
@@ -60,10 +60,13 @@ export const GET = withRateLimit(
       >;
       const live = lookupLiveProcessStatus(proc, liveProcesses);
 
-      return NextResponse.json({
-        ok: true,
-        data: shapeProcessForResponse(proc, live),
-      });
+      return applyAuthDeprecations(
+        NextResponse.json({
+          ok: true,
+          data: shapeProcessForResponse(proc, live),
+        }),
+        auth.scopeCheck,
+      );
     } catch (error: unknown) {
       return errorResponse(error, 'sites/machines/processes/[id] GET');
     }
@@ -205,7 +208,13 @@ function shapeProcessForResponse(
     visibility: p.visibility || 'Show',
     time_delay: p.time_delay || '0',
     time_to_init: p.time_to_init || '10',
-    relaunch_attempts: p.relaunch_attempts || '3',
+    // 0 is meaningful — "relaunch forever, never escalate to a machine
+    // restart" — so it must survive the round trip. `|| '3'` treated it as
+    // absent and handed the operator back a 3 they never set.
+    relaunch_attempts:
+      p.relaunch_attempts === undefined || p.relaunch_attempts === null || p.relaunch_attempts === ''
+        ? '3'
+        : String(p.relaunch_attempts),
     autolaunch: p.autolaunch ?? false,
     launch_mode: p.launch_mode || 'off',
     schedules: p.schedules || null,

@@ -55,7 +55,22 @@ describe('errorHandler', () => {
     it('should return user-friendly message for Firebase auth/network-request-failed error', () => {
       const error = { code: 'auth/network-request-failed', message: 'Firebase: Error (auth/network-request-failed).' };
       const result = sanitizeError(error);
-      expect(result).toBe('An error occurred. Please try again');
+      expect(result).toBe('Network error. Please check your connection and try again');
+    });
+
+    // The Firebase SDK signs the user out itself before surfacing these, so the
+    // message has to tell the user their session ended rather than blame the
+    // operation they were performing.
+    it('should return a session-expired message for Firebase auth/user-token-expired error', () => {
+      const error = { code: 'auth/user-token-expired', message: 'Firebase: Error (auth/user-token-expired).' };
+      const result = sanitizeError(error);
+      expect(result).toBe('Your session expired. Please sign in again');
+    });
+
+    it('should return a session-expired message for Firebase auth/invalid-user-token error', () => {
+      const error = { code: 'auth/invalid-user-token', message: 'Firebase: Error (auth/invalid-user-token).' };
+      const result = sanitizeError(error);
+      expect(result).toBe('Your session expired. Please sign in again');
     });
 
     it('should return user-friendly message for Firebase permission-denied error', () => {

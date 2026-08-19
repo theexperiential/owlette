@@ -1,7 +1,7 @@
 /**
- * POST /api/cortex/conversations — create a Cortex conversation.
+ * POST /api/hoot/conversations — create a Hoot conversation.
  *
- * `/api/chat/new` remains a compatibility alias; `/api/cortex/conversations`
+ * `/api/chat/new` remains a compatibility alias; `/api/hoot/conversations`
  * is the canonical public API path as of public-api Wave 2.9.
  *
  * Required scope: `chat=<siteId>:write`. Idempotent via `Idempotency-Key`.
@@ -22,7 +22,11 @@ import {
 } from '@/lib/apiErrors';
 import { withIdempotency } from '@/lib/idempotency';
 import { emitMutation } from '@/lib/auditLogClient';
-import { requireChatAuthAndScope, readAndParseJsonBody } from '@/app/api/_shared';
+import {
+  applyAuthDeprecations,
+  requireChatAuthAndScope,
+  readAndParseJsonBody,
+} from '@/app/api/_shared';
 import {
   createConversation,
   serializeConversation,
@@ -73,7 +77,7 @@ export async function POST(request: NextRequest) {
       const content = im.content;
       if (typeof role !== 'string' || !VALID_ROLES.includes(role as ChatRole)) {
         return problemValidation(
-          'initial_message.role must be `user` for public Cortex conversations',
+          'initial_message.role must be `user` for public Hoot conversations',
           { 'body.initial_message.role': ['invalid role'] },
         );
       }
@@ -120,9 +124,12 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        return NextResponse.json(
-          { ok: true, data: serializeConversation(conversation) },
-          { status: 201 },
+        return applyAuthDeprecations(
+          NextResponse.json(
+            { ok: true, data: serializeConversation(conversation) },
+            { status: 201 },
+          ),
+          auth.scopeCheck,
         );
       },
       { requireKey: true },

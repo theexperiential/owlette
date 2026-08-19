@@ -23,6 +23,9 @@ import { SDK_VERSION } from '../version';
 export const DEFAULT_API_URL = 'https://owlette.app';
 export const DEFAULT_ROOST_VERSION = '2026-04-22';
 
+/** Advisory header the api sets while the account's free trial is running. */
+const BILLING_WARNING_HEADER = 'x-owlette-billing-warning';
+
 export type Environment = 'live' | 'test';
 
 export interface OwletteClientOpts {
@@ -38,6 +41,22 @@ export interface OwletteClientOpts {
   fetch?: typeof fetch;
   /** Override the default retry schedule. */
   retry?: Partial<RetryOptions>;
+  /**
+   * Invoked when a response carries the api's trial-countdown advisory
+   * (`X-Owlette-Billing-Warning`) — e.g. `"trial ends 2026-08-15T00:00:00.000Z;
+   * choose a plan to keep API access"`.
+   *
+   * Unset by default, and the sdk prints nothing on its own: a library has no
+   * business writing to its host application's stderr. Wire it up to surface
+   * the notice however your app already surfaces warnings.
+   *
+   *   new Owlette({ token, onBillingWarning: (w) => logger.warn(w) })
+   *
+   * Fires once per response bearing the header — including retried attempts —
+   * so deduplicate on your side if you want at-most-once behaviour. Throwing
+   * from this callback is swallowed; it can never fail a request.
+   */
+  onBillingWarning?: (warning: string) => void;
 }
 
 export interface RequestOptions {
@@ -93,6 +112,7 @@ export class OwletteClient {
   readonly environment: Environment | null;
   readonly _fetch: typeof fetch;
   private readonly _retry: Partial<RetryOptions>;
+  private readonly _onBillingWarning: ((warning: string) => void) | null;
 
   constructor(opts: OwletteClientOpts) {
     if (!opts.token || typeof opts.token !== 'string') {
@@ -104,6 +124,25 @@ export class OwletteClient {
     this.environment = opts.environment ?? null;
     this._fetch = opts.fetch ?? globalThis.fetch;
     this._retry = opts.retry ?? {};
+    this._onBillingWarning = opts.onBillingWarning ?? null;
+  }
+
+  /**
+   * Hand the trial-countdown advisory to the consumer's callback, if any.
+   *
+   * A throwing callback must never surface as a request failure — the
+   * advisory is informational and the caller is waiting on their data — so
+   * the error is swallowed here rather than propagated.
+   */
+  private _emitBillingWarning(headers: Headers): void {
+    if (!this._onBillingWarning) return;
+    const warning = headers.get(BILLING_WARNING_HEADER);
+    if (!warning) return;
+    try {
+      this._onBillingWarning(warning);
+    } catch {
+      /* consumer callback threw — never let it fail the request */
+    }
   }
 
   async request<T>(path: string, options: RequestOptions = {}): Promise<ApiResponse<T>> {
@@ -141,6 +180,9 @@ export class OwletteClient {
       if (bodyText !== undefined) fetchInit.body = bodyText;
       if (options.signal) fetchInit.signal = options.signal;
       const res = await this._fetch(url.toString(), fetchInit);
+      // Before the ok-check: a response carrying the advisory is worth
+      // surfacing whether or not it also carries an error.
+      this._emitBillingWarning(res.headers);
       const text = await res.text();
       let parsed: unknown = null;
       if (text.length > 0) {

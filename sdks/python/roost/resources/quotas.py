@@ -12,13 +12,11 @@ if TYPE_CHECKING:
 @dataclass(slots=True)
 class QuotaSnapshot:
     site_id: str
-    tier: str
     used_bytes: int
     pending_bytes: int
     committed_bytes: int
     limit_bytes: int | None
     fraction_used: float | None
-    unlimited: bool
     last_alarm_level: int
     last_alarm_at: str | None
     last_reconciled_at: str | None
@@ -43,13 +41,11 @@ class Quotas:
         data = resp.data if isinstance(resp.data, dict) else {}
         return QuotaSnapshot(
             site_id=str(data.get("siteId", site_id)),
-            tier=str(data.get("tier", "free")),
             used_bytes=int(data.get("usedBytes") or 0),
             pending_bytes=int(data.get("pendingBytes") or 0),
             committed_bytes=int(data.get("committedBytes") or 0),
             limit_bytes=data.get("limitBytes"),
             fraction_used=data.get("fractionUsed"),
-            unlimited=bool(data.get("unlimited", False)),
             last_alarm_level=int(data.get("lastAlarmLevel") or 0),
             last_alarm_at=data.get("lastAlarmAt"),
             last_reconciled_at=data.get("lastReconciledAt"),

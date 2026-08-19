@@ -21,7 +21,10 @@
  * superadmin-only at this surface).
  */
 
+import type { DocumentReference } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
+import logger from '@/lib/logger';
 import type { UserActor } from '@/lib/capabilities';
 
 const VALID_OPERATORS = new Set(['>', '<', '>=', '<=']);
@@ -44,6 +47,8 @@ export interface AlertRuleInput {
 export interface SetAlertRulesContext {
   actor: UserActor;
   siteId: string;
+  /** Audit actor string ("user:<uid>" or "apiKey:<keyId>"). */
+  auditActor: string;
 }
 
 export interface SetAlertRulesInput {
@@ -159,11 +164,63 @@ export async function setAlertRules(
     .collection('settings')
     .doc('alerts');
 
+  // Snapshot the rule ids already on the doc so the audit row can name what
+  // the caller added/removed. Best-effort by design: this read exists only to
+  // enrich the audit attributes, so a failure degrades to "no diff recorded"
+  // rather than turning a valid config update into a 500.
+  const previousRuleIds = await readExistingRuleIds(alertsRef, ctx.siteId);
+
   // Whole-document semantics matching the legacy `setDoc(..., { merge: true })`
   // call in admin/alerts/page.tsx:225. Using merge:true preserves any sibling
   // fields the legacy doc may carry (rule digest hashes, last-fired markers
   // written by the alert evaluator). Only `rules` is replaced.
   await alertsRef.set({ rules: validatedRules }, { merge: true });
 
+  const attributes: Record<string, unknown> = {
+    verb: 'alert_rules.update',
+    endpoint: 'alerts',
+    method: 'PUT',
+    ruleCount: validatedRules.length,
+  };
+  if (previousRuleIds !== null) {
+    const before = new Set(previousRuleIds);
+    const after = new Set(validatedRules.map((r) => r.id));
+    attributes.addedRuleIds = [...after].filter((id) => !before.has(id));
+    attributes.removedRuleIds = [...before].filter((id) => !after.has(id));
+  }
+
+  emitMutation({
+    kind: 'site_mutated',
+    siteId: ctx.siteId,
+    actor: ctx.auditActor,
+    targetId: ctx.siteId,
+    attributes,
+  });
+
   return { siteId: ctx.siteId, ruleCount: validatedRules.length };
+}
+
+/**
+ * Rule ids currently stored on the alerts doc, or `null` when they could not
+ * be determined (doc absent, malformed `rules` field, or a failed read).
+ */
+async function readExistingRuleIds(
+  alertsRef: DocumentReference,
+  siteId: string,
+): Promise<string[] | null> {
+  try {
+    const snap = await alertsRef.get();
+    if (!snap.exists) return null;
+    const existing = snap.data()?.rules;
+    if (!Array.isArray(existing)) return null;
+    return existing
+      .map((r) => (r && typeof r === 'object' ? (r as { id?: unknown }).id : undefined))
+      .filter((id): id is string => typeof id === 'string');
+  } catch (err) {
+    logger.warn('setAlertRules: existing rule-id read failed (audit detail only)', {
+      context: 'setAlertRules',
+      data: { siteId, err: err instanceof Error ? err.message : String(err) },
+    });
+    return null;
+  }
 }

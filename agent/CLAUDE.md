@@ -93,6 +93,7 @@ Most common admin tasks have purpose-built Tier 2 tools with validated parameter
 | Get full service details (deps, recovery, status) | `manage_windows_service` (action=get_details) | Multiple sc.exe calls |
 | Set GPU TDR timeout (TdrDelay) | `configure_gpu_tdr` | `execute_script` + registry writes |
 | Pause / schedule Windows Update | `manage_windows_update` | `execute_script` + PowerShell |
+| Suppress full-screen setup/OOBE screens (privacy, welcome, "finish setting up", Edge first-run) for all profiles | `suppress_setup_screens` | `execute_script` + per-user hive registry writes |
 | Suppress Windows toast notifications | `manage_notifications` | `execute_script` + registry writes |
 | Set power plan, disable sleep/hibernate | `configure_power_plan` | `run_command` + powercfg |
 | Check if a reboot is pending | `check_pending_reboot` (Tier 1, diagnostic) | Manual registry reads |

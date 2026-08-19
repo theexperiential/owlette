@@ -1864,3 +1864,160 @@ class TestIndirectDisplayFilter:
                             lambda: ([usb_c], [self._stub_mode(0)]))
         monitors = dm._enumerate_monitors_ccd()
         assert [m['targetId'] for m in monitors] == [200]
+
+
+# ---------------------------------------------------------------------------
+# Display alert dispatch — the log write and the alert POST are two sinks,
+# not one. `send_display_alert` had zero call sites from v2.11.0 onward,
+# which left every routed display email and webhook dormant fleet-wide.
+
+
+class TestEmitAuditAlertDispatch:
+    """`_emit_audit` must reach BOTH sinks: `log_event` (dashboard feed +
+    talon log bridge) and `send_display_alert` (email + webhook routing).
+    """
+
+    def test_emits_log_and_alert(self):
+        fb = MagicMock()
+        dm._emit_audit(
+            fb, 'display_apply_failed', 'warning', 'validate rejected',
+            {'eventType': 'display_apply_failed', 'error': 'boom'},
+        )
+
+        fb.log_event.assert_called_once_with(
+            action='display_apply_failed',
+            level='warning',
+            details='validate rejected',
+            extra_fields={'eventType': 'display_apply_failed', 'error': 'boom'},
+        )
+        fb.send_display_alert.assert_called_once_with(
+            'display_apply_failed',
+            {
+                'details': 'validate rejected',
+                'eventType': 'display_apply_failed',
+                'error': 'boom',
+            },
+        )
+
+    def test_extras_win_over_the_merged_details_key(self):
+        # `details` is merged in for webhook rendering
+        # (`webhookSender.extractFields` reads `data.details`), but an
+        # explicit extras key is the caller's intent and must not be clobbered.
+        fb = MagicMock()
+        dm._emit_audit(
+            fb, 'display_sync_lost', 'warning', 'positional detail',
+            {'details': 'explicit detail'},
+        )
+        assert fb.send_display_alert.call_args[0][1]['details'] == 'explicit detail'
+
+    def test_no_extras_still_sends_details(self):
+        fb = MagicMock()
+        dm._emit_audit(fb, 'display_monitor_removed', 'critical', 'panel gone')
+        fb.send_display_alert.assert_called_once_with(
+            'display_monitor_removed', {'details': 'panel gone'},
+        )
+
+    def test_none_client_is_a_no_op(self):
+        # The user-session helper process runs display_manager without a
+        # firebase client; it must not blow up on the audit path.
+        dm._emit_audit(None, 'display_apply_failed', 'warning', 'x', {})
+
+    def test_alert_failure_does_not_break_the_caller(self):
+        fb = MagicMock()
+        fb.send_display_alert.side_effect = RuntimeError('no thread for you')
+        dm._emit_audit(fb, 'display_drift', 'warning', 'drifted', {})
+        fb.log_event.assert_called_once()
+
+    def test_log_failure_still_sends_the_alert(self):
+        # A Firestore write failure must not swallow the operator's alert —
+        # the two sinks fail independently.
+        fb = MagicMock()
+        fb.log_event.side_effect = RuntimeError('firestore down')
+        dm._emit_audit(fb, 'display_auto_revert_fired', 'error', 'reverted', {})
+        fb.send_display_alert.assert_called_once()
+
+
+class TestEmitDisplayEventAlertDispatch:
+    """`owlette_service._emit_display_event` is the other display-event funnel
+    (the six topology-observation events). Same two-sink contract.
+    """
+
+    @staticmethod
+    def _bound_service():
+        from owlette_service import OwletteService
+
+        class _Svc:
+            pass
+
+        svc = _Svc()
+        svc.firebase_client = MagicMock()
+        svc._emit_display_event = OwletteService._emit_display_event.__get__(
+            svc, OwletteService,
+        )
+        return svc
+
+    @staticmethod
+    def _bind_change_events(svc):
+        from owlette_service import OwletteService
+
+        svc._DISPLAY_DRIFT_FIELDS = OwletteService._DISPLAY_DRIFT_FIELDS
+        svc._display_monitor_summary = OwletteService._display_monitor_summary
+        svc._emit_display_change_events = (
+            OwletteService._emit_display_change_events.__get__(svc, OwletteService)
+        )
+        return svc
+
+    # One drifted field on a monitor present in both profiles — the minimum
+    # input that produces exactly one `display_drift` event.
+    _PREV = {'monitors': [{'edidHash': 'aaaa', 'refreshHz': 60}]}
+    _NEW = {
+        'monitors': [{'edidHash': 'aaaa', 'refreshHz': 30}],
+        'signatureHash': 'sig-1',
+    }
+
+    def test_emits_log_and_alert(self):
+        svc = self._bound_service()
+        payload = {'signatureHash': 'abc', 'monitorCount': 2}
+        svc._emit_display_event('display_drift', 'warning', payload)
+
+        svc.firebase_client.log_event.assert_called_once_with(
+            action='display_drift',
+            level='warning',
+            details=json.dumps(payload, separators=(',', ':'), sort_keys=True),
+        )
+        svc.firebase_client.send_display_alert.assert_called_once_with(
+            'display_drift', payload,
+        )
+
+    def test_unserializable_payload_sends_nothing(self):
+        # The early return on a serialization failure must skip BOTH sinks —
+        # an alert whose payload can't be logged is not worth half-emitting.
+        svc = self._bound_service()
+        svc._emit_display_event('display_drift', 'warning', {'bad': object()})
+        svc.firebase_client.log_event.assert_not_called()
+        svc.firebase_client.send_display_alert.assert_not_called()
+
+    def test_suppress_flag_reaches_the_alert_payload(self, reset_suppression_state):
+        # End-to-end for the `suppressAlert` contract: the stamping lives in
+        # `_emit_display_change_events` (B2.2) and rides the same payload dict
+        # into the alert, which `/api/agent/alert` reads off `data`.
+        import time as _time
+
+        svc = self._bind_change_events(self._bound_service())
+        dm._last_apply_finished_at = _time.time()
+        with patch.object(dm, '_current_apply_id', 'apply-xyz'):
+            svc._emit_display_change_events(self._PREV, self._NEW)
+
+        event_type, data = svc.firebase_client.send_display_alert.call_args[0]
+        assert event_type == 'display_drift'
+        assert data['suppressAlert'] is True
+        assert data['correlatedApplyId'] == 'apply-xyz'
+
+    def test_no_suppress_flag_outside_the_window(self, reset_suppression_state):
+        svc = self._bind_change_events(self._bound_service())
+        dm._last_apply_finished_at = 0.0  # no apply since startup
+        svc._emit_display_change_events(self._PREV, self._NEW)
+
+        _, data = svc.firebase_client.send_display_alert.call_args[0]
+        assert 'suppressAlert' not in data
+        assert 'correlatedApplyId' not in data

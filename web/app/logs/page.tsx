@@ -3,7 +3,8 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSites } from '@/hooks/useFirestore';
+import { useCurrentSite } from '@/hooks/useCurrentSite';
+import { NoSitesEmptyState } from '@/components/NoSitesEmptyState';
 import { Card } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageHeader } from '@/components/PageHeader';
@@ -134,6 +135,10 @@ const ACTION_TYPES = [
   { value: 'deployment_failed', label: 'deployment failed' },
   { value: 'deployment_cancelled', label: 'deployment cancelled' },
   { value: 'scheduled_reboot', label: 'scheduled restart' },
+  { value: 'talon_triggered', label: 'talon triggered' },
+  { value: 'talon_succeeded', label: 'talon succeeded' },
+  { value: 'talon_failed', label: 'talon failed' },
+  { value: 'talon_skipped', label: 'talon skipped' },
 ];
 
 // Level badges styling
@@ -194,10 +199,17 @@ function buildLogsQuery(
   return q;
 }
 
-// Shared grid template so the column header and every log row line up exactly:
+// Shared column template so the column header and every log row line up exactly:
 // chevron · level · time · event · machine · process · details(flex, truncates).
-const LOG_GRID =
-  'grid grid-cols-[14px_76px_104px_150px_132px_116px_minmax(0,1fr)] items-center gap-3';
+// The fixed columns add up to ~664px, so they only apply from `md` up.
+const LOG_COLS =
+  'md:grid-cols-[14px_76px_104px_150px_132px_116px_minmax(0,1fr)] md:gap-3';
+
+// Row layout. Below `md` the row is a wrapping stack — level + time + event on
+// the first line, machine + process next, the details preview on its own
+// full-width line — and the column header is hidden, since each field reads for
+// itself at that size. From `md` up it is the original fixed grid, untouched.
+const LOG_GRID = `flex flex-wrap items-center gap-x-2 gap-y-1 md:grid ${LOG_COLS}`;
 
 // Compact relative time for the scannable time column ("2m ago", "3d ago"). The
 // absolute timestamp is shown on hover and in the expanded row.
@@ -249,16 +261,16 @@ const LogRow = React.memo(function LogRow({
       className={`group/row hover:bg-card/40 transition-colors border-b border-border last:border-b-0`}
     >
       <CollapsibleTrigger asChild>
-        <button type="button" className="w-full px-4 py-2.5 text-left cursor-pointer">
+        <button type="button" className="w-full px-4 py-3 md:py-2.5 text-left cursor-pointer">
           <div className={`${LOG_GRID} text-sm`}>
-            {/* chevron */}
-            <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover/row:opacity-100 transition-all ${isExpanded ? 'opacity-100 rotate-180' : ''}`} />
+            {/* chevron — always visible on touch (there is no hover to reveal it) */}
+            <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 text-muted-foreground transition-all ${isExpanded ? 'opacity-100 rotate-180' : 'opacity-100 md:opacity-0 md:group-hover/row:opacity-100'}`} />
             {/* level */}
-            <div>{getLevelBadge(log.level)}</div>
+            <div className="flex-shrink-0">{getLevelBadge(log.level)}</div>
             {/* time (relative; absolute on hover) */}
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="text-muted-foreground text-xs whitespace-nowrap truncate cursor-help">
+                <span className="text-muted-foreground text-xs whitespace-nowrap truncate cursor-help flex-shrink-0">
                   {relativeTime(log.timestamp?.toDate())}
                 </span>
               </TooltipTrigger>
@@ -283,8 +295,8 @@ const LogRow = React.memo(function LogRow({
             <span className="text-foreground truncate">{log.machineName}</span>
             {/* process */}
             <span className="text-muted-foreground truncate">{log.processName || '—'}</span>
-            {/* details preview (flex, truncates) + screenshot indicator — hidden once expanded, where the full details render below (avoids duplicating the text) */}
-            <div className="flex items-center gap-2 min-w-0">
+            {/* details preview (flex, truncates) + screenshot indicator — hidden once expanded, where the full details render below (avoids duplicating the text). Below `md` it takes its own full-width line under the other fields. */}
+            <div className="flex items-center gap-2 min-w-0 w-full md:w-auto">
               {!isExpanded && log.screenshotUrl && <Camera className="w-3 h-3 text-muted-foreground flex-shrink-0" />}
               {!isExpanded && (log.details ? (
                 <Tooltip>
@@ -301,14 +313,14 @@ const LogRow = React.memo(function LogRow({
         </button>
       </CollapsibleTrigger>
       <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-        <div className="px-4 pb-3 pt-3 border-t border-border/50 text-sm flex gap-6 bg-card">
+        <div className="px-4 pb-3 pt-3 border-t border-border/50 text-sm flex flex-col md:flex-row gap-4 md:gap-6 bg-card">
           <div className="flex-shrink-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 self-start">
             <span className="text-muted-foreground">machine id</span>
-            <span className="text-foreground text-xs font-mono">{log.machineId}</span>
+            <span className="text-foreground text-xs font-mono break-all">{log.machineId}</span>
             {log.userId && (
               <>
                 <span className="text-muted-foreground">user</span>
-                <span className="text-foreground text-xs font-mono">{log.userId}</span>
+                <span className="text-foreground text-xs font-mono break-all">{log.userId}</span>
               </>
             )}
             <span className="text-muted-foreground">timestamp</span>
@@ -323,13 +335,13 @@ const LogRow = React.memo(function LogRow({
             </span>
           </div>
           {log.details && (
-            <div className="flex-1 min-w-0 border-l border-border/50 pl-6">
+            <div className="flex-1 min-w-0 border-t md:border-t-0 md:border-l border-border/50 pt-3 md:pt-0 md:pl-6">
               <span className="text-muted-foreground text-xs">details</span>
               <p className="text-foreground mt-1 whitespace-pre-wrap break-words select-text">{log.details}</p>
             </div>
           )}
           {log.screenshotUrl && (
-            <div className="flex-shrink-0 border-l border-border/50 pl-6">
+            <div className="flex-shrink-0 border-t md:border-t-0 md:border-l border-border/50 pt-3 md:pt-0 md:pl-6">
               <span className="text-muted-foreground text-xs">crash screenshot</span>
               <button onClick={() => onOpenScreenshot(log.screenshotUrl!)} className="block mt-1">
                 <img
@@ -348,12 +360,19 @@ const LogRow = React.memo(function LogRow({
 
 export default function LogsPage() {
   const router = useRouter();
-  const { user, loading, isSuperadmin, userSites, lastSiteId, updateLastSite, userPreferences } = useAuth();
-  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
-  const [currentSiteId, setCurrentSiteId] = useState<string>('');
-  // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
-  const currentSite = sites.find(s => s.id === currentSiteId);
-  const siteTimezone = currentSite?.timezone;
+  const { user, loading, userPreferences } = useAuth();
+  const {
+    sites,
+    sitesLoading,
+    currentSiteId,
+    siteTimezone,
+    hasNoSites,
+    selectSite,
+    pickSite,
+    createSite,
+    updateSite,
+    deleteSite,
+  } = useCurrentSite();
   const [logs, setLogs] = useState<LogEvent[]>([]);
   const [logsLoading, setLogsLoading] = useState(true);
   const [lastDoc, setLastDoc] = useState<DocumentData | null>(null);
@@ -487,26 +506,27 @@ export default function LogsPage() {
     }
   }, [user, loading, router]);
 
-  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
-  useEffect(() => {
-    if (!sitesLoading && sites.length > 0 && !currentSiteId) {
-      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
-      if (savedSite && sites.find(s => s.id === savedSite)) {
-        setCurrentSiteId(savedSite);
-      } else {
-        setCurrentSiteId(sites[0].id);
-      }
-    }
-  }, [sites, sitesLoading, currentSiteId, lastSiteId]);
-
   const handleSiteChange = (siteId: string) => {
-    setCurrentSiteId(siteId);
-    updateLastSite(siteId);
+    selectSite(siteId);
   };
 
   // Real-time logs listener for initial batch
   useEffect(() => {
-    if (!currentSiteId || !db) return;
+    if (!db) return;
+    if (!currentSiteId) {
+      // No site to subscribe to. Once the site list has settled that is a
+      // terminal answer, not a transient one — leaving `logsLoading` at its
+      // initial `true` is what pinned a site-less account on "loading
+      // logs..." forever, since the only two calls that clear it live inside
+      // the onSnapshot callbacks below and no listener is ever attached.
+      // Still gated on `!sitesLoading` so this cannot flash an empty state
+      // while sites are genuinely in flight.
+      if (!sitesLoading) {
+        setLogs([]);
+        setLogsLoading(false);
+      }
+      return;
+    }
 
     setLogsLoading(true);
     setExpandedLogIds(new Set());
@@ -543,7 +563,7 @@ export default function LogsPage() {
 
     // Cleanup listener on unmount or when dependencies change
     return () => unsubscribe();
-  }, [currentSiteId, filterAction, filterMachine, filterLevel, filterDatePreset, filterDateFrom, filterDateTo]);
+  }, [currentSiteId, sitesLoading, filterAction, filterMachine, filterLevel, filterDatePreset, filterDateFrom, filterDateTo]);
 
   // While searching, load the full set of logs matching the current server-side
   // filters (capped) so search spans the whole scope, not just the visible 50.
@@ -774,6 +794,11 @@ export default function LogsPage() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onCreateSite={createSite}
+        // Focus the new site, matching /deployments, /roosts and /talons.
+        // Logs was the one surface that omitted this, so a user creating
+        // their first site from here stayed on the no-sites state until the
+        // fallback resolver happened to pick it up.
+        onSiteCreated={(siteId) => pickSite(siteId)}
       />
 
       <AccountSettingsDialog
@@ -785,10 +810,10 @@ export default function LogsPage() {
       <main className="relative z-10 mx-auto max-w-screen-2xl p-3 md:p-4">
         {/* Section header with inline stats */}
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-center gap-6 md:gap-8">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3 md:gap-8">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">logs</h2>
 
-            <div className="flex items-center gap-6 md:gap-8">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 md:gap-8">
               <div className="flex items-center gap-2.5">
                 <div className={`rounded-md p-1.5 ${filteredLogs.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
                   <ScrollText className="h-4 w-4" />
@@ -801,7 +826,7 @@ export default function LogsPage() {
                 </div>
               </div>
 
-              <div className="h-8 w-px bg-border" />
+              <div className="hidden md:block h-8 w-px bg-border" />
 
               <div className="flex items-center gap-2.5">
                 <div className={`rounded-md p-1.5 ${warningCount > 0 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-muted text-muted-foreground'}`}>
@@ -815,7 +840,7 @@ export default function LogsPage() {
                 </div>
               </div>
 
-              <div className="h-8 w-px bg-border" />
+              <div className="hidden md:block h-8 w-px bg-border" />
 
               <div className="flex items-center gap-2.5">
                 <div className={`rounded-md p-1.5 ${errorCount > 0 ? 'bg-red-500/10 text-red-400' : 'bg-muted text-muted-foreground'}`}>
@@ -831,7 +856,7 @@ export default function LogsPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
             {filteredLogs.length > 0 && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1045,7 +1070,7 @@ export default function LogsPage() {
         {/* Logs List */}
         <Card className="bg-card-sunken border-border/60 overflow-hidden py-0 gap-0">
           {!logsLoading && filteredLogs.length > 0 && (
-            <div className={`${LOG_GRID} px-4 py-3 border-b border-border bg-card-header rounded-t-xl text-[11px] font-medium tracking-wide text-muted-foreground`}>
+            <div className={`hidden md:grid ${LOG_COLS} items-center px-4 py-3 border-b border-border bg-card-header rounded-t-xl text-[11px] font-medium tracking-wide text-muted-foreground`}>
               <span aria-hidden />
               <span>level</span>
               <span>time</span>
@@ -1056,7 +1081,11 @@ export default function LogsPage() {
             </div>
           )}
           <div className="divide-y divide-border">
-            {logsLoading ? (
+            {hasNoSites ? (
+              <div className="p-8">
+                <NoSitesEmptyState action="view logs" />
+              </div>
+            ) : logsLoading ? (
               <div className="p-8 text-center text-muted-foreground">
                 loading logs...
               </div>

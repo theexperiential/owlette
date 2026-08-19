@@ -55,6 +55,33 @@ def test_default_state_db_path_is_not_under_documents():
 # ─── lifecycle ───────────────────────────────────────────────────────
 
 
+def test_migration_skips_renames_already_applied(tmp_path):
+    """
+    regression (TEC-B4A, 2026-08-17): interim dev builds created DBs with the
+    NEW column names while still stamped user_version 1. the v1->v2 rename then
+    failed with "no such column: folder_id", the txn rolled back the version
+    stamp with it, and the same crash repeated on every open — killing the
+    hourly scrub and the content-store reaper forever. such a DB must open
+    cleanly and come out stamped at SCHEMA_VERSION.
+    """
+    db_path = tmp_path / 'state.db'
+    seed = SyncState(str(db_path))
+    seed.close()
+    conn = sqlite3.connect(str(db_path))
+    conn.execute('PRAGMA user_version = 1')
+    conn.close()
+
+    state = SyncState(str(db_path))
+    try:
+        stamped = state._conn.execute('PRAGMA user_version').fetchone()[0]
+        assert stamped == SCHEMA_VERSION
+        columns = {row[1] for row in state._conn.execute('PRAGMA table_info(distributions)')}
+        assert 'roost_id' in columns
+        assert 'folder_id' not in columns
+    finally:
+        state.close()
+
+
 def test_open_creates_db_and_dir(tmp_path):
     db_path = tmp_path / 'subdir' / 'state.db'
     state = SyncState(str(db_path))

@@ -390,23 +390,29 @@ Invoke-Check -Name 'Python 3.11' -OnError Fail -ScriptBlock {
     }
 }
 
-Invoke-Check -Name 'Python 3.11 tkinter' -OnError Warn -ScriptBlock {
-    if (-not (Test-Command 'py')) {
-        Write-Warn 'Python 3.11 tkinter: py launcher missing; GUI build degrades gracefully but warns'
+# The desktop app replaced the tkinter GUI in 3.0.0 and owlette-host replaced
+# NSSM, so the installer build now needs a Rust toolchain instead of a system
+# Python with Tk. Fatal, not a warn: without cargo the full build stops at step
+# 6 (desktop app) or step 7 (service host) rather than degrading.
+Invoke-Check -Name 'Rust toolchain' -OnError Fail -ScriptBlock {
+    $cargoExe = if (Test-Command 'cargo') { 'cargo' } elseif (Test-Path "$env:USERPROFILE\.cargo\bin\cargo.exe") { "$env:USERPROFILE\.cargo\bin\cargo.exe" } else { $null }
+
+    if (-not $cargoExe) {
+        Write-Fail 'Rust toolchain: cargo not found; install via rustup for the desktop app and service host builds'
         return
     }
 
-    $tkResult = Invoke-Native -FilePath 'py' -ArgumentList @('-3.11', '-c', 'import tkinter; print(tkinter.TkVersion)')
-    $tkVersion = Get-FirstLine $tkResult.Output
+    $cargoResult = Invoke-Native -FilePath $cargoExe -ArgumentList @('--version')
+    $cargoVersion = Get-FirstLine $cargoResult.Output
 
-    if ($tkResult.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($tkVersion)) {
-        Write-Pass "Python 3.11 tkinter: Tk $tkVersion"
+    if ($cargoResult.ExitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($cargoVersion)) {
+        Write-Pass "Rust toolchain: $cargoVersion"
     }
     else {
-        Write-Warn 'Python 3.11 tkinter: not importable; GUI build degrades gracefully but warns'
+        Write-Fail 'Rust toolchain: cargo present but not runnable'
     }
 
-    Write-Detail "Python 3.11 tkinter detail: Tk version $tkVersion"
+    Write-Detail "Rust toolchain detail: $cargoExe -> $cargoVersion"
 }
 
 Write-Host ''
@@ -450,19 +456,28 @@ Invoke-Check -Name 'Inno Setup 6' -OnError Warn -ScriptBlock {
     Write-Detail "Inno Setup 6 detail: version $isccVersion; path $isccPath"
 }
 
-Invoke-Check -Name 'NSSM' -OnError Info -ScriptBlock {
+# The service host is built from source (agent/host) by step 7 of the full
+# build, so there is nothing to download and nothing to install — this only
+# reports whether THIS machine is running a host-registered service yet, which
+# is the first thing to check when a local agent behaves oddly after an upgrade.
+Invoke-Check -Name 'Service host' -OnError Info -ScriptBlock {
     $programData = $env:ProgramData
     if ([string]::IsNullOrWhiteSpace($programData)) {
         $programData = 'C:\ProgramData'
     }
 
-    $nssmPath = Join-Path $programData 'Owlette\tools\nssm.exe'
+    $hostPath = Join-Path $programData 'Owlette\tools\owlette-host.exe'
 
-    if (Test-Path -LiteralPath $nssmPath -PathType Leaf) {
-        Write-Info "NSSM: present at $nssmPath"
+    if (Test-Path -LiteralPath $hostPath -PathType Leaf) {
+        Write-Info "Service host: installed at $hostPath"
     }
     else {
-        Write-Info "NSSM: not found at $nssmPath; build script downloads it if missing"
+        Write-Info "Service host: not installed at $hostPath; the full build compiles it from agent/host"
+    }
+
+    $legacyNssm = Join-Path $programData 'Owlette\tools\nssm.exe'
+    if (Test-Path -LiteralPath $legacyNssm -PathType Leaf) {
+        Write-Info "Service host: legacy nssm.exe still present at $legacyNssm; a 3.0.0 install removes it"
     }
 }
 

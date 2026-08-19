@@ -12,10 +12,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { toast } from '@/lib/toast';
 import { validatePassword, validateEmail } from '@/lib/validators';
 import { sanitizeError } from '@/lib/errorHandler';
+import { isPopupUnavailableError } from '@/lib/inAppBrowser';
+import { resolvePostSignInPath } from '@/lib/postSignIn';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { TurnstileWidget, TURNSTILE_ENABLED, type TurnstileHandle } from '@/components/TurnstileWidget';
 import { FormError } from '@/components/ui/form-error';
+import { InAppBrowserNotice } from '@/components/InAppBrowserNotice';
+import { InlineNotice } from '@/components/ui/inline-notice';
 import { useFieldError } from '@/hooks/useFieldError';
+import { useInAppBrowser } from '@/hooks/useInAppBrowser';
+import { useRedirectIfAuthenticated } from '@/hooks/useRedirectIfAuthenticated';
 
 export default function RegisterPage() {
   const [firstName, setFirstName] = useState('');
@@ -32,17 +38,52 @@ export default function RegisterPage() {
    * never closes, so a partly-filled form can't collapse mid-entry.
    */
   const [emailFormOpen, setEmailFormOpen] = useState(false);
+  /**
+   * Set when Google sign-in fails because the browser refused the popup. Covers
+   * the webviews the user-agent doesn't identify, plus ordinary browsers with a
+   * popup blocker — so the remediation appears even when detection said no.
+   */
+  const [popupBlocked, setPopupBlocked] = useState(false);
+  /**
+   * Set when signup fails because the email already has an account. Rendered
+   * inline with a route to /login — see the catch in handleRegister.
+   */
+  const [existingAccount, setExistingAccount] = useState(false);
   /** Field-targeted validation — see hooks/useFieldError.ts. Marks the
    *  offending input invalid (red outline) and focuses it, as well as showing
    *  the message; a message alone does not say WHERE to fix it. */
   const { error: formError, fail, clear: clearError, fieldProps } = useFieldError('register-form-error');
   const turnstileRef = useRef<TurnstileHandle>(null);
+  /**
+   * Latched for the rest of this page's life once a sign-in starts here, so the
+   * guard below cannot pre-empt our own post-signup navigation. A ref, not the
+   * `loading` state above: `loading` is cleared in the handlers' `finally`,
+   * which runs while the push to /setup-2fa is still in flight.
+   */
+  const authInFlight = useRef(false);
   const { signUp, signInWithGoogle } = useAuth();
+  const inApp = useInAppBrowser();
   const router = useRouter();
+
+  // A signed-in user has no business on the signup form — see the hook. The
+  // proxy rule this mirrors is bypassed entirely by client-side history pops.
+  useRedirectIfAuthenticated({ skip: authInFlight.current });
+
+  /**
+   * Google is unavailable — either we recognised the host app before the user
+   * spent a tap on it, or the popup was refused when they did.
+   */
+  const googleUnavailable = inApp.isInApp || popupBlocked;
+  /**
+   * Force the email path open when Google is out, rather than leaving the
+   * fallback we're pointing at collapsed behind a focus interaction.
+   */
+  const emailExpanded = emailFormOpen || googleUnavailable;
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     clearError();
+    setExistingAccount(false);
 
     // Empty-field checks are ours now: the form is noValidate, so the browser's
     // native bubble no longer fires (and never could be styled to match).
@@ -71,15 +112,33 @@ export default function RegisterPage() {
       return fail('terms', 'agree to the terms of service and privacy policy to continue');
     }
 
+    authInFlight.current = true;
     setLoading(true);
 
     try {
       await signUp(email, password, firstName, lastName, turnstileToken);
       toast.success('account created successfully!');
-      // Redirect to 2FA setup (mandatory for new users)
-      router.push('/setup-2fa');
+      // 2FA setup is mandatory for new users. /setup-2fa is proxy-protected, so
+      // this races the session cookie exactly like the Google path did — less
+      // often, because signUp awaits a profile update and the bootstrap POST
+      // first, and it self-heals (a fresh session has no MFA, so the proxy
+      // sends them straight back). Resolving narrows the window rather than
+      // closing it: if the cookie still is not there after the retry budget,
+      // the helper returns the fallback and the bounce happens anyway.
+      router.push(await resolvePostSignInPath('/setup-2fa'));
     } catch (error) {
-      toast.error(sanitizeError(error));
+      // Already have an account? That is not a validation failure to scold the
+      // user for — it is a wrong turn with an obvious next step. Render it
+      // inline with a route to sign in rather than a toast that expires and
+      // leaves them on a form that will never succeed.
+      if ((error as { code?: unknown } | null)?.code === 'auth/email-already-in-use') {
+        setExistingAccount(true);
+      } else {
+        toast.error(sanitizeError(error));
+      }
+      // Nobody was signed in, so re-arm the guard: this page stays mounted, and
+      // the session could still change under it (signing in from another tab).
+      authInFlight.current = false;
       // Turnstile tokens are single-use. The page stays mounted after a failed
       // submit, so the consumed token has to be cleared before a retry.
       turnstileRef.current?.reset();
@@ -94,15 +153,44 @@ export default function RegisterPage() {
     // given by the notice rendered directly beneath the Google button
     // ("by continuing you agree to..."), which is the standard pattern for
     // federated sign-up. Both paths still surface the same two links.
+    const alreadyBlocked = googleUnavailable;
+    authInFlight.current = true;
     setLoading(true);
 
     try {
-      await signInWithGoogle();
-      toast.success('account created with Google!');
-      // Note: AuthContext will redirect to /setup-2fa for new users
-      router.push('/dashboard');
+      const result = await signInWithGoogle();
+
+      // Google OAuth signs in and signs up through the same popup, so landing
+      // here does NOT mean an account was created — a user who already had one
+      // has simply been logged in, which is what they wanted anyway. Claiming
+      // "account created" at them was the misleading part.
+      toast.success(
+        result?.isNewUser
+          ? 'account created with Google!'
+          : 'welcome back — signing you in',
+      );
+
+      // Must resolve the landing rather than pushing /dashboard blind: the
+      // session cookie is minted asynchronously, and racing it is what sent
+      // users to /login?redirect=%2Fdashboard looking like a failed sign-in.
+      // New users are routed onward to /setup-2fa by the dashboard itself.
+      router.push(await resolvePostSignInPath('/dashboard'));
     } catch (error) {
-      toast.error(sanitizeError(error));
+      // Nobody was signed in — re-arm the guard. See the email path above.
+      authInFlight.current = false;
+      // A refused popup is not a transient failure to be re-tried — it is an
+      // environment that cannot do federated sign-in at all. Swap in the
+      // inline remediation instead of a toast that expires with no next step.
+      if (isPopupUnavailableError(error)) {
+        setPopupBlocked(true);
+        // If the notice was already on screen, the user got here via "try
+        // google anyway" — nothing visible would change, so say so explicitly.
+        if (alreadyBlocked) {
+          toast.error('google sign-in is still blocked in this browser');
+        }
+      } else {
+        toast.error(sanitizeError(error));
+      }
     } finally {
       setLoading(false);
     }
@@ -146,8 +234,21 @@ export default function RegisterPage() {
               skips the Turnstile challenge entirely (the server only gates
               password-provider signups). Showing the full email form up front
               buried it below six inputs. */}
-          {/* Button + its consent notice are one group, so they stay tight to
-              each other while space-y-6 pushes the next section away. */}
+          {/* Google is swapped out entirely when the browser can't run it —
+              an in-app webview, or a popup that was refused when tried. The
+              notice carries its own "try google anyway" escape, so nothing is
+              actually removed; detection only reorders and explains. */}
+          {googleUnavailable ? (
+            <InAppBrowserNotice
+              isInApp={inApp.isInApp}
+              appName={inApp.appName}
+              escapeAttempted={inApp.escapeAttempted}
+              onTryAnyway={handleGoogleSignup}
+              tryAnywayDisabled={loading}
+            />
+          ) : (
+          /* Button + its consent notice are one group, so they stay tight to
+              each other while space-y-6 pushes the next section away. */
           <div className="space-y-2">
           <Button
             type="button"
@@ -195,20 +296,25 @@ export default function RegisterPage() {
             </Link>
           </p>
           </div>
+          )}
 
-          {/* -mx-8 cancels CardContent's p-8 so the rule runs edge to edge of
-              the column instead of floating inset. Card is overflow-hidden, so
-              the bleed can't create a horizontal scrollbar. */}
-          <div className="relative -mx-8">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-border" />
+          {/* "or" only makes sense when there are two live options. With Google
+              out, the email form is the path, not an alternative to one. */}
+          {!googleUnavailable && (
+            /* -mx-8 cancels CardContent's p-8 so the rule runs edge to edge of
+                the column instead of floating inset. Card is overflow-hidden, so
+                the bleed can't create a horizontal scrollbar. */
+            <div className="relative -mx-8">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">
+                  or
+                </span>
+              </div>
             </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-card px-2 text-muted-foreground">
-                or
-              </span>
-            </div>
-          </div>
+          )}
 
           <form onSubmit={handleRegister} className="space-y-5" noValidate>
             <div className="space-y-2">
@@ -230,10 +336,10 @@ export default function RegisterPage() {
               />
             </div>
 
-            {emailFormOpen && (
+            {emailExpanded && (
               <div className="form-reveal">
                 <div className="space-y-5">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="firstName" className="text-foreground">first name</Label>
                     <Input
@@ -322,6 +428,21 @@ export default function RegisterPage() {
                   onToken={setTurnstileToken}
                   ref={turnstileRef}
                 />
+                {existingAccount && (
+                  <InlineNotice data-testid="register-existing-account">
+                    <p className="text-sm leading-snug text-muted-foreground">
+                      an account with this email already exists.{' '}
+                      <Link href="/login" className="font-medium hl-link text-accent-cyan">
+                        sign in instead
+                      </Link>
+                      , or{' '}
+                      <Link href="/forgot-password" className="font-medium hl-link text-accent-cyan">
+                        reset your password
+                      </Link>
+                      .
+                    </p>
+                  </InlineNotice>
+                )}
                 <FormError message={formError?.message} id="register-form-error" />
                 <Button type="submit" className="w-full text-background font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed" disabled={loading || (TURNSTILE_ENABLED && !turnstileToken)}>
                   {loading ? 'creating account...' : 'create account'}

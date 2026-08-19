@@ -27,7 +27,7 @@ import { MachineContextMenu } from '@/components/MachineContextMenu';
 import { MachineStatusPill } from '@/components/MachineStatusPill';
 import { useDemoContext } from '@/contexts/DemoContext';
 import { SparklineChart } from '@/components/charts';
-import { ChevronDown, ChevronUp, Pencil, Copy, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff, RotateCw } from 'lucide-react';
+import { ChevronDown, Pencil, Copy, Square, Plus, Clock, Monitor, Cog, Settings2, MoreVertical, BellOff, RotateCw } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -380,14 +380,12 @@ export function MachineRow({
       >
         <TableCell className="w-8 p-2">
           <div className="flex items-center justify-center">
-            {isExpanded ? (
-              <ChevronUp className="h-4 w-4 text-foreground/70" />
-            ) : (
-              <ChevronDown className="h-4 w-4 text-foreground/70" />
-            )}
+            <ChevronDown
+              className={`h-4 w-4 text-foreground/70 transition-transform duration-150 ease-out motion-reduce:transition-none ${isExpanded ? '-rotate-180' : 'rotate-0'}`}
+            />
           </div>
         </TableCell>
-        <TableCell className="w-[100px] font-medium text-white select-text overflow-hidden">
+        <TableCell className="w-[140px] font-medium text-white select-text overflow-hidden">
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex items-center gap-2">
               <div className="relative flex-shrink-0">
@@ -630,7 +628,7 @@ export function MachineRow({
             );
           })()}
         </TableCell>
-        <TableCell className="w-0 md:w-[150px] overflow-hidden p-0 md:p-2">
+        <TableCell className="w-0 md:w-[110px] overflow-hidden p-0 md:p-2">
           <Tooltip>
             <TooltipTrigger asChild>
               <span
@@ -693,7 +691,11 @@ export function MachineRow({
                       card view instead of the old floating bordered cards. */}
                   <div className="overflow-hidden rounded-lg border border-border/30 bg-card divide-y divide-border/60">
                     {machine.processes.map((process) => (
-                      <div key={process.id} className="flex flex-wrap items-center justify-between gap-y-2 p-3">
+                      /* Below sm the control rail stacks under the process info
+                         (full-width name/path block, buttons on their own line)
+                         instead of wrap-packing into a ragged two-column mess.
+                         From sm up this is the original wrapping row. */
+                      <div key={process.id} className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between gap-y-2 p-3">
                           {/* min-w-40 (not 0): see MachineCardView — at min-w-0 the
                               flex-1 name block never wraps and squeezes to 0px */}
                           <div className="flex-1 min-w-40">
@@ -743,14 +745,14 @@ export function MachineRow({
                                     // Non-admins are read-only: static mode pill, no toggle (which would 403).
                                     <div className="flex items-center h-8">
                                       <span className={`flex items-center px-3 text-sm font-medium rounded-md border bg-card ${currentMode === 'always' ? 'text-emerald-400 border-emerald-600/40' : currentMode === 'scheduled' ? 'text-blue-400 border-blue-600/40' : 'text-muted-foreground border-border'}`}>
-                                        {currentMode === 'always' ? 'Always On' : currentMode === 'scheduled' ? 'Scheduled' : 'Off'}
+                                        {currentMode === 'always' ? 'always on' : currentMode === 'scheduled' ? 'scheduled' : 'off'}
                                       </span>
                                     </div>
                                   ) : (
                                   <div className="flex items-stretch rounded-md overflow-hidden border border-border h-8">
                                     {(['off', 'always', 'scheduled'] as const).map((mode) => {
                                       const isActive = currentMode === mode;
-                                      const labels = { off: 'Off', always: 'Always On', scheduled: 'Scheduled' };
+                                      const labels = { off: 'off', always: 'always on', scheduled: 'scheduled' };
                                       const activeColors = {
                                         off: 'bg-muted text-foreground',
                                         always: 'bg-emerald-600 text-white',
@@ -842,11 +844,11 @@ export function MachineRow({
                                   )}
                                 </div>
                                 {/* Compact controls (<lg) */}
-                                <div className="flex lg:hidden items-center gap-2 ml-2 flex-shrink-0">
+                                <div className="flex lg:hidden items-center gap-2 sm:ml-2 flex-shrink-0">
                                   {!isSiteAdmin ? (
                                     // Non-admins are read-only: static mode pill, no write menu.
                                     <span className={`flex items-center px-2.5 h-8 text-xs font-medium rounded-md border bg-card ${currentMode === 'always' ? 'text-emerald-400 border-emerald-600/40' : currentMode === 'scheduled' ? 'text-blue-400 border-blue-600/40' : 'text-muted-foreground border-border'}`}>
-                                      {currentMode === 'always' ? 'Always On' : currentMode === 'scheduled' ? 'Scheduled' : 'Off'}
+                                      {currentMode === 'always' ? 'always on' : currentMode === 'scheduled' ? 'scheduled' : 'off'}
                                     </span>
                                   ) : (
                                     <>
@@ -880,13 +882,13 @@ export function MachineRow({
                                         }}
                                       >
                                         <DropdownMenuRadioItem value="off" className="cursor-pointer">
-                                          Off
+                                          off
                                         </DropdownMenuRadioItem>
                                         <DropdownMenuRadioItem value="always" className="text-emerald-400 cursor-pointer">
-                                          Always On
+                                          always on
                                         </DropdownMenuRadioItem>
                                         <DropdownMenuRadioItem value="scheduled" className="text-blue-400 cursor-pointer">
-                                          Scheduled
+                                          scheduled
                                         </DropdownMenuRadioItem>
                                       </DropdownMenuRadioGroup>
                                       <DropdownMenuItem

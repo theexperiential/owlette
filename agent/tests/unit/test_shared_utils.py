@@ -160,3 +160,59 @@ class TestUtilityFunctions:
             assert shared_utils.format_bytes(1024) == "1.0 KB"
             assert shared_utils.format_bytes(1024 * 1024) == "1.0 MB"
             assert shared_utils.format_bytes(1024 * 1024 * 1024) == "1.0 GB"
+
+
+# ─── external log rotation ───────────────────────────────────────────
+
+
+class TestRotateLogIfOversized:
+    """
+    guards the installer's /LOG file, which Inno Setup appends to forever and
+    which cleanup_old_logs never ages out (each update refreshes its mtime).
+    """
+
+    def test_small_log_is_left_alone(self, tmp_path):
+        log = tmp_path / 'installer_update.log'
+        log.write_bytes(b'x' * 100)
+
+        assert shared_utils.rotate_log_if_oversized(str(log), max_bytes=1024) is False
+        assert log.read_bytes() == b'x' * 100
+        assert not (tmp_path / 'installer_update.log.1').exists()
+
+    def test_oversized_log_is_rotated_once(self, tmp_path):
+        log = tmp_path / 'installer_update.log'
+        log.write_bytes(b'x' * 4096)
+
+        assert shared_utils.rotate_log_if_oversized(str(log), max_bytes=1024) is True
+        assert not log.exists()  # next writer starts from empty
+        assert (tmp_path / 'installer_update.log.1').read_bytes() == b'x' * 4096
+
+    def test_rotation_keeps_exactly_one_generation(self, tmp_path):
+        """a second rotation replaces .1 — no growing .1/.2/.3 chain."""
+        log = tmp_path / 'installer_update.log'
+        rotated = tmp_path / 'installer_update.log.1'
+
+        log.write_bytes(b'first' * 1000)
+        shared_utils.rotate_log_if_oversized(str(log), max_bytes=1024)
+        log.write_bytes(b'second' * 1000)
+        shared_utils.rotate_log_if_oversized(str(log), max_bytes=1024)
+
+        assert rotated.read_bytes() == b'second' * 1000
+        assert not (tmp_path / 'installer_update.log.2').exists()
+
+    def test_missing_log_is_not_an_error(self, tmp_path):
+        assert shared_utils.rotate_log_if_oversized(
+            str(tmp_path / 'never-written.log')
+        ) is False
+
+    def test_failure_never_raises(self, tmp_path, monkeypatch):
+        """an update must not fail because its log could not be rotated."""
+        log = tmp_path / 'installer_update.log'
+        log.write_bytes(b'x' * 4096)
+
+        def _boom(*a, **kw):
+            raise OSError('file locked by the installer')
+
+        monkeypatch.setattr(shared_utils.os, 'replace', _boom)
+        assert shared_utils.rotate_log_if_oversized(str(log), max_bytes=1024) is False
+        assert log.exists()

@@ -3,7 +3,7 @@ import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
 const systemInvokerImportMessage =
-  "systemInvoker.server may only be imported from web/lib/cortex/**, web/lib/jobs/**, or web/__tests__/**. " +
+  "systemInvoker.server may only be imported from web/lib/hoot/**, web/lib/jobs/**, or web/__tests__/**. " +
   "Use authorizedHandler for user-facing routes. Keep this rule in sync with scripts/check-system-invoker-callers.mjs.";
 
 const eslintConfig = defineConfig([
@@ -73,7 +73,7 @@ const eslintConfig = defineConfig([
   },
   {
     files: [
-      "lib/cortex/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+      "lib/hoot/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
       "lib/jobs/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
       "__tests__/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
       "lib/systemInvoker.server.ts",

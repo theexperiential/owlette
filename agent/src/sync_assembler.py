@@ -19,6 +19,11 @@ design:
 - cancellation honored between files (NOT mid-file — a half-assembled
   file with the wrong size on disk would be confusing). cancel mid-rename
   is impossible (rename is atomic).
+- assemble-then-prune: once EVERY file in the version is on disk, the
+  extract tree is reconciled against the version's file list and anything
+  extraneous is deleted. doing it in that order means a crash mid-sync
+  leaves a "mixed but complete superset" tree (old files still playable),
+  never a tree with files missing.
 - runs as agent SYSTEM user; relies on destination_allowlist + the sync
   guard rails (no symlinks, no junctions, no ADS, no reserved names) to
   prevent customer-controlled-path → SYSTEM-write escalation.
@@ -37,7 +42,7 @@ import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Set
+from typing import Iterable, List, Optional, Set, Tuple
 
 from destination_allowlist import (
     DestinationAllowlist,
@@ -70,10 +75,12 @@ class AssembleError(Exception):
 
 @dataclass
 class AssembleResult:
-    assembled: int   # files newly written this run
-    skipped: int     # files already present + matching (idempotent re-runs)
-    failed: int      # files that errored
+    assembled: int          # files newly written this run
+    skipped: int            # files already present + matching (idempotent re-runs)
+    failed: int             # files that errored
     cancelled: bool
+    pruned: int = 0         # extraneous files deleted by tree reconciliation
+    prune_failed: int = 0   # extraneous files that could NOT be deleted
 
 
 def assemble_all(
@@ -84,15 +91,21 @@ def assemble_all(
     allowlist: DestinationAllowlist,
     cancel_event: Optional[threading.Event] = None,
     content_store: Optional[str] = None,
+    prune: bool = True,
 ) -> AssembleResult:
     """
-    assemble every file from chunks into `extract_root/<file.path>`.
+    assemble every file from chunks into `extract_root/<file.path>`, then
+    reconcile the tree so it matches the version exactly.
 
     extract_root: the customer-configured destination (e.g. `C:\\TouchDesigner\\Projects`).
     allowlist: pre-built DestinationAllowlist; assembler validates each
     target path against it before any write.
     cancel_event: checked between files. cancel during write is NOT honored
     (atomic-rename safety) — wait until current file completes.
+    prune: when True (default), delete files under extract_root that the
+    version does not declare — this is what makes a rollback an actual
+    project-level swap instead of a per-file overwrite. Only runs after
+    every file assembled successfully and the run wasn't cancelled.
 
     raises AssembleError on first failure if cancel_event is None
     (caller can decide to keep going by passing a cancel_event).
@@ -111,6 +124,15 @@ def assemble_all(
     try:
         resolved_root = allowlist.validate(extract_root)
     except DestinationNotAllowedError as e:
+        # log before raising: the handler turns this into a command failure,
+        # but an operator debugging a refused deploy on the machine itself
+        # must be able to see WHY in service.log without a firestore round
+        # trip. (roost hardening finding 2 — refusals were silent locally.)
+        logger.error(
+            f"sync_assembler: distribution {distribution_id} REFUSED — "
+            f"extract_root {extract_root!r} is not allowed by "
+            f"destination_allowlist: {e}"
+        )
         raise AssembleError(
             f"extract_root not allowed by destination_allowlist: {e}"
         ) from e
@@ -167,8 +189,37 @@ def assemble_all(
     # failure always raises so the caller gets a hard error. external
     # cancellation returns peacefully (result.cancelled tells the story).
     if failed > 0:
+        logger.error(
+            f"sync_assembler: distribution {distribution_id} FAILED — "
+            f"{failed} file(s) could not be assembled into {str(resolved_root)!r}; "
+            f"see the per-file errors above"
+        )
         raise AssembleError(
             f"distribution {distribution_id}: {failed} file(s) failed to assemble"
+        )
+
+    # tree reconciliation — the second half of the "atomic project-level
+    # swap". every file the version declares is now on disk; anything else
+    # under extract_root belongs to a version we are no longer running (a
+    # rollback's newer files, a renamed asset, an aborted `.partial`) and
+    # has to go, or the roost's on-disk state is a union of every version
+    # ever deployed rather than the one we were told to run.
+    #
+    # ORDER MATTERS: assemble first, prune second. a crash between the two
+    # leaves a complete superset (every current file present, plus stale
+    # extras) — the show keeps playing and the next sync re-reconciles.
+    # pruning first would open a window where files are missing.
+    #
+    # runs even when assembled == 0: a rollback whose files are all
+    # byte-identical to what's on disk still has to lose the extra file the
+    # newer version added.
+    if prune and not result.cancelled:
+        result.pruned, result.prune_failed = _prune_extraneous(
+            distribution_id=distribution_id,
+            extract_root=resolved_root,
+            files=files_list,
+            allowlist=allowlist,
+            state=state,
         )
 
     # post-assembly cleanup: delete chunks referenced by this version from the
@@ -323,15 +374,224 @@ def _assemble_one(
         raise
 
 
+# ─── tree reconciliation (project-level swap) ───────────────────────
+
+
+def _prune_extraneous(
+    distribution_id: int,
+    extract_root: Path,
+    files: List[VersionFile],
+    allowlist: DestinationAllowlist,
+    state: SyncState,
+) -> Tuple[int, int]:
+    """
+    delete the files this agent wrote for THIS roost that the version being
+    installed no longer declares, then remove the directories that emptied
+    out as a result. returns (deleted, failed).
+
+    the candidate set comes from provenance, not from a directory walk:
+    SyncState knows every path every distribution of this roost put on
+    disk, so we delete only what we ourselves wrote. that matters because
+    the default extract path (`~/Documents/Owlette/`) is SHARED by every
+    roost that doesn't override it — a "delete everything the version
+    doesn't list" walk would have each deploy wipe the other roosts' files,
+    and would eat anything the operator keeps alongside them. the cost of
+    the safer rule: if the state DB is lost (reinstall), stale files
+    survive until something rewrites them. that is the correct direction to
+    fail.
+
+    safety rails on every candidate:
+      - re-validated through the destination allowlist (which rejects any
+        path with a symlink/junction in its ancestry, ADS, reserved names)
+      - realpath-checked to still sit under `extract_root` — the same TOCTOU
+        defense `_verify_under_root` applies to writes
+      - a `.partial` sidecar of the same path goes with it (an interrupted
+        write for a file the version dropped is pure garbage)
+
+    a delete that fails (file locked by TouchDesigner, ACL, AV) is logged
+    and counted, never raised: the version's own files are already on disk
+    and the show has to keep playing. the next sync retries the prune.
+    """
+    dist = state.get_distribution(distribution_id)
+    if dist is None:
+        logger.warning(
+            f"sync_assembler: distribution {distribution_id} has no state row — "
+            f"skipping tree reconciliation (cannot establish which files we wrote)"
+        )
+        return (0, 0)
+
+    keep = {_cmp_key(extract_root / Path(*f.path.split('/'))) for f in files}
+    root_cmp = _cmp_key(extract_root)
+
+    # map each prior distribution's extract_root through the allowlist once,
+    # so N file rows don't pay N resolutions. a root that no longer resolves
+    # (or is no longer allowed) contributes nothing.
+    root_matches: dict = {}
+
+    def _same_root(raw_root: Optional[str]) -> bool:
+        if not raw_root:
+            # pre-4a.4 rows without an extract_root: we cannot prove the file
+            # landed in THIS tree, so we leave it alone.
+            return False
+        if raw_root not in root_matches:
+            try:
+                root_matches[raw_root] = _cmp_key(allowlist.validate(raw_root)) == root_cmp
+            except DestinationNotAllowedError:
+                root_matches[raw_root] = False
+        return root_matches[raw_root]
+
+    candidates: List[Path] = []
+    seen: Set[str] = set()
+    for row in state.list_roost_written_files(dist['site_id'], dist['roost_id']):
+        if not _same_root(row['extract_root']):
+            continue
+        target = extract_root / Path(*row['path'].split('/'))
+        key = _cmp_key(target)
+        if key in keep or key in seen:
+            continue
+        seen.add(key)
+        candidates.append(target)
+
+    deleted = 0
+    failed = 0
+    freed_bytes = 0
+    emptied_dirs: Set[Path] = set()
+
+    for path in candidates:
+        sidecar = path.with_name(path.name + '.partial')
+        if not path.exists() and not sidecar.exists():
+            continue
+        if not _prune_target_is_safe(path, extract_root, allowlist):
+            failed += 1
+            continue
+        removed_any = False
+        for victim in (path, sidecar):
+            try:
+                if not victim.exists():
+                    continue
+                try:
+                    size = victim.stat().st_size
+                except OSError:
+                    size = 0
+                os.unlink(_long_path(str(victim)))
+            except OSError as e:
+                failed += 1
+                logger.warning(
+                    f"sync_assembler: could not prune stale file {str(victim)!r}: {e}"
+                )
+                continue
+            removed_any = True
+            freed_bytes += size
+            logger.debug(f"sync_assembler: pruned stale file {str(victim)!r}")
+        if removed_any:
+            deleted += 1
+            emptied_dirs.add(path.parent)
+
+    dirs_removed = _remove_empty_dirs(emptied_dirs, extract_root)
+
+    if deleted or failed or dirs_removed:
+        logger.info(
+            f"sync_assembler: distribution {distribution_id} tree reconciled — "
+            f"pruned {deleted} stale file(s) ({freed_bytes / (1024 * 1024):.1f} MiB), "
+            f"removed {dirs_removed} empty dir(s); {failed} could not be removed"
+        )
+    return (deleted, failed)
+
+
+def _prune_target_is_safe(
+    path: Path, extract_root: Path, allowlist: DestinationAllowlist
+) -> bool:
+    """
+    last gate before an unlink: the candidate must still pass the allowlist
+    AND still resolve under `extract_root`. fail-closed — anything we can't
+    positively confirm is left on disk.
+    """
+    try:
+        allowlist.validate(str(path))
+    except DestinationNotAllowedError as e:
+        logger.warning(
+            f"sync_assembler: refusing to prune {str(path)!r} — "
+            f"allowlist re-validation failed: {e}"
+        )
+        return False
+    try:
+        real_path = os.path.realpath(str(path))
+        real_root = os.path.realpath(str(extract_root))
+    except (OSError, ValueError) as e:
+        logger.warning(
+            f"sync_assembler: refusing to prune {str(path)!r} — "
+            f"realpath failed: {e}"
+        )
+        return False
+    if not _path_is_within(real_path, real_root):
+        logger.warning(
+            f"sync_assembler: refusing to prune {str(path)!r} — resolves to "
+            f"{real_path!r}, outside extract_root {real_root!r}"
+        )
+        return False
+    return True
+
+
+def _remove_empty_dirs(dirs: Set[Path], extract_root: Path) -> int:
+    """
+    rmdir every directory in `dirs` that a prune just emptied, then walk
+    upward doing the same until a non-empty directory or `extract_root`
+    itself is reached. `extract_root` is NEVER removed — the roost keeps
+    its (possibly empty) home.
+
+    rmdir on a non-empty or in-use directory raises and is treated as "stop
+    here": the intended no-op, not an error worth logging.
+    """
+    removed = 0
+    root_cmp = _cmp_key(extract_root)
+    # deepest-first so a nested chain collapses in one pass
+    for d in sorted(dirs, key=lambda p: len(p.parts), reverse=True):
+        cur = d
+        while _cmp_key(cur) != root_cmp:
+            if not _path_is_within(str(cur), str(extract_root)):
+                break
+            try:
+                os.rmdir(_long_path(str(cur)))
+            except OSError:
+                break
+            removed += 1
+            cur = cur.parent
+    return removed
+
+
 # ─── post-assembly chunk cleanup ────────────────────────────────────
 
 
-def _cleanup_content_store(content_store: Path, chunks_to_cleanup: Set[str]) -> None:
+def cleanup_chunks(
+    chunk_hashes: Iterable[str], content_store: Optional[str] = None
+) -> Tuple[int, int]:
+    """
+    public entry point for releasing a distribution's chunks from the local
+    content store. returns (deleted, bytes_freed).
+
+    used on the TERMINAL FAILURE path (sync_commands) as well as internally
+    after a successful assembly: a distribution that ended in 'failed' is
+    never resumed — a retry arrives as a fresh command and re-downloads
+    whatever the content store is missing — so holding its bytes is pure
+    leak. cancellation is the one case that must NOT call this: a cancelled
+    distribution resumes from exactly these chunks.
+    """
+    store = (
+        Path(_default_content_store()) if content_store is None
+        else Path(os.path.expanduser(content_store))
+    )
+    return _cleanup_content_store(store, set(chunk_hashes))
+
+
+def _cleanup_content_store(
+    content_store: Path, chunks_to_cleanup: Set[str]
+) -> Tuple[int, int]:
     """
     best-effort delete of every chunk in `chunks_to_cleanup` from the content
-    store. iterates one chunk at a time; a failed delete logs a warning but
-    does NOT fail the sync — the assembled file is already on disk and
-    that's what matters.
+    store — both the finished `<hash>` blob and any half-downloaded
+    `<hash>.partial` sidecar. iterates one chunk at a time; a failed delete
+    logs a warning but does NOT fail the sync — the assembled file is already
+    on disk and that's what matters. returns (deleted, bytes_freed).
 
     we explicitly do NOT remove the shard parent dirs or the content-store
     root. a future sync will download fresh chunks into the same directory
@@ -339,34 +599,36 @@ def _cleanup_content_store(content_store: Path, chunks_to_cleanup: Set[str]) -> 
     run. empty shard dirs are harmless (a few bytes of inode overhead each)
     and NTFS handles orphan directories fine.
 
-    callers should only invoke this on SUCCESSFUL assembly — deleting chunks
-    before the last file is committed would require re-downloading on any
-    retry.
+    callers should only invoke this on SUCCESSFUL assembly or on terminal
+    failure — deleting chunks while a distribution can still resume would
+    force a re-download.
     """
     deleted = 0
     total_bytes = 0
     failed = 0
     for chunk_hash in chunks_to_cleanup:
-        path = chunk_path(content_store, chunk_hash)
-        try:
-            # stat before unlink so we can report freed bytes. missing_ok
-            # handles the race where the chunk was never downloaded (skip-
-            # worthy dedup hit against a prior sync that already cleaned up).
-            if path.exists():
-                try:
-                    total_bytes += path.stat().st_size
-                except OSError:
-                    pass
-                path.unlink()
-                deleted += 1
-        except OSError as e:
-            # don't fail the sync — log and move on. a leftover chunk is a
-            # wasted disk page, not a correctness issue.
-            failed += 1
-            logger.warning(
-                f"sync_assembler: failed to delete cached chunk "
-                f"{chunk_hash[:12]}… at {path!s}: {e}"
-            )
+        base = chunk_path(content_store, chunk_hash)
+        for path in (base, base.with_name(base.name + '.partial')):
+            try:
+                # stat before unlink so we can report freed bytes. the
+                # exists() guard handles the common case where the chunk was
+                # never downloaded (dedup hit against a prior sync that
+                # already cleaned up) or has no partial sidecar.
+                if path.exists():
+                    try:
+                        total_bytes += path.stat().st_size
+                    except OSError:
+                        pass
+                    path.unlink()
+                    deleted += 1
+            except OSError as e:
+                # don't fail the sync — log and move on. a leftover chunk is a
+                # wasted disk page, not a correctness issue.
+                failed += 1
+                logger.warning(
+                    f"sync_assembler: failed to delete cached chunk "
+                    f"{chunk_hash[:12]}… at {path!s}: {e}"
+                )
     if deleted or failed:
         # format bytes freed in human-friendly units for log readability
         # (100GB syncs make the raw byte count unwieldy).
@@ -375,6 +637,7 @@ def _cleanup_content_store(content_store: Path, chunks_to_cleanup: Set[str]) -> 
             f"sync_assembler: cleaned up {deleted} chunk(s) from content store "
             f"({freed_mb:.1f} MiB freed); {failed} delete(s) failed"
         )
+    return (deleted, total_bytes)
 
 
 # ─── windows long-path support ───────────────────────────────────────
@@ -446,24 +709,41 @@ def _verify_under_root(resolved_target: 'Path', extract_root: 'Path') -> None:
             f"post-rename realpath failed for {str(resolved_target)!r}: {e}"
         ) from e
 
-    if os.name == 'nt':
-        real_target_cmp = real_target.casefold()
-        real_root_cmp = real_root.casefold()
-    else:
-        real_target_cmp = real_target
-        real_root_cmp = real_root
-
-    # ensure the real root ends with a separator for unambiguous prefix match
-    # (`/foo/bar` must not match root `/foo/ba`). str comparison, so normalize
-    # the separator and append.
-    root_with_sep = real_root_cmp.rstrip(os.sep) + os.sep
-    if not (real_target_cmp + os.sep).startswith(root_with_sep):
+    if not _path_is_within(real_target, real_root):
         _quarantine_delete(resolved_target)
         raise AssembleError(
             f"post-rename integrity check failed: {str(resolved_target)!r} "
             f"resolves to {real_target!r}, outside extract_root {real_root!r}. "
             f"possible symlink/junction tampering — file quarantined."
         )
+
+
+def _path_is_within(real_target: str, real_root: str) -> bool:
+    """
+    True when the already-realpath-resolved `real_target` sits under
+    `real_root`. case-folded on windows (NTFS is case-insensitive).
+
+    the separator is appended to both sides so `/foo/bar` does not match a
+    root of `/foo/ba`, while `real_root` itself still matches itself.
+    """
+    if os.name == 'nt':
+        target_cmp = real_target.casefold()
+        root_cmp = real_root.casefold()
+    else:
+        target_cmp = real_target
+        root_cmp = real_root
+    root_with_sep = root_cmp.rstrip(os.sep) + os.sep
+    return (target_cmp + os.sep).startswith(root_with_sep)
+
+
+def _cmp_key(path: Path) -> str:
+    """
+    comparison key for two paths that should refer to the same file.
+    case-folded on windows so `Assets/Logo.png` and `assets/logo.png` are
+    one entry, exact elsewhere.
+    """
+    s = str(path)
+    return s.casefold() if os.name == 'nt' else s
 
 
 def _quarantine_delete(path: 'Path') -> None:

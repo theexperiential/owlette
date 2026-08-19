@@ -1,7 +1,7 @@
 /**
  * GET /api/sites/{siteId}/quota
  *      → Current quota snapshot for a site:
- *        { tier, usedBytes, pendingBytes, limitBytes, fractionUsed,
+ *        { usedBytes, pendingBytes, limitBytes, fractionUsed,
  *          lastAlarmLevel, alarms[] }
  *
  * Reads the `sites/{siteId}/roost/quota` doc written by quotaEnforce
@@ -15,6 +15,7 @@ import { NextResponse } from 'next/server';
 import { timestampToIso } from '@/lib/firestoreTime.server';
 import { problemFromError } from '@/lib/apiErrors';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { SITE_STORAGE_BYTES } from '@/lib/roostStorage';
 import {
   applyAuthDeprecations,
   requireSiteAuthAndScope,
@@ -23,14 +24,6 @@ import {
 interface RouteParams {
   params: Promise<{ siteId: string }>;
 }
-
-/** Mirror of quotaLogic.PLAN_LIMITS_BYTES — web imports can't reach functions/. */
-const PLAN_LIMITS_BYTES: Record<string, number | null> = {
-  free: 5 * 1024 ** 3,
-  starter: 25 * 1024 ** 3,
-  pro: 100 * 1024 ** 3,
-  enterprise: null, // byo-bucket; no owlette-side cap
-};
 
 const MAX_ALARMS_RETURNED = 20;
 
@@ -55,20 +48,22 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     ]);
 
     const data = quotaSnap.exists ? quotaSnap.data() ?? {} : {};
-    const tier = typeof data.tier === 'string' ? data.tier : 'free';
     const usedBytes = typeof data.usedBytes === 'number' ? data.usedBytes : 0;
     const pendingBytes = pendingSnap.docs.reduce(
       (sum, d) => sum + (typeof (d.data() as { bytes?: number }).bytes === 'number' ? (d.data() as { bytes: number }).bytes : 0),
       0,
     );
 
-    const limitFromPlan = PLAN_LIMITS_BYTES[tier];
-    // Prefer the cached planLimitBytes on the doc if set (honors one-off
-    // grants), else fall back to tier default.
-    const rawLimit = typeof data.planLimitBytes === 'number' ? data.planLimitBytes : limitFromPlan;
-    const limitBytes = rawLimit === null || rawLimit === undefined ? null : rawLimit;
+    // Prefer the cached planLimitBytes written by quotaEnforce's reconcile
+    // (it honors one-off grants), else fall back to the standard allowance.
+    const limitBytes = typeof data.planLimitBytes === 'number'
+      ? data.planLimitBytes
+      : SITE_STORAGE_BYTES;
     const committedBytes = Math.max(0, usedBytes + pendingBytes);
-    const fractionUsed = limitBytes && limitBytes > 0
+    // No ratio to take when a site's cap is zero — mirrors the
+    // `planLimitBytes <= 0` short-circuit in quotaLogic.reportQuota, which
+    // returns NaN there (not JSON-representable, so `null` over the wire).
+    const fractionUsed = limitBytes > 0
       ? Math.min(1, committedBytes / limitBytes)
       : null;
 
@@ -84,13 +79,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     return applyAuthDeprecations(
       NextResponse.json({
         siteId,
-        tier,
         usedBytes,
         pendingBytes,
         committedBytes,
         limitBytes,
         fractionUsed,
-        unlimited: limitBytes === null,
         lastAlarmLevel: typeof data.lastAlarmLevel === 'number' ? data.lastAlarmLevel : 0,
         lastAlarmAt: timestampToIso(data.lastAlarmAt),
         lastReconciledAt: timestampToIso(data.lastReconciledAt),

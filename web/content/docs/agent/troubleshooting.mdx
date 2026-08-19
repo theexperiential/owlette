@@ -7,18 +7,38 @@ description: "Common issues and how to resolve them."
 
 ## log locations
 
-| log | path | contents |
+Logs live in two trees. The service and everything it launches write machine-wide under `%PROGRAMDATA%\Owlette\logs\`; the desktop app writes per-user.
+
+### machine-wide — `C:\ProgramData\Owlette\logs\`
+
+| log | file | contents |
 |-----|------|----------|
-| **Service** | `C:\ProgramData\Owlette\logs\service.log` | Main service operations, Firebase sync, command execution |
-| **Service stdout** | `C:\ProgramData\Owlette\logs\service_stdout.log` | NSSM-captured stdout from the service runner |
-| **Service stderr** | `C:\ProgramData\Owlette\logs\service_stderr.log` | NSSM-captured stderr from the service runner |
-| **GUI** | `C:\ProgramData\Owlette\logs\gui.log` | Configuration GUI operations |
-| **Tray** | `C:\ProgramData\Owlette\logs\tray.log` | System tray icon operations |
-| **Pairing** | `C:\ProgramData\Owlette\logs\pairing_debug.log` | Device-code pairing and token setup |
-| **Self-update installer** | `C:\ProgramData\Owlette\logs\installer_update.log` | Inno Setup log written during remote agent updates |
+| **Service** | `service.log` | Main service operations, Firebase sync, command execution |
+| **Service stdout** | `service_stdout.log` | The service runner's stdout, captured verbatim by owlette-host |
+| **Service stderr** | `service_stderr.log` | The service runner's stderr, captured verbatim by owlette-host — interpreter-level tracebacks that never reach the logger land here |
+| **Service host** | `service_host.log` | owlette-host's own narration — service registration, agent spawns, exit codes, restart backoff, stop escalations |
+| **hoot** | `cortex.log` | hoot runtime and CLI fetch. Only written when hoot is enabled. |
+| **Pairing** | `pairing_debug.log` | Device-code pairing and token setup |
+| **Self-update installer** | `installer_update.log` | Inno Setup log written during remote agent updates |
+| **Defender setup** | `defender_setup.log` | The installer's Defender-exclusion step — one entry per install |
+| **roost scrub reports** | `roost_scrub_reports\` | One JSON report per roost integrity scrub |
 | **Interactive installer** | Path passed with `/LOG=...` | Inno Setup log for manual installs; no fixed ProgramData installer log is written by default |
 
-Main shared-logger files use rotating file handlers: 10 MB per file, 5 backups. `tmp/status_writer.log` rotates at 100 KB with 2 backups, and `pairing_debug.log` uses plain writes. Old main logs are auto-deleted after 90 days by default.
+Main shared-logger files use rotating file handlers: 10 MB per file, 5 backups. owlette-host rotates the three files it writes by size, keeping exactly one `.1` sibling each: 10 MB for `service_stdout.log` and `service_stderr.log`, 2 MB for `service_host.log`. `tmp/status_writer.log` rotates at 100 KB with 2 backups, and `pairing_debug.log` uses plain writes. Old main logs are auto-deleted after 90 days by default.
+
+### per-user — `%LOCALAPPDATA%\app.owlette.desktop\logs\`
+
+| log | file | contents |
+|-----|------|----------|
+| **Desktop app** | `owlette-desktop.log` | The window and the tray icon — startup, status polling, service control, and pairing dialogs |
+
+This one is **per-user**: it belongs to whoever the app runs as, typically the machine's auto-login account, not the `LocalSystem` account the service runs as. It rotates at 4 MB and keeps 4 files (`owlette-desktop_<date>.log`), and its timestamps are local time, so they line up with `service.log` — a field report usually wants both.
+
+<Callout type="info" title={"logs removed in 3.0.0"}>
+
+`gui.log`, `tray.log`, and `report_issue.log` no longer exist — the Python programs that wrote them were replaced by the desktop app. Upgrading prunes any left behind.
+
+</Callout>
 
 ---
 
@@ -51,7 +71,7 @@ Debug mode must be run from an elevated command prompt.
     cd C:\ProgramData\Owlette\agent\src
     python owlette_service.py debug
     ```
-2. Check `service.log` for startup errors.
+2. Check `service.log` for startup errors, and `service_host.log` for what owlette-host saw — the spawn, the exit code the agent returned, and any crash-loop backoff. A traceback that never reached the logger lands in `service_stderr.log`.
 3. Verify Python is installed: `C:\ProgramData\Owlette\python\python.exe --version`.
 4. Verify `C:\ProgramData\Owlette\config\config.json` is valid JSON.
 
@@ -81,7 +101,7 @@ Debug mode must be run from an elevated command prompt.
 - **OAuth token expired**: Check for token refresh errors in `service.log`; the agent should auto-refresh when the stored refresh token is valid.
 - **Wrong site_id**: The config is paired to a different dashboard site.
 - **Firebase disabled**: Check `firebase.enabled` is `true` in `config.json`.
-- **Heartbeat has not refreshed yet**: Presence and metrics use an adaptive interval: about 5 seconds with the GUI open, 30 seconds when monitored processes are active, and 120 seconds when idle.
+- **Heartbeat has not refreshed yet**: Presence and metrics use an adaptive interval: about 5 seconds while the desktop app's window is open, 30 seconds when monitored processes are active, and 120 seconds when idle.
 
 ---
 
@@ -165,23 +185,27 @@ If stuck in `BACKOFF`:
 1. Check if debug logging is enabled.
 2. Look for rapid reconnection loops in `service.log`.
 3. Verify no circular config updates; hash tracking should prevent feedback loops.
-4. Check whether the GUI is open. Metrics and heartbeat uploads run about every 5 seconds while the GUI is active, 30 seconds while processes are active, and 120 seconds when idle.
+4. Check whether the desktop app's window is open. Metrics and heartbeat uploads run about every 5 seconds while it is on screen, 30 seconds while processes are active, and 120 seconds when idle. Closing the window back to the tray drops the machine to the slower cadence.
 
 ---
 
-### gui won't open
+### desktop app won't open
 
-**Symptoms**: Clicking `open owlette` from tray does nothing, or GUI crashes immediately.
+**Symptoms**: Clicking `open owlette` from the tray does nothing, or the window closes immediately after opening.
 
 **Check**:
 
-1. Look at `gui.log` for errors.
-2. Verify GUI file exists: `C:\ProgramData\Owlette\agent\src\owlette_gui.py`.
-3. Try launching manually:
+1. Look at `service.log` for the launch attempt — the service reports both the launch and a missing executable.
+2. Look at `%LOCALAPPDATA%\app.owlette.desktop\logs\owlette-desktop.log` — the app records its own startup there in release builds, so a crash after launch shows up here rather than in `service.log`.
+3. Verify the desktop app exists: `C:\ProgramData\Owlette\app\owlette-desktop.exe`.
+4. Try launching manually:
     ```bash
-    "C:\ProgramData\Owlette\python\pythonw.exe" "C:\ProgramData\Owlette\agent\src\owlette_gui.py"
+    "C:\ProgramData\Owlette\app\owlette-desktop.exe"
     ```
-4. Check for CustomTkinter import errors.
+5. Confirm the WebView2 runtime is installed — the app renders in it and cannot open a window without it. The installer adds it when missing, but a blocked or offline install can leave it absent:
+    ```powershell
+    (Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv
+    ```
 
 ---
 
@@ -224,7 +248,7 @@ The service writes `service_status.json` immediately when important state change
 
 **Symptoms**: Agent files quarantined, service won't start after update.
 
-**Cause**: The WinRing0 driver that LibreHardwareMonitor uses for CPU/GPU temperatures is extracted at runtime to `C:\ProgramData\Owlette\python\python.sys` (and `pythonw.sys` for the GUI host) and loaded as kernel service `R0python` / `R0pythonw`. Defender's antivirus flags it as `VulnerableDriver:WinNT/Winring0` and may quarantine that `.sys` file. Process exclusions do not cover a kernel-driver file load, so the driver path itself must be excluded.
+**Cause**: The WinRing0 driver that LibreHardwareMonitor uses for CPU/GPU temperatures is extracted at runtime to `C:\ProgramData\Owlette\python\python.sys` (and `pythonw.sys` whenever a windowless python host reads temperatures — hoot and the user-session helpers still run under `pythonw.exe`) and loaded as kernel service `R0python` / `R0pythonw`. Defender's antivirus flags it as `VulnerableDriver:WinNT/Winring0` and may quarantine that `.sys` file. Process exclusions do not cover a kernel-driver file load, so the driver path itself must be excluded.
 
 **Fix**: The installer adds these exclusions automatically (2.12.12+). If the agent predates that, or the exclusion did not register, add them manually from an elevated PowerShell prompt, then restart the service:
 
@@ -263,9 +287,12 @@ sc qc OwletteService
 
 All commands require **Administrator** privileges.
 
+The desktop app restarts the service without one. `restart service` in the app's menu writes `tmp/restart.flag`; the service picks it up on its next loop and exits 42, and owlette-host relaunches it immediately — no UAC prompt. The tray icon's right-click menu carries the same item, with one difference: a service that is already stopped has no loop to read the flag, so the tray starts it through the SCM instead, which is the one path that can prompt for elevation.
+
 ---
 
 ## getting help
 
+- Use `submit bug report` in the desktop app's menu — it also takes feature requests and general feedback. The agent attaches the machine's system metrics and the last 100 lines of `service.log` automatically, along with the hostname and site id, so the report arrives diagnosable.
 - Email us at [support@owlette.app](mailto:support@owlette.app)
 - File a bug or feature request on [GitHub](https://github.com/theexperiential/owlette/issues)

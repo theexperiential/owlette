@@ -12,7 +12,7 @@ const coreFeatures: TierFeature[] = [
   { label: 'start, stop, restart, kill — every process, every machine' },
   { label: 'software & file deployment' },
   { label: 'display layouts with watchdog auto-revert' },
-  { label: 'cortex AI fleet assistant (BYOK)', asterisk: true },
+  { label: 'hoot AI fleet assistant (BYOK)', asterisk: true },
   { label: '1 site with role-based access' },
   { label: 'unlimited machines & members' },
   { label: 'email alerts' },
@@ -163,7 +163,7 @@ export function PricingSection() {
             </a>
           </p>
           <p className="mt-10 text-sm text-muted-foreground/60">
-            * cortex requires your own API key (OpenAI, Anthropic, or compatible)
+            * hoot requires your own API key (OpenAI, Anthropic, or compatible)
           </p>
         </div>
       </div>

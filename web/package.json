@@ -1,6 +1,6 @@
 {
   "name": "web",
-  "version": "2.12.19",
+  "version": "3.0.1",
   "private": true,
   "packageManager": "npm@10.9.0",
   "engines": {
@@ -24,6 +24,7 @@
     "e2e:install": "playwright install chromium",
     "screenshots": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts\"",
     "screenshots:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.screenshots.config.ts --headed --debug\"",
+    "screenshots:desktop": "npx playwright test --config=playwright.desktop-screenshots.config.ts",
     "videos": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts\"",
     "videos:debug": "npm run e2e:build && cd .. && firebase emulators:exec --only auth,firestore,storage --project demo-playwright-e2e \"cd web && npx playwright test --config=playwright.videos.config.ts --headed --debug\""
   },
@@ -64,6 +65,7 @@
     "fumadocs-core": "^16.8.12",
     "fumadocs-mdx": "^15.0.7",
     "fumadocs-ui": "^16.8.12",
+    "inapp-spy": "^5.0.10",
     "iron-session": "^8.0.4",
     "js-yaml": "^4.1.1",
     "lucide-react": "^0.548.0",

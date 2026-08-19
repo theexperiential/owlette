@@ -63,6 +63,33 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      // specs/mobile/** belongs to the mobile-chromium project below. Without
+      // this exclusion they would also run here at desktop width and assert
+      // layouts that only exist under a narrow viewport.
+      //
+      // NOTE: a project-level testIgnore REPLACES the config-level one rather
+      // than merging with it, so the security-boundary exclusion has to be
+      // repeated here — otherwise those live-Firebase specs rejoin this project.
+      testIgnore: ['**/security-boundary/**', '**/mobile/**'],
+    },
+    {
+      // Mobile viewport on Chromium by design: the iPhone entries in `devices`
+      // pin `browserName: 'webkit'`, and CI installs Chromium only
+      // (.github/workflows/e2e.yml → `playwright install --with-deps chromium`).
+      // Desktop Chrome plus an explicit 390x844 touch viewport exercises the
+      // same responsive surface on the one engine guaranteed to be present.
+      name: 'mobile-chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 390, height: 844 },
+        isMobile: true,
+        hasTouch: true,
+        deviceScaleFactor: 3,
+      },
+      // Scoped so `workers: 1` (global) doesn't pay for a second full pass of
+      // the suite at mobile size. Playwright normalizes paths to forward
+      // slashes before matching, so this holds on Windows too.
+      testMatch: /mobile\/.*\.spec\.ts/,
     },
   ],
 

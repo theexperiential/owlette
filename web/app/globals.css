@@ -210,6 +210,20 @@ input[type="week"] {
     font-family: var(--font-geist);
   }
 
+  /* No typographic orphans, anywhere (platform rule, 2026-08-13): headings
+     balance their lines; body copy avoids a lone word on the last line.
+     `pretty` is a no-op in engines that don't support it, so this can only
+     improve wrapping — never change what fits. */
+  h1, h2, h3, h4, h5, h6,
+  [data-slot="card-title"],
+  [data-slot="dialog-title"] {
+    text-wrap: balance;
+  }
+
+  p, li, figcaption, [data-slot="card-description"], [data-slot="dialog-description"] {
+    text-wrap: pretty;
+  }
+
   /* Tabular figures for aligned numbers in data tables */
   table, [data-table], .tabular-nums {
     font-variant-numeric: tabular-nums;
@@ -437,6 +451,67 @@ input[type="week"] {
   animation: display-test-result-flash 1100ms ease-out 1;
 }
 
+/* Falling feather (boot splash — FallingFeather). Four composed transforms
+   reproduce the pendulum-glide regime of a real feather, one axis each so
+   every axis gets its own correct easing:
+
+     fall  — steady descent + fade at the loop edges (linear)
+     sway  — side-to-side pendulum, slowest at the turnarounds (ease-in-out)
+     arc   — vertical bob at TWICE the sway frequency: the feather dives
+             through the middle of each glide and lifts into each stall.
+             sway + arc together trace the downward arcs of a falling leaf
+     tilt  — noses into the glide direction, peaking mid-swing where
+             airspeed peaks, levelling out at the stalls. The ~100deg base
+             lays lucide's diagonal quill flat
+
+   fall = exactly two sway periods, so passes are phase-locked and every
+   descent draws the same two clean arcs. The fades do the entering/exiting
+   (no overflow clipping — a hard crop mid-air reads as a bug). */
+@keyframes feather-fall {
+  0%   { transform: translateY(-1.5rem); opacity: 0; }
+  8%   { opacity: 1; }
+  78%  { opacity: 1; }
+  100% { transform: translateY(7.5rem); opacity: 0; }
+}
+@keyframes feather-sway {
+  0%   { transform: translateX(3.25rem); }
+  50%  { transform: translateX(-3.25rem); }
+  100% { transform: translateX(3.25rem); }
+}
+@keyframes feather-arc {
+  0%   { transform: translateY(0); }
+  50%  { transform: translateY(1.9rem); }
+  100% { transform: translateY(0); }
+}
+@keyframes feather-tilt {
+  0%   { transform: rotate(102deg); }
+  25%  { transform: rotate(80deg); }
+  50%  { transform: rotate(98deg); }
+  75%  { transform: rotate(122deg); }
+  100% { transform: rotate(102deg); }
+}
+.feather-fall {
+  animation: feather-fall 7.2s linear infinite;
+  will-change: transform, opacity;
+}
+.feather-sway { animation: feather-sway 3.6s ease-in-out infinite; }
+.feather-arc  { animation: feather-arc 1.8s ease-in-out infinite; }
+.feather-tilt { animation: feather-tilt 3.6s ease-in-out infinite; }
+
+/* Second feather: the same flight, started exactly half a descent (one full
+   sway period) into the cycle. The delay is uniform across all four layers
+   so their phase relationships — the physics — stay intact. Its wrapper is
+   mirrored (scaleX(-1)), so the pair trace identical opposite arcs around
+   the vertical center line, staggered half a fall apart: one is always
+   mid-screen during long loads, and the mirrored-but-offset choreography is
+   what makes it read as natural AND mechanical. */
+.feather-delayed.feather-fall,
+.feather-delayed .feather-sway,
+.feather-delayed .feather-arc,
+.feather-delayed .feather-tilt {
+  animation-delay: -3.6s;
+}
+
 /* Chart loading — a miniature line graph that plots itself on a loop
    (ChartLoadingIndicator). Requires pathLength=100 on the path so the dash
    math is geometry-independent: draw the line, hold, fade, repeat. The
@@ -453,21 +528,21 @@ input[type="week"] {
   animation: chart-plot-draw 2.4s ease-in-out infinite;
 }
 
-/* Cortex markdown styling */
-.cortex-markdown {
+/* Hoot markdown styling */
+.hoot-markdown {
   line-height: 1.75;
 }
 
-.cortex-markdown p {
+.hoot-markdown p {
   margin: 0.75rem 0;
 }
 
-.cortex-markdown h1, .cortex-markdown h2, .cortex-markdown h3 {
+.hoot-markdown h1, .hoot-markdown h2, .hoot-markdown h3 {
   margin-top: 1.25rem;
   margin-bottom: 0.5rem;
 }
 
-.cortex-markdown pre {
+.hoot-markdown pre {
   background: var(--secondary);
   border-radius: 0.375rem;
   padding: 0.75rem 1rem;
@@ -475,38 +550,38 @@ input[type="week"] {
   overflow-x: auto;
 }
 
-.cortex-markdown code {
+.hoot-markdown code {
   color: var(--accent-cyan);
   font-size: 0.8125rem;
 }
 
-.cortex-markdown ul,
-.cortex-markdown ol {
+.hoot-markdown ul,
+.hoot-markdown ol {
   margin: 0.75rem 0;
   padding-left: 1.25rem;
 }
 
-.cortex-markdown li {
+.hoot-markdown li {
   margin: 0.35rem 0;
 }
 
-.cortex-markdown li + li {
+.hoot-markdown li + li {
   margin-top: 0.25rem;
 }
 
-.cortex-markdown hr {
+.hoot-markdown hr {
   margin: 1rem 0;
   border-color: var(--border);
 }
 
-.cortex-markdown blockquote {
+.hoot-markdown blockquote {
   border-left: 3px solid var(--border);
   padding-left: 0.75rem;
   margin: 0.75rem 0;
   color: var(--muted-foreground);
 }
 
-.cortex-markdown table {
+.hoot-markdown table {
   border-collapse: collapse;
   width: 100%;
   margin: 1rem 0;
@@ -514,7 +589,7 @@ input[type="week"] {
   overflow: hidden;
 }
 
-.cortex-markdown th {
+.hoot-markdown th {
   background: var(--secondary);
   font-weight: 600;
   text-align: left;
@@ -523,26 +598,26 @@ input[type="week"] {
   white-space: nowrap;
 }
 
-.cortex-markdown td {
+.hoot-markdown td {
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
 }
 
-.cortex-markdown tr:nth-child(even) {
+.hoot-markdown tr:nth-child(even) {
   background: var(--secondary);
 }
 
-.cortex-markdown strong {
+.hoot-markdown strong {
   color: var(--foreground);
   font-weight: 600;
 }
 
-.cortex-markdown a {
+.hoot-markdown a {
   color: var(--accent-cyan);
   text-decoration: none;
 }
 
-.cortex-markdown a:hover {
+.hoot-markdown a:hover {
   text-decoration: underline;
 }
 

@@ -131,7 +131,12 @@ def _stop_if_running(service: Any, process: dict, timeout_seconds: int) -> Optio
         process_id=process_list_id,
     )
 
-    terminated = shared_utils.graceful_terminate(last_pid, timeout=timeout_seconds)
+    # exe_path lets graceful_terminate reap the payload behind a cmd.exe
+    # wrapper for .bat/.cmd targets — without it the tracked pid is the
+    # wrapper and the real process survives the "restart".
+    terminated = shared_utils.graceful_terminate(
+        last_pid, timeout=timeout_seconds, exe_path=process.get("exe_path")
+    )
     if terminated:
         logger.info(
             f"restart_process: terminated PID {last_pid} for '{process_name}' "

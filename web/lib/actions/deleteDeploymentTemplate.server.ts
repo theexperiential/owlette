@@ -5,7 +5,9 @@
  * Missing docs are treated as success, matching firebase client deleteDoc behavior.
  */
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import type { SiteHandlerContext } from '@/lib/authorizedHandler.server';
+import { siteAuditActor } from './auditActor.server';
 import { DeploymentTemplateValidationError } from './createDeploymentTemplate.server';
 
 const TEMPLATE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -31,5 +33,20 @@ export async function deleteDeploymentTemplate(
     .doc(templateId);
 
   await templateRef.delete();
+
+  emitMutation({
+    kind: 'process_mutated',
+    siteId: ctx.siteId,
+    actor: siteAuditActor(ctx),
+    targetId: templateId,
+    attributes: {
+      verb: 'preset.delete',
+      endpoint: 'presets/deployment-template',
+      method: 'DELETE',
+      family: 'deployment-template',
+      presetId: templateId,
+    },
+  });
+
   return { templateId, siteId: ctx.siteId };
 }

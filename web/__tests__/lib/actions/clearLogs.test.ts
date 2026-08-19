@@ -14,11 +14,18 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: jest.fn(),
 }));
 
+const mockEmitMutation = jest.fn();
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
+}));
+
 import type { Firestore } from 'firebase-admin/firestore';
 import {
   ClearLogsValidationError,
   clearLogs,
 } from '@/lib/actions/clearLogs.server';
+
+const AUDIT_ACTOR = 'user:admin-uid';
 
 const mockWhere = jest.fn();
 const mockOrderBy = jest.fn();
@@ -95,7 +102,7 @@ describe('clearLogs', () => {
     mockGet.mockResolvedValueOnce(snapFor(['log-1', 'log-2']));
 
     const result = await clearLogs(
-      { siteId: 'site-a', db: mockDb as unknown as Firestore },
+      { siteId: 'site-a', auditActor: AUDIT_ACTOR, db: mockDb as unknown as Firestore },
       {},
     );
 
@@ -113,7 +120,7 @@ describe('clearLogs', () => {
     mockGet.mockResolvedValueOnce(snapFor([]));
 
     const result = await clearLogs(
-      { siteId: 'site-a', db: mockDb as unknown as Firestore },
+      { siteId: 'site-a', auditActor: AUDIT_ACTOR, db: mockDb as unknown as Firestore },
       { action: 'process_started', machineId: 'machine-a', level: 'warning' },
     );
 
@@ -130,7 +137,7 @@ describe('clearLogs', () => {
       .mockResolvedValueOnce(snapFor(['log-500']));
 
     const result = await clearLogs(
-      { siteId: 'site-a', db: mockDb as unknown as Firestore },
+      { siteId: 'site-a', auditActor: AUDIT_ACTOR, db: mockDb as unknown as Firestore },
       {},
     );
 
@@ -141,12 +148,12 @@ describe('clearLogs', () => {
 
   it('rejects invalid site ids and levels', async () => {
     await expect(
-      clearLogs({ siteId: 'bad site', db: mockDb as unknown as Firestore }),
+      clearLogs({ siteId: 'bad site', auditActor: AUDIT_ACTOR, db: mockDb as unknown as Firestore }),
     ).rejects.toMatchObject({ field: 'siteId' });
 
     await expect(
       clearLogs(
-        { siteId: 'site-a', db: mockDb as unknown as Firestore },
+        { siteId: 'site-a', auditActor: AUDIT_ACTOR, db: mockDb as unknown as Firestore },
         { level: 'verbose' },
       ),
     ).rejects.toBeInstanceOf(ClearLogsValidationError);
@@ -161,7 +168,7 @@ describe('clearLogs', () => {
     );
 
     const result = await clearLogs(
-      { siteId: 'site-a', db: mockDb as unknown as Firestore },
+      { siteId: 'site-a', auditActor: AUDIT_ACTOR, db: mockDb as unknown as Firestore },
       { sinceMs: 1000, untilMs: 2000, level: 'error' },
     );
 
@@ -174,17 +181,56 @@ describe('clearLogs', () => {
     expect(mockBatchInstances[0].delete).toHaveBeenCalledTimes(1);
   });
 
+  it('emits a site_mutated audit with verb=logs.clear and the deleted count', async () => {
+    mockGet.mockResolvedValueOnce(snapFor(['log-1', 'log-2']));
+
+    await clearLogs(
+      { siteId: 'site-a', auditActor: AUDIT_ACTOR, db: mockDb as unknown as Firestore },
+      { level: 'error' },
+    );
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith({
+      kind: 'site_mutated',
+      siteId: 'site-a',
+      actor: AUDIT_ACTOR,
+      targetId: 'site-a',
+      attributes: {
+        verb: 'logs.clear',
+        endpoint: 'logs',
+        method: 'DELETE',
+        deletedCount: 2,
+        filters: { level: 'error' },
+      },
+    });
+  });
+
+  it('emits the audit even when nothing matched the filters', async () => {
+    mockGet.mockResolvedValueOnce(snapFor([]));
+
+    await clearLogs(
+      { siteId: 'site-a', auditActor: AUDIT_ACTOR, db: mockDb as unknown as Firestore },
+      {},
+    );
+
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attributes: expect.objectContaining({ verb: 'logs.clear', deletedCount: 0 }),
+      }),
+    );
+  });
+
   it('rejects invalid since/until bounds', async () => {
     await expect(
       clearLogs(
-        { siteId: 'site-a', db: mockDb as unknown as Firestore },
+        { siteId: 'site-a', auditActor: AUDIT_ACTOR, db: mockDb as unknown as Firestore },
         { sinceMs: 5000, untilMs: 1000 },
       ),
     ).rejects.toMatchObject({ field: 'sinceMs' });
 
     await expect(
       clearLogs(
-        { siteId: 'site-a', db: mockDb as unknown as Firestore },
+        { siteId: 'site-a', auditActor: AUDIT_ACTOR, db: mockDb as unknown as Firestore },
         { sinceMs: -1 },
       ),
     ).rejects.toBeInstanceOf(ClearLogsValidationError);

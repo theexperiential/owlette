@@ -202,6 +202,9 @@ class CortexFirestore:
     def write_cortex_status(self, status: str):
         """Update the Cortex status (idle, thinking, tool_call, error).
 
+        Clears any startup error recorded by write_cortex_error() — reaching a
+        live status means whatever blocked the previous start is resolved.
+
         Args:
             status: Current cortex status string.
         """
@@ -210,9 +213,31 @@ class CortexFirestore:
                 'cortexStatus.status': status,
                 'cortexStatus.lastHeartbeat': SERVER_TIMESTAMP,
                 'cortexStatus.online': True,
+                'cortexStatus.error': None,
             })
         except Exception as e:
             logger.debug(f"Failed to write cortex status: {e}")
+
+    def write_cortex_error(self, message: str):
+        """Record a startup failure that prevents Cortex from running.
+
+        Unlike write_error_response() (which answers a chat turn), this marks
+        the machine's Cortex as down with a human-readable reason, so the
+        dashboard shows why it never came online.
+
+        Args:
+            message: Short, user-facing explanation of the failure.
+        """
+        try:
+            self.db.update_document(self._machine_path, {
+                'cortexStatus.status': 'error',
+                'cortexStatus.error': message,
+                'cortexStatus.online': False,
+                'cortexStatus.lastHeartbeat': SERVER_TIMESTAMP,
+            })
+            logger.info(f"Cortex error status written: {message}")
+        except Exception as e:
+            logger.warning(f"Failed to write cortex error status: {e}")
 
     def write_cortex_offline(self):
         """Mark Cortex as offline on the machine doc."""

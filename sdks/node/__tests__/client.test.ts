@@ -169,3 +169,126 @@ describe('OwletteClient retry policy', () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+/**
+ * Trial-countdown advisory (billing-system wave 3.3).
+ *
+ * The api sets `X-Owlette-Billing-Warning` while the account's free trial is
+ * running. The sdk never prints — it hands the value to the consumer's
+ * optional `onBillingWarning` callback and nothing else.
+ */
+describe('OwletteClient onBillingWarning', () => {
+  const WARNING = 'trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API access';
+
+  /** Fake fetch whose responses carry real headers. */
+  function fetchWithHeaders(
+    handler: (n: number) => { status: number; body: unknown; headers?: Record<string, string> },
+  ): typeof fetch {
+    let n = 0;
+    return async () => {
+      const { status, body, headers } = handler(n++);
+      return {
+        ok: status >= 200 && status < 300,
+        status,
+        headers: new Headers(headers ?? {}),
+        text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+      } as Response;
+    };
+  }
+
+  it('invokes the callback with the header value', async () => {
+    const seen: string[] = [];
+    const client = new OwletteClient({
+      token: 'owk_live_x',
+      fetch: fetchWithHeaders(() => ({
+        status: 200,
+        body: { ok: true },
+        headers: { 'X-Owlette-Billing-Warning': WARNING },
+      })),
+      onBillingWarning: (w) => seen.push(w),
+    });
+
+    await client.request('/api/sites');
+    expect(seen).toEqual([WARNING]);
+  });
+
+  it('does not invoke the callback when the header is absent', async () => {
+    const seen: string[] = [];
+    const client = new OwletteClient({
+      token: 'owk_live_x',
+      fetch: fetchWithHeaders(() => ({ status: 200, body: { ok: true } })),
+      onBillingWarning: (w) => seen.push(w),
+    });
+
+    await client.request('/api/sites');
+    expect(seen).toEqual([]);
+  });
+
+  it('is entirely optional — a client without the callback still works', async () => {
+    const client = new OwletteClient({
+      token: 'owk_live_x',
+      fetch: fetchWithHeaders(() => ({
+        status: 200,
+        body: { ok: true },
+        headers: { 'X-Owlette-Billing-Warning': WARNING },
+      })),
+    });
+
+    await expect(client.request('/api/sites')).resolves.toMatchObject({ status: 200 });
+  });
+
+  it('fires on an error response too', async () => {
+    const seen: string[] = [];
+    const client = new OwletteClient({
+      token: 'owk_live_x',
+      fetch: fetchWithHeaders(() => ({
+        status: 404,
+        body: { code: 'not_found' },
+        headers: { 'X-Owlette-Billing-Warning': WARNING },
+      })),
+      onBillingWarning: (w) => seen.push(w),
+      retry: { maxAttempts: 1 },
+    });
+
+    await expect(client.request('/api/sites')).rejects.toBeInstanceOf(OwletteApiError);
+    expect(seen).toEqual([WARNING]);
+  });
+
+  it('fires once per response, including retried attempts', async () => {
+    // Documented semantics: the sdk does not deduplicate — consumers that
+    // want at-most-once do it themselves.
+    const seen: string[] = [];
+    const client = new OwletteClient({
+      token: 'owk_live_x',
+      fetch: fetchWithHeaders((n) => ({
+        status: n === 0 ? 500 : 200,
+        body: { ok: n !== 0 },
+        headers: { 'X-Owlette-Billing-Warning': WARNING },
+      })),
+      onBillingWarning: (w) => seen.push(w),
+      retry: { maxAttempts: 5, baseDelayMs: 1, maxDelayMs: 5, jitter: 0 },
+    });
+
+    await client.request('/api/sites');
+    expect(seen).toEqual([WARNING, WARNING]);
+  });
+
+  it('swallows a throwing callback — the request still resolves', async () => {
+    const client = new OwletteClient({
+      token: 'owk_live_x',
+      fetch: fetchWithHeaders(() => ({
+        status: 200,
+        body: { ok: true },
+        headers: { 'X-Owlette-Billing-Warning': WARNING },
+      })),
+      onBillingWarning: () => {
+        throw new Error('consumer bug');
+      },
+    });
+
+    await expect(client.request('/api/sites')).resolves.toMatchObject({
+      status: 200,
+      data: { ok: true },
+    });
+  });
+});

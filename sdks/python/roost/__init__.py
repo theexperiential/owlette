@@ -19,6 +19,7 @@ Typical usage::
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from types import TracebackType
 from typing import TYPE_CHECKING
 
@@ -124,6 +125,7 @@ class Roost:
         retry: RetryPolicy | None = None,
         transport: "httpx.AsyncBaseTransport | None" = None,
         timeout: float = 30.0,
+        on_billing_warning: Callable[[str], None] | None = None,
     ) -> None:
         client_kwargs: dict[str, object] = {
             "token": token,
@@ -137,6 +139,8 @@ class Roost:
             client_kwargs["retry"] = retry
         if transport is not None:
             client_kwargs["transport"] = transport
+        if on_billing_warning is not None:
+            client_kwargs["on_billing_warning"] = on_billing_warning
         self._client = RoostClient(**client_kwargs)  # type: ignore[arg-type]
 
         self._roosts: Roosts | None = None

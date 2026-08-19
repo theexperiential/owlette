@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   ApiAuthError,
+  assertActiveUser,
   requireSessionOrIdToken,
 } from '@/lib/apiAuth.server';
-import { emitMutation } from '@/lib/auditLogClient';
+import { withRateLimit } from '@/lib/withRateLimit';
+import {
+  type ApiKeyRecord,
+  type ApiKeyScope,
+  buildApiKeyListItem,
+} from '@/lib/apiKeyTypes';
+import { assertScopesGrantable, MAX_NAME_LENGTH, validateScopes } from '../_shared';
+import { emitMutation, scopeFingerprint } from '@/lib/auditLogClient';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
   problem,
@@ -86,3 +94,178 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return problemFromError(error, 'api/keys/[keyId]:DELETE');
   }
 }
+
+/**
+ * PATCH /api/keys/{keyId}
+ *
+ * Edit an existing key's scopes and/or name in place, without reissuing the
+ * secret. Body: `{ scopes?: Scope[], name?: string }` — `scopes` is a full
+ * replacement, not a merge.
+ *
+ * Why both documents are written in one batch, and why that is not optional:
+ * authorization reads scopes *exclusively* from the denormalised
+ * `api_keys/{keyHash}` lookup (apiAuth.server.ts:185,230). The user
+ * subcollection is never consulted on the auth path — only a fire-and-forget
+ * `lastUsedAt` write touches it. Updating just the user doc would leave the
+ * credential on its old permissions indefinitely while the dashboard claimed
+ * otherwise. There is no cache in front of the lookup, so the commit takes
+ * effect on the very next request.
+ *
+ * Validation is the same code POST uses (`./_shared`) rather than a
+ * reimplementation: a PATCH that validated more loosely than create would be
+ * a privilege-escalation path around the superadmin gate — edit into scopes
+ * you could never have been issued.
+ *
+ * Auth is copied from POST (`rejectAgentTokens` + `assertActiveUser`), not
+ * from DELETE, which has neither.
+ *
+ * 409 on a rotated or revoked key: both have a successor or a terminal state
+ * the caller should be acting on instead, and silently editing a key inside
+ * its rotation grace window would change the predecessor's powers out from
+ * under whoever still holds it.
+ */
+export const PATCH = withRateLimit(
+  async (request: NextRequest, { params }: RouteParams) => {
+    try {
+      const userId = await requireSessionOrIdToken(request, { rejectAgentTokens: true });
+      const activeUserData = await assertActiveUser(userId);
+      const { keyId } = await params;
+
+      if (!keyId || typeof keyId !== 'string') {
+        return problemValidation('keyId is required');
+      }
+
+      let body: { scopes?: unknown; name?: unknown; environment?: unknown; ttlDays?: unknown };
+      try {
+        body = (await request.json()) as typeof body;
+      } catch {
+        return problemValidation('request body must be valid json');
+      }
+
+      if (body.environment !== undefined) {
+        return problemValidation('environment cannot be changed — rotate or create a new key');
+      }
+      if (body.ttlDays !== undefined) {
+        return problemValidation('ttlDays cannot be changed — rotate to extend expiry');
+      }
+
+      const wantsScopes = body.scopes !== undefined;
+      const wantsName = body.name !== undefined;
+      if (!wantsScopes && !wantsName) {
+        return problemValidation('nothing to update — provide scopes and/or name');
+      }
+
+      let scopes: ApiKeyScope[] | null = null;
+      if (wantsScopes) {
+        const result = validateScopes(body.scopes);
+        if (typeof result === 'string') {
+          return problemValidation(result);
+        }
+        scopes = result;
+        const notGrantable = await assertScopesGrantable(userId, activeUserData, scopes);
+        if (notGrantable) return notGrantable;
+      }
+
+      let name: string | null = null;
+      if (wantsName) {
+        if (typeof body.name !== 'string' || body.name.trim().length === 0) {
+          return problemValidation('name must be a non-empty string');
+        }
+        name = body.name.trim().slice(0, MAX_NAME_LENGTH);
+      }
+
+      const db = getAdminDb();
+      const keyRef = db.collection('users').doc(userId).collection('api_keys').doc(keyId);
+      const keySnap = await keyRef.get();
+      if (!keySnap.exists) {
+        return problemNotFound('api key not found');
+      }
+      const existing = keySnap.data() as Partial<ApiKeyRecord> & { revokedAt?: number };
+
+      if (existing.revokedAt) {
+        return problem({
+          type: ProblemType.Conflict,
+          title: 'key revoked',
+          status: 409,
+          detail: 'this key has been revoked and cannot be edited',
+        });
+      }
+      if (existing.rotatedAt) {
+        return problem({
+          type: ProblemType.Conflict,
+          title: 'key rotated',
+          status: 409,
+          detail: 'this key was rotated — edit its successor instead',
+        });
+      }
+      if (!existing.keyHash) {
+        return problemFromError(
+          new Error(`api key ${keyId} has no keyHash; cannot update its lookup document`),
+          'api/keys/[keyId]:PATCH',
+        );
+      }
+
+      const patch: Record<string, unknown> = {};
+      if (scopes) patch.scopes = scopes;
+      if (name) patch.name = name;
+
+      const batch = db.batch();
+      batch.update(keyRef, patch);
+      // The lookup carries only the enforcement-relevant half. `name` is
+      // display-only and is not denormalised there.
+      if (scopes) {
+        batch.update(db.collection('api_keys').doc(existing.keyHash), { scopes });
+      }
+      await batch.commit();
+
+      emitMutation({
+        kind: 'api_key_mutated',
+        siteId: '',
+        actor: `user:${userId}`,
+        targetId: keyId,
+        attributes: {
+          verb: 'update',
+          endpoint: request.nextUrl.pathname,
+          method: request.method,
+          changedFields: Object.keys(patch).sort().join(','),
+          // Fingerprints, never raw scopes — the audit log is broadly readable
+          // and a scope list is a map of what the key can reach. The counts
+          // ride along because the fingerprint is opaque: they are what makes
+          // a key quietly going from one scope to nine visible on a scan.
+          ...(scopes
+            ? {
+                scopeFingerprintBefore: scopeFingerprint(existing.scopes ?? null),
+                scopeFingerprintAfter: scopeFingerprint(scopes),
+                scopeCountBefore: (existing.scopes ?? []).length,
+                scopeCountAfter: scopes.length,
+              }
+            : {}),
+        },
+      });
+
+      const updated = buildApiKeyListItem(
+        keyId,
+        { ...existing, ...patch } as Record<string, unknown>,
+        Date.now(),
+      );
+      return NextResponse.json({ success: true, key: updated });
+    } catch (error: unknown) {
+      if (error instanceof ApiAuthError) {
+        if (error.code === 'token_expired') {
+          const expiredAt =
+            typeof error.details?.expiredAt === 'number' ? error.details.expiredAt : undefined;
+          return problemTokenExpired(expiredAt);
+        }
+        if (error.status === 401) return problemUnauthorized(error.message);
+        return problem({
+          type: ProblemType.Forbidden,
+          title: 'forbidden',
+          status: error.status,
+          detail: error.message,
+        });
+      }
+      return problemFromError(error, 'api/keys/[keyId]:PATCH');
+    }
+  },
+  { strategy: 'api', identifier: 'ip' },
+);

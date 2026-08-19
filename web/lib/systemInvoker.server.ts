@@ -2,7 +2,7 @@
  * system invoker (security-boundary-migration wave 2.3).
  *
  * Single entry point for any code path that needs to act as a system
- * actor — cortex autonomous mode, cortex provisioning, scheduled jobs.
+ * actor — hoot autonomous mode, hoot provisioning, scheduled jobs.
  * Mirrors the authorization pipeline that `authorizedHandler` enforces
  * for http requests so the same audit + rate-limit + kill-switch
  * semantics apply to background work.
@@ -13,7 +13,7 @@
  *      actor (this is a programmer error — no audit row to write).
  *   2. Capture a stack-trace fingerprint of the caller module and stamp
  *      it into `metadata.callerModule`. If the fingerprint does NOT
- *      match an expected pattern (`web/lib/cortex/`, `web/lib/jobs/`,
+ *      match an expected pattern (`web/lib/hoot/`, `web/lib/jobs/`,
  *      or a test file), emit a `logger.error('UNEXPECTED_SYSTEM_INVOKER_CALLER')`
  *      so wave 8.2 monitoring can fire on this. Never throws — this is a
  *      defense-in-depth alert layered on top of the eslint + ci-scan
@@ -40,7 +40,7 @@
  *
  * Import-graph allowlist (defense in depth):
  *   - eslint rule `no-restricted-imports` blocks importing this module
- *     from outside `web/lib/cortex/**`, `web/lib/jobs/**`, and tests.
+ *     from outside `web/lib/hoot/**`, `web/lib/jobs/**`, and tests.
  *   - `scripts/check-system-invoker-callers.mjs` re-checks the same
  *     allowlist at ci time using a typescript ast walk, so a stale or
  *     bypassed eslint config doesn't silently let a misuse through.
@@ -150,6 +150,7 @@ const KNOWN_SYSTEM_ACTOR_NAMES: ReadonlySet<string> = new Set<SystemActorName>([
   'cortex_autonomous',
   'cortex_provisioning',
   'scheduled_cleanup',
+  'talon_runner',
 ]);
 
 /**
@@ -161,7 +162,7 @@ const KNOWN_SYSTEM_ACTOR_NAMES: ReadonlySet<string> = new Set<SystemActorName>([
  * don't trip the alert.
  */
 const ALLOWED_CALLER_PATTERNS: readonly RegExp[] = [
-  /(^|\/)web\/lib\/cortex\//,
+  /(^|\/)web\/lib\/hoot\//,
   /(^|\/)web\/lib\/jobs\//,
   /(^|\/)web\/__tests__\//,
   /\.test\.[cm]?[jt]sx?$/,
@@ -238,7 +239,7 @@ function findRepoRelativeStart(p: string): number {
 
 function isAllowedCaller(fingerprint: string): boolean {
   if (fingerprint === 'unknown') return false;
-  // Strip line:column suffix before pattern matching (so /web/lib/cortex/foo.ts:12:3 still matches).
+  // Strip line:column suffix before pattern matching (so /web/lib/hoot/foo.ts:12:3 still matches).
   const sourcePath = fingerprint.replace(/:\d+:\d+$/, '');
   return ALLOWED_CALLER_PATTERNS.some((re) => re.test(sourcePath));
 }

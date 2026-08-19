@@ -88,6 +88,17 @@ test.afterAll(async () => {
   if (readOnlyKey) await revokeApiKey(readOnlyKey);
   await clearDeployments();
   await Promise.all([clearMachineCommands(MACHINE_ID_A), clearMachineCommands(MACHINE_ID_B)]);
+
+  // Undo the beforeAll membership grant and drop the isolated site. Leaving
+  // SITE_ID in admin-uid's `sites` makes the UI's site auto-selection pick it
+  // over the canonical `site-A` for every later spec in the run — their
+  // site-A seeds then never render (this failed 9 co-run specs on 2026-08-12).
+  const db = getAdminDb();
+  const userRef = db.collection('users').doc('admin-uid');
+  const snap = await userRef.get();
+  const sites = ((snap.data()?.sites ?? []) as string[]).filter((s) => s !== SITE_ID);
+  await userRef.update({ sites });
+  await db.collection('sites').doc(SITE_ID).delete();
 });
 
 test.beforeEach(async () => {

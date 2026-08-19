@@ -23,6 +23,7 @@ import type {
   QueryDocumentSnapshot,
 } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 
 const FIRESTORE_BATCH_LIMIT = 500;
@@ -31,6 +32,8 @@ const VALID_LEVELS = new Set(['debug', 'info', 'warning', 'error', 'critical']);
 
 export interface ClearLogsContext {
   siteId: string;
+  /** Audit actor string ("user:<uid>" or "apiKey:<keyId>"). */
+  auditActor: string;
   /** Inject a Firestore instance — tests pass a mock; production omits. */
   db?: Firestore;
 }
@@ -118,6 +121,20 @@ export async function clearLogs(
     input.sinceMs !== undefined || input.untilMs !== undefined
       ? await clearByTimestampWindow(db, logsCol, input)
       : await clearByEqualityFilters(db, logsCol, input);
+
+  emitMutation({
+    kind: 'site_mutated',
+    siteId: ctx.siteId,
+    actor: ctx.auditActor,
+    targetId: ctx.siteId,
+    attributes: {
+      verb: 'logs.clear',
+      endpoint: 'logs',
+      method: 'DELETE',
+      deletedCount,
+      filters: input,
+    },
+  });
 
   if (deletedCount > 0) {
     logger.info(`clearLogs: deleted ${deletedCount} entries from sites/${ctx.siteId}/logs`, {

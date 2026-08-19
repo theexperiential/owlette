@@ -6,7 +6,7 @@
  * This is the destination for the "manage alerts" link in every alert email
  * (added in wrapEmailLayout). It lets a recipient toggle individual alert
  * categories on/off instead of only fully unsubscribing. Each toggle saves
- * immediately (optimistic, reverting on failure). The same four+1 toggles live
+ * immediately (optimistic, reverting on failure). The same toggles live
  * in the account-settings dialog's "alerts" section — this page is the
  * deep-linkable, focused view of them.
  */
@@ -25,7 +25,8 @@ type AlertKey =
   | 'processAlerts'
   | 'thresholdAlerts'
   | 'cortexAlerts'
-  | 'displayAlerts';
+  | 'displayAlerts'
+  | 'talonAlerts';
 
 const ALERT_TOGGLES: { key: AlertKey; label: string; desc: string }[] = [
   {
@@ -45,13 +46,18 @@ const ALERT_TOGGLES: { key: AlertKey; label: string; desc: string }[] = [
   },
   {
     key: 'cortexAlerts',
-    label: 'cortex escalation alerts',
+    label: 'hoot escalation alerts',
     desc: "receive email alerts when automated diagnostics can't resolve an issue",
   },
   {
     key: 'displayAlerts',
     label: 'display events',
     desc: 'receive email alerts when monitors are removed, layouts drift, or display apply fails',
+  },
+  {
+    key: 'talonAlerts',
+    label: 'talon alerts',
+    desc: 'emails when a talon fires or fails',
   },
 ];
 
@@ -62,6 +68,7 @@ function pickAlertPrefs(p: UserPreferences): Record<AlertKey, boolean> {
     thresholdAlerts: p.thresholdAlerts,
     cortexAlerts: p.cortexAlerts,
     displayAlerts: p.displayAlerts,
+    talonAlerts: p.talonAlerts,
   };
 }
 

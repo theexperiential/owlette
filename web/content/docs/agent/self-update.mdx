@@ -28,12 +28,16 @@ The service does not stop itself and run the installer inline. Task Scheduler ow
 
 ### from the dashboard
 
-1. Navigate to the machine in the dashboard.
-2. Click **update owlette**.
-3. Select the machines to update.
+1. Open the **deploy** page in the dashboard.
+2. Click **update owlette** in the page header. The button is only shown while at least one machine on the current site is behind the latest installer.
+3. Select the machines to update. Only outdated machines are listed, and an offline machine cannot be selected — the agent has to be online to receive the command.
 4. Confirm the update.
 
 The dashboard uses the current latest installer metadata automatically and sends an `update_owlette` command with the installer URL, expected SHA-256 checksum, and target version.
+
+### on the machine itself
+
+The installer runs with `/VERYSILENT`, so nothing appears on screen. Setup closes the owlette desktop app before it copies files, so the window and the tray icon both disappear for the length of the update — that is expected, not a crash. The installer does not bring them back: the service relaunches the desktop app in tray mode as soon as it starts again.
 
 ### what gets preserved
 
@@ -41,7 +45,7 @@ The dashboard uses the current latest installer metadata automatically and sends
 |-----------|----------|
 | ProgramData configuration | Agent application files |
 | Encrypted OAuth tokens | Bundled Python packages |
-| Log files | Service wrapper files installed by the package |
+| Log files | The service host (`owlette-host.exe`) and the desktop app |
 | Cache and temporary data directories | Installer executable used for the update |
 
 The installer upgrades in place and avoids deleting the ProgramData configuration, token, log, cache, and temp directories. It does not perform a separate config backup/restore step.
@@ -90,11 +94,13 @@ After the update completes:
 If the machine goes offline and does not come back:
 
 1. Check the machine physically if remote access is unavailable.
-2. Check `%ProgramData%\owlette\logs\service.log`.
-3. Check `%ProgramData%\owlette\logs\installer_update.log`.
-4. Check `%ProgramData%\owlette\logs\update_in_progress.json` for the old version, target version, command ID, and deployment ID.
-5. Check for leftover `OwletteUpdate_*` or `OwletteRecovery_*` scheduled tasks.
-6. Start the service manually with `net start OwletteService`.
+2. Open the desktop app from the start menu (**Owlette**). The service is what relaunches it, so it will not be in the tray while the service is down. Opening the app attempts to start the service on its own, and its status footer keeps a **start service** button — either may raise a single UAC prompt.
+3. Read the logs. The app menu (☰) → **logs** opens `%ProgramData%\owlette\logs`, and the start menu's **View Logs** shortcut opens the same folder without the app:
+   - `service.log` — the agent's own account of the update.
+   - `installer_update.log` — what the installer did.
+   - `update_in_progress.json` — old version, target version, command ID, and deployment ID. The service deletes this file on its next start, so finding it still present means the service has not come back.
+4. Check for leftover `OwletteUpdate_*` or `OwletteRecovery_*` scheduled tasks. `OwletteRecovery_*` should already have tried to start the service about five minutes after the update began.
+5. Start the service manually with `net start OwletteService` from an elevated prompt if the desktop app is unavailable.
 
 ### version did not change
 

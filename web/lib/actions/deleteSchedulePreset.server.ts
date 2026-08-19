@@ -9,7 +9,9 @@
  * as success, matching firebase client deleteDoc behavior.
  */
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import type { SiteHandlerContext } from '@/lib/authorizedHandler.server';
+import { siteAuditActor } from './auditActor.server';
 import { SchedulePresetValidationError } from './createSchedulePreset.server';
 
 const PRESET_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -35,5 +37,20 @@ export async function deleteSchedulePreset(
     .doc(presetId);
 
   await presetRef.delete();
+
+  emitMutation({
+    kind: 'process_mutated',
+    siteId: ctx.siteId,
+    actor: siteAuditActor(ctx),
+    targetId: presetId,
+    attributes: {
+      verb: 'preset.delete',
+      endpoint: 'presets/schedule',
+      method: 'DELETE',
+      family: 'schedule',
+      presetId,
+    },
+  });
+
   return { presetId, siteId: ctx.siteId };
 }

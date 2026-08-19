@@ -59,7 +59,7 @@ Legend:
 | `owlette machine screenshot <machineId>` | ready | [machine](/docs/cli/reference/machine) | `POST /api/sites/{siteId}/machines/{machineId}/commands` with `type=capture_screenshot`, then `GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}` |
 | `owlette machine live-view <machineId>` | stub | [machine](/docs/cli/reference/machine) | no public route yet; `public-api deferred: live-view-webrtc` |
 
-## cortex chat
+## hoot chat
 
 | command | status | reference page | public route or reason |
 |---|---|---|---|
@@ -100,10 +100,11 @@ Legend:
 
 | command | status | reference page | public route or reason |
 |---|---|---|---|
-| `owlette key create` | ready | [key](/docs/cli/reference/key) | `POST /api/keys` |
-| `owlette key list` | ready | [key](/docs/cli/reference/key) | `GET /api/keys` |
-| `owlette key rotate <keyId>` | ready | [key](/docs/cli/reference/key) | `POST /api/keys/{keyId}/rotate` |
-| `owlette key revoke <keyId>` | ready | [key](/docs/cli/reference/key) | `DELETE /api/keys/{keyId}` |
+| `owlette key list` | ready (superadmin keys only) | [key](/docs/cli/reference/key) | `GET /api/account/api-keys` |
+| `owlette key create` | ready (superadmin keys only; scopes inherited) | [key](/docs/cli/reference/key) | `POST /api/account/api-keys` |
+| `owlette key update <keyId>` | not available | [key](/docs/cli/reference/key) | session-only — `PATCH /api/keys/{keyId}` rejects api-key auth |
+| `owlette key rotate <keyId>` | not available | [key](/docs/cli/reference/key) | session-only — `POST /api/keys/{keyId}/rotate` rejects api-key auth |
+| `owlette key revoke <keyId>` | not available | [key](/docs/cli/reference/key) | session-only — `DELETE /api/keys/{keyId}` rejects api-key auth |
 | `owlette user list` | ready | [user](/docs/cli/reference/user) | `GET /api/users` |
 | `owlette user get <uid>` | ready | [user](/docs/cli/reference/user) | `GET /api/users/{uid}` |
 | `owlette user promote <uid>` | ready | [user](/docs/cli/reference/user) | `POST /api/users/{uid}/promote` |
@@ -137,7 +138,7 @@ Legend:
 ## invariants
 
 - No registered CLI command calls `/api/admin/*`.
-- `owlette chat` uses canonical `/api/cortex/conversations/*` routes; `/api/chat/*` is compatibility-only.
+- `owlette chat` currently calls the `/api/cortex/conversations/*` compatibility aliases; `/api/hoot/conversations/*` is the canonical family, and `/api/chat/*` is a second, older alias set.
 - `machine live-view` is the only registered stub; `rg 'stubExit\(' cli/src/commands` should only match `cli/src/commands/machine.ts`.
 - `owlette listen` and `owlette trigger` are registered commands, but their dedicated reference pages are still pending Tasks 4.9 and 4.10.
 - `owlette webhook ...` is documented as a planned noun, not a registered command.

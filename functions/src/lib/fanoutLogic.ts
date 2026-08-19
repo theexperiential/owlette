@@ -66,7 +66,10 @@ export interface RolloutEvaluation {
   failed: number;
   /** targets still pending/in_progress */
   pending: number;
-  /** all wave targets are in a terminal state */
+  /**
+   * No target in this wave is still in flight. An **empty** wave is
+   * vacuously settled — see the note in {@link evaluateWave}.
+   */
   settled: boolean;
   /** success rate among settled targets (0..1, NaN if nothing settled) */
   successRate: number;
@@ -145,6 +148,14 @@ export function canarySizeFor(fleetSize: number): number {
  * Summarise the state of a rollout wave. Callers feed the current
  * reported target statuses; this function returns the pure computation
  * of "are we done, and how did it go?"
+ *
+ * An empty wave settles vacuously (`settled: true`, `pending: 0`). This
+ * matters for the single-machine case: `canarySizeFor(1) === 1`, so the
+ * lone machine IS the canary and the fleet wave is empty. Treating an
+ * empty wave as permanently unsettled parked every 1-machine rollout at
+ * `stage: "fleet"` forever. The abort and promote gates keep their own
+ * `total > 0` guards, so "settled" never on its own aborts a rollout or
+ * promotes an empty canary — only `fleet → complete` reads it as done.
  */
 export function evaluateWave(targets: readonly TargetState[]): RolloutEvaluation {
   const total = targets.length;
@@ -158,7 +169,7 @@ export function evaluateWave(targets: readonly TargetState[]): RolloutEvaluation
 
   const terminal = succeeded + failed;
   const pending = total - terminal;
-  const settled = total > 0 && pending === 0;
+  const settled = pending === 0;
   const successRate = terminal === 0 ? NaN : succeeded / terminal;
   const failureRate = total === 0 ? 0 : failed / total;
 

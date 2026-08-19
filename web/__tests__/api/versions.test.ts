@@ -738,3 +738,7 @@ describe('PATCH /versions/{ref} — description edit', () => {
     expect(res.body.code).toBe('version_content_immutable');
   });
 });
+
+/* ========================================================================== */
+/*  billing gate — publishing is pro-only (wave 0.6)                          */
+/* ========================================================================== */

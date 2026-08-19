@@ -54,6 +54,11 @@ jest.mock('firebase-admin/firestore', () => ({
   FieldValue: { serverTimestamp: () => '__SERVER_TS__' },
 }));
 
+const mockEmitMutation = jest.fn();
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
+}));
+
 import {
   createRestartPreset,
   RestartPresetValidationError,
@@ -78,6 +83,7 @@ beforeEach(() => {
   updateCalls.length = 0;
   deleteCalls.length = 0;
   docState.clear();
+  mockEmitMutation.mockClear();
 });
 
 describe('createRestartPreset', () => {
@@ -186,5 +192,72 @@ describe('deleteRestartPreset', () => {
     await expect(
       deleteRestartPreset(ctx, 'bad id'),
     ).rejects.toBeInstanceOf(RestartPresetValidationError);
+  });
+});
+
+describe('restart preset audit emission', () => {
+  it('emits preset.create on create', async () => {
+    const result = await createRestartPreset(ctx, {
+      name: 'Weekday 3am',
+      entries: [{ id: 'entry-1', days: ['mon'], time: '03:00' }],
+      isBuiltIn: false,
+      order: 0,
+      createdBy: 'uid_alice',
+    });
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        siteId: 'site-a',
+        actor: 'user:uid_alice',
+        targetId: result.presetId,
+        attributes: expect.objectContaining({
+          verb: 'preset.create',
+          family: 'reboot',
+          presetId: result.presetId,
+        }),
+      }),
+    );
+  });
+
+  it('emits preset.update on a built-in override', async () => {
+    await updateRestartPreset(ctx, 'builtin-weekly-reboot', { name: 'renamed' });
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        targetId: 'builtin-weekly-reboot',
+        attributes: expect.objectContaining({
+          verb: 'preset.update',
+          family: 'reboot',
+          isBuiltInOverride: true,
+        }),
+      }),
+    );
+  });
+
+  it('does not emit when the update target is missing', async () => {
+    await expect(
+      updateRestartPreset(ctx, 'reboot-missing-1', { name: 'x' }),
+    ).rejects.toBeInstanceOf(RestartPresetNotFoundError);
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  it('emits preset.delete on delete', async () => {
+    await deleteRestartPreset(ctx, 'reboot-x-1');
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        targetId: 'reboot-x-1',
+        attributes: expect.objectContaining({
+          verb: 'preset.delete',
+          family: 'reboot',
+        }),
+      }),
+    );
   });
 });

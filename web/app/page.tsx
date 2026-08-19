@@ -8,6 +8,7 @@ import {
   LandingFooter,
 } from '@/components/landing';
 import { PRODUCT_JSONLD } from '@/lib/product-facts';
+import { pickHeroHeadline } from '@/lib/heroHeadlines';
 
 // Lazy-load below-fold sections to reduce initial JS bundle
 // Note: ValuePropSection stays static because it contains the LCP image (dashboard.png)
@@ -24,6 +25,12 @@ const jsonLd = PRODUCT_JSONLD;
 
 export default async function LandingPage() {
   const nonce = (await headers()).get('x-nonce') ?? undefined;
+  // Rolled here rather than inside HeroSection: the hero is a client
+  // component, so picking there would produce one phrase on the server and a
+  // different one during hydration. Reading headers() above already opts this
+  // page into per-request rendering, so the phrase re-rolls on every load
+  // instead of freezing into a prerendered page.
+  const heroHeadline = pickHeroHeadline();
 
   return (
     <div className="min-h-screen relative">
@@ -43,7 +50,7 @@ export default async function LandingPage() {
       <div className="fixed inset-0 dot-grid opacity-30 pointer-events-none" />
       <LandingHeader />
       <main>
-        <HeroSection />
+        <HeroSection headline={heroHeadline} />
         <ValuePropSection />
         <UseCaseSection />
         <DisplaySection />

@@ -404,7 +404,7 @@ export default function DeploymentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-border bg-secondary text-white max-w-3xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
+      <DialogContent className="border-border bg-secondary text-white sm:max-w-3xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle className="text-white">deploy software</DialogTitle>
           <DialogDescription className="text-muted-foreground">
@@ -838,7 +838,7 @@ export default function DeploymentDialog({
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <DialogContent className="border-border bg-secondary text-white max-w-md">
+        <DialogContent className="border-border bg-secondary text-white sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="text-white">delete template</DialogTitle>
             <DialogDescription className="text-muted-foreground">

@@ -8,11 +8,14 @@ const machineRefSet = jest.fn().mockResolvedValue(undefined);
 const siteRefSet = jest.fn().mockResolvedValue(undefined);
 const emailSend = jest.fn().mockResolvedValue({ error: null });
 const fireWebhooksMock = jest.fn().mockResolvedValue(undefined);
+const tapTalonMatcherMock = jest.fn();
 const getSiteAlertRecipientsMock = jest.fn();
 
 const mockMachinesGet = jest.fn();
 const mockSitesGet = jest.fn();
 const mockSiteGet = jest.fn(async () => ({ data: () => ({ name: 'node-pa' }) }));
+/** Site ids the scan is allowed to address this test. */
+const knownSites = new Set<string>(['node-pa']);
 
 const siteDocRef = {
   collection: jest.fn((name: string) => {
@@ -24,14 +27,14 @@ const siteDocRef = {
 const sitesCollection = {
   get: mockSitesGet,
   doc: jest.fn((id: string) => {
-    if (id !== 'node-pa') throw new Error(`unexpected site doc: ${id}`);
+    if (!knownSites.has(id)) throw new Error(`unexpected site doc: ${id}`);
     return siteDocRef;
   }),
 };
 const mockDb = {
   collection: jest.fn((name: string) => {
-    if (name !== 'sites') throw new Error(`unexpected collection: ${name}`);
-    return sitesCollection;
+    if (name === 'sites') return sitesCollection;
+    throw new Error(`unexpected collection: ${name}`);
   }),
 };
 
@@ -62,6 +65,13 @@ jest.mock('@/app/api/unsubscribe/route', () => ({
 
 jest.mock('@/lib/webhookSender.server', () => ({
   fireWebhooks: (...args: unknown[]) => fireWebhooksMock(...args),
+}));
+
+// The matcher is exercised in `__tests__/lib/talons/matcher.test.ts`; here only
+// the tap's placement matters, and mocking it keeps the run engine (and the
+// `talons` subcollection it would query) out of this suite's firestore double.
+jest.mock('@/lib/talons/matcher.server', () => ({
+  tapTalonMatcher: (...args: unknown[]) => tapTalonMatcherMock(...args),
 }));
 
 import { GET, classifyMachineHealth, stalePlannedDowntime } from '@/app/api/cron/health-check/route';
@@ -115,7 +125,15 @@ describe('classifyMachineHealth', () => {
   });
 
   it('treats a heartbeat exactly at the threshold as ok (boundary)', () => {
-    expect(classifyMachineHealth(snapshot({ lastHeartbeatMs: NOW - 3 * MIN }), NOW)).toEqual({
+    expect(classifyMachineHealth(snapshot({ lastHeartbeatMs: NOW - 5 * MIN }), NOW)).toEqual({
+      action: 'ok',
+    });
+  });
+
+  it('keeps two consecutive missed idle heartbeats inside the threshold', () => {
+    // Idle cadence is 120s; two missed beats (~4 min of silence) must not mark a
+    // healthy machine stale — that headroom is why the threshold is 5 minutes.
+    expect(classifyMachineHealth(snapshot({ lastHeartbeatMs: NOW - 4 * MIN }), NOW)).toEqual({
       action: 'ok',
     });
   });
@@ -176,7 +194,7 @@ describe('classifyMachineHealth', () => {
   });
 
   it('keeps debouncing until stale is confirmed for long enough', () => {
-    const m = snapshot({ lastHeartbeatMs: NOW - 4 * MIN, staleSinceMs: NOW - 2 * MIN });
+    const m = snapshot({ lastHeartbeatMs: NOW - 6 * MIN, staleSinceMs: NOW - 3 * MIN });
     expect(classifyMachineHealth(m, NOW)).toEqual({ action: 'debounce' });
   });
 
@@ -286,6 +304,8 @@ describe('GET /api/cron/health-check', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.CRON_SECRET = 'cron-secret';
+    knownSites.clear();
+    knownSites.add('node-pa');
     setSite({ name: 'node-pa' });
     getSiteAlertRecipientsMock.mockResolvedValue([
       { userId: 'u1', email: 'admin@node-pa.test', ccEmails: [], mutedMachines: [] },
@@ -344,6 +364,33 @@ describe('GET /api/cron/health-check', () => {
       },
       { merge: true }
     );
+  });
+
+  it('taps the talon matcher once per not-responding machine (talons 2.3)', async () => {
+    // This cron is the ONLY dispatcher of `machine_offline` — a machine that is
+    // offline cannot report that it is — so a talon subscribed to it can only
+    // ever fire from here, and only for the machines that actually triggered.
+    setSite({
+      name: 'node-pa',
+      health: {
+        offlineAlert: { pendingIds: ['SILENT-1', 'SILENT-2'], pendingUpdatedAt: ts(now - 8 * MIN) },
+      },
+    });
+    mockMachinesGet.mockResolvedValue({
+      size: 3,
+      docs: [alertDoc('SILENT-1'), alertDoc('SILENT-2'), gracefulDoc('GRACEFUL-1')],
+    });
+
+    await GET(request('cron-secret'));
+
+    expect(tapTalonMatcherMock).toHaveBeenCalledTimes(2);
+    for (const machineId of ['SILENT-1', 'SILENT-2']) {
+      expect(tapTalonMatcherMock).toHaveBeenCalledWith(expect.anything(), 'node-pa', {
+        kind: 'event',
+        eventType: 'machine_offline',
+        machineId,
+      });
+    }
   });
 
   it('does NOT email while the pending set is still settling (records pending, no email)', async () => {
@@ -596,7 +643,7 @@ describe('GET /api/cron/health-check', () => {
       docs: [
         machineDoc('INF-FLEX-3', {
           online: true,
-          lastHeartbeat: ts(now - 5 * MIN),
+          lastHeartbeat: ts(now - 7 * MIN),
           // no health.staleSince yet
         }),
       ],

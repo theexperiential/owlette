@@ -1154,3 +1154,7 @@ describe('POST /api/sites/{siteId}/machines/{machineId}/screenshots/upload-url',
     expect(body.code).toBe('scope_insufficient');
   });
 });
+
+/* ========================================================================== */
+/*  control-plane billing lockout (billing-system wave 0.6)                   */
+/* ========================================================================== */

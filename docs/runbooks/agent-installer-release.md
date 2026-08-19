@@ -10,7 +10,7 @@ This document is only for the installer surface. For non-installer deploys, use 
 
 - Windows machine with admin rights.
 - Inno Setup 6.x installed, or `%ISCC%` set to the compiler path.
-- Python 3.11 with `tkinter`, or `%PYTHON311_ROOT%` set.
+- Node.js 22 + npm, and the Rust toolchain (rustup) with the MSVC C++ build tools — the full build compiles the desktop app.
 - `/.claude/.env.local` containing `OWLETTE_API_KEY`.
 - API key scope: `installer=*:write`.
 - Installer upload keys must be minted by a superadmin.
@@ -333,7 +333,7 @@ If omitted, the server computes the checksum.
 - [ ] `/web/package.json` is bumped.
 - [ ] Version and changelog changes are committed and pushed.
 - [ ] Inno Setup 6.x is installed, `%ISCC%` is set, or `PATH` can find `ISCC`.
-- [ ] Python 3.11 with `tkinter` is installed, or `%PYTHON311_ROOT%` is set.
+- [ ] Node.js 22 + npm and the Rust toolchain are available (the build compiles `desktop/`).
 - [ ] Build output is `agent/build/installer_output/Owlette-Installer-vX.Y.Z.exe`.
 - [ ] sha256 is computed for the exact installer being uploaded.
 - [ ] `BASE_URL` points at the intended environment.
@@ -350,7 +350,7 @@ If omitted, the server computes the checksum.
 - [ ] Step 3 supplies `checksum_sha256` when possible.
 - [ ] MockService and OwletteService constructor state are in parity.
 - [ ] Any new `self.*` attribute is added to both classes.
-- [ ] `agent/src/owlette_runner.py:117` NSSM startup path still works with MockService.
+- [ ] `agent/src/owlette_runner.py` hosted startup path still works with MockService.
 - [ ] `service.log` will be tailed for at least 30 seconds after restart.
 - [ ] No blocking IO was added to the 10-second main service loop at `agent/src/owlette_service.py:6557`.
 - [ ] ConnectionManager backoff remains `BACKOFF_BASE=30s`.
@@ -365,6 +365,7 @@ If omitted, the server computes the checksum.
 - [ ] If using CI artifact, it was downloaded from the GitHub Release.
 - [ ] If using local artifact, no checksum match with CI is expected.
 - [ ] A Windows test machine is ready for smoke testing.
+- [ ] `installer_metadata/cortex_cli` exists in the target environment and pins the CLI version the shipped SDK expects (`claude_agent_sdk/_cli_version.py`). Since 3.0.0 the installer no longer bundles `claude.exe`; a missing or stale pin leaves Cortex dead on every fresh install. See `/docs/internal/cortex-cli-provisioning.md`.
 
 ## post-release smoke
 
@@ -372,7 +373,7 @@ If omitted, the server computes the checksum.
 2. Confirm the downloaded filename and version.
 3. Pair a controlled Windows test machine using the new installer.
 4. Watch `service.log` for at least 30 seconds after restart.
-5. Look for `AttributeError`, NSSM restart loops, startup failures, connection failures, and update loop failures.
+5. Look for `AttributeError`, crash-loop entries in `logs\service_host.log`, startup failures, connection failures, and update loop failures.
 6. Treat log stability as a release gate because MockService and OwletteService parity has caused repeated crash loops before.
 7. Confirm the dashboard shows the agent online.
 8. Confirm the dashboard shows the released version.
@@ -444,5 +445,6 @@ The signing decision is deferred. Treat it as a business and product call, not a
 - `/docs/runbooks/production-deploy.md`
 - `/docs/runbooks/hotfix-rollback.md`
 - `/docs/internal/version-management.md`
+- `/docs/internal/cortex-cli-provisioning.md`
 - `/agent/BUILD.md`
 - `/CLAUDE.md`

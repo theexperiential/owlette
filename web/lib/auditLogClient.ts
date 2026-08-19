@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import type { ApiKeyScope } from '@/lib/apiKeyTypes';
+import { HOOT_INTERNAL_SECRET_ENV, hootInternalSecret } from '@/lib/hootInternalSecret';
 
 /**
  * Fire-and-forget HTTP client for the audit log cloud function
@@ -107,7 +108,7 @@ export function emitApiKeyUsed(event: ApiKeyUsedEvent): void {
  * here (and in the cloud function's recogniser) when a new track lands.
  */
 export type MutationKind =
-  | 'api_key_mutated' // api-key lifecycle: create / rotate / revoke
+  | 'api_key_mutated' // api-key lifecycle: create / update / rotate / revoke
   | 'chunk_mutated' // chunk metadata lifecycle: cross-roost mount / referrer changes
   | 'deployment_mutated' // installer-deploys-api: create / retry / cancel / uninstall / delete
   | 'distribution_mutated' // project-distribution-api: create / cancel / delete
@@ -119,7 +120,9 @@ export type MutationKind =
   | 'site_member_mutated' // /api/sites/{siteId}/members
   | 'installer_mutated' // installer-api: upload / set-latest / delete
   | 'webhook_mutated' // webhook-api: create / update / delete / rotate-secret / delivery retry
-  | 'chat_mutated'; // cortex-api: new conversation / rename / soft-delete
+  | 'chat_mutated' // hoot-api: new conversation / rename / soft-delete
+  | 'billing_mutated' // admin billing override: extend-trial / set-tier / force-expire
+  | 'talon_mutated'; // talon lifecycle: create / update / enable / disable / delete
 
 export interface MutationEvent {
   /** Mutation kind — see {@link MutationKind}. */
@@ -184,7 +187,7 @@ function postAudit(url: string, body: unknown, label: string): void {
   // a network error), and the .catch() below would never fire — so audit
   // events would silently disappear. We pass the secret in the header
   // here AND check response.ok below to fail loudly on misconfiguration.
-  const internalSecret = process.env.CORTEX_INTERNAL_SECRET;
+  const internalSecret = hootInternalSecret();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -207,7 +210,7 @@ function postAudit(url: string, body: unknown, label: string): void {
           `[auditLogClient] ${label} emit returned ${response.status} — audit event was DROPPED. ` +
             (internalSecret
               ? 'Check x-internal-secret matches the cloud function env.'
-              : 'CORTEX_INTERNAL_SECRET is not set in this web env.'),
+              : `${HOOT_INTERNAL_SECRET_ENV} is not set in this web env.`),
         );
       }
     })

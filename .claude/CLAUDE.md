@@ -2,7 +2,7 @@
 
 Owlette is a cloud-connected Windows process management and remote deployment system for managing TouchDesigner installations, digital signage, kiosks, and media servers. Monorepo: Python Windows service (agent) + Next.js web dashboard (web) + Firebase/Firestore backend.
 
-**Version**: 2.12.19 | **License**: FSL-1.1-Apache-2.0
+**Version**: 3.0.1 | **License**: FSL-1.1-Apache-2.0
 
 ---
 
@@ -17,7 +17,7 @@ Owlette is a cloud-connected Windows process management and remote deployment sy
 - **Never import `firebase_admin`** — we use a custom REST client
 - **Never log OAuth tokens** — not even in debug, not even partially
 - **Never modify the `firebase` section** of `config.json` during remote config updates — breaks agent registration
-- **Never use blocking operations** in the 10-second main service loop — stalls all monitoring
+- **Never use blocking operations** in the 5-second main service loop (`SLEEP_INTERVAL = 5`) — stalls all monitoring
 - **Never spawn reconnection logic** outside `ConnectionManager` — it has circuit breaker and backoff
 
 **Web landmines:**
@@ -49,7 +49,7 @@ A multi-quarter rewrite of project distribution into a content-addressed sync pl
 ## Tech Stack
 
 - **Web** (`web/`): Next.js 16 (App Router, React 19), TypeScript, Tailwind CSS 4, shadcn/ui, Firebase Auth + Firestore
-- **Agent** (`agent/`): Python 3.9+ Windows Service via NSSM, Firestore REST API (not Admin SDK), psutil, pywin32, Inno Setup installer
+- **Agent** (`agent/`): Python 3.9+ hosted as a Windows service by `owlette-host` (`agent/host`, Rust — replaced NSSM in 3.0.0), Firestore REST API (not Admin SDK), psutil, pywin32, Inno Setup installer
 - **Database**: Cloud Firestore (real-time NoSQL), Firebase Auth (Email/Password, Google OAuth, Passkey/WebAuthn)
 - **Package Managers**: Web: npm (not pnpm/yarn) | Agent: pip
 
@@ -168,11 +168,11 @@ Reviews are judged on calibration, not volume. Three accurate findings are more 
 The `deploy-agent.mjs` hook auto-copies edited `agent/src/*.py` files to `C:\ProgramData\Owlette\agent\src\`. Service files (`owlette_service.py`, `shared_utils.py`, `firebase_client.py`, `connection_manager.py`, `auth_manager.py`) require a restart. **Do this automatically** — don't wait for the user to ask.
 
 ### Restart sequence (order matters):
-1. **Kill GUI**: `taskkill /F /IM pythonw.exe /FI "WINDOWTITLE eq Owlette*"` (or wmic for owlette_gui.py)
+1. **Close the desktop app** (it holds the tray icon): kill the `owlette-desktop.exe` PID from `C:\ProgramData\Owlette\tmp\tray.pid` — by PID, never by image name.
 2. **Restart service**: `powershell -Command "Start-Process cmd -ArgumentList '/c net stop OwletteService && net start OwletteService' -Verb RunAs -Wait"`
-3. **Relaunch GUI**: `start "" "C:/ProgramData/Owlette/python/pythonw.exe" "C:/ProgramData/Owlette/agent/src/owlette_gui.py"`
+3. The service relaunches the desktop app itself on its next status check (`launch_desktop_app_as_user`) — only start it manually (`C:\ProgramData\Owlette\app\owlette-desktop.exe --tray`) if you don't want to wait.
 
-GUI-only files (e.g. `owlette_gui.py`) only need steps 1 + 3 (no service restart).
+The local UI is the Tauri app in `desktop/`, not python — `agent/src` has no GUI modules since 3.0.0. Desktop changes need a rebuild (`cd desktop && npx tauri build --no-bundle`) and a copy of the exe into `C:\ProgramData\Owlette\app\`; the deploy hook only mirrors `agent/src/*.py`.
 
 ---
 
@@ -215,4 +215,4 @@ Be real, not flattering. If something was mid, say so. If it was genuinely great
 
 ---
 
-**Last Updated**: 2026-07-15
+**Last Updated**: 2026-08-17

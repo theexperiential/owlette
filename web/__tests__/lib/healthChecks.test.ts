@@ -32,8 +32,17 @@ const mockDisplayAlertQuery = {
   get: mockDisplayAlertGet,
 };
 
+const mockTalonGet = jest.fn();
+const mockTalonQuery = {
+  where: jest.fn(() => mockTalonQuery),
+  limit: jest.fn(() => mockTalonQuery),
+  get: mockTalonGet,
+};
+
 const mockDb = {
-  collectionGroup: jest.fn(() => mockMachineQuery),
+  collectionGroup: jest.fn((name: string) =>
+    name === 'talons' ? mockTalonQuery : mockMachineQuery,
+  ),
   collection: jest.fn((name: string) => {
     if (name === 'webhook_deliveries') return mockWebhookQuery;
     if (name === 'pending_process_alerts') return mockProcessAlertQuery;
@@ -57,11 +66,12 @@ import {
   agentRegistryHealth,
   alertDeliveryHealth,
   apiHealth,
-  cortexChatHealth,
+  hootChatHealth,
   dashboardHealth,
   firestoreHealth,
   r2UploadsHealth,
   runStatusHealthChecks,
+  talonDispatchHealth,
   webhookDeliveryHealth,
 } from '@/lib/healthChecks.server';
 
@@ -91,6 +101,7 @@ describe('status health checks', () => {
     mockWebhookGet.mockResolvedValue(querySnapshot([]));
     mockProcessAlertGet.mockResolvedValue(querySnapshot([]));
     mockDisplayAlertGet.mockResolvedValue(querySnapshot([]));
+    mockTalonGet.mockResolvedValue(querySnapshot([]));
     mockSystemGet.mockResolvedValue({ exists: true });
   });
 
@@ -280,6 +291,44 @@ describe('status health checks', () => {
     expect(result.error).toBe('queue query failed');
   });
 
+  it('passes talon dispatch when no talon is left unclaimed', async () => {
+    const result = await talonDispatchHealth({ now: () => 2_000_000 });
+
+    expect(result.component).toBe('talon_dispatch');
+    expect(result.ok).toBe(true);
+    expect(result.metadata).toMatchObject({ overdue_talons: 0, threshold_minutes: 15 });
+  });
+
+  it('marks talon dispatch degraded when a due talon was never claimed', async () => {
+    mockTalonGet.mockResolvedValueOnce(querySnapshot([
+      { id: 'talon-1', data: { enabled: true } },
+      { id: 'talon-2', data: { enabled: true } },
+    ]));
+
+    const result = await talonDispatchHealth({ now: () => 2_000_000 });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('unclaimed');
+    expect(result.metadata).toMatchObject({ overdue_talons: 2 });
+  });
+
+  it('queries only enabled talons overdue past the threshold', async () => {
+    await talonDispatchHealth({ now: () => 2_000_000 });
+
+    expect(mockDb.collectionGroup).toHaveBeenCalledWith('talons');
+    expect(mockTalonQuery.where).toHaveBeenCalledWith('enabled', '==', true);
+    expect(mockTalonQuery.where).toHaveBeenCalledWith('nextRunAt', '<=', expect.any(Date));
+  });
+
+  it('marks talon dispatch degraded when Firestore throws', async () => {
+    mockTalonGet.mockRejectedValueOnce(new Error('talon index unavailable'));
+
+    const result = await talonDispatchHealth();
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe('talon index unavailable');
+  });
+
   it('checks Firestore with a small heartbeat read', async () => {
     const result = await firestoreHealth();
 
@@ -310,13 +359,13 @@ describe('status health checks', () => {
     expect(result.error).toBe('read failed');
   });
 
-  it('keeps uninstrumented R2 and Cortex checks explicitly marked as placeholders', async () => {
+  it('keeps uninstrumented R2 and Hoot checks explicitly marked as placeholders', async () => {
     await expect(r2UploadsHealth()).resolves.toMatchObject({
       component: 'r2_uploads',
       ok: true,
       metadata: { placeholder: true },
     });
-    await expect(cortexChatHealth()).resolves.toMatchObject({
+    await expect(hootChatHealth()).resolves.toMatchObject({
       component: 'cortex_chat',
       ok: true,
       metadata: { placeholder: true },
@@ -332,6 +381,7 @@ describe('status health checks', () => {
       'agent_registry',
       'webhook_delivery',
       'alert_delivery',
+      'talon_dispatch',
       'r2_uploads',
       'firestore',
       'cortex_chat',

@@ -8,6 +8,7 @@ each handler runs on the `_slow_command_worker` thread (NOT the main
 
 handler responsibilities:
 - parse + validate the command payload
+- validate the destination BEFORE any egress (fail-fast allowlist check)
 - fetch the version (sync_version)
 - diff against local cache to compute chunk + file delta
 - download missing chunks (sync_downloader)
@@ -21,6 +22,16 @@ design:
 - cancellation: each in-flight sync registers its threading.Event first by
   (site_id, roost_id, version_id), then by distribution_id once state exists.
   cancel_sync fires the event through whichever key is currently available.
+- FAILURE REPORTING: a handler that could not do what it was asked returns
+  a string starting with `Error:` (see `_failure()`), matching every other
+  command handler in owlette_service. firebase_client._execute_command
+  keys off that prefix to write status:'failed' instead of
+  status:'completed' — a returned string without it is recorded as a
+  SUCCESS, which is how refused deploys used to show up green. every such
+  return is also logged locally at ERROR so the machine's own service.log
+  explains the failure without a firestore round trip.
+- terminal failures release the distribution's cached chunks; cancellations
+  deliberately do not (a cancelled sync resumes from them).
 
 NOT this module's job:
 - the actual sync engine logic (downloader / assembler / version)
@@ -37,7 +48,7 @@ from typing import Any, Dict, Optional, Tuple
 from command_router import CommandRouter
 from destination_allowlist import DestinationAllowlist, DestinationNotAllowedError
 from roost_kill_switch import check_enabled as _roost_is_enabled
-from sync_assembler import AssembleError, assemble_all
+from sync_assembler import AssembleError, assemble_all, cleanup_chunks
 from sync_downloader import ChunkDownloadError, download_all
 from sync_version import Version, VersionError, diff_versions, fetch_version
 from sync_state import SyncState, SyncStateError
@@ -215,6 +226,30 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
         state = _state_for(service)
         allowlist = _allowlist_for(service)
 
+        # FAIL-FAST destination check. The assembler validates extract_root
+        # again before it writes anything (defense in depth, and it owns the
+        # per-file checks), but doing it here means a misconfigured deploy
+        # costs zero egress: no version body, no chunks, no signed-URL
+        # requests. Before this, a refused deploy still pulled the entire
+        # project down first and only then declined to write it.
+        try:
+            allowlist.validate(extract_root)
+        except DestinationNotAllowedError as e:
+            reason = (
+                f"extract_root {extract_root!r} is not allowed by "
+                f"destination_allowlist: {e}"
+            )
+            logger.error(
+                f"sync_pull: REFUSED before download — {reason} "
+                f"(site={site_id} roost={roost_id} version={version_id}). "
+                f"allowed roots: {[str(r) for r in allowlist.roots]}"
+            )
+            _report_target_state(
+                service, site_id, roost_id, version_id, 'failed',
+                error=f"destination refused: {e}",
+            )
+            return _failure(f"sync_pull refused: {reason}")
+
         cancelled = _cancelled_before_distribution('state setup')
         if cancelled:
             return cancelled
@@ -255,11 +290,15 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
             cancelled = _cancelled_before_distribution('version fetch')
             if cancelled:
                 return cancelled
+            logger.error(
+                f"sync_pull: version fetch/validate failed for "
+                f"{roost_id}/{version_id}: {e}"
+            )
             _report_target_state(
                 service, site_id, roost_id, version_id, 'failed',
                 error=f"version fetch/validate: {e}",
             )
-            return f"sync_pull failed: version fetch/validate: {e}"
+            return _failure(f"sync_pull failed: version fetch/validate: {e}")
 
         cancelled = _cancelled_before_distribution('version fetch')
         if cancelled:
@@ -301,7 +340,15 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
                 cancelled = _cancelled_before_distribution('distribution start')
                 if cancelled:
                     return cancelled
-                return f"sync_pull failed: state error and no existing row: {e}"
+                logger.error(
+                    f"sync_pull: could not register distribution for "
+                    f"{roost_id}/{version_id} and no existing row to resume: {e}"
+                )
+                _report_target_state(
+                    service, site_id, roost_id, version_id, 'failed',
+                    error=f"sync state: {e}",
+                )
+                return _failure(f"sync_pull failed: state error and no existing row: {e}")
             dist_id = existing['id']
             logger.info(f"sync_pull: resuming existing distribution {dist_id}")
 
@@ -388,12 +435,17 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
                 progress_cb=_download_progress,
             )
         except ChunkDownloadError as e:
+            logger.error(
+                f"sync_pull: chunk download failed for distribution {dist_id} "
+                f"({roost_id}/{version_id}): {e}"
+            )
             state.set_distribution_state(dist_id, 'failed', error=str(e))
             _report_target_state(
                 service, site_id, roost_id, version_id, 'failed',
                 error=f"chunk download: {e}",
             )
-            return f"sync_pull failed: chunk download: {e}"
+            _release_chunks(version, dist_id)
+            return _failure(f"sync_pull failed: chunk download: {e}")
 
         if cancel_event.is_set() and dl_result.failed == 0:
             state.set_distribution_state(dist_id, 'cancelled')
@@ -420,12 +472,17 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
                 cancel_event=cancel_event,
             )
         except (AssembleError, DestinationNotAllowedError) as e:
+            logger.error(
+                f"sync_pull: file assembly failed for distribution {dist_id} "
+                f"({roost_id}/{version_id}) into {extract_root!r}: {e}"
+            )
             state.set_distribution_state(dist_id, 'failed', error=str(e))
             _report_target_state(
                 service, site_id, roost_id, version_id, 'failed',
                 error=f"file assembly: {e}",
             )
-            return f"sync_pull failed: file assembly: {e}"
+            _release_chunks(version, dist_id)
+            return _failure(f"sync_pull failed: file assembly: {e}")
 
         if cancel_event.is_set() and asm_result.failed == 0:
             state.set_distribution_state(dist_id, 'cancelled')
@@ -441,13 +498,15 @@ def _handle_sync_pull(cmd_data: dict, cmd_id: str, service: Any) -> str:
             chunks_dedup=dl_result.already_present,
             files_assembled=asm_result.assembled,
             files_skipped=asm_result.skipped,
+            files_pruned=asm_result.pruned,
         )
         return (
             f"sync_pull complete (distribution {dist_id}): "
             f"fetched {dl_result.fetched} chunks, "
             f"dedup {dl_result.already_present}, "
             f"assembled {asm_result.assembled} files, "
-            f"skipped {asm_result.skipped}"
+            f"skipped {asm_result.skipped}, "
+            f"pruned {asm_result.pruned}"
         )
 
     finally:
@@ -500,6 +559,48 @@ def _handle_rollback_to_version(cmd_data: dict, cmd_id: str, service: Any) -> st
 
 
 # ─── helpers ─────────────────────────────────────────────────────────
+
+
+def _failure(message: str) -> str:
+    """
+    format a handler failure the way every other owlette command handler
+    does: an `Error: ` prefix.
+
+    this is load-bearing, not cosmetic. firebase_client._execute_command
+    decides between `_mark_command_completed` and `_mark_command_failed` on
+    `result.startswith("Error:")` — a failure string without the prefix is
+    written to firestore as status:'completed', which is exactly how a
+    refused deploy came to be reported as a successful one.
+    """
+    return f"Error: {message}"
+
+
+def _release_chunks(version: Version, dist_id: int) -> None:
+    """
+    release the cached chunks of a distribution that has just reached a
+    TERMINAL failure state.
+
+    a failed distribution is never resumed — a retry arrives as a fresh
+    sync_pull that re-downloads whatever the content store lacks — so its
+    bytes are pure leak. cancellation deliberately does NOT come through
+    here: a cancelled sync resumes from exactly these chunks.
+
+    never raises: the command has already failed and a cleanup problem must
+    not mask the real error.
+    """
+    try:
+        deleted, freed = cleanup_chunks(version.chunks)
+    except Exception as e:
+        logger.warning(
+            f"sync_pull: could not release cached chunks for failed "
+            f"distribution {dist_id}: {type(e).__name__}: {e}"
+        )
+        return
+    if deleted:
+        logger.info(
+            f"sync_pull: released {deleted} cached chunk(s) "
+            f"({freed / (1024 * 1024):.1f} MiB) from failed distribution {dist_id}"
+        )
 
 
 def _require_str(d: dict, key: str) -> str:

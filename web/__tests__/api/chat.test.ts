@@ -1,15 +1,15 @@
 /** @jest-environment node */
 
 /**
- * api-sprint wave 3 — track 3A (cortex-api / chat noun).
+ * api-sprint wave 3 — track 3A (hoot-api / chat noun).
  *
- * Http-shape coverage for the public Cortex conversation endpoints:
+ * Http-shape coverage for the public Hoot conversation endpoints:
  *
- *   GET    /api/cortex/conversations
- *   POST   /api/cortex/conversations
- *   POST   /api/cortex/conversations/{conversationId}      (send + stream)
- *   PATCH  /api/cortex/conversations/{conversationId}      (rename)
- *   DELETE /api/cortex/conversations/{conversationId}      (soft-delete)
+ *   GET    /api/hoot/conversations
+ *   POST   /api/hoot/conversations
+ *   POST   /api/hoot/conversations/{conversationId}      (send + stream)
+ *   PATCH  /api/hoot/conversations/{conversationId}      (rename)
+ *   DELETE /api/hoot/conversations/{conversationId}      (soft-delete)
  *
  * Each verb is covered for scope-pass + scope-fail + verb-specific happy /
  * error paths (validation, 404, idempotency replay, sse smoke). Storage is
@@ -84,17 +84,17 @@ jest.mock('@/lib/chatStorage.server', () => {
   };
 });
 
-// Cortex stream is mocked at the module boundary so we don't need a real LLM.
-const mockRunCortexStream = jest.fn();
-jest.mock('@/lib/cortexStream.server', () => {
-  const actual = jest.requireActual('@/lib/cortexStream.server');
+// Hoot stream is mocked at the module boundary so we don't need a real LLM.
+const mockRunHootStream = jest.fn();
+jest.mock('@/lib/hootStream.server', () => {
+  const actual = jest.requireActual('@/lib/hootStream.server');
   return {
     ...actual,
-    runCortexStream: (...a: unknown[]) => mockRunCortexStream(...a),
+    runHootStream: (...a: unknown[]) => mockRunHootStream(...a),
   };
 });
 
-// User+site reads for the GET /api/cortex/conversations list filter.
+// User+site reads for the GET /api/hoot/conversations list filter.
 const mockGetUserSiteIds = jest.fn();
 jest.mock('@/lib/apiHelpers.server', () => {
   const actual = jest.requireActual('@/lib/apiHelpers.server');
@@ -140,12 +140,12 @@ import { Timestamp } from 'firebase-admin/firestore';
 import {
   GET as listGET,
   POST as newPOST,
-} from '@/app/api/cortex/conversations/route';
+} from '@/app/api/hoot/conversations/route';
 import {
   POST as sendPOST,
   PATCH as renamePATCH,
   DELETE as deleteDELETE,
-} from '@/app/api/cortex/conversations/[conversationId]/route';
+} from '@/app/api/hoot/conversations/[conversationId]/route';
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
@@ -242,7 +242,7 @@ beforeEach(() => {
     title: typeof title === 'string' ? title.trim() : 'untitled chat',
   }));
 
-  // Default: cortex returns a tiny synthetic stream
+  // Default: hoot returns a tiny synthetic stream
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     start(controller) {
@@ -251,7 +251,7 @@ beforeEach(() => {
       controller.close();
     },
   });
-  mockRunCortexStream.mockResolvedValue({
+  mockRunHootStream.mockResolvedValue({
     ok: true,
     response: new Response(stream, {
       headers: {
@@ -263,12 +263,12 @@ beforeEach(() => {
 });
 
 /* ========================================================================== */
-/*  GET /api/cortex/conversations - list                                      */
+/*  GET /api/hoot/conversations - list                                      */
 /* ========================================================================== */
 
-describe('GET /api/cortex/conversations', () => {
+describe('GET /api/hoot/conversations', () => {
   it('200 with conversations + pagination shape', async () => {
-    const res = await listGET(jsonReq('http://localhost/api/cortex/conversations', 'GET'));
+    const res = await listGET(jsonReq('http://localhost/api/hoot/conversations', 'GET'));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
@@ -281,7 +281,7 @@ describe('GET /api/cortex/conversations', () => {
   it('returns empty list when caller has zero accessible sites', async () => {
     mockGetUserSiteIds.mockResolvedValueOnce([]);
     mockOwnedSitesGet.mockResolvedValueOnce({ docs: [] });
-    const res = await listGET(jsonReq('http://localhost/api/cortex/conversations', 'GET'));
+    const res = await listGET(jsonReq('http://localhost/api/hoot/conversations', 'GET'));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.data.conversations).toEqual([]);
@@ -300,14 +300,14 @@ describe('GET /api/cortex/conversations', () => {
       },
     });
     mockGetUserSiteIds.mockResolvedValueOnce([SITE, 'other-site']);
-    await listGET(jsonReq('http://localhost/api/cortex/conversations', 'GET'));
+    await listGET(jsonReq('http://localhost/api/hoot/conversations', 'GET'));
     const passed = mockListConversations.mock.calls[0][0];
     expect(passed.siteIds.sort()).toEqual([SITE]);
   });
 
   it('filters by explicit siteId when provided', async () => {
     mockGetUserSiteIds.mockResolvedValueOnce([SITE, 'other-site']);
-    await listGET(jsonReq(`http://localhost/api/cortex/conversations?siteId=${SITE}`, 'GET'));
+    await listGET(jsonReq(`http://localhost/api/hoot/conversations?siteId=${SITE}`, 'GET'));
     const passed = mockListConversations.mock.calls[0][0];
     expect(passed.siteIds).toEqual([SITE]);
   });
@@ -315,7 +315,7 @@ describe('GET /api/cortex/conversations', () => {
   it('returns an empty page for a siteId outside readable scope', async () => {
     mockGetUserSiteIds.mockResolvedValueOnce([SITE]);
     const res = await listGET(
-      jsonReq('http://localhost/api/cortex/conversations?siteId=other-site', 'GET'),
+      jsonReq('http://localhost/api/hoot/conversations?siteId=other-site', 'GET'),
     );
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -324,26 +324,26 @@ describe('GET /api/cortex/conversations', () => {
   });
 
   it('honors owner=me filter', async () => {
-    await listGET(jsonReq('http://localhost/api/cortex/conversations?owner=me', 'GET'));
+    await listGET(jsonReq('http://localhost/api/hoot/conversations?owner=me', 'GET'));
     const passed = mockListConversations.mock.calls[0][0];
     expect(passed.ownerUid).toBe('user-1');
   });
 
   it('emits no audit on read', async () => {
-    await listGET(jsonReq('http://localhost/api/cortex/conversations', 'GET'));
+    await listGET(jsonReq('http://localhost/api/hoot/conversations', 'GET'));
     expect(mockEmitMutation).not.toHaveBeenCalled();
   });
 });
 
 /* ========================================================================== */
-/*  POST /api/cortex/conversations - create                                   */
+/*  POST /api/hoot/conversations - create                                   */
 /* ========================================================================== */
 
-describe('POST /api/cortex/conversations', () => {
+describe('POST /api/hoot/conversations', () => {
   it('201 with full conversation payload', async () => {
     const res = await newPOST(
       jsonReq(
-        'http://localhost/api/cortex/conversations',
+        'http://localhost/api/hoot/conversations',
         'POST',
         { siteId: SITE, title: 'first one' },
         { 'idempotency-key': 'k1' },
@@ -358,7 +358,7 @@ describe('POST /api/cortex/conversations', () => {
 
   it('400 when siteId is missing', async () => {
     const res = await newPOST(
-      jsonReq('http://localhost/api/cortex/conversations', 'POST', {}, { 'idempotency-key': 'k' }),
+      jsonReq('http://localhost/api/hoot/conversations', 'POST', {}, { 'idempotency-key': 'k' }),
     );
     expect(res.status).toBe(400);
   });
@@ -366,7 +366,7 @@ describe('POST /api/cortex/conversations', () => {
   it('400 when initial_message has invalid role', async () => {
     const res = await newPOST(
       jsonReq(
-        'http://localhost/api/cortex/conversations',
+        'http://localhost/api/hoot/conversations',
         'POST',
         { siteId: SITE, initial_message: { role: 'invalid', content: 'x' } },
         { 'idempotency-key': 'k' },
@@ -378,7 +378,7 @@ describe('POST /api/cortex/conversations', () => {
   it('400 when initial_message uses assistant or system role', async () => {
     const res = await newPOST(
       jsonReq(
-        'http://localhost/api/cortex/conversations',
+        'http://localhost/api/hoot/conversations',
         'POST',
         { siteId: SITE, initial_message: { role: 'system', content: 'x' } },
         { 'idempotency-key': 'k' },
@@ -391,7 +391,7 @@ describe('POST /api/cortex/conversations', () => {
     authForbidden();
     const res = await newPOST(
       jsonReq(
-        'http://localhost/api/cortex/conversations',
+        'http://localhost/api/hoot/conversations',
         'POST',
         { siteId: SITE },
         { 'idempotency-key': 'k' },
@@ -403,7 +403,7 @@ describe('POST /api/cortex/conversations', () => {
   it('emits chat_mutated audit on create', async () => {
     await newPOST(
       jsonReq(
-        'http://localhost/api/cortex/conversations',
+        'http://localhost/api/hoot/conversations',
         'POST',
         { siteId: SITE },
         { 'idempotency-key': 'k' },
@@ -415,7 +415,7 @@ describe('POST /api/cortex/conversations', () => {
         targetId: CONV,
         attributes: expect.objectContaining({
           verb: 'create',
-          endpoint: '/api/cortex/conversations',
+          endpoint: '/api/hoot/conversations',
           method: 'POST',
           siteId: SITE,
         }),
@@ -432,7 +432,7 @@ describe('POST /api/cortex/conversations', () => {
     });
     const res = await newPOST(
       jsonReq(
-        'http://localhost/api/cortex/conversations',
+        'http://localhost/api/hoot/conversations',
         'POST',
         { siteId: SITE },
         { 'idempotency-key': 'k' },
@@ -443,14 +443,14 @@ describe('POST /api/cortex/conversations', () => {
 });
 
 /* ========================================================================== */
-/*  POST /api/cortex/conversations/{conversationId} - send + stream           */
+/*  POST /api/hoot/conversations/{conversationId} - send + stream           */
 /* ========================================================================== */
 
-describe('POST /api/cortex/conversations/{conversationId}', () => {
+describe('POST /api/hoot/conversations/{conversationId}', () => {
   it('streams an SSE-style text/plain response on happy path', async () => {
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'hello' },
         { 'idempotency-key': 'sk1' },
@@ -471,7 +471,7 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
   it('400 when role is invalid', async () => {
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'bogus', content: 'x' },
         { 'idempotency-key': 'sk2' },
@@ -484,7 +484,7 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
   it('400 when role is assistant or system', async () => {
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'assistant', content: 'x' },
         { 'idempotency-key': 'sk2b' },
@@ -497,7 +497,7 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
   it('400 when content is missing', async () => {
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'user' },
         { 'idempotency-key': 'sk3' },
@@ -510,7 +510,7 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
   it('400 when machine override is supplied', async () => {
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x', machineId: 'other-machine' },
         { 'idempotency-key': 'sk3b' },
@@ -526,7 +526,7 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
     mockGetConversation.mockResolvedValueOnce(null);
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x' },
         { 'idempotency-key': 'sk4' },
@@ -542,7 +542,7 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
     );
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x' },
         { 'idempotency-key': 'sk5' },
@@ -556,7 +556,7 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
     authForbidden();
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x' },
         { 'idempotency-key': 'sk6' },
@@ -575,7 +575,7 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
     );
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x' },
         { 'idempotency-key': 'sk-hijack' },
@@ -585,7 +585,7 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
     // 404 (not 403) intentionally — don't leak existence of another user's chat.
     expect(res.status).toBe(404);
     expect(mockAppendMessage).not.toHaveBeenCalled();
-    expect(mockRunCortexStream).not.toHaveBeenCalled();
+    expect(mockRunHootStream).not.toHaveBeenCalled();
   });
 
   it('200 when caller is superadmin overriding owner check', async () => {
@@ -598,7 +598,7 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
     );
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x' },
         { 'idempotency-key': 'sk-super' },
@@ -608,15 +608,15 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
     expect(res.status).toBe(200);
   });
 
-  it('503 when cortex stream reports machine offline', async () => {
-    mockRunCortexStream.mockResolvedValueOnce({
+  it('503 when hoot stream reports machine offline', async () => {
+    mockRunHootStream.mockResolvedValueOnce({
       ok: false,
       status: 503,
       error: 'machine offline',
     });
     const res = await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x' },
         { 'idempotency-key': 'sk7' },
@@ -629,7 +629,7 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
   it('persists the user message and emits audit on send', async () => {
     await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'persistent' },
         { 'idempotency-key': 'sk8' },
@@ -649,13 +649,13 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
         targetId: CONV,
         attributes: expect.objectContaining({
           verb: 'send',
-          endpoint: `/api/cortex/conversations/${CONV}`,
+          endpoint: `/api/hoot/conversations/${CONV}`,
         }),
       }),
     );
   });
 
-  it('caps API-key callers to tier-1 Cortex tools', async () => {
+  it('caps API-key callers to tier-1 Hoot tools', async () => {
     mockRequireChatAuth.mockResolvedValueOnce({
       ok: true,
       userId: 'user-1',
@@ -667,28 +667,28 @@ describe('POST /api/cortex/conversations/{conversationId}', () => {
     });
     await sendPOST(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'POST',
         { role: 'user', content: 'x' },
         { 'idempotency-key': 'sk9' },
       ),
       ctx(),
     );
-    expect(mockRunCortexStream).toHaveBeenCalledWith(
+    expect(mockRunHootStream).toHaveBeenCalledWith(
       expect.objectContaining({ maxToolTier: 1 }),
     );
   });
 });
 
 /* ========================================================================== */
-/*  PATCH /api/cortex/conversations/{conversationId} - rename                 */
+/*  PATCH /api/hoot/conversations/{conversationId} - rename                 */
 /* ========================================================================== */
 
-describe('PATCH /api/cortex/conversations/{conversationId}', () => {
+describe('PATCH /api/hoot/conversations/{conversationId}', () => {
   it('200 on title-only update', async () => {
     const res = await renamePATCH(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'PATCH',
         { title: 'renamed' },
         { 'idempotency-key': 'pk1' },
@@ -703,7 +703,7 @@ describe('PATCH /api/cortex/conversations/{conversationId}', () => {
   it('400 forbidden_field when other fields supplied', async () => {
     const res = await renamePATCH(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'PATCH',
         { title: 'ok', siteId: 'evil' },
         { 'idempotency-key': 'pk2' },
@@ -718,7 +718,7 @@ describe('PATCH /api/cortex/conversations/{conversationId}', () => {
   it('400 when title missing', async () => {
     const res = await renamePATCH(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'PATCH',
         {},
         { 'idempotency-key': 'pk3' },
@@ -732,7 +732,7 @@ describe('PATCH /api/cortex/conversations/{conversationId}', () => {
     mockGetConversation.mockResolvedValueOnce(null);
     const res = await renamePATCH(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'PATCH',
         { title: 'x' },
         { 'idempotency-key': 'pk4' },
@@ -745,7 +745,7 @@ describe('PATCH /api/cortex/conversations/{conversationId}', () => {
   it('emits chat_mutated audit on rename', async () => {
     await renamePATCH(
       jsonReq(
-        `http://localhost/api/cortex/conversations/${CONV}`,
+        `http://localhost/api/hoot/conversations/${CONV}`,
         'PATCH',
         { title: 'newer' },
         { 'idempotency-key': 'pk5' },
@@ -757,7 +757,7 @@ describe('PATCH /api/cortex/conversations/{conversationId}', () => {
         kind: 'chat_mutated',
         attributes: expect.objectContaining({
           verb: 'rename',
-          endpoint: `/api/cortex/conversations/${CONV}`,
+          endpoint: `/api/hoot/conversations/${CONV}`,
           newTitle: 'newer',
         }),
       }),
@@ -766,13 +766,13 @@ describe('PATCH /api/cortex/conversations/{conversationId}', () => {
 });
 
 /* ========================================================================== */
-/*  DELETE /api/cortex/conversations/{conversationId} - soft delete           */
+/*  DELETE /api/hoot/conversations/{conversationId} - soft delete           */
 /* ========================================================================== */
 
-describe('DELETE /api/cortex/conversations/{conversationId}', () => {
+describe('DELETE /api/hoot/conversations/{conversationId}', () => {
   it('200 with alreadyDeleted=false on first delete', async () => {
     const res = await deleteDELETE(
-      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
+      jsonReq(`http://localhost/api/hoot/conversations/${CONV}`, 'DELETE'),
       ctx(),
     );
     expect(res.status).toBe(200);
@@ -786,7 +786,7 @@ describe('DELETE /api/cortex/conversations/{conversationId}', () => {
       deletedAt: Timestamp.now(),
     });
     const res = await deleteDELETE(
-      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
+      jsonReq(`http://localhost/api/hoot/conversations/${CONV}`, 'DELETE'),
       ctx(),
     );
     expect(res.status).toBe(200);
@@ -797,7 +797,7 @@ describe('DELETE /api/cortex/conversations/{conversationId}', () => {
   it('404 when conversation never existed', async () => {
     mockGetConversation.mockResolvedValueOnce(null);
     const res = await deleteDELETE(
-      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
+      jsonReq(`http://localhost/api/hoot/conversations/${CONV}`, 'DELETE'),
       ctx(),
     );
     expect(res.status).toBe(404);
@@ -806,7 +806,7 @@ describe('DELETE /api/cortex/conversations/{conversationId}', () => {
   it('403 when scope insufficient', async () => {
     authForbidden();
     const res = await deleteDELETE(
-      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
+      jsonReq(`http://localhost/api/hoot/conversations/${CONV}`, 'DELETE'),
       ctx(),
     );
     expect(res.status).toBe(403);
@@ -815,7 +815,7 @@ describe('DELETE /api/cortex/conversations/{conversationId}', () => {
   it('401 when caller is unauthorized', async () => {
     authUnauthorized();
     const res = await deleteDELETE(
-      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
+      jsonReq(`http://localhost/api/hoot/conversations/${CONV}`, 'DELETE'),
       ctx(),
     );
     expect(res.status).toBe(401);
@@ -823,7 +823,7 @@ describe('DELETE /api/cortex/conversations/{conversationId}', () => {
 
   it('emits chat_mutated audit on delete', async () => {
     await deleteDELETE(
-      jsonReq(`http://localhost/api/cortex/conversations/${CONV}`, 'DELETE'),
+      jsonReq(`http://localhost/api/hoot/conversations/${CONV}`, 'DELETE'),
       ctx(),
     );
     expect(mockEmitMutation).toHaveBeenCalledWith(
@@ -832,7 +832,7 @@ describe('DELETE /api/cortex/conversations/{conversationId}', () => {
         targetId: CONV,
         attributes: expect.objectContaining({
           verb: 'delete',
-          endpoint: `/api/cortex/conversations/${CONV}`,
+          endpoint: `/api/hoot/conversations/${CONV}`,
           method: 'DELETE',
           alreadyDeleted: false,
         }),

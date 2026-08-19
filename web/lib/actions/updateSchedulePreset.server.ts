@@ -11,7 +11,9 @@
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import type { SiteHandlerContext } from '@/lib/authorizedHandler.server';
+import { siteAuditActor } from './auditActor.server';
 import {
   SchedulePresetValidationError,
   validateSchedulePresetInput,
@@ -73,14 +75,33 @@ export async function updateSchedulePreset(
   if (updates.isBuiltIn !== undefined) payload.isBuiltIn = updates.isBuiltIn;
   if (updates.order !== undefined) payload.order = updates.order;
 
+  const emitUpdated = (isBuiltInOverride: boolean) =>
+    emitMutation({
+      kind: 'process_mutated',
+      siteId: ctx.siteId,
+      actor: siteAuditActor(ctx),
+      targetId: presetId,
+      attributes: {
+        verb: 'preset.update',
+        endpoint: 'presets/schedule',
+        method: 'PATCH',
+        family: 'schedule',
+        presetId,
+        isBuiltInOverride,
+        fields: Object.keys(payload).filter((k) => k !== 'updatedAt'),
+      },
+    });
+
   if (presetId.startsWith('builtin-')) {
     payload.isBuiltIn = true;
     await presetRef.set(payload, { merge: true });
+    emitUpdated(true);
     return { presetId, siteId: ctx.siteId, isBuiltInOverride: true };
   }
 
   const existing = await presetRef.get();
   if (!existing.exists) throw new SchedulePresetNotFoundError(presetId);
   await presetRef.update(payload);
+  emitUpdated(false);
   return { presetId, siteId: ctx.siteId, isBuiltInOverride: false };
 }

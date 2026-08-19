@@ -33,7 +33,14 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({ collection: () => ({ doc: () => ({}) }) }),
 }));
 
+const mockEmitMutation = jest.fn();
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
+}));
+
 import { removeMachine } from '@/lib/actions/removeMachine.server';
+
+const AUDIT_ACTOR = 'user:admin-uid';
 
 interface RecordedDelete {
   path: string;
@@ -184,13 +191,14 @@ function buildFakeDb(
 beforeEach(() => {
   loggerWarnSpy.mockClear();
   loggerErrorSpy.mockClear();
+  mockEmitMutation.mockClear();
 });
 
 describe('removeMachine — input validation', () => {
   it('throws when siteId is empty', async () => {
     const fake = buildFakeDb();
     await expect(
-      removeMachine({ siteId: '', machineId: 'm1', db: fake.db }),
+      removeMachine({ siteId: '', machineId: 'm1', auditActor: AUDIT_ACTOR, db: fake.db }),
     ).rejects.toThrow(/siteId/);
     expect(fake.batchCommitCount).toBe(0);
   });
@@ -198,7 +206,7 @@ describe('removeMachine — input validation', () => {
   it('throws when machineId is empty', async () => {
     const fake = buildFakeDb();
     await expect(
-      removeMachine({ siteId: 'site-a', machineId: '', db: fake.db }),
+      removeMachine({ siteId: 'site-a', machineId: '', auditActor: AUDIT_ACTOR, db: fake.db }),
     ).rejects.toThrow(/machineId/);
     expect(fake.batchCommitCount).toBe(0);
   });
@@ -210,6 +218,7 @@ describe('removeMachine — cascade covers all 4 paths', () => {
     const result = await removeMachine({
       siteId: 'site-a',
       machineId: 'mach_alpha',
+      auditActor: AUDIT_ACTOR,
       db: fake.db,
     });
 
@@ -251,6 +260,7 @@ describe('removeMachine — cascade covers all 4 paths', () => {
     await removeMachine({
       siteId: 'site-a',
       machineId: 'm1',
+      auditActor: AUDIT_ACTOR,
       db: fake.db,
     });
 
@@ -279,6 +289,7 @@ describe('removeMachine — cascade covers all 4 paths', () => {
     await removeMachine({
       siteId: 'site-a',
       machineId: 'm1',
+      auditActor: AUDIT_ACTOR,
       db: fake.db,
     });
 
@@ -296,7 +307,7 @@ describe('removeMachine — cascade covers all 4 paths', () => {
     fake.setBatchCommitFailure(new Error('batch_blew_up'));
 
     await expect(
-      removeMachine({ siteId: 'site-a', machineId: 'm1', db: fake.db }),
+      removeMachine({ siteId: 'site-a', machineId: 'm1', auditActor: AUDIT_ACTOR, db: fake.db }),
     ).rejects.toThrow('batch_blew_up');
 
     expect(fake.individualDeletes).toEqual([]);
@@ -315,6 +326,7 @@ describe('removeMachine — best-effort tolerance', () => {
     const result = await removeMachine({
       siteId: 'site-a',
       machineId: 'm1',
+      auditActor: AUDIT_ACTOR,
       db: fake.db,
     });
 
@@ -340,6 +352,7 @@ describe('removeMachine — best-effort tolerance', () => {
     const result = await removeMachine({
       siteId: 'site-a',
       machineId: 'm1',
+      auditActor: AUDIT_ACTOR,
       db: fake.db,
     });
 
@@ -362,6 +375,7 @@ describe('removeMachine — best-effort tolerance', () => {
     const result = await removeMachine({
       siteId: 'site-a',
       machineId: 'm1',
+      auditActor: AUDIT_ACTOR,
       db: fake.db,
     });
 
@@ -382,11 +396,13 @@ describe('removeMachine — best-effort tolerance', () => {
     await removeMachine({
       siteId: 'site-a',
       machineId: 'm1',
+      auditActor: AUDIT_ACTOR,
       db: fake.db,
     });
     await removeMachine({
       siteId: 'site-a',
       machineId: 'm1',
+      auditActor: AUDIT_ACTOR,
       db: fake.db,
     });
     // Two batches committed; eight delete-records (4 per call).
@@ -396,12 +412,50 @@ describe('removeMachine — best-effort tolerance', () => {
   });
 });
 
+describe('removeMachine — audit emission', () => {
+  it('emits one site_mutated audit with verb=machine.remove', async () => {
+    const fake = buildFakeDb();
+    await removeMachine({
+      siteId: 'site-a',
+      machineId: 'mach_alpha',
+      auditActor: AUDIT_ACTOR,
+      db: fake.db,
+    });
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith({
+      kind: 'site_mutated',
+      siteId: 'site-a',
+      actor: AUDIT_ACTOR,
+      targetId: 'mach_alpha',
+      attributes: {
+        verb: 'machine.remove',
+        endpoint: 'machines',
+        method: 'DELETE',
+        machineId: 'mach_alpha',
+      },
+    });
+  });
+
+  it('does not emit when the main cascade batch fails', async () => {
+    const fake = buildFakeDb();
+    fake.setBatchCommitFailure(new Error('batch_blew_up'));
+
+    await expect(
+      removeMachine({ siteId: 'site-a', machineId: 'm1', auditActor: AUDIT_ACTOR, db: fake.db }),
+    ).rejects.toThrow('batch_blew_up');
+
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+});
+
 describe('removeMachine — return shape', () => {
   it('returns the canonical 4 firestore paths in the deleted block', async () => {
     const fake = buildFakeDb();
     const result = await removeMachine({
       siteId: 'site-with_dashes-and_underscores',
       machineId: 'mach_42-x',
+      auditActor: AUDIT_ACTOR,
       db: fake.db,
     });
     expect(result.deleted).toEqual({

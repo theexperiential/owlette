@@ -31,7 +31,7 @@ Research the codebase, then produce a plan covering:
 - Web uses Firebase Client SDK; agent uses custom REST client (`firestore_rest_client.py`) — NOT Admin SDK
 - Almost all data is site-scoped: `sites/{siteId}/...`
 - Commands flow: web writes to `commands/pending/` → agent executes → moves to `commands/completed/`
-- Agent runs as Windows service via NSSM with 10s process monitoring loop
+- Agent runs as a Windows service hosted by `owlette-host` (`agent/host`) with a 10s process monitoring loop
 - Refer to skills in `.claude/skills/` for domain-specific patterns
 
 Be thorough but concise. Specify exact file paths and concrete tasks, not vague descriptions.

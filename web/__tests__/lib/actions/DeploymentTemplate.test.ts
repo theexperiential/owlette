@@ -51,6 +51,11 @@ jest.mock('firebase-admin/firestore', () => ({
   FieldValue: { serverTimestamp: () => '__SERVER_TS__' },
 }));
 
+const mockEmitMutation = jest.fn();
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
+}));
+
 import {
   createDeploymentTemplate,
   DeploymentTemplateValidationError,
@@ -74,6 +79,7 @@ beforeEach(() => {
   setCalls.length = 0;
   deleteCalls.length = 0;
   docState.clear();
+  mockEmitMutation.mockClear();
 });
 
 describe('createDeploymentTemplate', () => {
@@ -220,5 +226,75 @@ describe('deleteDeploymentTemplate', () => {
     await expect(
       deleteDeploymentTemplate(ctx, 'bad id'),
     ).rejects.toBeInstanceOf(DeploymentTemplateValidationError);
+  });
+});
+
+describe('deployment template audit emission', () => {
+  it('emits preset.create on create', async () => {
+    const result = await createDeploymentTemplate(ctx, {
+      name: 'TouchDesigner 2023',
+      installer_name: 'TouchDesigner.exe',
+      installer_url: 'https://example.com/installer.exe',
+      silent_flags: '/S',
+    });
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        siteId: 'site-a',
+        actor: 'user:uid_alice',
+        targetId: result.templateId,
+        attributes: expect.objectContaining({
+          verb: 'preset.create',
+          family: 'deployment-template',
+          presetId: result.templateId,
+        }),
+      }),
+    );
+  });
+
+  it('emits preset.update on update', async () => {
+    docState.set('sites/site-a/installer_templates/template-1', {
+      exists: true,
+      data: () => ({ name: 'old' }),
+    });
+
+    await updateDeploymentTemplate(ctx, 'template-1', { name: 'new name' });
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        targetId: 'template-1',
+        attributes: expect.objectContaining({
+          verb: 'preset.update',
+          family: 'deployment-template',
+        }),
+      }),
+    );
+  });
+
+  it('does not emit when the update target is missing', async () => {
+    await expect(
+      updateDeploymentTemplate(ctx, 'template-missing', { name: 'x' }),
+    ).rejects.toBeInstanceOf(DeploymentTemplateNotFoundError);
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  it('emits preset.delete on delete', async () => {
+    await deleteDeploymentTemplate(ctx, 'template-1');
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        targetId: 'template-1',
+        attributes: expect.objectContaining({
+          verb: 'preset.delete',
+          family: 'deployment-template',
+        }),
+      }),
+    );
   });
 });

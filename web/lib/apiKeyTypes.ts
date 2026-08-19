@@ -4,12 +4,32 @@ export type ApiKeyResource =
   | 'site'
   | 'machine'
   // api-sprint additions:
-  | 'chat' // site-scoped cortex conversations
+  | 'chat' // site-scoped hoot conversations
   | 'deploy' // site-scoped classic-installer deploys (distinct from the `deploy` permission on roosts)
   | 'process' // machine-scoped process management
   | 'user' // platform-wide user administration (superadmin)
   | 'installer'; // platform-wide installer-binary management (superadmin)
+/**
+ * The union keeps `test` even though nothing mints it any more.
+ *
+ * `test` never gated authorization or data access — auth reads the field and
+ * never branches on it — so it promised a sandbox it did not provide, and the
+ * option is gone from every create surface. But it is NOT inert: it is the
+ * second component of the idempotency cache key
+ * (`hashCacheKey(userId, environment, key, routeScope)`, lib/idempotency.ts),
+ * so narrowing this union would re-namespace idempotency for every existing
+ * `owk_test_*` key and orphan its cached responses. Existing test keys keep
+ * working; only new mints are forced to `live`.
+ */
 export type ApiKeyEnvironment = 'live' | 'test';
+
+/**
+ * The environment every newly minted key gets. Never read from user input —
+ * requests may still send `environment` (the shipped CLI and both SDKs do) and
+ * it is accepted and ignored rather than rejected, so older clients keep
+ * working. Rotation is the one exception: it inherits the old key's value.
+ */
+export const MINTED_API_KEY_ENVIRONMENT: ApiKeyEnvironment = 'live';
 
 /**
  * Canonical list of every accepted resource type. Imported by route
@@ -106,10 +126,27 @@ export const SCOPE_PRESET_KEYS: readonly ApiKeyScopePreset[] = [
   'admin',
 ];
 
+/**
+ * Display labels for the presets.
+ *
+ * The keys are code identifiers — they index SCOPE_PRESETS, back the
+ * `ApiKeyScopePreset` union, and are the `<SelectItem value>` in every picker.
+ * Rendering them raw leaked `readonly` into the UI as a scope's name. The
+ * identifier stays; only what a human reads changes. Nothing persists or
+ * transmits the preset name (a preset expands to `scopes` before the POST),
+ * so this is purely presentational.
+ */
+export const SCOPE_PRESET_LABELS: Record<ApiKeyScopePreset, string> = {
+  readonly: 'read only',
+  publisher: 'publisher',
+  operator: 'operator',
+  admin: 'admin',
+};
+
 /** Human-readable descriptions of each preset, shared across every scope picker. */
 export const SCOPE_PRESET_DESCRIPTIONS: Record<ApiKeyScopePreset, string> = {
-  readonly: 'read access to roosts, sites, machines, and cortex chats — no mutations',
-  publisher: 'read + write — can upload chunks, publish versions, and use cortex chats',
+  readonly: 'read access to roosts, sites, machines, and hoot chats — no mutations',
+  publisher: 'read + write — can upload chunks, publish versions, and use hoot chats',
   operator: 'read, write, deploy, rollback — full day-to-day operations',
   admin: 'full access including admin permissions',
 };
@@ -135,4 +172,114 @@ export function scopeMatches(
       (s.id === '*' || s.id === id) &&
       s.permissions.includes(permission)
   );
+}
+
+/**
+ * The shape `GET /api/keys` returns, and the only shape the key UIs read.
+ *
+ * Declared here rather than beside a component on purpose. It used to live in
+ * KeyCard.tsx, where it described fields the route never actually sent —
+ * `expired`, `retired` and `expiredMarkedAt` were always `undefined`, so the
+ * "expired" badge could not render, and an expired key sat under a heading
+ * that called it active. Sharing the type makes that a compile error instead.
+ *
+ * Every instant here is epoch milliseconds. The stored record is not
+ * consistent — `createdAt` is a Firestore Timestamp (written with
+ * serverTimestamp()) while `lastUsedAt` is a plain number (written with
+ * Date.now()) — so the route normalises through {@link toEpochMillis} before
+ * serialising. Returning the raw Timestamp made `new Date(...)` yield
+ * "Invalid Date" in the dashboard for every key created after the switch to
+ * serverTimestamp().
+ */
+export interface ApiKeyListItem {
+  id: string;
+  name: string | null;
+  keyPrefix: string | null;
+  environment: ApiKeyEnvironment | null;
+  scopes: ApiKeyScope[] | null;
+  expiresAt: number | null;
+  createdAt: number | null;
+  lastUsedAt: number | null;
+  rotatedAt: number | null;
+  rotatedFromKeyId: string | null;
+  retiresAt: number | null;
+  revokedAt: number | null;
+  expiredMarkedAt: number | null;
+  /** Derived: past its expiry at the moment the list was built. */
+  expired: boolean;
+  /** Derived: a rotated key whose grace window has closed. */
+  retired: boolean;
+}
+
+/**
+ * Coerce any instant this codebase has ever stored into epoch milliseconds.
+ *
+ * Handles the three shapes that reach it: a plain number, a live
+ * Firestore Timestamp (Admin SDK, has `toMillis()`), and a Timestamp that has
+ * already been through JSON (`{_seconds, _nanoseconds}` or `{seconds, ...}`).
+ * Anything else — including a FieldValue sentinel read back before the write
+ * lands — returns null rather than a nonsense date.
+ */
+export function toEpochMillis(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === 'object') {
+    const t = value as {
+      toMillis?: unknown;
+      _seconds?: unknown;
+      seconds?: unknown;
+      _nanoseconds?: unknown;
+      nanoseconds?: unknown;
+    };
+    if (typeof t.toMillis === 'function') {
+      const ms = (t.toMillis as () => unknown)();
+      return typeof ms === 'number' && Number.isFinite(ms) ? ms : null;
+    }
+    const secs = typeof t._seconds === 'number' ? t._seconds
+      : typeof t.seconds === 'number' ? t.seconds : null;
+    if (secs !== null) {
+      const nanos = typeof t._nanoseconds === 'number' ? t._nanoseconds
+        : typeof t.nanoseconds === 'number' ? t.nanoseconds : 0;
+      return secs * 1000 + Math.floor(nanos / 1e6);
+    }
+  }
+  return null;
+}
+
+/**
+ * Build the list item the UIs consume from a stored record.
+ *
+ * `now` is injected so a single listing classifies every key against one
+ * instant, and so the derivation is testable without faking the clock.
+ */
+export function buildApiKeyListItem(
+  id: string,
+  data: Record<string, unknown>,
+  now: number
+): ApiKeyListItem {
+  const expiresAt = toEpochMillis(data.expiresAt);
+  const retiresAt = toEpochMillis(data.retiresAt);
+  const rotatedAt = toEpochMillis(data.rotatedAt);
+  return {
+    id,
+    name: typeof data.name === 'string' ? data.name : null,
+    keyPrefix: typeof data.keyPrefix === 'string' ? data.keyPrefix : null,
+    environment:
+      data.environment === 'live' || data.environment === 'test' ? data.environment : null,
+    scopes: Array.isArray(data.scopes) ? (data.scopes as ApiKeyScope[]) : null,
+    expiresAt,
+    createdAt: toEpochMillis(data.createdAt),
+    lastUsedAt: toEpochMillis(data.lastUsedAt),
+    rotatedAt,
+    rotatedFromKeyId:
+      typeof data.rotatedFromKeyId === 'string' ? data.rotatedFromKeyId : null,
+    retiresAt,
+    revokedAt: toEpochMillis(data.revokedAt),
+    expiredMarkedAt: toEpochMillis(data.expiredMarkedAt),
+    expired: expiresAt !== null && expiresAt <= now,
+    // A rotated key stops working once its grace window closes. Without
+    // rotatedAt there is no grace window and the key is simply live.
+    retired: rotatedAt !== null && retiresAt !== null && retiresAt <= now,
+  };
 }

@@ -56,6 +56,7 @@ CORNER_RADIUS = 6             # consistent corner radius for all elements
 STATUS_COLORS = {
     'RUNNING':       '#4ade80',  # green-400
     'LAUNCHING':     '#facc15',  # yellow-400
+    'RESTARTING':    '#facc15',  # yellow-400 (operator-initiated, mid-flight)
     'QUEUED':        '#fb923c',  # orange-400
     'LAUNCH_FAILED': '#ef4444',  # red-500
     'KILLED':        '#f87171',  # red-400
@@ -75,18 +76,71 @@ SERVICE_NAME = 'OwletteService'
 # Initialize a global lock (thread-level)
 json_lock = threading.Lock()
 
-# Cross-process mutex for JSON file access (service + GUI coordination)
+# Cross-process mutex for JSON file access (service + desktop app coordination)
 _json_file_mutex = None
+
+_JSON_MUTEX_NAME = "Global\\OwletteJsonFileMutex"
+
+# Security descriptor for that mutex.
+#
+# The service runs as LocalSystem, and a kernel object it creates with a NULL
+# descriptor inherits that token's default DACL — LocalSystem and Administrators
+# only. Every other process then fails BOTH CreateMutex and OpenMutex with
+# ACCESS_DENIED, so _CrossProcessLock silently degraded to "no lock at all"
+# everywhere except inside the service itself; the legacy GUI never once held it
+# (measured 2026-08-12). Creating the object with an explicit descriptor is the
+# only fix, because whoever creates it sets the DACL for its whole lifetime.
+#
+# Authenticated Users get exactly SYNCHRONIZE (0x00100000) | MUTEX_MODIFY_STATE
+# (0x0001): enough to wait on the mutex and release it, and nothing else —
+# notably not WRITE_DAC, so a user process cannot re-permission the object.
+# LocalSystem and Administrators keep MUTEX_ALL_ACCESS (0x001F0001).
+_JSON_MUTEX_SDDL = "D:(A;;0x1F0001;;;SY)(A;;0x1F0001;;;BA)(A;;0x100001;;;AU)"
+
+# The two rights the descriptor above hands to ordinary users.
+_MUTEX_OPEN_ACCESS = 0x00100000 | 0x0001  # SYNCHRONIZE | MUTEX_MODIFY_STATE
+
+
 def _get_json_file_mutex():
-    """Get or create a Windows named mutex for cross-process JSON file locking."""
+    """Get or create the Windows named mutex for cross-process JSON file locking.
+
+    Creation carries an explicit descriptor (see _JSON_MUTEX_SDDL) so that
+    whichever process wins the race — normally the service — leaves the object
+    reachable by the desktop app and by any other agent process.
+
+    CreateMutex always asks for MUTEX_ALL_ACCESS, which that descriptor
+    deliberately withholds from ordinary users, so a non-elevated process falls
+    through to OpenMutex with just the rights it needs. The desktop host does
+    exactly the same thing (desktop/src-tauri/src/json_io.rs::json_mutex).
+    """
     global _json_file_mutex
     if _json_file_mutex is None:
         try:
             import win32event
-            # Named mutex shared between service and GUI processes
-            _json_file_mutex = win32event.CreateMutex(None, False, "Global\\OwletteJsonFileMutex")
-        except Exception:
-            _json_file_mutex = False  # Fallback: skip cross-process locking
+            import win32security
+
+            attributes = win32security.SECURITY_ATTRIBUTES()
+            attributes.SECURITY_DESCRIPTOR = (
+                win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
+                    _JSON_MUTEX_SDDL, win32security.SDDL_REVISION_1
+                )
+            )
+            _json_file_mutex = win32event.CreateMutex(attributes, False, _JSON_MUTEX_NAME)
+        except Exception as create_error:
+            try:
+                import win32event
+                _json_file_mutex = win32event.OpenMutex(
+                    _MUTEX_OPEN_ACCESS, False, _JSON_MUTEX_NAME
+                )
+            except Exception as open_error:
+                # Both paths refused: proceed unlocked. The writes are atomic
+                # (temp file + os.replace), so the worst case is a lost update,
+                # never a torn file.
+                logging.debug(
+                    f"Cross-process JSON mutex unavailable "
+                    f"(create: {create_error}; open: {open_error}) — proceeding unlocked"
+                )
+                _json_file_mutex = False  # Fallback: skip cross-process locking
     return _json_file_mutex
 
 class _CrossProcessLock:
@@ -1072,6 +1126,97 @@ def _is_script_running_uncached(script_name):
 CONFIG_PATH = get_data_path('config/config.json')
 RESULT_FILE_PATH = get_data_path('tmp/app_states.json')
 
+# DESKTOP APP (Tauri) — replaces owlette_tray.py and owlette_gui.py.
+#
+# The installer drops it at {app}\app\owlette-desktop.exe, alongside the agent
+# and the bundled interpreter. Two pid markers tell the service what the
+# operator has open:
+#   tmp/tray.pid — written for the life of the process (tray icon present)
+#   tmp/gui.pid  — written only while the main window is on screen
+# See desktop/src-tauri/src/pid_file.rs for the writer.
+DESKTOP_EXE_NAME = 'owlette-desktop.exe'
+DESKTOP_TRAY_ARG = '--tray'
+DESKTOP_RESTART_PROMPT_ARG = '--restart-prompt'
+TRAY_PID_PATH = get_data_path('tmp/tray.pid')
+GUI_PID_PATH = get_data_path('tmp/gui.pid')
+
+
+def get_desktop_exe_path():
+    """Full path to the desktop app, or None when it is not installed.
+
+    Resolved from the install root the same way get_python_exe_path() does
+    (src lives at <install>\\agent\\src), so a relocated install is followed
+    rather than hardcoded.
+    """
+    install_root = os.path.dirname(os.path.dirname(get_path()))
+    candidate = os.path.join(install_root, 'app', DESKTOP_EXE_NAME)
+    return candidate if os.path.exists(candidate) else None
+
+
+def build_detached_launch_command(exe_path, args=()):
+    """Command line that launches exe_path *outside* the service's process tree.
+
+    Through 2.x the service ran under NSSM, which stopped a service by walking
+    the process tree of the program it started and terminating every process in
+    it (``Killing PID <n> in process tree of PID <m> because service
+    OwletteService is stopping``). The desktop app is spawned by the service with
+    CreateProcessAsUser, which makes it a child of that program — so every
+    operator stop of OwletteService also killed the operator's UI, including the
+    tray icon they need in order to start the service again. NSSM 2.24 ignored
+    the AppKillProcessTree=0 the installer set, so it could not be turned off
+    from the service configuration either.
+
+    ``cmd.exe /c start`` breaks the link: cmd spawns the app and exits
+    immediately, so by the time anything enumerates the tree the app's recorded
+    parent no longer exists and the walk never reaches it. The empty ``""`` is
+    the window title ``start`` would otherwise take the quoted path for.
+
+    owlette-host (3.0.0) terminates only the process it launched and never its
+    descendants, so this detachment is no longer the single thing standing
+    between an operator's stop and their UI. It stays because it is still true
+    of anything else that might walk the tree — a manual ``taskkill /T``, a
+    remote-management tool, a future host — and because losing the desktop app
+    on a service restart is exactly the failure it was written to prevent.
+
+    The PID is lost in the handoff — the caller gets cmd's, not the app's — so
+    callers must recover it from the marker the app writes for itself
+    (``read_desktop_pid(TRAY_PID_PATH)``) rather than from the launch.
+    """
+    quoted = ' '.join(f'"{argument}"' for argument in args)
+    return f'cmd.exe /c start "" "{exe_path}"{" " + quoted if quoted else ""}'
+
+
+def read_desktop_pid(pid_path):
+    """PID recorded in pid_path, but only if it is a live owlette-desktop.exe.
+
+    Replaces the is_script_running() image scan the python tray and GUI relied
+    on: that helper only inspects processes whose image name contains "python",
+    so it can never match a native executable. Checking the image name as well
+    as the PID is what stops a recycled PID from reading as a live UI.
+
+    Returns the PID, or None when the marker is absent, stale or foreign.
+    """
+    try:
+        with open(pid_path, 'r') as f:
+            pid = int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+    if pid <= 0 or not psutil.pid_exists(pid):
+        return None
+
+    try:
+        if (psutil.Process(pid).name() or '').lower() == DESKTOP_EXE_NAME:
+            return pid
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+    return None
+
+
+def is_desktop_window_open():
+    """True while the operator has the desktop app's main window on screen."""
+    return read_desktop_pid(GUI_PID_PATH) is not None
+
 # Lazy GPUtil import — avoids eager GPU probing at module load (saves ~5-10 MB
 # baseline and a startup delay for every process that imports shared_utils).
 # Failures are sticky only for _GPUTIL_RETRY_BACKOFF seconds so a transient
@@ -1309,6 +1454,50 @@ def cleanup_old_logs(max_age_days=90):
     except Exception as e:
         logging.error(f"Error during log cleanup: {e}")
         return 0
+
+# Size at which an externally-written log gets rotated. 2 MB is generous for
+# a single installer run and keeps the on-disk worst case (current + .1) at
+# ~4 MB.
+EXTERNAL_LOG_MAX_BYTES = 2 * 1024 * 1024
+
+
+def rotate_log_if_oversized(log_path, max_bytes=EXTERNAL_LOG_MAX_BYTES):
+    """
+    Rotate ONCE (``<name>`` -> ``<name>.1``) if the file is bigger than
+    max_bytes, so the next writer starts from empty.
+
+    For logs written by an external process — the Inno Setup installer's
+    ``/LOG=`` file is the one that motivated this — which appends forever and
+    therefore isn't covered by the RotatingFileHandler our own logging uses.
+    ``cleanup_old_logs`` doesn't catch it either: every update refreshes the
+    mtime, so it never ages out.
+
+    Deliberately dumb: one rename, no handlers, no locks. This log has to
+    survive the very upgrade it documents, so there is nothing here that can
+    hold the file open or fail the update. Never raises.
+
+    Returns True if a rotation happened.
+    """
+    try:
+        if not os.path.exists(log_path):
+            return False
+        size = os.path.getsize(log_path)
+        if size <= max_bytes:
+            return False
+        # os.replace overwrites an existing .1 atomically — we keep exactly one
+        # generation of history, never a growing chain.
+        os.replace(log_path, f"{log_path}.1")
+        logging.info(
+            f"Rotated oversized log {os.path.basename(log_path)} "
+            f"({round(size / 1024 / 1024, 2)} MB) to .1"
+        )
+        return True
+    except Exception as e:
+        # A log we couldn't rotate is a disk-space annoyance; failing the
+        # caller (an in-progress agent update) would be far worse.
+        logging.warning(f"Could not rotate log {log_path}: {e}")
+        return False
+
 
 def get_log_tail(log_name='service', lines=100):
     """Read the last N lines from a log file. Returns empty string on failure."""
@@ -2077,10 +2266,58 @@ def find_windows_by_pid(pid):
     return windows
 
 
-def graceful_terminate(pid, timeout=5):
+def _reap_orphaned_descendants(snapshot, pid):
+    """Kill descendants that outlived the process they belonged to.
+
+    `snapshot` must have been taken while the parent was still alive — once it
+    exits, the parent/child link is gone and the survivors are unattributable.
+
+    Only called after the parent is confirmed dead, so this can never kill a
+    child out from under a running process. Matching on (pid, create_time)
+    rather than pid alone: Windows recycles pids aggressively, and a bare pid
+    match could terminate an unrelated process that inherited the number
+    between the snapshot and here.
+    """
+    reaped = []
+    for child_pid, created in snapshot:
+        try:
+            child = psutil.Process(child_pid)
+            if child.create_time() != created:
+                continue  # pid was recycled — not our child
+            name = child.name()
+            child.terminate()
+            try:
+                child.wait(timeout=3)
+            except psutil.TimeoutExpired:
+                child.kill()
+            reaped.append(f'{name} ({child_pid})')
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    if reaped:
+        logging.info(
+            f"Reaped {len(reaped)} orphaned child process(es) of {pid}: "
+            f"{', '.join(reaped)}")
+    return reaped
+
+
+def graceful_terminate(pid, timeout=5, exe_path=None):
     """Attempt graceful shutdown via WM_CLOSE, then fall back to hard terminate.
 
     Returns True if the process was terminated, False if it was already gone.
+
+    `exe_path` is the configured target, used only to decide whether surviving
+    children need reaping. A .bat/.cmd target runs through a cmd.exe wrapper
+    (see process_launcher.build_hidden_batch_command), so the pid Owlette
+    tracks is the wrapper, not the payload. Killing the wrapper leaves the
+    real process running and untracked — the supervisor reports the restart as
+    successful while the old instance is still holding its port, its GPU, or
+    its files. Children are snapshotted before the kill and reaped after.
+
+    Deliberately NOT unconditional. For a normal .exe the tracked pid is the
+    application itself, and its children are its own business — TouchDesigner
+    spawns TouchEngine.exe and TouchDesignerWebRender.exe, and a well-behaved
+    app tears those down during WM_CLOSE. Reaping there would only race that
+    cleanup.
     """
     import win32gui
     import win32con
@@ -2089,6 +2326,26 @@ def graceful_terminate(pid, timeout=5):
         proc = psutil.Process(pid)
     except psutil.NoSuchProcess:
         return False
+
+    # Snapshot descendants while the parent still exists, so orphans stay
+    # attributable after it is gone. Cheap, and only for wrapper targets.
+    wrapper_target = bool(exe_path) and exe_path.replace('/', '\\').lower().endswith(('.bat', '.cmd'))
+    child_snapshot = []
+    if wrapper_target:
+        try:
+            child_snapshot = [
+                (c.pid, c.create_time()) for c in proc.children(recursive=True)
+            ]
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            logging.debug(f"Could not enumerate children of {pid}: {e}")
+
+    def _finish(result):
+        # Reap regardless of `result`: a False here means the wrapper exited on
+        # its own between the snapshot and the kill, which orphans its children
+        # just the same. Every path that reaches _finish has a dead parent.
+        if wrapper_target:
+            _reap_orphaned_descendants(child_snapshot, pid)
+        return result
 
     # Try graceful shutdown: send WM_CLOSE to all visible windows
     windows = find_windows_by_pid(pid)
@@ -2103,7 +2360,7 @@ def graceful_terminate(pid, timeout=5):
         try:
             proc.wait(timeout=timeout)
             logging.info(f"Process {pid} exited gracefully after WM_CLOSE")
-            return True
+            return _finish(True)
         except psutil.TimeoutExpired:
             logging.info(f"Process {pid} did not exit after WM_CLOSE ({timeout}s), forcing terminate")
 
@@ -2111,15 +2368,15 @@ def graceful_terminate(pid, timeout=5):
     try:
         proc.terminate()
         proc.wait(timeout=3)
-        return True
+        return _finish(True)
     except psutil.NoSuchProcess:
-        return False
+        return _finish(False)
     except psutil.TimeoutExpired:
         try:
             proc.kill()
-            return True
+            return _finish(True)
         except psutil.NoSuchProcess:
-            return False
+            return _finish(False)
 
 
 # PROCESSES
@@ -2195,6 +2452,17 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
     offers no corroboration the match must be UNIQUE — with several candidate
     instances of the same exe there is no way to know which one the operator
     meant, so none is returned rather than risking an unrelated process.
+
+    Matching precedence, strongest evidence first:
+      1. file_path present and found in a candidate's command line — unambiguous
+         even when several instances of the exe are running (the TouchDesigner
+         case: one image, one process per .toe).
+      2. an exact exe-path match that is unique on the machine.
+      3. (non-strict only) an exe-path or image-name match chosen from several.
+         Ambiguous by construction — logged with a warning, because the fix is
+         to configure file_path, not to guess better. strict refuses here.
+    Callers that kill or restart must pass strict=True; only startup adoption,
+    which merely risks watching the wrong instance, may take tier 3.
     """
     try:
         exe_lower = exe_path.replace('/', '\\').lower()
@@ -2237,18 +2505,42 @@ def find_running_process_by_exe(exe_path, file_path=None, strict=False):
                     except (psutil.NoSuchProcess, psutil.AccessDenied):
                         continue  # Can't verify cmdline, skip to avoid false match
                     return proc.info['pid']  # cmdline-corroborated — unambiguous
-                if not strict:
-                    return proc.info['pid']
-                candidates.append(proc.info['pid'])
+                candidates.append((proc.info['pid'], full_match))
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
-        if strict and len(candidates) == 1:
-            return candidates[0]
-        if strict and len(candidates) > 1:
+        # No file_path to corroborate with. Rank an exact exe-path match above a
+        # bare image-name match: several instances of one image are normal for
+        # the apps Owlette supervises (every TouchDesigner project is the same
+        # TouchDesigner.exe), and an unranked scan would adopt whichever one
+        # psutil happened to yield first — possibly a different install entirely.
+        full_matches = [pid for pid, is_full in candidates if is_full]
+        if len(full_matches) == 1:
+            return full_matches[0]
+        if strict:
+            # Bare basename matches never reach `candidates` under strict, so
+            # everything here is a full-path match and the unique case already
+            # returned above. Reaching this point means several instances of
+            # the configured exe are running with nothing to tell them apart.
+            if candidates:
+                logging.warning(
+                    f"find_running_process_by_exe: {len(candidates)} instances of "
+                    f"{exe_basename} match with no file_path to disambiguate — refusing"
+                )
+            return None
+        # Non-strict callers (startup adoption) must still return something when
+        # the choice is ambiguous: returning None makes the monitor loop launch
+        # yet another instance, which is the duplicate we are trying to avoid.
+        # Prefer an exact-path match, then fall back to the image-name match.
+        if full_matches:
             logging.warning(
-                f"find_running_process_by_exe: {len(candidates)} instances of "
-                f"{exe_basename} match with no file_path to disambiguate — refusing"
+                f"find_running_process_by_exe: {len(full_matches)} instances of "
+                f"{exe_path} running and no file_path configured to tell them "
+                f"apart — adopting PID {full_matches[0]}. Set the file path on "
+                f"this process entry to make adoption unambiguous."
             )
+            return full_matches[0]
+        if candidates:
+            return candidates[0][0]
     except Exception:
         pass
     return None

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import RequireSuperadmin from '@/components/RequireSuperadmin';
@@ -8,7 +8,16 @@ import { Users, Package, ArrowLeft, Menu, X, Settings, Mail, KeyRound, Webhook, 
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { useDevicePrefFlag } from '@/hooks/useDevicePrefFlag';
+import { useDevicePrefFlag, useDevicePrefNumber } from '@/hooks/useDevicePrefFlag';
+
+/** Resizable sidebar bounds (lg+ expanded state only; the icon rail is fixed). */
+const SIDEBAR_MIN_W = 200;
+const SIDEBAR_MAX_W = 480;
+const SIDEBAR_DEFAULT_W = 256;
+/** Dragging well past the minimum reads as "get rid of it" — collapse instead. */
+const SIDEBAR_COLLAPSE_AT_W = 150;
+/** Below this width the nav descriptions vanish so names keep their room. */
+const SIDEBAR_COMPACT_BELOW_W = 232;
 
 /**
  * Admin Layout
@@ -29,6 +38,46 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // the width is predictable regardless of window size. Mobile (<lg) always
   // uses the full-width drawer, so this only governs the lg+ static sidebar.
   const { value: collapsed, setValue: setCollapsed } = useDevicePrefFlag('adminSidebarCollapsed', false);
+
+  // Drag-resizable width (expanded lg+ only), persisted per device alongside
+  // the collapse flag. The pref's own 400ms debounce means drags write to
+  // Firestore once at rest, not per pointermove.
+  const { value: sidebarWidth, setValue: setSidebarWidth } = useDevicePrefNumber(
+    'adminSidebarWidth',
+    SIDEBAR_DEFAULT_W,
+    SIDEBAR_MIN_W,
+    SIDEBAR_MAX_W,
+  );
+  const [resizing, setResizing] = useState(false);
+  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    resizeRef.current = { startX: e.clientX, startWidth: sidebarWidth };
+    setResizing(true);
+  };
+  const onResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizeRef.current) return;
+    const raw = resizeRef.current.startWidth + (e.clientX - resizeRef.current.startX);
+    // Yanking well past the minimum collapses the rail, exactly like the
+    // collapse button. The width pref keeps its last clamped value, so
+    // expanding restores the width the user had before the yank.
+    if (raw < SIDEBAR_COLLAPSE_AT_W) {
+      resizeRef.current = null;
+      setResizing(false);
+      setCollapsed(true);
+      return;
+    }
+    setSidebarWidth(raw);
+  };
+  const onResizeEnd = () => {
+    resizeRef.current = null;
+    setResizing(false);
+  };
+  // Narrow-but-expanded: drop the nav descriptions so names keep their room.
+  // lg+ only — the mobile drawer is fixed-width and keeps its descriptions.
+  const compactNav = !collapsed && sidebarWidth < SIDEBAR_COMPACT_BELOW_W;
 
   const navItems = [
     {
@@ -148,12 +197,47 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         )}
 
         {/* Sidebar Navigation */}
-        <aside className={`
-          w-64 ${collapsed ? 'lg:w-20' : 'lg:w-64'} bg-card border-r border-border flex flex-col
-          fixed lg:static inset-y-0 left-0 z-40
-          transform transition-all duration-200 ease-in-out
+        <aside
+          // The width var only governs lg+ expanded; mobile stays w-64 in the
+          // drawer and the collapsed rail stays fixed at lg:w-20. Transitions
+          // are suspended mid-drag so the width tracks the pointer 1:1 instead
+          // of rubber-banding 200ms behind it.
+          style={{ '--admin-sidebar-w': `${sidebarWidth}px` } as React.CSSProperties}
+          className={`
+          w-64 ${collapsed ? 'lg:w-20' : 'lg:w-[var(--admin-sidebar-w)]'} bg-card border-r border-border flex flex-col
+          fixed lg:relative inset-y-0 left-0 z-40
+          transform ${resizing ? 'transition-none' : 'transition-all duration-200 ease-in-out'}
           ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
         `}>
+          {/* Resize handle — lg+ expanded only. Keyboard: arrows nudge 16px,
+              double-click resets to the default width.
+
+              A *focusable* separator is a window-splitter widget, not decoration,
+              so ARIA requires aria-valuenow on it (axe `aria-required-attr`,
+              critical — it failed the a11y route smoke without it). The hook
+              clamps on set, so the reported value is always within the declared
+              range. Don't drop these when editing the handle. */}
+          {!collapsed && (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="resize sidebar"
+              aria-valuenow={sidebarWidth}
+              aria-valuemin={SIDEBAR_MIN_W}
+              aria-valuemax={SIDEBAR_MAX_W}
+              tabIndex={0}
+              onPointerDown={onResizeStart}
+              onPointerMove={onResizeMove}
+              onPointerUp={onResizeEnd}
+              onPointerCancel={onResizeEnd}
+              onDoubleClick={() => setSidebarWidth(SIDEBAR_DEFAULT_W)}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowLeft') setSidebarWidth(sidebarWidth - 16);
+                if (e.key === 'ArrowRight') setSidebarWidth(sidebarWidth + 16);
+              }}
+              className="hidden lg:block absolute inset-y-0 -right-px w-1.5 z-50 cursor-col-resize outline-none transition-colors hover:bg-accent-cyan/40 active:bg-accent-cyan/60 focus-visible:bg-accent-cyan/50"
+            />
+          )}
           {/* Header — vertical padding is held constant across states (only the
               horizontal shrinks when collapsed) so the logo doesn't shift up or
               down as the rail folds. */}
@@ -170,7 +254,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <X className="h-5 w-5 text-muted-foreground hover:text-foreground" />
                 </button>
               </div>
-              <p className="text-sm text-muted-foreground">system management</p>
             </div>
 
             {/* Desktop/Tablet Header — fixed row height + constant logo size in
@@ -211,7 +294,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   </div>
                   <div className="block pr-8">
                     <h1 className="text-xl font-bold text-foreground">admin panel</h1>
-                    <p className="text-xs text-muted-foreground">system management</p>
                   </div>
                   {/* Collapse control — icon-only, floated at the row's right
                       edge, vertically centered on the logo; the title's pr-8
@@ -266,7 +348,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                         <div className={`block ${collapsed ? 'lg:hidden' : 'lg:block'}`}>
                           <p className="font-medium text-sm">{item.name}</p>
                           <p
-                            className={`text-xs mt-0.5 ${
+                            className={`text-xs mt-0.5 ${compactNav ? 'lg:hidden' : ''} ${
                               isActive ? 'text-accent-cyan' : 'text-muted-foreground'
                             }`}
                           >

@@ -1,13 +1,17 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Plus, X, Loader2, Search } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import ConfirmDialog from '@/components/ConfirmDialog';
+import { NO_SUCCESSOR, TalonSuccessorPicker } from '@/components/TalonSuccessorPicker';
 import { useSites } from '@/hooks/useFirestore';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTalonReassign, type AuthoredTalon } from '@/hooks/useTalonReassign';
+import { eligibleTalonSuccessors, type TalonSuccessorUser } from '@/lib/talonSuccessors';
 import type { UserRole } from '@/hooks/useUserManagement';
 
 interface ManageUserSitesDialogProps {
@@ -17,8 +21,21 @@ interface ManageUserSitesDialogProps {
   userEmail: string;
   userRole: UserRole;
   userSites: string[];
+  /**
+   * Everyone on the platform, so the removal flow can offer a successor for
+   * the talons this user wrote. Already loaded by the users page; passing it
+   * down avoids a second listener on a superadmin-only collection.
+   */
+  allUsers?: readonly TalonSuccessorUser[];
   onAssignSite: (userId: string, siteId: string) => Promise<void>;
   onRemoveSite: (userId: string, siteId: string) => Promise<void>;
+}
+
+/** A pending site removal, held open while the operator answers for the talons. */
+interface PendingRemoval {
+  siteId: string;
+  siteName: string;
+  talons: AuthoredTalon[];
 }
 
 export function ManageUserSitesDialog({
@@ -28,6 +45,7 @@ export function ManageUserSitesDialog({
   userEmail,
   userRole,
   userSites,
+  allUsers,
   onAssignSite,
   onRemoveSite,
 }: ManageUserSitesDialogProps) {
@@ -36,6 +54,9 @@ export function ManageUserSitesDialog({
   const [assigningTo, setAssigningTo] = useState<string | null>(null);
   const [removingFrom, setRemovingFrom] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const { fetchSiteAuthored, reassignSiteTalons } = useTalonReassign();
+  const [pendingRemoval, setPendingRemoval] = useState<PendingRemoval | null>(null);
+  const [successorUid, setSuccessorUid] = useState<string>(NO_SUCCESSOR);
 
   // Local state for optimistic UI updates
   const [localUserSites, setLocalUserSites] = useState<string[]>(userSites);
@@ -51,6 +72,17 @@ export function ManageUserSitesDialog({
       setSearchQuery('');
     }
   }, [open]);
+
+  // Admins who could take over the talons on the site being given up. Scoped
+  // to that site, so the picker can't offer someone the API will refuse.
+  const successorCandidates = useMemo(
+    () =>
+      eligibleTalonSuccessors(allUsers ?? [], {
+        siteId: pendingRemoval?.siteId,
+        excludeUid: userId,
+      }),
+    [allUsers, pendingRemoval?.siteId, userId],
+  );
 
   const handleAssignSite = async (siteId: string) => {
     setAssigningTo(siteId);
@@ -75,7 +107,36 @@ export function ManageUserSitesDialog({
     }
   };
 
-  const handleRemoveSite = async (siteId: string) => {
+  /**
+   * Ask about the talons first.
+   *
+   * Removing site access is a one-click action today, and for anyone who wrote
+   * a talon with an AI step it silently breaks that automation — the run
+   * re-resolves the AUTHOR's access, not the operator's. So the click now
+   * looks the damage up before it does anything, and only goes straight
+   * through when there is none.
+   */
+  const handleRemoveSiteClick = async (siteId: string, siteName: string) => {
+    setRemovingFrom(siteId);
+    try {
+      const authored = await fetchSiteAuthored(siteId, userId);
+      if (authored.count === 0) {
+        await removeSite(siteId);
+        return;
+      }
+      setSuccessorUid(NO_SUCCESSOR);
+      setPendingRemoval({ siteId, siteName, talons: authored.talons });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('Removal Failed', {
+        description: message || 'Failed to check this user’s talons.',
+      });
+    } finally {
+      setRemovingFrom(null);
+    }
+  };
+
+  const removeSite = async (siteId: string) => {
     setRemovingFrom(siteId);
 
     // Optimistically update UI immediately
@@ -98,6 +159,39 @@ export function ManageUserSitesDialog({
     }
   };
 
+  /**
+   * Reassign before removing — never after. If the reassignment fails the
+   * member keeps their access, which is recoverable; the reverse order would
+   * leave automations pointing at someone who has already lost it.
+   */
+  const handleConfirmRemoval = async () => {
+    if (!pendingRemoval) return;
+    const { siteId } = pendingRemoval;
+    setPendingRemoval(null);
+
+    if (successorUid !== NO_SUCCESSOR) {
+      setRemovingFrom(siteId);
+      try {
+        const { reassignedTalonIds } = await reassignSiteTalons(siteId, userId, successorUid);
+        toast.success('Talons Reassigned', {
+          description: `${reassignedTalonIds.length} talon${
+            reassignedTalonIds.length === 1 ? '' : 's'
+          } moved to a new owner.`,
+        });
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        toast.error('Reassignment Failed', {
+          description: message || 'Site access was left unchanged.',
+        });
+        setRemovingFrom(null);
+        return;
+      }
+      setRemovingFrom(null);
+    }
+
+    await removeSite(siteId);
+  };
+
   // Filter sites based on search query
   const filterSites = (siteList: typeof sites) => {
     if (!searchQuery.trim()) return siteList;
@@ -116,175 +210,206 @@ export function ManageUserSitesDialog({
   const orphanedSiteIds = localUserSites.filter((siteId) => !validSiteIds.includes(siteId));
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-border bg-card text-foreground max-w-2xl">
-        <DialogHeader>
-          <DialogTitle className="text-foreground">manage site access</DialogTitle>
-          <DialogDescription className="text-muted-foreground">
-            control which sites {userEmail} can access
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="border-border bg-card text-foreground sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">manage site access</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              control which sites {userEmail} can access
+            </DialogDescription>
+          </DialogHeader>
 
-        {/* Admin Notice */}
-        {userRole === 'admin' && (
-          <div className="bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-3 mt-4">
-            <p className="text-accent-cyan text-sm">
-              <strong className="font-semibold">Admin Access:</strong> This user has admin privileges and can access <strong>all sites</strong> in the system regardless of the assignments below. The &quot;Assigned Sites&quot; list only controls which sites appear in this user&apos;s site dropdown for convenience.
-            </p>
-          </div>
-        )}
+          {/* Admin Notice */}
+          {userRole === 'admin' && (
+            <div className="bg-accent-cyan/10 border border-accent-cyan/30 rounded-lg p-3 mt-4">
+              <p className="text-accent-cyan text-sm">
+                <strong className="font-semibold">Admin Access:</strong> This user has admin privileges and can access <strong>all sites</strong> in the system regardless of the assignments below. The &quot;Assigned Sites&quot; list only controls which sites appear in this user&apos;s site dropdown for convenience.
+              </p>
+            </div>
+          )}
 
-        {/* Search Filter */}
-        {!sitesLoading && sites.length > 0 && (
-          <div className="relative mt-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="search sites by name or ID..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 border-border bg-background text-foreground placeholder:text-muted-foreground"
-            />
-          </div>
-        )}
+          {/* Search Filter */}
+          {!sitesLoading && sites.length > 0 && (
+            <div className="relative mt-4">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="search sites by name or ID..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 border-border bg-background text-foreground placeholder:text-muted-foreground"
+              />
+            </div>
+          )}
 
-        {sitesLoading ? (
-          <div className="flex justify-center items-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-accent-cyan" />
-            <span className="ml-2 text-muted-foreground">loading sites...</span>
-          </div>
-        ) : (
-          <div className="space-y-6 py-4 max-h-[60vh] overflow-y-auto pr-2">
-            {/* Assigned Sites */}
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3">
-                assigned sites ({assignedSites.length})
-              </h3>
-              {assignedSites.length === 0 ? (
-                <div className="text-center py-6 text-muted-foreground bg-background rounded-lg border border-border">
-                  {searchQuery ? 'no assigned sites match your search' : 'no sites assigned yet'}
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {assignedSites.map((site) => (
-                    <div
-                      key={site.id}
-                      className="flex items-center justify-between p-3 bg-background rounded-lg border border-border"
-                    >
-                      <div className="flex-1">
-                        <p className="text-foreground font-medium">{site.name}</p>
-                        <p className="text-xs text-muted-foreground font-mono">{site.id}</p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleRemoveSite(site.id)}
-                        disabled={removingFrom === site.id}
-                        className="text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
+          {sitesLoading ? (
+            <div className="flex justify-center items-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-accent-cyan" />
+              <span className="ml-2 text-muted-foreground">loading sites...</span>
+            </div>
+          ) : (
+            <div className="space-y-6 py-4 max-h-[60vh] overflow-y-auto pr-2">
+              {/* Assigned Sites */}
+              <div>
+                <h3 className="text-sm font-semibold text-foreground mb-3">
+                  assigned sites ({assignedSites.length})
+                </h3>
+                {assignedSites.length === 0 ? (
+                  <div className="text-center py-6 text-muted-foreground bg-background rounded-lg border border-border">
+                    {searchQuery ? 'no assigned sites match your search' : 'no sites assigned yet'}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {assignedSites.map((site) => (
+                      <div
+                        key={site.id}
+                        className="flex items-center justify-between p-3 bg-background rounded-lg border border-border"
                       >
-                        {removingFrom === site.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <X className="h-4 w-4" />
-                        )}
-                      </Button>
+                        <div className="flex-1">
+                          <p className="text-foreground font-medium">{site.name}</p>
+                          <p className="text-xs text-muted-foreground font-mono">{site.id}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleRemoveSiteClick(site.id, site.name)}
+                          disabled={removingFrom === site.id}
+                          className="text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
+                        >
+                          {removingFrom === site.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <X className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Orphaned/Invalid Site References */}
+              {orphanedSiteIds.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-red-400 mb-3">
+                    invalid site references ({orphanedSiteIds.length})
+                  </h3>
+                  <div className="space-y-2">
+                    <div className="text-xs text-muted-foreground mb-2 p-2 bg-red-950/20 border border-red-900 rounded">
+                      these site IDs are in the user&apos;s access list but the sites no longer exist or are inaccessible. remove them to fix the site count.
                     </div>
-                  ))}
+                    {orphanedSiteIds.map((siteId) => (
+                      <div
+                        key={siteId}
+                        className="flex items-center justify-between p-3 bg-red-950/30 rounded-lg border border-red-900"
+                      >
+                        <div className="flex-1">
+                          <p className="text-red-300 font-medium">invalid/orphaned site</p>
+                          <p className="text-xs text-red-400 font-mono">{siteId}</p>
+                        </div>
+                        {/* Straight to the removal: the site document is gone, so
+                            there is nothing to look talons up on. */}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => removeSite(siteId)}
+                          disabled={removingFrom === siteId}
+                          className="text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
+                        >
+                          {removingFrom === siteId ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <X className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
-            </div>
 
-            {/* Orphaned/Invalid Site References */}
-            {orphanedSiteIds.length > 0 && (
+              {/* Available Sites */}
               <div>
-                <h3 className="text-sm font-semibold text-red-400 mb-3">
-                  invalid site references ({orphanedSiteIds.length})
+                <h3 className="text-sm font-semibold text-foreground mb-3">
+                  available sites ({availableSites.length})
                 </h3>
-                <div className="space-y-2">
-                  <div className="text-xs text-muted-foreground mb-2 p-2 bg-red-950/20 border border-red-900 rounded">
-                    these site IDs are in the user&apos;s access list but the sites no longer exist or are inaccessible. remove them to fix the site count.
+                {availableSites.length === 0 && searchQuery ? (
+                  <div className="text-center py-6 text-muted-foreground bg-background rounded-lg border border-border">
+                    no available sites match your search
                   </div>
-                  {orphanedSiteIds.map((siteId) => (
-                    <div
-                      key={siteId}
-                      className="flex items-center justify-between p-3 bg-red-950/30 rounded-lg border border-red-900"
-                    >
-                      <div className="flex-1">
-                        <p className="text-red-300 font-medium">invalid/orphaned site</p>
-                        <p className="text-xs text-red-400 font-mono">{siteId}</p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleRemoveSite(siteId)}
-                        disabled={removingFrom === siteId}
-                        className="text-red-400 hover:text-red-300 hover:bg-red-950/30 cursor-pointer"
+                ) : availableSites.length > 0 ? (
+                  <div className="space-y-2">
+                    {availableSites.map((site) => (
+                      <div
+                        key={site.id}
+                        className="flex items-center justify-between p-3 bg-background rounded-lg border border-border hover:border-accent-cyan/30 transition-colors"
                       >
-                        {removingFrom === siteId ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <X className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
+                        <div className="flex-1">
+                          <p className="text-foreground font-medium">{site.name}</p>
+                          <p className="text-xs text-muted-foreground font-mono">{site.id}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleAssignSite(site.id)}
+                          disabled={assigningTo === site.id}
+                          className="border border-accent-cyan/50 text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan cursor-pointer"
+                        >
+                          {assigningTo === site.id ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              assigning...
+                            </>
+                          ) : (
+                            <>
+                              <Plus className="h-4 w-4 mr-2" />
+                              assign
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
-            )}
-
-            {/* Available Sites */}
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3">
-                available sites ({availableSites.length})
-              </h3>
-              {availableSites.length === 0 && searchQuery ? (
-                <div className="text-center py-6 text-muted-foreground bg-background rounded-lg border border-border">
-                  no available sites match your search
-                </div>
-              ) : availableSites.length > 0 ? (
-                <div className="space-y-2">
-                  {availableSites.map((site) => (
-                    <div
-                      key={site.id}
-                      className="flex items-center justify-between p-3 bg-background rounded-lg border border-border hover:border-accent-cyan/30 transition-colors"
-                    >
-                      <div className="flex-1">
-                        <p className="text-foreground font-medium">{site.name}</p>
-                        <p className="text-xs text-muted-foreground font-mono">{site.id}</p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleAssignSite(site.id)}
-                        disabled={assigningTo === site.id}
-                        className="border border-accent-cyan/50 text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan cursor-pointer"
-                      >
-                        {assigningTo === site.id ? (
-                          <>
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                            assigning...
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="h-4 w-4 mr-2" />
-                            assign
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
             </div>
-          </div>
-        )}
+          )}
 
-        {!sitesLoading && sites.length === 0 && (
-          <div className="text-center py-8 text-muted-foreground">
-            <p>no sites available yet.</p>
-            <p className="text-sm mt-2">create a site first from the dashboard.</p>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
+          {!sitesLoading && sites.length === 0 && (
+            <div className="text-center py-8 text-muted-foreground">
+              <p>no sites available yet.</p>
+              <p className="text-sm mt-2">create a site first from the dashboard.</p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Sibling of the sites dialog, not a child of it — same shape as the
+          delete confirmation in ManageSitesDialog. Only reached when this user
+          actually authored talons on the site being taken away; the zero case
+          removes access with no extra click. */}
+      <ConfirmDialog
+        open={pendingRemoval !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingRemoval(null);
+        }}
+        title="remove site access"
+        description={`${userEmail} still owns automations on ${pendingRemoval?.siteName ?? 'this site'}.`}
+        confirmText={successorUid === NO_SUCCESSOR ? 'remove anyway' : 'reassign and remove'}
+        cancelText="cancel"
+        variant="destructive"
+        onConfirm={handleConfirmRemoval}
+      >
+        <TalonSuccessorPicker
+          count={pendingRemoval?.talons.length ?? 0}
+          talonNames={(pendingRemoval?.talons ?? []).map((talon) => talon.name)}
+          consequence="they lose access to this site"
+          candidates={successorCandidates}
+          value={successorUid}
+          onChange={setSuccessorUid}
+          idPrefix="member-removal"
+        />
+      </ConfirmDialog>
+    </>
   );
 }

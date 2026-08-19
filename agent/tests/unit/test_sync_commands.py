@@ -152,3 +152,137 @@ def test_chunk_url_provider_without_firebase_client_raises_clear_error():
     provider = _make_chunk_url_provider(FakeService(), 'site_test')
     with pytest.raises(NotImplementedError, match="firebase_client"):
         provider(['a' * 64])
+
+
+# ─── failure reporting + fail-fast destination check ─────────────────
+
+
+class _RecordingService:
+    """
+    a service stand-in with the two lazily-attached collaborators the
+    handlers reach for, and no firebase_client (so target_state reporting
+    is a no-op and the kill-switch check fails open).
+    """
+    firebase_client = None
+
+    def __init__(self, state, allowlist):
+        self._sync_state = state
+        self._destination_allowlist = allowlist
+
+
+def _sync_pull_cmd(extract_root: str) -> dict:
+    return {
+        'site_id': 's',
+        'roost_id': 'r',
+        'version_id': 'v',
+        'version_url': 'https://example.invalid/version.json',
+        'extract_root': extract_root,
+    }
+
+
+def test_sync_pull_refuses_out_of_root_extract_before_any_egress(tmp_path, monkeypatch):
+    """
+    fail-fast: a destination the allowlist rejects must be refused BEFORE the
+    version body or a single chunk is fetched. previously the agent pulled the
+    whole project down and only then declined to write it.
+    """
+    import sync_commands
+    from destination_allowlist import DestinationAllowlist
+    from sync_state import SyncState
+
+    allowed = tmp_path / 'allowed'
+    allowed.mkdir()
+    state = SyncState(':memory:')
+    service = _RecordingService(state, DestinationAllowlist([str(allowed)]))
+
+    def _explode(*a, **kw):  # pragma: no cover - must never run
+        raise AssertionError('network access attempted after a refused destination')
+
+    monkeypatch.setattr(sync_commands, 'fetch_version', _explode)
+    monkeypatch.setattr(sync_commands, 'download_all', _explode)
+
+    try:
+        result = sync_commands._handle_sync_pull(
+            _sync_pull_cmd(str(tmp_path / 'not-allowed' / 'show')), 'cmd-1', service,
+        )
+
+        assert result.startswith('Error:'), result
+        assert 'not allowed by destination_allowlist' in result
+        # nothing was registered → nothing was downloaded
+        assert state.find_distribution('s', 'r', 'v') is None
+    finally:
+        state.close()
+
+
+def test_sync_pull_refusal_is_logged_locally(tmp_path, caplog):
+    """
+    an operator on the machine must be able to see WHY a deploy was refused
+    without a firestore round trip.
+    """
+    import logging
+
+    import sync_commands
+    from destination_allowlist import DestinationAllowlist
+    from sync_state import SyncState
+
+    allowed = tmp_path / 'allowed'
+    allowed.mkdir()
+    state = SyncState(':memory:')
+    service = _RecordingService(state, DestinationAllowlist([str(allowed)]))
+    try:
+        with caplog.at_level(logging.ERROR, logger='sync_commands'):
+            sync_commands._handle_sync_pull(
+                _sync_pull_cmd(str(tmp_path / 'not-allowed')), 'cmd-1', service,
+            )
+    finally:
+        state.close()
+
+    refusals = [r for r in caplog.records if 'REFUSED before download' in r.message]
+    assert refusals, [r.message for r in caplog.records]
+    assert refusals[0].levelno >= logging.ERROR
+
+
+def test_sync_pull_version_failure_uses_the_error_prefix(tmp_path, monkeypatch):
+    """
+    handler failures must carry the `Error:` prefix — firebase_client keys the
+    completed-vs-failed firestore status off exactly that.
+    """
+    import sync_commands
+    from destination_allowlist import DestinationAllowlist
+    from sync_state import SyncState
+    from sync_version import VersionError
+
+    extract = tmp_path / 'allowed' / 'show'
+    extract.mkdir(parents=True)
+    state = SyncState(':memory:')
+    service = _RecordingService(state, DestinationAllowlist([str(tmp_path / 'allowed')]))
+
+    def _boom(*a, **kw):
+        raise VersionError('manifest digest mismatch')
+
+    monkeypatch.setattr(sync_commands, 'fetch_version', _boom)
+
+    try:
+        result = sync_commands._handle_sync_pull(
+            _sync_pull_cmd(str(extract)), 'cmd-1', service,
+        )
+        assert result.startswith('Error:'), result
+        assert 'manifest digest mismatch' in result
+    finally:
+        state.close()
+
+
+def test_every_sync_pull_failure_return_is_error_prefixed():
+    """
+    static guard: a future edit that adds a `return f"sync_pull failed: ..."`
+    without the prefix would silently record the failure as a completed
+    command. every failure return goes through `_failure()`.
+    """
+    import re
+    from pathlib import Path
+
+    import sync_commands
+
+    source = Path(sync_commands.__file__).read_text(encoding='utf-8')
+    bad = re.findall(r'return f?"(?:sync_pull|rollback)[^"]*fail[^"]*"', source)
+    assert bad == [], f"failure returns bypassing _failure(): {bad}"

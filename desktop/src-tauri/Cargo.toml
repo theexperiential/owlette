@@ -1,0 +1,50 @@
+[package]
+name = "owlette-desktop"
+version = "3.0.1"
+description = "owlette desktop app"
+authors = ["The Experiential Company"]
+license = "FSL-1.1-Apache-2.0"
+repository = "https://github.com/theexperiential/owlette"
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# main.rs calls into this crate; renaming the package does not rename the lib,
+# so keep the two in sync if either changes.
+name = "owlette_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+# `preserve_order` is load-bearing: without it serde_json sorts object keys and
+# every desktop write would reshuffle the operator's config.json — including the
+# firebase block the service owns.
+serde_json = { version = "1.0", features = ["preserve_order"] }
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+# `tray-icon` builds the notification-area icon that replaces pystray;
+# `image-png` is what lets `Image::from_bytes` decode the embedded tray icons.
+tauri = { version = "2.11.3", features = ["tray-icon", "image-png"] }
+tauri-plugin-log = "2"
+tauri-plugin-single-instance = "2"
+# Native file/folder pickers for the process detail form — the same Win32 common
+# dialogs the legacy GUI opened through tkinter.
+tauri-plugin-dialog = "2"
+# Degraded-state toasts, the equivalent of pystray's `icon.notify`. Driven from
+# Rust only (the tray monitor), so there is no matching npm package.
+tauri-plugin-notification = "2"
+# Registered for the next task's filesystem browsing; no frontend usage yet.
+tauri-plugin-fs = "2"
+# The host side is Windows-only by design (it drives the SCM, a named mutex and
+# WM_CLOSE), so these are unconditional rather than target-gated.
+notify = "8"
+windows-service = "0.8"
+# `Win32_Graphics_Gdi` and `Win32_Storage_FileSystem` are what the exe-icon
+# extraction adds (GetDIBits on the icon's bitmaps, and the file-attribute type
+# SHGetFileInfoW takes). Feature flags on a crate that is already a dependency —
+# no new crate, and nothing else in the build changes.
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_EnhancedStorage", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_Security"] }

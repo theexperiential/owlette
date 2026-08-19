@@ -4,7 +4,7 @@
     "index",
     "authentication",
     "agent-commands",
-    "cortex-tools",
+    "hoot-tools",
     "firestore-data-model"
   ]
 }

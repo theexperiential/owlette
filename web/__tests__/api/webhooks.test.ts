@@ -68,6 +68,7 @@ function authed() {
 beforeEach(() => {
   jest.clearAllMocks();
   authed();
+  mocks.siteDocs.clear();
   mocks.set.mockResolvedValue(undefined);
   mocks.update.mockResolvedValue(undefined);
   mocks.get.mockImplementation(() => Promise.resolve(docSnapshot('any', {})));
@@ -831,3 +832,7 @@ describe('POST /api/webhooks/{webhookId}/deliveries/{deliveryId}/retry', () => {
     expect(mocks.set).not.toHaveBeenCalled();
   });
 });
+
+/* ========================================================================== */
+/*  billing gate — POST is pro-only (billing-system wave 0.6)                 */
+/* ========================================================================== */

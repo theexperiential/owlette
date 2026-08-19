@@ -1,7 +1,15 @@
 /**
- * api-sprint W5.4 — chat-api e2e (track 3A / cortex noun).
+ * api-sprint W5.4 — chat-api e2e (track 3A / hoot noun).
  *
  * Hits the chat conversation endpoints with a `chat=<siteId>:write` api key.
+ *
+ * DELIBERATELY still on `/api/cortex/*`. The hoot rename made
+ * `/api/hoot/conversations*` canonical and left thin re-export route files at
+ * every `/api/cortex/*` path for the shipped `@owlette/cli`, the SDKs, and any
+ * fleet agent pinned to the old surface. Exercising the alias here is the point:
+ * this spec is the regression gate that the published back-compat surface keeps
+ * routing, authorizing, and streaming exactly like the canonical one. Do not
+ * "modernize" these URLs — add a hoot-path spec alongside if you want both.
  *
  * Verbs covered (≥1 happy-path each):
  *   - GET    /api/cortex/conversations
@@ -11,7 +19,7 @@
  *   - POST   /api/cortex/conversations/{conversationId}    (SSE stream — see notes)
  *
  * Notes on the streaming case:
- *   The send endpoint funnels through `runCortexStream`, which returns 503
+ *   The send endpoint funnels through `runHootStream`, which returns 503
  *   when the targeted machine is offline (or in our case, has no
  *   `cortexStatus.online`). For the e2e we don't need a real LLM completion —
  *   we only assert the route returns either a streaming response (Content-
@@ -173,10 +181,10 @@ test('POST /api/cortex/conversations/{conversationId} — SSE response when stre
   });
 
   // Two valid outcomes prove the route's auth + idempotency executed and the
-  // request was forwarded into the cortex pipeline:
+  // request was forwarded into the hoot pipeline:
   //   - 200 with a `text/event-stream` body (LLM is reachable)
   //   - 503 with a problem+json body whose code is `cortex_unavailable`
-  //     (machine offline / cortex disabled / no LLM creds in test env)
+  //     (machine offline / hoot disabled / no LLM creds in test env)
   const status = res.status();
   expect([200, 423, 503]).toContain(status);
   const ct = res.headers()['content-type'] || '';

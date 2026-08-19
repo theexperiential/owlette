@@ -264,3 +264,4 @@ export function problemTokenExpired(expiredAt?: number, detail?: string): NextRe
     ...(typeof expiredAt === 'number' ? { expiredAt } : {}),
   });
 }
+

@@ -46,6 +46,12 @@ logger = logging.getLogger(__name__)
 # Default token refresh buffer (refresh 5 minutes before expiry)
 TOKEN_REFRESH_BUFFER_SECONDS = 5 * 60
 
+# Retry cadence for transport-level refresh failures (no HTTP response received:
+# host unreachable, DNS failure, connect/read timeout). These are not server-side
+# errors, so they retry on this fixed short interval instead of escalating the
+# exponential backoff ladder reserved for HTTP error responses.
+TOKEN_REFRESH_NETWORK_RETRY_SECONDS = 10
+
 # Wrap version emitted by web/lib/deviceCodeCrypto.ts. Bump in lockstep
 # if the crypto parameters ever change.
 DEVICE_CODE_WRAP_VERSION = 'v1'
@@ -130,6 +136,18 @@ class TokenRefreshError(Exception):
     pass
 
 
+class TokenRefreshNetworkError(TokenRefreshError):
+    """
+    Raised when token refresh fails at the transport layer — no HTTP response
+    was received (host unreachable, DNS failure, connect/read timeout).
+
+    Subclasses TokenRefreshError so existing handlers keep working; callers that
+    schedule retries use TOKEN_REFRESH_NETWORK_RETRY_SECONDS for this class
+    instead of doubling the server-error backoff.
+    """
+    pass
+
+
 class AuthManager:
     """
     Manages OAuth authentication for the Owlette agent.
@@ -167,8 +185,9 @@ class AuthManager:
         self._last_refresh_attempt: Optional[float] = None
         self._refresh_backoff_seconds: float = 60  # Start with 1 minute
         self._max_backoff_seconds: float = 300  # Max 5 minutes
-        self._consecutive_failures: int = 0  # Track consecutive failures
+        self._consecutive_failures: int = 0  # Track consecutive HTTP-error failures
         self._backoff_logged: bool = False  # Track if we've logged backoff message
+        self._last_failure_was_network: bool = False  # Last failure was transport-level
 
         # Lock to prevent concurrent token refresh attempts from multiple threads
         self._refresh_lock = threading.Lock()
@@ -566,11 +585,12 @@ class AuthManager:
             self._token_expiry = expiry_timestamp
 
             # Only log at INFO when recovering from failures (state change)
-            was_failing = self._consecutive_failures > 0
+            was_failing = self._consecutive_failures > 0 or self._last_failure_was_network
 
             # Reset failure counters on success
             self._consecutive_failures = 0
             self._refresh_backoff_seconds = 60  # Reset backoff to 1 minute
+            self._last_failure_was_network = False
 
             if was_failing:
                 logger.info(f"Token refresh recovered after failures, expires_in={expires_in}s")
@@ -579,6 +599,13 @@ class AuthManager:
 
             return True
 
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            # Transport-level failure — the request never reached a responding
+            # server (host unreachable, DNS failure, connect/read timeout).
+            # Routine on cold boot before the NIC has a route, so it is logged
+            # at INFO and retried on a fixed short cadence by the caller.
+            logger.info(f"Token refresh unreachable (transport error, no HTTP response): {e}")
+            raise TokenRefreshNetworkError(f"Network error: {e}")
         except requests.exceptions.RequestException as e:
             logger.error(f"Network error during token refresh: {e}")
             raise TokenRefreshError(f"Network error: {e}")
@@ -623,14 +650,26 @@ class AuthManager:
                     # Check backoff - don't retry too soon after previous failure
                     if self._last_refresh_attempt:
                         time_since_last_attempt = time.time() - self._last_refresh_attempt
-                        if time_since_last_attempt < self._refresh_backoff_seconds:
+                        # Transport failures retry on a fixed short cadence; only
+                        # HTTP error responses escalate the exponential ladder.
+                        retry_after = (
+                            TOKEN_REFRESH_NETWORK_RETRY_SECONDS
+                            if self._last_failure_was_network
+                            else self._refresh_backoff_seconds
+                        )
+                        if time_since_last_attempt < retry_after:
                             # Still in backoff period - only log ONCE per backoff period
-                            retry_in = int(self._refresh_backoff_seconds - time_since_last_attempt)
+                            retry_in = int(retry_after - time_since_last_attempt)
                             if not self._backoff_logged:
-                                logger.warning(
-                                    f"Token refresh in backoff (waiting {int(self._refresh_backoff_seconds)}s, "
-                                    f"{self._consecutive_failures} consecutive failures)"
-                                )
+                                if self._last_failure_was_network:
+                                    logger.debug(
+                                        f"Token refresh waiting for network (retry in {retry_in}s)"
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Token refresh in backoff (waiting {int(retry_after)}s, "
+                                        f"{self._consecutive_failures} consecutive failures)"
+                                    )
                                 self._backoff_logged = True
                             # Use existing token even if close to expiry (better than spamming)
                             if self._access_token and time_until_expiry > 0:
@@ -650,15 +689,29 @@ class AuthManager:
                         self.refresh_access_token()
                         logger.debug("Token refresh completed successfully")
                     except TokenRefreshError as e:
-                        # Double backoff on failure (exponential backoff)
-                        self._refresh_backoff_seconds = min(
-                            self._refresh_backoff_seconds * 2,
-                            self._max_backoff_seconds
-                        )
-                        logger.error(
-                            f"Token refresh failed, increasing backoff to {int(self._refresh_backoff_seconds)}s "
-                            f"({self._consecutive_failures} consecutive failures)"
-                        )
+                        if isinstance(e, TokenRefreshNetworkError):
+                            # No HTTP response — the server never had a chance to
+                            # answer. Retry on the fixed short cadence and leave
+                            # the server-error ladder where it is.
+                            self._last_failure_was_network = True
+                            logger.info(
+                                "Token refresh failed: transport error (no HTTP response), "
+                                f"retrying in {int(TOKEN_REFRESH_NETWORK_RETRY_SECONDS)}s "
+                                f"(server backoff held at {int(self._refresh_backoff_seconds)}s)"
+                            )
+                        else:
+                            # Server answered with an error — double backoff
+                            # on failure (exponential backoff)
+                            self._last_failure_was_network = False
+                            self._refresh_backoff_seconds = min(
+                                self._refresh_backoff_seconds * 2,
+                                self._max_backoff_seconds
+                            )
+                            logger.error(
+                                f"Token refresh failed: server error, increasing backoff to "
+                                f"{int(self._refresh_backoff_seconds)}s "
+                                f"({self._consecutive_failures} consecutive failures)"
+                            )
                         # If token is still valid (not completely expired), use it
                         if self._access_token and time_until_expiry > 0:
                             logger.warning("Using expiring token due to refresh failure")

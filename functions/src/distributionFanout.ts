@@ -26,6 +26,9 @@
  *   pendingCommandsDispatched: true only after every chunk commits.
  * - If any chunk fails, a later target_state trigger can see the false flag
  *   and retry the same merge-set command writes without duplicating commands.
+ * - A single-machine site has no fleet wave at all (the lone target is the
+ *   canary). That promotion completes the rollout inside the same
+ *   transaction — nothing else would ever re-enter the trigger to do it.
  *
  * **Why not all-at-once?** The cloudflare 2025-11-18 config push that
  * took down the fleet globally is the standing reminder: canary first.
@@ -232,6 +235,32 @@ export const onTargetStateWritten = onDocumentWritten(
       if (!transition) return null; // still in flight
 
       if (transition.stage === 'fleet') {
+        // Single-machine site: `canarySizeFor(1) === 1`, so the lone target
+        // IS the canary and `rollout.fleet` is empty. There is no fleet
+        // command to dispatch and no fleet target_state write will ever
+        // re-enter this trigger — so run the empty fleet wave through the
+        // same state machine here and land on its terminal stage in this
+        // transaction. Without this the rollout parks at "fleet" forever.
+        const fleetTransition =
+          rollout.fleet.length === 0
+            ? nextStage('fleet', evaluateWave([]))
+            : null;
+        if (fleetTransition?.stage === 'complete') {
+          tx.update(rolloutRef, {
+            stage: 'complete',
+            fleetStartedAt: FieldValue.serverTimestamp(),
+            // Nothing was queued and nothing is outstanding — the retry
+            // branch above must never pick this rollout back up.
+            pendingCommandsDispatched: true,
+            completedAt: FieldValue.serverTimestamp(),
+          });
+          console.log(
+            `[fanout] ${siteId}/${roostId}/${reportedVersionId}: ${transition.reason}; ` +
+              `no fleet wave (canary covered every target) — ${fleetTransition.reason}`,
+          );
+          return null;
+        }
+
         // promote: commit rollout state first; command batches happen after
         // the transaction so large fleets don't hit Firestore's transaction
         // write ceiling.

@@ -8,7 +8,7 @@ description: "this page maps the Firestore collections that owlette currently re
 - **server-only Admin SDK** paths are intentionally denied by rules, or fall
   through to the deny-all rule. Route handlers, Cloud Functions, and server
   workers use the Admin SDK for these paths.
-- **legacy** paths still exist for older dashboard, agent, or Cortex flows but
+- **legacy** paths still exist for older dashboard, agent, or hoot flows but
   are not the model new docs should teach first.
 - **current public API** paths are the storage models behind public API routes.
   API routes enforce auth and scope before touching Firestore.
@@ -90,8 +90,8 @@ web go through API routes.
 | `agent_version` | string | Agent build version. |
 | `machine_timezone` | string | Legacy Windows timezone label. |
 | `machine_timezone_iana` | string | IANA timezone reported by newer agents. |
-| `cortexEnabled` | boolean | Per-machine Cortex delivery kill switch. Missing means enabled. |
-| `cortexStatus` | map | Local Cortex status and heartbeat fields. |
+| `cortexEnabled` | boolean | Per-machine hoot delivery kill switch. Missing means enabled. |
+| `cortexStatus` | map | Local hoot status and heartbeat fields. |
 | `rebooting`, `shuttingDown` | boolean | Current machine power-operation flags. |
 | `rebootScheduledAt`, `shutdownScheduledAt` | timestamp/number | Countdown anchors used by the dashboard. |
 | `rebootPending` | map | `{ active, processName, reason, timestamp }`. |
@@ -355,7 +355,7 @@ not directly covered by a client rules stanza.
 
 ### `sites/{siteId}/settings/{settingId}`
 
-Site settings such as shared LLM/Cortex configuration. Site members can read;
+Site settings such as shared LLM/hoot configuration. Site members can read;
 server APIs write.
 
 Known document IDs include:
@@ -507,8 +507,8 @@ flows and built-in preset overrides.
 
 ### `chats/{chatId}` and `chats/{chatId}/messages/{messageId}`
 
-Legacy Cortex conversation storage. Rules still expose this collection to the
-owning user, and older Cortex categorization paths still read/write it.
+Legacy hoot conversation storage. Rules still expose this collection to the
+owning user, and older hoot categorization paths still read/write it.
 
 | field | type | notes |
 | --- | --- | --- |
@@ -524,16 +524,16 @@ owning user, and older Cortex categorization paths still read/write it.
 Messages under `messages/{messageId}` contain `role`, `content`, and
 `createdAt`.
 
-### legacy/local Cortex bridge paths
+### legacy/local hoot bridge paths
 
-Older local Cortex bridge code references these paths:
+Older local hoot bridge code references these paths:
 
 - `sites/{siteId}/machines/{machineId}/cortex/active-chat`
 - `sites/{siteId}/cortex-events/{eventId}`
 - `sites/{siteId}/cortex-state/lock`
 
 They are not the current public chat API storage model. Treat them as legacy
-dashboard/agent internals unless the owning Cortex code is explicitly being
+dashboard/agent internals unless the owning hoot code is explicitly being
 updated.
 
 ### machine-level log shipping
@@ -550,7 +550,7 @@ surface rather than reading or writing these collections directly.
 
 ### public chat storage
 
-Current public Cortex chat APIs use `chat_conversations/{conversationId}`.
+Current public hoot chat APIs use `chat_conversations/{conversationId}`.
 The most recent messages are embedded on the conversation document; older
 messages spill to `chat_conversations/{conversationId}/chat_messages/{messageId}`
 after the embedded array reaches 200 entries.

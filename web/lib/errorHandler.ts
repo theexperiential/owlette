@@ -23,6 +23,23 @@ const FIREBASE_ERROR_MESSAGES: Record<string, string> = {
   'auth/too-many-requests': 'Too many failed attempts. Please try again later',
   'auth/operation-not-allowed': 'This operation is not allowed',
   'auth/requires-recent-login': 'Please log out and log in again to continue',
+  // The Firebase SDK signs the user out itself when it sees these (see
+  // `_logoutIfInvalidated` in @firebase/auth), so by the time a caller reads
+  // this string the session is already gone.
+  'auth/user-token-expired': 'Your session expired. Please sign in again',
+  'auth/invalid-user-token': 'Your session expired. Please sign in again',
+
+  // Constrained-browser errors. The first two are in POPUP_UNAVAILABLE_CODES
+  // (lib/inAppBrowser), so on /login and /register they get inline remediation
+  // instead of a toast and these strings serve only other callers.
+  //
+  // `auth/web-storage-unsupported` is deliberately NOT in that set: blocked
+  // storage is a different failure from a refused popup, and the inline notice
+  // would steer the user to an email fallback that needs the same storage. It
+  // keeps the ordinary toast, so this string is what the user actually reads.
+  'auth/popup-blocked': 'This browser blocked the sign-in window. Open owlette.app in your browser, or sign in with your email',
+  'auth/operation-not-supported-in-this-environment': 'Google sign-in is not available in this browser. Open owlette.app in your browser, or sign in with your email',
+  'auth/web-storage-unsupported': 'This browser is blocking the storage sign-in needs. Try another browser, or sign in with your email',
 
   // Firestore errors
   'permission-denied': 'You do not have permission to perform this action',
@@ -39,7 +56,7 @@ const FIREBASE_ERROR_MESSAGES: Record<string, string> = {
   'unauthenticated': 'You must be logged in to perform this action',
 
   // Network errors
-  'network-request-failed': 'Network error. Please check your connection and try again',
+  'auth/network-request-failed': 'Network error. Please check your connection and try again',
   'timeout': 'Request timed out. Please try again',
 };
 
@@ -108,24 +125,45 @@ export const sanitizeError = (error: unknown): string => {
 };
 
 /**
+ * Extra Sentry scope for a single report.
+ *
+ * Exists so a caller can attach the environment detail that makes an otherwise
+ * unactionable error diagnosable — the raw user-agent being the motivating
+ * case, since Sentry's parsed browser family collapses every unrecognised iOS
+ * webview to one fallback label and loses which app it actually was.
+ */
+export interface ErrorDetail {
+  /** Short, low-cardinality values only — these become Sentry tags. */
+  tags?: Record<string, string>;
+  /** Anything larger or higher-cardinality (user agents, ids, payloads). */
+  extra?: Record<string, unknown>;
+}
+
+/**
  * Logs errors to console in development, could be extended to send to error tracking service
  *
  * @param error - The error to log
  * @param context - Optional context about where the error occurred
+ * @param detail - Optional tags/extra to attach to the Sentry report
  */
-export const logError = (error: unknown, context?: string): void => {
+export const logError = (error: unknown, context?: string, detail?: ErrorDetail): void => {
   const isDevelopment = process.env.NODE_ENV === 'development';
 
   if (isDevelopment) {
-    console.error(`[Error${context ? ` - ${context}` : ''}]`, error);
+    console.error(`[Error${context ? ` - ${context}` : ''}]`, error, detail?.extra ?? '');
   } else {
     console.error('[Error]', context || 'An error occurred');
+    const tags = { ...(context ? { context } : {}), ...(detail?.tags ?? {}) };
+    const scope = {
+      tags: Object.keys(tags).length > 0 ? tags : undefined,
+      extra: detail?.extra,
+    };
     if (error instanceof Error) {
-      Sentry.captureException(error, { tags: context ? { context } : undefined });
+      Sentry.captureException(error, scope);
     } else {
       Sentry.captureMessage(String(error), {
         level: 'error',
-        tags: context ? { context } : undefined,
+        ...scope,
       });
     }
   }

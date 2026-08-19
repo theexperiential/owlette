@@ -16,6 +16,7 @@
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import type { UserActor } from '@/lib/capabilities';
 import { DistributionPresetValidationError } from './createDistributionPreset.server';
 
@@ -23,6 +24,8 @@ export interface DeleteDistributionPresetContext {
   actor: UserActor;
   siteId: string;
   presetId: string;
+  /** Audit actor string ("user:<uid>" or "apiKey:<keyId>"). */
+  auditActor: string;
 }
 
 const PRESET_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -45,4 +48,18 @@ export async function deleteDistributionPreset(
     .doc(ctx.presetId);
 
   await presetRef.delete();
+
+  emitMutation({
+    kind: 'process_mutated',
+    siteId: ctx.siteId,
+    actor: ctx.auditActor,
+    targetId: ctx.presetId,
+    attributes: {
+      verb: 'preset.delete',
+      endpoint: 'presets/distribution',
+      method: 'DELETE',
+      family: 'distribution',
+      presetId: ctx.presetId,
+    },
+  });
 }

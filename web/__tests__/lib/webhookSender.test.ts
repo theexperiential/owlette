@@ -5,6 +5,7 @@ const mockGet = jest.fn();
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
+    // Subscription query path — `sites/{id}/webhooks`.
     collection: () => ({
       where: jest.fn().mockReturnThis(),
       get: mockGet,
@@ -202,6 +203,10 @@ describe('webhookSender', () => {
       );
     });
   });
+
+  /* ---------------------------------------------------------------- */
+  /*  billing-system wave 2.6 — delivery pauses on a locked-out account */
+  /* ---------------------------------------------------------------- */
 
   describe('testWebhook', () => {
     it('sends test payload and returns status', async () => {

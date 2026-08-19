@@ -941,10 +941,13 @@ export function DisplayLayoutPanel({
     }
     return (
       <div
-        className="h-[280px] overflow-y-auto border border-border rounded-lg"
+        className="h-[280px] overflow-y-auto overflow-x-auto border border-border rounded-lg"
         data-testid="display-events-table"
       >
-        <table className="w-full text-xs">
+        {/* The declared column widths add up to 500px, so below that the table
+            scrolls horizontally inside this container instead of crushing the
+            columns (or widening the page). */}
+        <table className="w-full min-w-[500px] text-xs">
           <thead className="bg-muted/40 text-muted-foreground sticky top-0 z-10">
             <tr>
               <th className="text-left font-normal px-3 py-1.5 w-[80px]">when</th>

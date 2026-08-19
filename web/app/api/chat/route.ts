@@ -1,7 +1,7 @@
 /**
- * GET /api/cortex/conversations — list conversations the caller can access.
+ * GET /api/hoot/conversations — list conversations the caller can access.
  *
- * `/api/chat` remains a compatibility alias; `/api/cortex/conversations`
+ * `/api/chat` remains a compatibility alias; `/api/hoot/conversations`
  * is the canonical public API path as of public-api Wave 2.9.
  *
  * Filters to conversations whose `siteId` is in the caller's effective access

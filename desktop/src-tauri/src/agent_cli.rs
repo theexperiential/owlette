@@ -1,0 +1,393 @@
+//! Running the agent's python CLI and streaming its progress.
+//!
+//! Three things the desktop app must be able to do — pair with a site, leave
+//! one, and file a bug report — need the agent's cloud client and its encrypted
+//! token store. Neither is reimplemented here. The token crypto stays in
+//! `agent/src/secure_storage.py`, the Firestore REST client stays in
+//! `agent/src/firestore_rest_client.py`, and this module spawns the bundled
+//! interpreter against `agent/src/configure_site.py` instead:
+//!
+//! ```text
+//! %PROGRAMDATA%\Owlette\python\python.exe
+//!   %PROGRAMDATA%\Owlette\agent\src\configure_site.py --json-progress
+//! ```
+//!
+//! That script writes one JSON object per line to stdout (see its "Headless
+//! modes" section). Every line is forwarded to the frontend as an
+//! [`EVENT_AGENT_CLI`] event, tagged with the run it belongs to, followed by
+//! exactly one `exit` event carrying the process's exit code. Parsing is the
+//! frontend's job — the host stays a pipe.
+//!
+//! The mode is not a command line. The frontend names one of [`MODES`] and this
+//! module builds the argv, so nothing the webview can say becomes an argument to
+//! the interpreter.
+
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read};
+use std::os::windows::process::CommandExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+use serde::Serialize;
+use serde_json::Value;
+use tauri::{AppHandle, Emitter, Manager};
+
+use crate::paths;
+
+/// Emitted for every line the agent CLI writes, and once more when it exits.
+pub const EVENT_AGENT_CLI: &str = "owlette://agent-cli";
+
+/// The bundled interpreter, relative to the data root. `python.exe` rather than
+/// `pythonw.exe`: we need its stdout, and `CREATE_NO_WINDOW` already keeps the
+/// console off the operator's screen.
+const PYTHON_REL: &str = "python/python.exe";
+
+/// The agent script that hosts every headless mode.
+const SCRIPT_REL: &str = "agent/src/configure_site.py";
+
+/// Where a feedback payload is staged for `--report-issue`. The script deletes
+/// it as soon as it has been read.
+const REPORT_DIR_REL: &str = "tmp";
+
+/// Windows creation flag: no console window for the child.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// How often a running child is checked for having exited.
+const REAP_INTERVAL: Duration = Duration::from_millis(150);
+
+/// Longest line forwarded from the child. A pairing phrase is 30 characters and
+/// an error message a few hundred; anything approaching this is a runaway
+/// traceback, and truncating it keeps one bad run from filling the webview.
+const MAX_LINE_BYTES: usize = 64 * 1024;
+
+/// Modes the frontend may run, and the argv each one becomes.
+///
+/// The second element is what `configure_site.py` is actually given. Adding a
+/// mode here is the only way to add one to the frontend's reach.
+const MODES: &[(&str, &str)] = &[
+  // Pair this machine with a site: emits `phrase`, then `status` while polling,
+  // then `authorized`.
+  ("join", "--json-progress"),
+  // Leave the current site: disable cloud sync, drop the cached config, stop the
+  // service, delete the machine document, start the service.
+  ("leave", "--leave"),
+  // File a feedback report. Requires a payload.
+  ("report-issue", "--report-issue"),
+  // Restart Windows, recorded as an owlette-initiated reboot.
+  ("reboot-now", "--reboot-now"),
+  // Clear this machine's cloud `rebootPending` flag.
+  ("dismiss-reboot", "--dismiss-reboot"),
+];
+
+/// The mode that carries a JSON payload rather than running bare.
+const MODE_REPORT_ISSUE: &str = "report-issue";
+
+/// One line of output, or the child's exit.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCliEvent {
+  /// Run this belongs to, as returned by [`start`].
+  pub run: String,
+  /// `stdout`, `stderr`, or `exit`.
+  pub stream: String,
+  /// The line, for `stdout` and `stderr`.
+  pub line: Option<String>,
+  /// Exit code, for `exit`. `None` when the process was terminated by a signal
+  /// or could not be reaped.
+  pub code: Option<i32>,
+}
+
+/// Children that are still running, keyed by run id.
+#[derive(Default)]
+pub struct Runs {
+  next: AtomicU64,
+  children: Mutex<HashMap<String, Arc<Mutex<Child>>>>,
+}
+
+/// Translate a mode name into the flag it runs.
+fn flag_for(mode: &str) -> Result<&'static str, String> {
+  MODES
+    .iter()
+    .find(|(name, _)| *name == mode)
+    .map(|(_, flag)| *flag)
+    .ok_or_else(|| format!("unknown agent mode: {mode}"))
+}
+
+/// Write a feedback payload into the owlette tree and return its path.
+///
+/// The file is created with a per-run name so two reports cannot share one, and
+/// the script deletes it after reading — the operator's description is not left
+/// on disk.
+fn stage_payload(root: &Path, run: &str, payload: &Value) -> Result<PathBuf, String> {
+  let dir = root.join(REPORT_DIR_REL);
+  std::fs::create_dir_all(&dir)
+    .map_err(|error| format!("could not create {}: {error}", dir.display()))?;
+
+  let path = dir.join(format!("owlette-feedback-{run}.json"));
+  let body = serde_json::to_vec(payload).map_err(|error| error.to_string())?;
+  std::fs::write(&path, body)
+    .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+  Ok(path)
+}
+
+/// Spawn one agent CLI run and start streaming it. Returns the run id.
+pub fn start(
+  app: &AppHandle,
+  runs: &Runs,
+  mode: &str,
+  payload: Option<Value>,
+) -> Result<String, String> {
+  let flag = flag_for(mode)?;
+  let root = paths::data_root();
+
+  let python = root.join(PYTHON_REL);
+  if !python.is_file() {
+    return Err(format!(
+      "the bundled python interpreter is missing ({}) — reinstall the owlette agent",
+      python.display()
+    ));
+  }
+  let script = root.join(SCRIPT_REL);
+  if !script.is_file() {
+    return Err(format!(
+      "the agent scripts are missing ({}) — reinstall the owlette agent",
+      script.display()
+    ));
+  }
+
+  let run = format!("{mode}-{}", runs.next.fetch_add(1, Ordering::Relaxed));
+
+  let mut arguments: Vec<String> = vec![script.to_string_lossy().into_owned(), flag.to_string()];
+  match (mode == MODE_REPORT_ISSUE, payload) {
+    (true, Some(payload)) => {
+      let staged = stage_payload(&root, &run, &payload)?;
+      arguments.push(staged.to_string_lossy().into_owned());
+    }
+    (true, None) => return Err("a feedback report needs a payload".to_string()),
+    (false, Some(_)) => return Err(format!("the {mode} mode takes no payload")),
+    (false, None) => {}
+  }
+
+  let mut child = Command::new(&python)
+    .args(&arguments)
+    .current_dir(root.join("agent").join("src"))
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .creation_flags(CREATE_NO_WINDOW)
+    .spawn()
+    .map_err(|error| format!("could not start the agent helper: {error}"))?;
+
+  // Taken before the child is shared, so the reader threads own them outright
+  // and never contend with `cancel` for the child's lock.
+  let stdout = child.stdout.take();
+  let stderr = child.stderr.take();
+
+  let child = Arc::new(Mutex::new(child));
+  match runs.children.lock() {
+    Ok(mut children) => {
+      children.insert(run.clone(), Arc::clone(&child));
+    }
+    Err(_) => return Err("the agent run table is poisoned".to_string()),
+  }
+
+  if let Some(stdout) = stdout {
+    spawn_reader(app.clone(), run.clone(), "stdout", stdout);
+  }
+  if let Some(stderr) = stderr {
+    spawn_reader(app.clone(), run.clone(), "stderr", stderr);
+  }
+  spawn_reaper(app.clone(), run.clone(), child);
+
+  Ok(run)
+}
+
+/// Kill a running child. `false` when the run had already finished.
+///
+/// Cancelling a pairing run is the operator closing the dialog: the device code
+/// is simply abandoned and expires server-side ten minutes later, which is why
+/// there is nothing to tell the server here.
+pub fn cancel(runs: &Runs, run: &str) -> Result<bool, String> {
+  let child = runs
+    .children
+    .lock()
+    .map_err(|_| "the agent run table is poisoned".to_string())?
+    .remove(run);
+
+  let Some(child) = child else {
+    return Ok(false);
+  };
+
+  let mut child = child
+    .lock()
+    .map_err(|_| "the agent child lock is poisoned".to_string())?;
+  match child.kill() {
+    Ok(()) => Ok(true),
+    // Already gone between the lookup and the kill.
+    Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => Ok(false),
+    Err(error) => Err(format!("could not stop the agent helper: {error}")),
+  }
+}
+
+/// Kill everything still running. Called when the app exits, so a ten-minute
+/// pairing poll does not outlive the window that started it.
+pub fn cancel_all(runs: &Runs) {
+  let Ok(mut children) = runs.children.lock() else {
+    return;
+  };
+  for (run, child) in children.drain() {
+    if let Ok(mut child) = child.lock() {
+      if let Err(error) = child.kill() {
+        log::debug!("could not stop agent run {run}: {error}");
+      }
+    }
+  }
+}
+
+/// Forward one pipe, line by line, until it closes.
+fn spawn_reader<R>(app: AppHandle, run: String, stream: &'static str, source: R)
+where
+  R: Read + Send + 'static,
+{
+  let name = format!("owlette-agent-{stream}");
+  if let Err(error) = thread::Builder::new().name(name).spawn(move || {
+    let reader = BufReader::new(source);
+    for line in reader.lines() {
+      match line {
+        Ok(mut line) => {
+          if line.is_empty() {
+            continue;
+          }
+          if line.len() > MAX_LINE_BYTES {
+            // `truncate` panics on a non-boundary index, so cut on one.
+            let mut end = MAX_LINE_BYTES;
+            while end > 0 && !line.is_char_boundary(end) {
+              end -= 1;
+            }
+            line.truncate(end);
+          }
+          emit(
+            &app,
+            AgentCliEvent {
+              run: run.clone(),
+              stream: stream.to_string(),
+              line: Some(line),
+              code: None,
+            },
+          );
+        }
+        // Non-UTF-8 output is a python traceback in the console codepage, not
+        // protocol; drop the line rather than abandoning the stream.
+        Err(error) => log::debug!("unreadable {stream} line from agent run {run}: {error}"),
+      }
+    }
+  }) {
+    log::error!("could not read the agent helper's {stream}: {error}");
+  }
+}
+
+/// Wait for the child, emit its exit, and drop it from the run table.
+fn spawn_reaper(app: AppHandle, run: String, child: Arc<Mutex<Child>>) {
+  if let Err(error) = thread::Builder::new()
+    .name("owlette-agent-reap".into())
+    .spawn(move || {
+      let code = loop {
+        // The lock is released between polls so `cancel` can take it. Holding it
+        // across a blocking `wait()` would make cancelling impossible.
+        let polled = match child.lock() {
+          Ok(mut child) => child.try_wait(),
+          Err(_) => break None,
+        };
+        match polled {
+          Ok(Some(status)) => break status.code(),
+          Ok(None) => thread::sleep(REAP_INTERVAL),
+          Err(error) => {
+            log::warn!("could not reap agent run {run}: {error}");
+            break None;
+          }
+        }
+      };
+
+      if let Some(app_runs) = app.try_state::<Runs>() {
+        if let Ok(mut children) = app_runs.children.lock() {
+          children.remove(&run);
+        }
+      }
+
+      emit(
+        &app,
+        AgentCliEvent {
+          run,
+          stream: "exit".to_string(),
+          line: None,
+          code,
+        },
+      );
+    })
+  {
+    log::error!("could not watch the agent helper: {error}");
+  }
+}
+
+fn emit(app: &AppHandle, event: AgentCliEvent) {
+  if let Err(error) = app.emit(EVENT_AGENT_CLI, event) {
+    log::warn!("could not forward an agent helper event: {error}");
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn every_mode_maps_to_exactly_one_flag() {
+    for (mode, flag) in MODES {
+      assert_eq!(flag_for(mode).expect("known mode"), *flag);
+      assert!(flag.starts_with("--"), "{mode} maps to {flag}");
+    }
+  }
+
+  #[test]
+  fn the_mode_names_are_unique() {
+    let mut names: Vec<&str> = MODES.iter().map(|(name, _)| *name).collect();
+    names.sort_unstable();
+    let count = names.len();
+    names.dedup();
+    assert_eq!(names.len(), count, "duplicate mode name");
+  }
+
+  #[test]
+  fn an_unknown_mode_is_refused_rather_than_run() {
+    // The frontend cannot reach the interpreter with anything not in MODES —
+    // this is what keeps a webview string from becoming an argv entry.
+    for attempt in ["", "--leave", "join; rm -rf", "JOIN", "exec"] {
+      assert!(flag_for(attempt).is_err(), "{attempt} should be refused");
+    }
+  }
+
+  #[test]
+  fn report_issue_is_the_only_mode_that_carries_a_payload() {
+    assert!(flag_for(MODE_REPORT_ISSUE).is_ok());
+    assert_eq!(flag_for(MODE_REPORT_ISSUE).unwrap(), "--report-issue");
+  }
+
+  #[test]
+  fn a_staged_payload_lands_in_the_tree_and_round_trips() {
+    let root = std::env::temp_dir().join(format!("owlette-agent-cli-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+
+    let payload = serde_json::json!({ "category": "bug", "description": "it stopped" });
+    let path = stage_payload(&root, "report-issue-7", &payload).expect("stage");
+
+    assert!(path.starts_with(root.join(REPORT_DIR_REL)));
+    let written: Value =
+      serde_json::from_slice(&std::fs::read(&path).expect("read back")).expect("parse");
+    assert_eq!(written, payload);
+
+    let _ = std::fs::remove_dir_all(&root);
+  }
+}

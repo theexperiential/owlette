@@ -152,8 +152,8 @@ export interface SeedMachineOptions {
   displayName?: string;
   /**
    * Seconds-to-backdate the `lastHeartbeat` field. Defaults to 0 (now),
-   * which renders the machine as online. Pass >180 to simulate a stale
-   * heartbeat (offline via the 180s threshold in useMachines).
+   * which renders the machine as online. Pass >300 to simulate a stale
+   * heartbeat (offline via the 300s threshold in useMachines).
    */
   heartbeatOffsetSec?: number;
   /**

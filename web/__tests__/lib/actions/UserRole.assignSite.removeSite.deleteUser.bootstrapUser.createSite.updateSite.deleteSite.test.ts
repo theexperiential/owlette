@@ -15,6 +15,7 @@ jest.mock('@/lib/userDeleteCascade.server', () => ({
 jest.mock('@/lib/logger', () => ({
   __esModule: true,
   default: {
+    debug: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
     info: jest.fn(),
@@ -47,6 +48,52 @@ class FakeDb {
     return new FakeCollection(this, path);
   }
 
+  /**
+   * Collection-group reads, for `deleteUser`'s fleet-wide talon lookup. Matches
+   * on the last collection segment of a path rather than a prefix, and exposes
+   * `ref.parent.parent.id` so the caller can recover the owning site.
+   */
+  collectionGroup(id: string): FakeCollectionGroup {
+    return new FakeCollectionGroup(this, id);
+  }
+
+  /**
+   * Write batch, for the talon store's all-or-nothing reassign commit and
+   * for createSite's site-doc + owner-membership pair.
+   *
+   * Models the two real-Firestore behaviours the callers depend on, which a
+   * naive sequential apply would not: `update` against a missing document
+   * fails, and a failed commit writes nothing at all. `FakeDoc.update` on its
+   * own deliberately keeps its upsert behaviour — plenty of existing tests
+   * rely on it — so the strictness lives here, at the batch boundary.
+   */
+  batch() {
+    const ops: Array<{
+      ref: FakeDoc;
+      patch: Record<string, unknown>;
+      mode: 'set' | 'update';
+    }> = [];
+    return {
+      set: (ref: FakeDoc, patch: Record<string, unknown>) =>
+        ops.push({ ref, patch, mode: 'set' }),
+      update: (ref: FakeDoc, patch: Record<string, unknown>) =>
+        ops.push({ ref, patch, mode: 'update' }),
+      commit: async () => {
+        for (const op of ops) {
+          if (op.mode !== 'update') continue;
+          const snap = await op.ref.get();
+          if (!snap.exists) {
+            throw new Error(`NOT_FOUND: no document to update: ${op.ref.path}`);
+          }
+        }
+        for (const op of ops) {
+          if (op.mode === 'set') await op.ref.set(op.patch);
+          else await op.ref.update(op.patch);
+        }
+      },
+    };
+  }
+
   async runTransaction<T>(
     callback: (tx: {
       get: (ref: FakeDoc | FakeCollection) => Promise<unknown>;
@@ -68,26 +115,107 @@ class FakeDb {
   }
 }
 
+interface FakeQuerySnapshot {
+  docs: Array<{ id: string; data: () => Record<string, unknown> }>;
+  empty: boolean;
+}
+
+/**
+ * Minimal collection/query fake. `where` supports equality only and `limit`
+ * truncates — enough for the owner-scoped lookups these actions run, without
+ * pulling in a Firestore emulator.
+ */
 class FakeCollection {
   constructor(
     private readonly db: FakeDb,
     private readonly path: string,
+    private readonly filters: Array<[string, unknown]> = [],
+    private readonly max: number | null = null,
   ) {}
 
   doc(id: string): FakeDoc {
     return new FakeDoc(this.db, `${this.path}/${id}`, id);
   }
 
-  async get(): Promise<{ docs: Array<{ id: string; data: () => Record<string, unknown> }> }> {
+  where(field: string, op: string, value: unknown): FakeCollection {
+    if (op !== '==') throw new Error(`FakeCollection.where: unsupported operator ${op}`);
+    return new FakeCollection(this.db, this.path, [...this.filters, [field, value]], this.max);
+  }
+
+  limit(n: number): FakeCollection {
+    return new FakeCollection(this.db, this.path, this.filters, n);
+  }
+
+  async get(): Promise<FakeQuerySnapshot> {
     const prefix = `${this.path}/`;
-    const docs = [...this.db.docs.entries()]
+    let docs = [...this.db.docs.entries()]
       .filter(([path, data]) => data !== null && path.startsWith(prefix))
       .filter(([path]) => !path.slice(prefix.length).includes('/'))
+      .filter(([, data]) =>
+        this.filters.every(([field, value]) => (data as Record<string, unknown>)[field] === value),
+      )
       .map(([path, data]) => ({
         id: path.slice(prefix.length),
         data: () => ({ ...(data as Record<string, unknown>) }),
       }));
-    return { docs };
+    if (this.max !== null) docs = docs.slice(0, this.max);
+    return { docs, empty: docs.length === 0 };
+  }
+}
+
+/**
+ * Collection-group query fake. Equality filters only; `orderBy` sorts by the
+ * field's string form, matching the `createdBy == uid, orderBy name` shape the
+ * talon store issues.
+ */
+class FakeCollectionGroup {
+  constructor(
+    private readonly db: FakeDb,
+    private readonly collectionId: string,
+    private readonly filters: Array<[string, unknown]> = [],
+    private readonly order: string | null = null,
+  ) {}
+
+  where(field: string, op: string, value: unknown): FakeCollectionGroup {
+    if (op !== '==') throw new Error(`FakeCollectionGroup.where: unsupported operator ${op}`);
+    return new FakeCollectionGroup(
+      this.db,
+      this.collectionId,
+      [...this.filters, [field, value]],
+      this.order,
+    );
+  }
+
+  orderBy(field: string): FakeCollectionGroup {
+    return new FakeCollectionGroup(this.db, this.collectionId, this.filters, field);
+  }
+
+  async get() {
+    const docs = [...this.db.docs.entries()]
+      .filter(([, data]) => data !== null)
+      .filter(([path]) => {
+        const segments = path.split('/');
+        return segments.length >= 2 && segments[segments.length - 2] === this.collectionId;
+      })
+      .filter(([, data]) =>
+        this.filters.every(([field, value]) => (data as Record<string, unknown>)[field] === value),
+      )
+      .map(([path, data]) => {
+        const segments = path.split('/');
+        const grandparentId =
+          segments.length >= 3 ? segments[segments.length - 3] : undefined;
+        return {
+          id: segments[segments.length - 1],
+          data: () => ({ ...(data as Record<string, unknown>) }),
+          ref: { parent: { parent: grandparentId ? { id: grandparentId } : null } },
+        };
+      });
+
+    if (this.order) {
+      const field = this.order;
+      docs.sort((a, b) => String(a.data()[field] ?? '').localeCompare(String(b.data()[field] ?? '')));
+    }
+    return { docs, empty: docs.length === 0 };
   }
 }
 
@@ -97,6 +225,11 @@ class FakeDoc {
     private readonly path: string,
     readonly id: string,
   ) {}
+
+  /** Subcollection, e.g. `sites/{siteId}` → `talons`. */
+  collection(name: string): FakeCollection {
+    return new FakeCollection(this.db, `${this.path}/${name}`);
+  }
 
   async get(): Promise<{ exists: boolean; data: () => Record<string, unknown> | undefined }> {
     const data = this.db.docs.get(this.path);
@@ -149,6 +282,9 @@ function isFieldOp(
 
 const ctx = {
   auditActor: 'user:admin',
+  // `deleteUser` carries the authorized caller into the talon store's audit
+  // context; the other action cores ignore the extra field.
+  actor: { type: 'user' as const, userId: 'admin', role: 'superadmin' as const, sites: [] },
   endpoint: '/test',
   method: 'POST',
 };
@@ -257,6 +393,25 @@ describe('removeSiteFromUser', () => {
 });
 
 describe('deleteUser', () => {
+  /** A db holding one soft-deletable author, one successor, and their talons. */
+  function talonDb(): FakeDb {
+    const db = new FakeDb();
+    db.seed('users/bob', { role: 'admin', sites: ['site-a'] });
+    db.seed('sites/site-a/talons/t1', {
+      name: 'nightly restart',
+      enabled: true,
+      outputs: [{ type: 'email' }],
+      createdBy: 'alice',
+    });
+    db.seed('sites/site-a/talons/t2', {
+      name: 'morning check',
+      enabled: true,
+      outputs: [{ type: 'email' }],
+      createdBy: 'alice',
+    });
+    return db;
+  }
+
   it('delegates to the user-delete cascade and audits successful deletes', async () => {
     mockDeleteCascade.mockResolvedValue({
       kind: 'deleted',
@@ -268,6 +423,7 @@ describe('deleteUser', () => {
     const result = await deleteUser(ctx, {
       uid: 'alice',
       successorUid: 'bob',
+      db: new FakeDb().asFirestore(),
     });
 
     expect(result.kind).toBe('deleted');
@@ -281,6 +437,106 @@ describe('deleteUser', () => {
         attributes: expect.objectContaining({ verb: 'soft_deleted' }),
       }),
     );
+  });
+
+  it('reports the authored-talon count without touching them by default', async () => {
+    mockDeleteCascade.mockResolvedValue({
+      kind: 'deleted',
+      deletedAt: 123,
+      transferredSites: [],
+      revokedKeyIds: [],
+    });
+    const db = talonDb();
+
+    const result = await deleteUser(ctx, {
+      uid: 'alice',
+      successorUid: 'bob',
+      db: db.asFirestore(),
+    });
+
+    // The count is the warning; without `reassignTalons` nothing moves. This is
+    // the deliberate half: an api client that has always passed `successorUid`
+    // must not discover it now rewrites authorship.
+    expect(result).toMatchObject({
+      kind: 'deleted',
+      authoredTalonCount: 2,
+      reassignedTalonIds: [],
+      talonReassignFailures: [],
+    });
+    expect(db.docs.get('sites/site-a/talons/t1')?.createdBy).toBe('alice');
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'user_mutated',
+        attributes: expect.objectContaining({
+          authoredTalonCount: 2,
+          reassignedTalonCount: 0,
+        }),
+      }),
+    );
+  });
+
+  it('hands the talons to the successor when asked', async () => {
+    mockDeleteCascade.mockResolvedValue({
+      kind: 'deleted',
+      deletedAt: 123,
+      transferredSites: [],
+      revokedKeyIds: [],
+    });
+    const db = talonDb();
+
+    const result = await deleteUser(ctx, {
+      uid: 'alice',
+      successorUid: 'bob',
+      reassignTalons: true,
+      db: db.asFirestore(),
+    });
+
+    expect(result).toMatchObject({
+      kind: 'deleted',
+      authoredTalonCount: 2,
+      talonReassignFailures: [],
+    });
+    expect((result as { reassignedTalonIds: string[] }).reassignedTalonIds.sort()).toEqual([
+      't1',
+      't2',
+    ]);
+    expect(db.docs.get('sites/site-a/talons/t1')?.createdBy).toBe('bob');
+    expect(db.docs.get('sites/site-a/talons/t2')?.createdBy).toBe('bob');
+  });
+
+  it('records the site when the successor cannot author there, and still deletes', async () => {
+    mockDeleteCascade.mockResolvedValue({
+      kind: 'deleted',
+      deletedAt: 123,
+      transferredSites: [],
+      revokedKeyIds: [],
+    });
+    const db = talonDb();
+    // bob is an admin of site-a only; the talon on site-b is out of his reach.
+    db.seed('sites/site-b/talons/t3', {
+      name: 'atrium sweep',
+      enabled: true,
+      outputs: [{ type: 'email' }],
+      createdBy: 'alice',
+    });
+
+    const result = await deleteUser(ctx, {
+      uid: 'alice',
+      successorUid: 'bob',
+      reassignTalons: true,
+      db: db.asFirestore(),
+    });
+
+    // The account is already gone by this point, so a per-site refusal is
+    // reported rather than thrown — otherwise the operator would have no way
+    // to learn which automations were left behind.
+    expect(result).toMatchObject({ kind: 'deleted', authoredTalonCount: 3 });
+    const failures = (result as { talonReassignFailures: { siteId: string }[] })
+      .talonReassignFailures;
+    expect(failures).toHaveLength(1);
+    expect(failures[0].siteId).toBe('site-b');
+    expect(db.docs.get('sites/site-b/talons/t3')?.createdBy).toBe('alice');
+    expect(db.docs.get('sites/site-a/talons/t1')?.createdBy).toBe('bob');
   });
 });
 
@@ -353,19 +609,25 @@ describe('bootstrapUser', () => {
 });
 
 describe('site CRUD actions', () => {
-  it('createSite writes only the top-level site document', async () => {
-    const db = new FakeDb();
-    db.seed('users/owner-1', { sites: [] });
-    const now = new Date('2026-02-03T04:05:06.000Z');
+  const CREATE_NOW = new Date('2026-02-03T04:05:06.000Z');
 
-    const result = await createSite(ctx, {
-      siteId: 'site-a',
+  /** Run createSite against `db` with the fixed clock and stable inputs. */
+  function runCreateSite(db: FakeDb, siteId = 'site-a') {
+    return createSite(ctx, {
+      siteId,
       name: '  Main Gallery  ',
       ownerUid: 'owner-1',
       timezone: 'Not/AZone',
       db: db.asFirestore(),
-      now: () => now,
+      now: () => CREATE_NOW,
     });
+  }
+
+  it('createSite writes the site document and the creator\'s membership together', async () => {
+    const db = new FakeDb();
+    db.seed('users/owner-1', { sites: [] });
+
+    const result = await runCreateSite(db);
 
     expect(result).toMatchObject({
       kind: 'created',
@@ -373,17 +635,41 @@ describe('site CRUD actions', () => {
       name: 'Main Gallery',
       owner: 'owner-1',
       timezone: 'Not/AZone',
-      // wave 3.2: new sites bootstrap with the beta default tier so the
-      // roost gate doesn't lock new users out during the public beta.
-      tier: 'pro',
     });
     expect(db.docs.get('sites/site-a')).toMatchObject({
       name: 'Main Gallery',
       owner: 'owner-1',
       timezone: 'Not/AZone',
-      tier: 'pro',
     });
-    expect(db.docs.get('users/owner-1')?.sites).toEqual([]);
+    // The regression this guards: stamping `owner` alone left the site
+    // invisible to its creator, because the client site list resolves
+    // `users/{uid}.sites[]` and never queries by owner. Asserting the
+    // membership entry is the whole point — an owner-only write passes
+    // every other assertion in this test.
+    expect(db.docs.get('users/owner-1')?.sites).toEqual(['site-a']);
+  });
+
+  it('createSite preserves memberships the creator already had', async () => {
+    const db = new FakeDb();
+    db.seed('users/owner-1', { sites: ['existing-site'] });
+
+    await runCreateSite(db);
+
+    // arrayUnion, not an overwrite: a user creating their second site must
+    // not lose access to the first.
+    expect(db.docs.get('users/owner-1')?.sites).toEqual(['existing-site', 'site-a']);
+  });
+
+  it('createSite creates no site when the creator has no user document', async () => {
+    const db = new FakeDb();
+
+    await expect(runCreateSite(db)).rejects.toThrow();
+
+    // Atomicity: the batch fails as a unit, so no orphaned site doc is left
+    // behind for nobody to see. The route's assertActiveUser makes this
+    // unreachable in production; the guard is here so a future caller that
+    // skips it fails loudly instead of recreating the original bug.
+    expect(db.docs.get('sites/site-a')).toBeUndefined();
   });
 
   it('updateSite writes whitelisted fields and allows arbitrary timezone strings', async () => {

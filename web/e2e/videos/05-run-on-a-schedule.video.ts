@@ -149,9 +149,9 @@ test('episode 5 — run apps on a schedule', async ({ browser }) => {
         const editButton = lobbyCard.locator('button:has(svg.lucide-pencil)').first();
         await clickWithCursor(page, editButton);
         await expect(page.getByRole('dialog')).toBeVisible();
-        // In the ProcessDialog launch-mode segmented control, click "Scheduled".
+        // In the ProcessDialog launch-mode segmented control, click "scheduled".
         // The inline schedule editor + WeekSummaryBar appear in the dialog.
-        const scheduledPill = page.getByRole('button', { name: 'Scheduled' }); // VERIFY: segmented control button literal text
+        const scheduledPill = page.getByRole('button', { name: 'scheduled' }); // VERIFY: segmented control button literal text
         await clickWithCursor(page, scheduledPill);
         await narrate(page, 'b02 flip to scheduled', 13);
 

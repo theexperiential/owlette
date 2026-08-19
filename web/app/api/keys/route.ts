@@ -6,13 +6,11 @@ import { emitMutation } from '@/lib/auditLogClient';
 import {
   ApiAuthError,
   assertActiveUser,
-  assertUserHasSiteAccess,
   requireSessionOrIdToken,
 } from '@/lib/apiAuth.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import {
   problem,
-  problemForbidden,
   problemFromError,
   problemTokenExpired,
   problemUnauthorized,
@@ -20,75 +18,25 @@ import {
   ProblemType,
 } from '@/lib/apiErrors';
 import {
-  ALL_RESOURCES,
-  type ApiKeyEnvironment,
+  assertScopesGrantable,
+  MAX_NAME_LENGTH,
+  validateScopes,
+} from './_shared';
+import {
   type ApiKeyLookup,
-  type ApiKeyPermission,
   type ApiKeyRecord,
-  type ApiKeyResource,
-  type ApiKeyScope,
+  type ApiKeyListItem,
+  buildApiKeyListItem,
+  MINTED_API_KEY_ENVIRONMENT,
   DEFAULT_TTL_DAYS,
   MAX_TTL_DAYS,
-  SUPERADMIN_ONLY_RESOURCES,
 } from '@/lib/apiKeyTypes';
-
-const VALID_RESOURCES: readonly ApiKeyResource[] = ALL_RESOURCES;
-const VALID_PERMISSIONS: readonly ApiKeyPermission[] = [
-  'read',
-  'write',
-  'deploy',
-  'rollback',
-  'admin',
-];
-const VALID_ENVIRONMENTS: readonly ApiKeyEnvironment[] = ['live', 'test'];
-const MAX_NAME_LENGTH = 100;
-const MAX_SCOPES = 50;
-const SITE_SCOPED_RESOURCES = new Set<ApiKeyResource>(['site', 'chat', 'deploy']);
 
 interface CreateKeyBody {
   name?: unknown;
   scopes?: unknown;
   ttlDays?: unknown;
   environment?: unknown;
-}
-
-function validateScopes(raw: unknown): ApiKeyScope[] | string {
-  if (!Array.isArray(raw) || raw.length === 0) {
-    return 'scopes must be a non-empty array';
-  }
-  if (raw.length > MAX_SCOPES) {
-    return `scopes array too large (max ${MAX_SCOPES})`;
-  }
-  const scopes: ApiKeyScope[] = [];
-  for (let i = 0; i < raw.length; i++) {
-    const s = raw[i];
-    if (!s || typeof s !== 'object') {
-      return `scopes[${i}] must be an object`;
-    }
-    const scope = s as Record<string, unknown>;
-    if (!VALID_RESOURCES.includes(scope.resource as ApiKeyResource)) {
-      return `scopes[${i}].resource must be one of ${VALID_RESOURCES.join(', ')}`;
-    }
-    if (typeof scope.id !== 'string' || scope.id.length === 0 || scope.id.length > 128) {
-      return `scopes[${i}].id must be a non-empty string (max 128 chars)`;
-    }
-    if (!Array.isArray(scope.permissions) || scope.permissions.length === 0) {
-      return `scopes[${i}].permissions must be a non-empty array`;
-    }
-    const perms = new Set<ApiKeyPermission>();
-    for (const p of scope.permissions) {
-      if (!VALID_PERMISSIONS.includes(p as ApiKeyPermission)) {
-        return `scopes[${i}].permissions contains invalid value (must be one of ${VALID_PERMISSIONS.join(', ')})`;
-      }
-      perms.add(p as ApiKeyPermission);
-    }
-    scopes.push({
-      resource: scope.resource as ApiKeyResource,
-      id: scope.id,
-      permissions: Array.from(perms),
-    });
-  }
-  return scopes;
 }
 
 /**
@@ -101,7 +49,7 @@ function validateScopes(raw: unknown): ApiKeyScope[] | string {
  *     name: string,
  *     scopes: [{resource, id, permissions[]}],
  *     ttlDays?: number (1-365, default 90),
- *     environment?: 'live' | 'test' (default 'live')
+ *     environment?: ignored — every key is minted 'live'
  *   }
  *
  * Returns the raw key once — only the SHA-256 hash is stored.
@@ -133,28 +81,8 @@ export const POST = withRateLimit(
       }
       const scopes = scopesResult;
 
-      const superadminScopeWithConcreteId = scopes.find(
-        (scope) =>
-          SUPERADMIN_ONLY_RESOURCES.includes(scope.resource) &&
-          scope.id !== '*',
-      );
-      if (superadminScopeWithConcreteId) {
-        return problemValidation(
-          `${superadminScopeWithConcreteId.resource} scopes must use id "*"`,
-        );
-      }
-
-      const needsSuperadminGrant = scopes.some((scope) =>
-        SUPERADMIN_ONLY_RESOURCES.includes(scope.resource),
-      );
-      if (needsSuperadminGrant) {
-        const role = activeUserData.role ?? null;
-        if (role !== 'superadmin') {
-          return problemForbidden(
-            'superadmin access required to create user or installer scopes',
-          );
-        }
-      }
+      const notGrantable = await assertScopesGrantable(userId, activeUserData, scopes);
+      if (notGrantable) return notGrantable;
 
       const rawTtl = body.ttlDays === undefined ? DEFAULT_TTL_DAYS : body.ttlDays;
       if (typeof rawTtl !== 'number' || !Number.isFinite(rawTtl) || !Number.isInteger(rawTtl)) {
@@ -165,24 +93,13 @@ export const POST = withRateLimit(
       }
       const ttlDays = rawTtl;
 
-      const rawEnv = body.environment ?? 'live';
-      if (!VALID_ENVIRONMENTS.includes(rawEnv as ApiKeyEnvironment)) {
-        return problemValidation(
-          `environment must be one of ${VALID_ENVIRONMENTS.join(', ')}`
-        );
-      }
-      const environment = rawEnv as ApiKeyEnvironment;
+      // Every new key is minted live. `body.environment` is accepted and
+      // ignored rather than rejected: the shipped @owlette/cli and both SDKs
+      // still send it, and 400-ing them would break clients over a field that
+      // never controlled anything they could observe.
+      const environment = MINTED_API_KEY_ENVIRONMENT;
 
-      // Defense-in-depth: validate site-scoped ids against caller's own access.
-      // Runtime requireScope() also enforces this; doing it here catches typos
-      // and prevents storing unusable scopes.
-      for (const scope of scopes) {
-        if (SITE_SCOPED_RESOURCES.has(scope.resource) && scope.id !== '*') {
-          await assertUserHasSiteAccess(userId, scope.id);
-        }
-      }
-
-      // owk_live_<43 base64url chars> or owk_test_<43 base64url chars>
+      // owk_live_<43 base64url chars>
       const keyRandom = crypto.randomBytes(32).toString('base64url');
       const rawKey = `owk_${environment}_${keyRandom}`;
       const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
@@ -294,23 +211,12 @@ export const GET = withRateLimit(
         .orderBy('createdAt', 'desc')
         .get();
 
-      const keys = snap.docs.map((doc) => {
-        const data = doc.data() as Partial<ApiKeyRecord>;
-        return {
-          id: doc.id,
-          name: data.name ?? null,
-          keyPrefix: data.keyPrefix ?? null,
-          environment: data.environment ?? null,
-          scopes: data.scopes ?? null,
-          expiresAt: data.expiresAt ?? null,
-          createdAt: data.createdAt ?? null,
-          lastUsedAt: data.lastUsedAt ?? null,
-          rotatedAt: data.rotatedAt ?? null,
-          rotatedFromKeyId: data.rotatedFromKeyId ?? null,
-          retiresAt: data.retiresAt ?? null,
-          revokedAt: data.revokedAt ?? null,
-        };
-      });
+      // One instant for the whole listing, so two keys either side of the
+      // boundary can't be classified against different "now"s.
+      const listedAt = Date.now();
+      const keys: ApiKeyListItem[] = snap.docs.map((doc) =>
+        buildApiKeyListItem(doc.id, doc.data() as Record<string, unknown>, listedAt)
+      );
 
       return NextResponse.json({ success: true, keys });
     } catch (error: unknown) {

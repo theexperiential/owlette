@@ -33,6 +33,7 @@ export interface PreUploadTarget {
 }
 
 export interface QuotaSnapshot {
+  /** Included storage for the site's tier, in bytes. `0` on core. */
   planLimitBytes: number;
   usedBytes: number;
   pendingBytes: number;
@@ -202,16 +203,15 @@ export function checkTargetDisks(
 
 /**
  * Given the current quota snapshot + the upload size (post-dedup), is
- * there room? Returns an `error`-severity blocking check if the upload
- * would exceed the plan cap, a `warning` advisory if it would cross
- * 80 % of the cap, otherwise nothing.
+ * there room? Returns an `error`-severity blocking check if roost isn't
+ * part of the site's tier at all or the upload would exceed the plan cap,
+ * a `warning` advisory if it would cross 80 % of the cap, otherwise nothing.
  */
 export function checkQuota(
   uploadBytes: number,
   quota: QuotaSnapshot | undefined,
 ): PreUploadCheck | null {
   if (!quota) return null;
-  if (!isFinite(quota.planLimitBytes)) return null; // unlimited plan
 
   const afterBytes = quota.usedBytes + quota.pendingBytes + uploadBytes;
   if (afterBytes > quota.planLimitBytes) {

@@ -49,8 +49,31 @@ Roost(
     retry=RetryPolicy(max_attempts=3),  # optional
     transport=my_httpx_transport,     # for proxy / mTLS / recording
     timeout=30.0,
+    on_billing_warning=logger.warning,  # optional — free-trial advisory
 )
 ```
+
+### billing warnings
+
+While the account is on its free trial, the api attaches an advisory
+`X-Owlette-Billing-Warning` header to responses. The SDK never prints it — a
+library has no business writing to your stderr — so pass
+`on_billing_warning` to surface it however your app already does:
+
+```python
+async with Roost(
+    token=os.environ["OWLETTE_TOKEN"],
+    on_billing_warning=logger.warning,
+    # → "trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API access"
+) as client:
+    ...
+```
+
+It fires once per response carrying the header, retried attempts included, so
+deduplicate on your side if you want at-most-once. Exceptions raised by the
+callback are swallowed and can never fail a request. Once the trial ends,
+requests raise `RoostApiError` with `code == "trial_expired"` and
+`status == 402`.
 
 ## resources
 

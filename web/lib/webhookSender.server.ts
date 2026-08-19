@@ -137,8 +137,12 @@ function extractFields(eventType: string, data: Record<string, unknown>) {
 /**
  * Format a webhook payload for the target platform.
  * Returns the JSON body string to send.
+ *
+ * Exported for the talon webhook output (`@/lib/talons/outputs.server`), which
+ * delivers on its own signing path but must render Slack/Discord bodies
+ * identically to the subscription fan-out below.
  */
-function formatForPlatform(
+export function formatForPlatform(
   platform: WebhookPlatform,
   payload: WebhookPayload,
 ): string {

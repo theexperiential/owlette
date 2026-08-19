@@ -1,0 +1,3 @@
+# Match desktop/src-tauri/rustfmt.toml so both Rust crates in this repo read the
+# same way; the rest of the tree is 2-space indented too.
+tab_spaces = 2

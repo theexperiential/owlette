@@ -4,25 +4,14 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { InteractiveBackground } from './InteractiveBackground';
 import { OwletteEye } from './OwletteEye';
-import { RotatingWord } from './RotatingWord';
+import type { HeroHeadline } from '@/lib/heroHeadlines';
 
-const prefixWords = ['monitor', 'deploy software to', 'ask questions to', 'remotely control', 'manage', 'script', 'lay out displays on', 'diagnose'];
-const suffixWords = [
-  'computers',
-  'media servers',
-  'interactive installations',
-  'interactive exhibits',
-  'kiosks',
-  'digital signage',
-  'TouchDesigner PCs',
-  'Unreal Engine nodes',
-  'Node.js servers',
-  'projector walls',
-  'LED arrays',
-  'video walls',
-];
+interface HeroSectionProps {
+  /** Chosen per request by the server component — see app/page.tsx. */
+  headline: HeroHeadline;
+}
 
-export function HeroSection() {
+export function HeroSection({ headline }: HeroSectionProps) {
   return (
     <section className="relative sm:h-[100dvh] flex flex-col pt-16 overflow-hidden">
       {/* Interactive mouse-reactive background */}
@@ -45,18 +34,19 @@ export function HeroSection() {
           />
         </div>
 
-        {/* Headline */}
-        <h1 className="hero-headline text-foreground mb-4 sm:mb-6 hero-enter">
-          attention<br className="sm:hidden" /> is all you need
+        {/* Headline — text-balance rather than a hardcoded <br>, since the
+            phrase varies per load and a fixed break point would split most of
+            them in the wrong place. Every phrase fits one line at the 72px
+            desktop ceiling; balancing is what keeps the longer ones from
+            leaving an orphan word on phones. */}
+        <h1 className="hero-headline text-foreground mb-4 sm:mb-6 hero-enter text-balance">
+          {headline}
         </h1>
 
         {/* Subheadline */}
-        <p className="hero-subheadline max-w-5xl mx-auto mb-8 sm:mb-10 h-[4.5em] sm:h-[3em] flex items-center justify-center overflow-hidden hero-enter-delay-1">
-          <span className="text-center">
-            <RotatingWord words={prefixWords} align="end" direction="up" />{' '}
-            all of your{' '}
-            <RotatingWord words={suffixWords} align="start" direction="down" delay={2000} />
-          </span>
+        <p className="hero-subheadline max-w-5xl mx-auto mb-8 sm:mb-10 hero-enter-delay-1">
+          {/* Non-breaking space: "24/7" must never wrap onto its own line. */}
+          owlette keeps your installations running&nbsp;24/7
         </p>
 
         {/* CTA */}

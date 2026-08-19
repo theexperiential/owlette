@@ -176,7 +176,7 @@ echo To manage the service:
 echo   net stop OwletteService
 echo   net start OwletteService
 echo.
-echo To run GUI: "%SYSTEM_PYTHON%" src\owlette_gui.py
+echo To open the desktop app: build it from desktop\ ^(npx tauri build --no-bundle^)
 echo.
 endlocal
 pause

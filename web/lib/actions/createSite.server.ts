@@ -6,20 +6,25 @@
  * refuses to overwrite an existing site, and writes the site doc with the
  * caller as `owner`.
  *
- * The legacy hook only wrote the top-level `sites/{siteId}` document. It did
- * not add the site to `users/{uid}.sites[]`; ownership is the access path for
- * the creator. This core preserves that narrow behavior.
+ * The site document and the creator's membership are written in one batch.
+ * Ownership alone is not enough: the server honours it (firestore.rules
+ * `isSiteOwner`, `GET /api/sites`, `apiAuth.server.ts`) but the client site
+ * list resolves membership only — `useSites` in `web/hooks/useFirestore.ts`
+ * iterates `users/{uid}.sites[]` and never queries by `owner`. A site written
+ * without that membership entry is therefore invisible in-product to the very
+ * user who just created it, with no self-service way to recover. That split
+ * stranded every self-serve signup between 1756e5f (2026-03-20) and this fix.
+ * Keep the two writes atomic so a site can never exist without its creator.
  *
  * Capability: `SITE_MEMBER_MANAGE` via the platform route wrapper. Site
  * creation has no existing site id to authorize against, so the route is
  * treated as a platform-level mutation.
  */
 
-import type { Firestore } from 'firebase-admin/firestore';
+import { FieldValue, type Firestore } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { emitMutation } from '@/lib/auditLogClient';
 import { validateSiteId } from '@/lib/validators';
-import { BETA_DEFAULT_TIER, type SiteTier } from '@/lib/siteTier';
 
 const NAME_MAX_LENGTH = 200;
 
@@ -50,7 +55,6 @@ export type CreateSiteResult =
       name: string;
       timezone: string;
       owner: string;
-      tier: SiteTier;
       createdAt: number;
     };
 
@@ -90,19 +94,22 @@ export async function createSite(
   }
 
   const nowDate = (input.now ?? (() => new Date()))();
-  // New sites bootstrap with the beta default tier so the roost gate (and
-  // any future pro-only feature) doesn't lock new users out during the
-  // beta. Flipping `BETA_DEFAULT_TIER` to `'core'` is the single switch
-  // that ends free pro access for sites created from that point forward.
-  const tier: SiteTier = BETA_DEFAULT_TIER;
 
-  await siteRef.set({
+  // `update` rather than `set(..., {merge:true})` on the user doc: the route
+  // has already run `assertActiveUser`, so the document exists. If that
+  // invariant ever breaks, failing the batch — and creating no site at all —
+  // is the right outcome; a site nobody can see is the bug being fixed here.
+  const batch = db.batch();
+  batch.set(siteRef, {
     name: trimmedName,
     createdAt: nowDate,
     owner: input.ownerUid,
     timezone,
-    tier,
   });
+  batch.update(db.collection('users').doc(input.ownerUid), {
+    sites: FieldValue.arrayUnion(input.siteId),
+  });
+  await batch.commit();
 
   emitMutation({
     kind: 'site_mutated',
@@ -115,7 +122,6 @@ export async function createSite(
       verb: 'created',
       owner: input.ownerUid,
       timezone,
-      tier,
     },
   });
 
@@ -125,7 +131,6 @@ export async function createSite(
     name: trimmedName,
     timezone,
     owner: input.ownerUid,
-    tier,
     createdAt: nowDate.getTime(),
   };
 }

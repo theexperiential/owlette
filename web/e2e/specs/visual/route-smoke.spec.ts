@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { roleState } from '../../helpers/roles';
 import { TEST_USERS } from '../../helpers/seed';
 import {
-  seedCortexFixture,
+  seedHootFixture,
   seedLogEvents,
   seedSystemPreset,
 } from '../../helpers/coverageSeed';
@@ -38,9 +38,9 @@ test.describe('authenticated visual smoke', () => {
     await expectNonBlankScreenshot(page);
   });
 
-  test('cortex captures a nonblank desktop screenshot with seeded conversations', async ({ page }) => {
-    await seedCortexFixture({ userId: TEST_USERS.admin.uid });
-    await page.goto('/cortex');
+  test('hoot captures a nonblank desktop screenshot with seeded conversations', async ({ page }) => {
+    await seedHootFixture({ userId: TEST_USERS.admin.uid });
+    await page.goto('/hoot');
     await expect(page.getByText('Deployment triage')).toBeVisible();
     await expectNonBlankScreenshot(page);
   });
