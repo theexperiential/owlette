@@ -23,6 +23,11 @@ const FIREBASE_ERROR_MESSAGES: Record<string, string> = {
   'auth/too-many-requests': 'Too many failed attempts. Please try again later',
   'auth/operation-not-allowed': 'This operation is not allowed',
   'auth/requires-recent-login': 'Please log out and log in again to continue',
+  // The Firebase SDK signs the user out itself when it sees these (see
+  // `_logoutIfInvalidated` in @firebase/auth), so by the time a caller reads
+  // this string the session is already gone.
+  'auth/user-token-expired': 'Your session expired. Please sign in again',
+  'auth/invalid-user-token': 'Your session expired. Please sign in again',
 
   // Constrained-browser errors. The first two are in POPUP_UNAVAILABLE_CODES
   // (lib/inAppBrowser), so on /login and /register they get inline remediation
@@ -51,7 +56,7 @@ const FIREBASE_ERROR_MESSAGES: Record<string, string> = {
   'unauthenticated': 'You must be logged in to perform this action',
 
   // Network errors
-  'network-request-failed': 'Network error. Please check your connection and try again',
+  'auth/network-request-failed': 'Network error. Please check your connection and try again',
   'timeout': 'Request timed out. Please try again',
 };
 

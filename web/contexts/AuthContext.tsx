@@ -33,6 +33,19 @@ function arraysEqual(a: string[], b: string[]): boolean {
   return true;
 }
 
+// Auth error codes that mean the Firebase credential itself is gone, rather
+// than the attempted operation having failed. The SDK signs the user out
+// before surfacing these (`_logoutIfInvalidated` in @firebase/auth), so the
+// auth listener below owns the user-facing message — a per-operation toast
+// would blame the wrong thing ("Photo Update Failed") for a dead session, and
+// the Sentry report would be noise rather than a defect.
+const SESSION_ENDED_CODES = new Set(['auth/user-token-expired', 'auth/invalid-user-token']);
+
+function isSessionEndedError(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code;
+  return code !== undefined && SESSION_ENDED_CODES.has(code);
+}
+
 // Shallow-compare two flat objects (for lastMachineIds)
 function shallowEqual(a: Record<string, string>, b: Record<string, string>): boolean {
   const keysA = Object.keys(a);
@@ -300,6 +313,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // when callers stacked rapid updates (e.g. cell-click + sparkline-toggle).
   const userPreferencesRef = useRef(userPreferences);
   useEffect(() => { userPreferencesRef.current = userPreferences; }, [userPreferences]);
+  // A sign-out is deliberate when it comes from `signOut` or from deleting the
+  // account; anything else means the credential was revoked underneath us and
+  // the user is owed an explanation. Only the auth listener can tell them,
+  // because the SDK signs out from inside whichever call happened to notice.
+  const intentionalSignOutRef = useRef(false);
+  // `onAuthStateChanged` also fires with null on first load, so an involuntary
+  // sign-out only counts for a session that was actually signed in.
+  const hadUserRef = useRef(false);
   const [lastSiteId, setLastSiteId] = useState<string | null>(null);
   const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
 
@@ -373,6 +394,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (user) {
+        hadUserRef.current = true;
         // User is logged in - create server-side session with HTTPOnly cookie
         try {
           const idToken = await user.getIdToken();
@@ -519,10 +541,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } else {
         // User is logged out - destroy server-side session and reset role
+        const involuntary = hadUserRef.current && !intentionalSignOutRef.current;
+        hadUserRef.current = false;
+        intentionalSignOutRef.current = false;
         destroySessionCookie();
         setRole(null);
         setUserSites([]);
         setLoading(false);
+        if (involuntary) {
+          toast.error('Session Expired', {
+            description: 'You were signed out. Please sign in again.',
+          });
+        }
       }
     });
 
@@ -677,12 +707,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw error;
       }
 
+      intentionalSignOutRef.current = true;
       await firebaseSignOut(auth);
       await destroySessionCookie();
       toast.success('Signed Out', {
         description: 'You have been signed out successfully.',
       });
     } catch (error: unknown) {
+      // Leave the flag armed only for a sign-out that actually happened.
+      intentionalSignOutRef.current = false;
       const friendlyMessage = handleError(error);
       toast.error('Sign Out Failed', {
         description: friendlyMessage,
@@ -713,13 +746,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       await updateProfile(auth.currentUser, { displayName });
 
-      // Force a refresh of the user object
-      setUser({ ...auth.currentUser });
+      // Force a refresh of the user object. Spreading a null `currentUser`
+      // would yield a truthy `{}` that every `!user` guard waves through.
+      setUser(auth.currentUser ? { ...auth.currentUser } : null);
 
       toast.success('Profile Updated', {
         description: 'Your profile has been updated successfully.',
       });
     } catch (error: unknown) {
+      // The session ended mid-update: the listener already told the user, and
+      // this is an expected condition rather than a defect worth reporting.
+      if (isSessionEndedError(error)) {
+        throw error;
+      }
       const friendlyMessage = handleError(error);
       toast.error('Update Failed', {
         description: friendlyMessage,
@@ -758,7 +797,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await updateProfile(auth.currentUser, { photoURL: '' });
       }
 
-      setUser({ ...auth.currentUser });
+      setUser(auth.currentUser ? { ...auth.currentUser } : null);
 
       toast.success(photoBlob ? 'Photo Updated' : 'Photo Removed', {
         description: photoBlob
@@ -766,6 +805,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           : 'Your profile photo has been removed.',
       });
     } catch (error: unknown) {
+      // Session ended mid-upload — see updateUserProfile. Blaming the photo
+      // here is what made this surface as an unexplained failure in Sentry.
+      if (isSessionEndedError(error)) {
+        throw error;
+      }
       const friendlyMessage = handleError(error);
       toast.error('Photo Update Failed', {
         description: friendlyMessage,
@@ -965,6 +1009,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await reauthenticateWithCredential(auth.currentUser, credential);
       }
 
+      // The server revokes tokens and deletes the Auth record, so the SDK will
+      // sign this session out on its own — that is intended, not a session
+      // dying underneath the user.
+      intentionalSignOutRef.current = true;
       const response = await fetch('/api/users/me', {
         method: 'DELETE',
         headers: { 'idempotency-key': `account-delete-${userId}` },
@@ -988,6 +1036,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         description: 'Your account has been permanently deleted.',
       });
     } catch (error: unknown) {
+      // The account survived, so a later sign-out is not this one.
+      intentionalSignOutRef.current = false;
       const code = (error as { code?: string } | null)?.code;
       // Handle specific errors
       if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
