@@ -37,6 +37,7 @@ const PROTECTED_PATHS = [
   // `/cortex/:chatId`) to `/hoot`, so the protected surface is reached under
   // its canonical name before any session check matters.
   '/hoot',
+  '/talons',
   // /settings/* (api-keys, webhooks, alerts) manage account + security state and
   // must require completed MFA like the rest of the app — not just password auth.
   '/settings',
