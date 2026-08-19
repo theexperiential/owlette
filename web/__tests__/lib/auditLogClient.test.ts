@@ -210,6 +210,7 @@ describe('emitMutation', () => {
     'installer_mutated',
     'webhook_mutated',
     'chat_mutated',
+    'billing_mutated',
   ])('posts a %s event with kind, actor, target, and attributes', (kind, done) => {
     emitMutation({
       kind,

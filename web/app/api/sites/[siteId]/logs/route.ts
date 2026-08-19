@@ -25,6 +25,7 @@ import {
   clearLogs,
   ClearLogsValidationError,
 } from '@/lib/actions/clearLogs.server';
+import { siteAuditActor } from '@/lib/actions/auditActor.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { timestampToIso, timestampToMs } from '@/lib/firestoreTime.server';
 import {
@@ -313,7 +314,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
         parsed.raw,
         async () => {
           const result = await clearLogs(
-            { siteId: ctx.siteId },
+            { siteId: ctx.siteId, auditActor: siteAuditActor(ctx) },
             {
               action,
               machineId,

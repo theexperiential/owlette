@@ -26,6 +26,7 @@ function installFetchStub(payload: unknown, status = 200): FetchCall[] {
       return {
         ok: status >= 200 && status < 300,
         status,
+        headers: new Headers(),
         json: async () => payload,
         text: async () => JSON.stringify(payload),
       } as Response;
@@ -60,13 +61,11 @@ afterEach(() => {
 
 const SNAPSHOT = {
   siteId: 'site-1',
-  tier: 'pro',
   usedBytes: 1024,
   pendingBytes: 0,
   committedBytes: 1024,
   limitBytes: 5 * 1024 * 1024 * 1024,
   fractionUsed: 0.0001,
-  unlimited: false,
   lastAlarmLevel: 0,
   lastAlarmAt: null,
   lastReconciledAt: '2026-04-26T00:00:00Z',
@@ -116,6 +115,27 @@ describe('owlette quota show', () => {
     expect(out).toContain('storage:');
     expect(out).toMatch(/\(\d+%\)/);
     expect(out).toMatch(/\[#+\.+\]/);
+  });
+
+  it('reports bytes used instead of a bar when the limit is null', async () => {
+    installFetchStub({
+      ...SNAPSHOT,
+      limitBytes: null,
+      fractionUsed: null,
+    });
+    const writes: string[] = [];
+    (process.stdout.write as unknown as jest.Mock).mockImplementation((chunk: string) => {
+      writes.push(chunk);
+      return true;
+    });
+    const program = buildProgram();
+
+    await program.parseAsync(['quota', 'show', '--site', 'site-1'], { from: 'user' });
+
+    const out = writes.join('');
+    expect(out).toContain('storage:');
+    expect(out).toContain('used');
+    expect(out).not.toMatch(/\[[#.]+\]/);
   });
 });
 

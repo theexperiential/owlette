@@ -8,6 +8,7 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged,
   GoogleAuthProvider,
+  getAdditionalUserInfo,
   signInWithPopup,
   updateProfile,
   updatePassword as firebaseUpdatePassword,
@@ -17,7 +18,8 @@ import {
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { auth, db, storage } from '@/lib/firebase';
-import { handleError } from '@/lib/errorHandler';
+import { handleError, logError } from '@/lib/errorHandler';
+import { inAppDiagnostics, isPopupUnavailableError } from '@/lib/inAppBrowser';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { toast } from '@/lib/toast';
 import * as Sentry from '@sentry/nextjs';
@@ -29,6 +31,19 @@ function arraysEqual(a: string[], b: string[]): boolean {
     if (a[i] !== b[i]) return false;
   }
   return true;
+}
+
+// Auth error codes that mean the Firebase credential itself is gone, rather
+// than the attempted operation having failed. The SDK signs the user out
+// before surfacing these (`_logoutIfInvalidated` in @firebase/auth), so the
+// auth listener below owns the user-facing message — a per-operation toast
+// would blame the wrong thing ("Photo Update Failed") for a dead session, and
+// the Sentry report would be noise rather than a defect.
+const SESSION_ENDED_CODES = new Set(['auth/user-token-expired', 'auth/invalid-user-token']);
+
+function isSessionEndedError(error: unknown): boolean {
+  const code = (error as { code?: string } | null)?.code;
+  return code !== undefined && SESSION_ENDED_CODES.has(code);
 }
 
 // Shallow-compare two flat objects (for lastMachineIds)
@@ -184,6 +199,7 @@ export interface UserPreferences {
   thresholdAlerts: boolean; // Receive email alerts when health metrics exceed thresholds. Default: true
   cortexAlerts: boolean; // Receive email alerts when Cortex AI escalates unresolved issues. Default: true
   displayAlerts: boolean; // Receive email alerts when display layout / topology events fire (drift, monitor removed, apply failed, auto-revert, etc). Default: true
+  talonAlerts: boolean; // Receive email alerts when a talon (automation) fires or fails. Default: true
   displayAlertsBannerDismissed: boolean; // [B4.3] One-shot dismissal of the "new: display alerts" banner on /admin/alerts. Default: false (banner shows). The banner also auto-hides after 30 days from feature launch regardless of dismissal state.
   mutedMachines: string[]; // Machine IDs to suppress all alerts for. Default: []
   alertCcEmails: string[]; // Additional CC recipients for alert emails. Default: []
@@ -200,6 +216,23 @@ export interface UserPreferences {
   /** Selected time range for the MetricsDetailPanel (global, not per-machine).
    * One of: '1h' | '1d' | '1w' | '1m' | '1y' | 'all'. Default: '1h'. */
   graphTimeRange?: '1h' | '1d' | '1w' | '1m' | '1y' | 'all';
+}
+
+/**
+ * Outcome of a Google sign-in.
+ *
+ * Google OAuth does not distinguish signing up from signing in — the same
+ * popup does both — so a user who already has an account and lands on
+ * /register is simply signed in. Without this flag the page cannot tell, and
+ * /register told everyone "account created with Google!" whether or not one
+ * was. `isNewUser` comes from Firebase's own `getAdditionalUserInfo`.
+ *
+ * Deliberately a small domain object rather than the raw `UserCredential`:
+ * pages need one bit, and leaking the Firebase type into them would make it
+ * that much harder to move off the client SDK later.
+ */
+export interface GoogleSignInResult {
+  isNewUser: boolean;
 }
 
 interface AuthContextType {
@@ -219,7 +252,7 @@ interface AuthContextType {
   userPreferences: UserPreferences; // User preferences (temperature unit, etc.)
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, firstName?: string, lastName?: string, turnstileToken?: string) => Promise<void>;
-  signInWithGoogle: () => Promise<void>;
+  signInWithGoogle: () => Promise<GoogleSignInResult>;
   signOut: () => Promise<void>;
   updateUserProfile: (firstName: string, lastName: string) => Promise<void>;
   updateUserPhoto: (photoBlob: Blob | null) => Promise<void>;
@@ -243,10 +276,10 @@ const AuthContext = createContext<AuthContextType>({
   lastMachineIds: {},
   requiresMfaSetup: false,
   passkeyEnrolled: false,
-  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
+  userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
   signIn: async () => {},
   signUp: async () => {},
-  signInWithGoogle: async () => {},
+  signInWithGoogle: async () => ({ isNewUser: false }),
   signOut: async () => {},
   updateUserProfile: async () => {},
   updateUserPhoto: async () => {},
@@ -273,13 +306,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
   const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
-  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
+  const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
   // Mirror userPreferences in a ref so updateUserPreferences can read the
   // current value without putting userPreferences in its useCallback deps —
   // putting it in deps caused stale closures to overwrite recent changes
   // when callers stacked rapid updates (e.g. cell-click + sparkline-toggle).
   const userPreferencesRef = useRef(userPreferences);
   useEffect(() => { userPreferencesRef.current = userPreferences; }, [userPreferences]);
+  // A sign-out is deliberate when it comes from `signOut` or from deleting the
+  // account; anything else means the credential was revoked underneath us and
+  // the user is owed an explanation. Only the auth listener can tell them,
+  // because the SDK signs out from inside whichever call happened to notice.
+  const intentionalSignOutRef = useRef(false);
+  // `onAuthStateChanged` also fires with null on first load, so an involuntary
+  // sign-out only counts for a session that was actually signed in.
+  const hadUserRef = useRef(false);
   const [lastSiteId, setLastSiteId] = useState<string | null>(null);
   const [lastMachineIds, setLastMachineIds] = useState<Record<string, string>>({});
 
@@ -353,6 +394,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       if (user) {
+        hadUserRef.current = true;
         // User is logged in - create server-side session with HTTPOnly cookie
         try {
           const idToken = await user.getIdToken();
@@ -406,6 +448,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   thresholdAlerts: preferences.thresholdAlerts !== false, // Default: true
                   cortexAlerts: preferences.cortexAlerts !== false, // Default: true
                   displayAlerts: preferences.displayAlerts !== false, // Default: true
+                  talonAlerts: preferences.talonAlerts !== false, // Default: true
                   displayAlertsBannerDismissed: preferences.displayAlertsBannerDismissed === true, // Default: false (banner shows)
                   mutedMachines: preferences.mutedMachines || [], // Default: []
                   alertCcEmails: preferences.alertCcEmails || [], // Default: []
@@ -436,6 +479,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     prev.processAlerts === newPrefs.processAlerts &&
                     prev.thresholdAlerts === newPrefs.thresholdAlerts &&
                     prev.cortexAlerts === newPrefs.cortexAlerts &&
+                    prev.talonAlerts === newPrefs.talonAlerts &&
                     prev.statsExpanded === newPrefs.statsExpanded &&
                     prev.processesExpanded === newPrefs.processesExpanded &&
                     prev.displaysExpanded === newPrefs.displaysExpanded &&
@@ -497,10 +541,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } else {
         // User is logged out - destroy server-side session and reset role
+        const involuntary = hadUserRef.current && !intentionalSignOutRef.current;
+        hadUserRef.current = false;
+        intentionalSignOutRef.current = false;
         destroySessionCookie();
         setRole(null);
         setUserSites([]);
         setLoading(false);
+        if (involuntary) {
+          toast.error('Session Expired', {
+            description: 'You were signed out. Please sign in again.',
+          });
+        }
       }
     });
 
@@ -576,6 +628,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         description: 'Your account has been created successfully. You can now sign in.',
       });
     } catch (error: unknown) {
+      // /register renders inline remediation for this one — the sentence plus
+      // routes to sign in or reset the password — so a toast here would only
+      // repeat it in a different voice and then expire. Same precedent as the
+      // popup-unavailable branch in signInWithGoogle below: when the page owns
+      // the presentation, the context stays quiet but still reports, because
+      // this is how we learned real users hit it (OWLETTE-WEB-46).
+      if ((error as { code?: unknown } | null)?.code === 'auth/email-already-in-use') {
+        logError(error, 'signup-email-already-in-use');
+        throw error;
+      }
+
       const friendlyMessage = handleError(error);
       toast.error('Sign Up Failed', {
         description: friendlyMessage,
@@ -595,11 +658,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
+      const credential = await signInWithPopup(auth, provider);
+      // `additionalUserInfo` is absent on some replayed/edge credentials; a
+      // missing flag means we cannot claim an account was created, so treat it
+      // as a returning user. The wrong guess here costs a slightly generic
+      // greeting, whereas the opposite claims a signup that did not happen.
+      return { isNewUser: getAdditionalUserInfo(credential)?.isNewUser ?? false };
     } catch (error: unknown) {
       const code = (error as { code?: string } | null)?.code;
-      // Don't show toast for popup closed by user
+      // The user dismissed the popup themselves. Not a failure — no toast, and
+      // nothing worth reporting.
       if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        throw error;
+      }
+
+      // The environment cannot open a sign-in popup at all — overwhelmingly an
+      // in-app browser, where no Firebase configuration or redirect fallback
+      // can rescue the flow (see lib/inAppBrowser for why).
+      //
+      // No toast: /login and /register catch this and render inline
+      // remediation that actually tells the user what to do next, so a toast
+      // here would stack a second, contentless message on top of it.
+      //
+      // It must still reach Sentry, and with the raw user-agent attached: this
+      // is the only signal for how often the signup funnel dies this way, and
+      // Sentry's parsed browser family collapses every unrecognised iOS
+      // webview to one label that doesn't name the host app.
+      if (isPopupUnavailableError(error)) {
+        logError(error, 'google-signin-popup-blocked', inAppDiagnostics());
         throw error;
       }
 
@@ -621,12 +707,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         throw error;
       }
 
+      intentionalSignOutRef.current = true;
       await firebaseSignOut(auth);
       await destroySessionCookie();
       toast.success('Signed Out', {
         description: 'You have been signed out successfully.',
       });
     } catch (error: unknown) {
+      // Leave the flag armed only for a sign-out that actually happened.
+      intentionalSignOutRef.current = false;
       const friendlyMessage = handleError(error);
       toast.error('Sign Out Failed', {
         description: friendlyMessage,
@@ -657,13 +746,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       await updateProfile(auth.currentUser, { displayName });
 
-      // Force a refresh of the user object
-      setUser({ ...auth.currentUser });
+      // Force a refresh of the user object. Spreading a null `currentUser`
+      // would yield a truthy `{}` that every `!user` guard waves through.
+      setUser(auth.currentUser ? { ...auth.currentUser } : null);
 
       toast.success('Profile Updated', {
         description: 'Your profile has been updated successfully.',
       });
     } catch (error: unknown) {
+      // The session ended mid-update: the listener already told the user, and
+      // this is an expected condition rather than a defect worth reporting.
+      if (isSessionEndedError(error)) {
+        throw error;
+      }
       const friendlyMessage = handleError(error);
       toast.error('Update Failed', {
         description: friendlyMessage,
@@ -702,7 +797,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await updateProfile(auth.currentUser, { photoURL: '' });
       }
 
-      setUser({ ...auth.currentUser });
+      setUser(auth.currentUser ? { ...auth.currentUser } : null);
 
       toast.success(photoBlob ? 'Photo Updated' : 'Photo Removed', {
         description: photoBlob
@@ -710,6 +805,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           : 'Your profile photo has been removed.',
       });
     } catch (error: unknown) {
+      // Session ended mid-upload — see updateUserProfile. Blaming the photo
+      // here is what made this surface as an unexplained failure in Sentry.
+      if (isSessionEndedError(error)) {
+        throw error;
+      }
       const friendlyMessage = handleError(error);
       toast.error('Photo Update Failed', {
         description: friendlyMessage,
@@ -909,6 +1009,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await reauthenticateWithCredential(auth.currentUser, credential);
       }
 
+      // The server revokes tokens and deletes the Auth record, so the SDK will
+      // sign this session out on its own — that is intended, not a session
+      // dying underneath the user.
+      intentionalSignOutRef.current = true;
       const response = await fetch('/api/users/me', {
         method: 'DELETE',
         headers: { 'idempotency-key': `account-delete-${userId}` },
@@ -932,6 +1036,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         description: 'Your account has been permanently deleted.',
       });
     } catch (error: unknown) {
+      // The account survived, so a later sign-out is not this one.
+      intentionalSignOutRef.current = false;
       const code = (error as { code?: string } | null)?.code;
       // Handle specific errors
       if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {

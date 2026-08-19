@@ -3,7 +3,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSites, useMachines } from '@/hooks/useFirestore';
+import { useMachines } from '@/hooks/useFirestore';
+import { useCurrentSite } from '@/hooks/useCurrentSite';
+import { NoSitesEmptyState } from '@/components/NoSitesEmptyState';
 import { useDeploymentManager, type Deployment, type DeploymentTarget } from '@/hooks/useDeployments';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -132,15 +134,18 @@ const DeploymentRow = React.memo(function DeploymentRow({
             }
           }}
         >
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           {getStatusIcon(deployment.status)}
           <div className="min-w-0">
-            <span className="text-foreground font-medium select-text">{deployment.name}</span>
+            <span className="block truncate text-foreground font-medium select-text">{deployment.name}</span>
             <p className="text-xs text-muted-foreground select-text truncate">{deployment.installer_name}</p>
           </div>
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
-          <div className="w-[90px] flex justify-end">
+          {/* Status text badge is desktop-only — below `sm` the leading status
+              icon already carries the same state, so the row stays icon-only
+              instead of spending 90px of a 390px viewport on a duplicate. */}
+          <div className="hidden sm:flex w-[90px] shrink-0 justify-end">
             {getStatusBadge(deployment.status, errorMessages || undefined)}
           </div>
           <span className="text-xs text-muted-foreground hidden sm:block w-[150px] text-right">
@@ -155,7 +160,7 @@ const DeploymentRow = React.memo(function DeploymentRow({
                     variant="ghost"
                     onClick={(e) => e.stopPropagation()}
                     aria-label={`deployment actions for ${deployment.name}`}
-                    className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
+                    className="h-7 w-7 pointer-coarse:h-10 pointer-coarse:w-10 p-0 text-muted-foreground hover:text-foreground hover:bg-muted cursor-pointer"
                   >
                     <MoreVertical className="h-4 w-4" />
                   </Button>
@@ -286,12 +291,19 @@ const DeploymentRow = React.memo(function DeploymentRow({
 });
 
 export default function DeploymentsPage() {
-  const { user, loading: authLoading, userSites, isSuperadmin, lastSiteId, updateLastSite, userPreferences } = useAuth();
-  const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
-  const [currentSiteId, setCurrentSiteId] = useState<string>('');
-  // Resolve site timezone for display-mode-aware timestamp rendering on this site-scoped surface.
-  const currentSite = sites.find(s => s.id === currentSiteId);
-  const siteTimezone = currentSite?.timezone;
+  const { user, loading: authLoading, userPreferences } = useAuth();
+  const {
+    sites,
+    sitesLoading,
+    currentSiteId,
+    siteTimezone,
+    hasNoSites,
+    selectSite,
+    pickSite,
+    createSite,
+    updateSite,
+    deleteSite,
+  } = useCurrentSite();
   const [deployDialogOpen, setDeployDialogOpen] = useState(false);
   const [uninstallDialogOpen, setUninstallDialogOpen] = useState(false);
   const [initialSoftwareName, setInitialSoftwareName] = useState<string | undefined>(undefined);
@@ -391,21 +403,8 @@ export default function DeploymentsPage() {
     await runRetry(deployment, [machineId]);
   }, [runRetry]);
 
-  // Load saved site from Firestore (cross-browser) or localStorage (same-browser fallback)
-  useEffect(() => {
-    if (!sitesLoading && sites.length > 0 && !currentSiteId) {
-      const savedSite = lastSiteId || localStorage.getItem('owlette_current_site');
-      if (savedSite && sites.find(s => s.id === savedSite)) {
-        setCurrentSiteId(savedSite);
-      } else {
-        setCurrentSiteId(sites[0].id);
-      }
-    }
-  }, [sites, sitesLoading, currentSiteId, lastSiteId]);
-
   const handleSiteChange = (siteId: string) => {
-    setCurrentSiteId(siteId);
-    updateLastSite(siteId);
+    selectSite(siteId);
   };
 
   const handleToggleDeployment = useCallback((id: string) => {
@@ -489,7 +488,7 @@ export default function DeploymentsPage() {
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         onCreateSite={createSite}
-        onSiteCreated={(siteId) => setCurrentSiteId(siteId)}
+        onSiteCreated={(siteId) => pickSite(siteId)}
       />
 
       {/* Main content */}
@@ -528,14 +527,20 @@ export default function DeploymentsPage() {
 
         {/* Section header with inline stats */}
         {(() => {
-          const statsLoading = deploymentsLoading || templatesLoading || !currentSiteId;
+          // A site-less account has a settled, knowable answer — zero — so
+          // show it rather than a permanent '--' placeholder.
+          const statsLoading =
+            !hasNoSites && (deploymentsLoading || templatesLoading || !currentSiteId);
           const inProgressCount = deployments.filter(d => d.status === 'in_progress').length;
           return (
         <div className="mt-3 md:mt-2 mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-center gap-6 md:gap-8">
+          {/* Heading + inline stats wrap at narrow widths so the cluster can
+              never push the document past the viewport (same shape as the
+              dashboard's quick-stats row). */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3 sm:gap-x-6 md:gap-8">
             <h2 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">deployments</h2>
 
-            <div className="flex items-center gap-6 md:gap-8">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-3 sm:gap-x-6 md:gap-8">
               <div className="flex items-center gap-2.5">
                 <div className={`rounded-md p-1.5 ${!statsLoading && deployments.length > 0 ? 'bg-accent-cyan/10 text-accent-cyan' : 'bg-muted text-muted-foreground'}`}>
                   <Package className="h-4 w-4" />
@@ -578,7 +583,9 @@ export default function DeploymentsPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Wraps too: with an update pending, `update owlette to vX` sits
+              beside `new deployment` and the pair is wider than a phone. */}
+          <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
             <UpdateOwletteButton siteId={currentSiteId} machines={machines} />
             <Button
               onClick={() => setDeployDialogOpen(true)}
@@ -594,7 +601,15 @@ export default function DeploymentsPage() {
 
         {/* Deployments List */}
         <div className="rounded-lg border border-border bg-card overflow-hidden animate-in fade-in duration-300">
-          {deploymentsLoading || sitesLoading || !currentSiteId ? (
+          {/* `hasNoSites` first: it is terminal and only true once the site
+              list has settled. Folding it into the loading condition below
+              (via a bare `!currentSiteId`) is what left a site-less account
+              on a permanent "loading deployments..." spinner. */}
+          {hasNoSites ? (
+            <div className="p-8">
+              <NoSitesEmptyState action="manage deployments" />
+            </div>
+          ) : deploymentsLoading || sitesLoading || !currentSiteId ? (
             <div className="p-8 text-center">
               <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
               <p className="mt-2 text-muted-foreground">loading deployments...</p>

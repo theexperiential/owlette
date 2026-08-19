@@ -9,11 +9,12 @@ This is the canonical first-time path for a senior engineer cloning Owlette for 
 | Windows 10/11 64-bit | — | agent dev/build, installer | not portable to Mac/Linux yet |
 | Node.js | >=20.9.0 (see [/.nvmrc](../.nvmrc)) | web + cli + functions | [package.json engines field](../package.json) |
 | npm | >=10.0.0 | all js packages | [package.json](../package.json) |
-| Python | 3.11 with tkinter | agent build (full installer) + SDK dev (SDK requires >=3.10, so 3.11 covers both) | [agent/build_installer_full.bat](../agent/build_installer_full.bat), [sdks/python/pyproject.toml](../sdks/python/pyproject.toml) |
+| Python | 3.11 | agent dev + SDK dev (SDK requires >=3.10, so 3.11 covers both). The installer bundles its own embedded runtime | [agent/build_installer_full.bat](../agent/build_installer_full.bat), [sdks/python/pyproject.toml](../sdks/python/pyproject.toml) |
+| Rust (rustup) + MSVC C++ build tools | stable | desktop app (`desktop/`), compiled by the full installer build | [desktop/README.md](../desktop/README.md) |
 | JDK 21 (Temurin) | 21.x | Firebase emulators in e2e | [web/e2e/README.md](../web/e2e/README.md) |
 | firebase-tools | @13.x | emulators + rules deploy | [web/e2e/README.md](../web/e2e/README.md) |
 | Inno Setup | 6.2.x | installer build | [agent/build_installer_full.bat](../agent/build_installer_full.bat) (set `%ISCC%` or use default path) |
-| NSSM | 2.24 | agent service install | downloaded by build script |
+| Rust toolchain (rustup) | stable | desktop app + `owlette-host` service host | [agent/host](../agent/host) — built by the build script |
 | Playwright Chromium | (matches @playwright/test) | e2e tests | run `npm run e2e:install` in `/web` |
 
 When available, run `/scripts/bootstrap-windows.ps1` to validate your local toolchain before starting maintainer work.

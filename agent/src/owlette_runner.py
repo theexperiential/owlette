@@ -1,6 +1,10 @@
 """
-owlette Service Runner - NSSM Compatible
-Runs the service main loop without Windows Service framework
+owlette Service Runner — the process the service host supervises.
+
+Runs the service main loop without the Windows Service framework: the SCM talks
+to owlette-host.exe (agent/host), which launches this script, keeps it alive,
+and reports the service's state. That state is the shutdown signal — see the SCM
+stop watcher below.
 """
 import sys
 import os
@@ -19,7 +23,21 @@ import shared_utils
 _service_instance = None
 
 def signal_handler(signum, frame):
-    """Handle Ctrl+C and other termination signals from NSSM"""
+    """Handle Ctrl+C and other termination signals.
+
+    NSSM used to deliver a stop this way — by attaching to the application's
+    console and generating a Control-C event, then terminating the process tree
+    ~4.5s later whether or not the event was ever delivered. It was therefore
+    best-effort, and on 2026-08-13 it silently was not delivered at all: the
+    machine was terminated without flushing presence and sat on the dashboard as
+    online. owlette-host does not attempt that trick; it reports STOP_PENDING and
+    waits, which is what the SCM stop watcher below is looking for.
+
+    This handler stays for every other source of a console event — an operator
+    running the runner by hand, a system shutdown, Ctrl+Break — and the real work
+    lives in OwletteService.graceful_shutdown(), which the SCM stop watcher calls
+    as well: whichever notices the stop first does it, exactly once.
+    """
     global _service_instance
 
     # Log to both logger and stderr for visibility
@@ -38,50 +56,17 @@ def signal_handler(signum, frame):
         print("[SIGNAL HANDLER] ERROR: _service_instance is None", file=sys.stderr, flush=True)
         sys.exit(0)
 
-    # CRITICAL: NSSM kills the process ~4 seconds after this signal
-    # The main loop can't exit fast enough to hit the finally block
-    # So we MUST log agent_stopped HERE before we're killed
-    if _service_instance.firebase_client:
-        try:
-            import shared_utils
-            version = shared_utils.get_app_version()
-            logging.info("[SIGNAL HANDLER] Logging agent_stopped event to Firestore")
-            _service_instance.firebase_client.log_event(
-                action='agent_stopped',
-                level='info',
-                details=f'owlette agent v{version} shutting down gracefully'
-            )
-            logging.info("[SIGNAL HANDLER] agent_stopped event logged successfully")
-            print("[SIGNAL HANDLER] agent_stopped logged", file=sys.stderr, flush=True)
-        except Exception as e:
-            logging.error(f"[SIGNAL HANDLER] Failed to log agent_stopped: {e}")
-            print(f"[SIGNAL HANDLER] Failed to log agent_stopped: {e}", file=sys.stderr, flush=True)
+    try:
+        performed = _service_instance.graceful_shutdown(f'console_{sig_name.lower()}')
+        print(
+            f"[SIGNAL HANDLER] shutdown {'performed' if performed else 'already done'}",
+            file=sys.stderr, flush=True,
+        )
+    except Exception as e:
+        logging.error(f"[SIGNAL HANDLER] graceful_shutdown failed: {e}")
+        print(f"[SIGNAL HANDLER] graceful_shutdown failed: {e}", file=sys.stderr, flush=True)
 
-        # Mark the session as cleanly stopped — but only if no Owlette intent
-        # was already set (e.g. by _handle_reboot_machine moments earlier).
-        # set_intent_if_none is compare-and-set: it will not overwrite an
-        # existing owlette_reboot/owlette_shutdown intent.
-        try:
-            import session_state
-            session_state.set_intent_if_none("external_clean")
-        except Exception as e:
-            logging.debug(f"[SIGNAL HANDLER] session_state.set_intent_if_none failed: {e}")
-
-        # Stop Firebase client now
-        try:
-            _service_instance.firebase_client.stop()
-            logging.info("[SIGNAL HANDLER] Firebase client stopped")
-        except Exception as e:
-            logging.error(f"[SIGNAL HANDLER] Error stopping Firebase: {e}")
-    else:
-        logging.warning("[SIGNAL HANDLER] No Firebase client - cannot log agent_stopped")
-
-    # Signal main loop to exit gracefully (if we get time)
-    if hasattr(_service_instance, 'is_alive'):
-        _service_instance.is_alive = False
-        logging.info("[SIGNAL HANDLER] is_alive set to False")
-
-    # Exit immediately - NSSM will kill us anyway
+    # Exit immediately — the shutdown work is done and the host is waiting.
     sys.exit(0)
 
 # Initialize Firebase and Auth imports
@@ -108,7 +93,7 @@ if __name__ == '__main__':
     sys.excepthook = _handle_unhandled_exception
     threading.excepthook = _handle_thread_exception
 
-    logging.info("Running as NSSM service (not win32serviceutil)")
+    logging.info("Running under owlette-host (not win32serviceutil)")
 
     # Import the OwletteService class just to access its main() method
     from owlette_service import OwletteService
@@ -151,6 +136,14 @@ if __name__ == '__main__':
             self.is_alive = True
             self._restart_exit_code = 0
             self.tray_icon_pid = None
+            # Reboot-prompt suppression deadline (mirror OwletteService.__init__);
+            # without it reached_max_relaunch_attempts raises AttributeError the
+            # first time a process exceeds its relaunch budget under the host.
+            self._restart_prompt_until = 0.0
+            # "desktop app not found" log de-spam flag (mirror
+            # OwletteService.__init__); launch_desktop_app_as_user reads it on
+            # the very first tray launch attempt, which happens here too.
+            self._desktop_exe_missing_logged = False
             self.relaunch_attempts = {}
             self.first_start = True
             self.last_started = {}
@@ -165,6 +158,12 @@ if __name__ == '__main__':
             self._skip_launch_delay = set()
             self._last_seen_launch_modes = {}
             self._last_seen_launch_schedules = {}
+            # Per-process launch locks (mirror OwletteService.__init__).
+            # handle_process_launch and kill_and_relaunch_process take these on
+            # every launch — without them the runner dies with AttributeError
+            # the first time it starts a process.
+            self._launch_locks = {}
+            self._launch_locks_guard = threading.Lock()
             self._cached_site_timezone = None
             self._last_scheduled_reboot_time = None
             self._reboot_schedule_counter = 0
@@ -205,9 +204,23 @@ if __name__ == '__main__':
                 logging.warning(f"Failed to register process-control handlers: {e}")
             # Throttle state for _write_service_status() — OwletteService has
             # a hasattr() guard, but mirror here so the safety net never has
-            # to fire under NSSM.
+            # to fire under the host.
             self._last_status_signature = None
             self._last_status_write_time = 0.0
+            # Case-4 recovery throttle (mirror OwletteService.__init__).
+            # The main loop reads it whenever Firebase is enabled but no
+            # running client is serving it.
+            self._firebase_reinit_not_before = 0.0
+            # Once-only guard for graceful_shutdown() (mirror
+            # OwletteService.__init__). The console control handler and the SCM
+            # stop watcher both call it for the same stop; without the lock and
+            # the trigger marker they would race the Firestore offline write and
+            # log agent_stopped twice.
+            self._shutdown_lock = threading.Lock()
+            self._shutdown_trigger = None
+            # ConnectionManager the status-file listener is bound to (mirror
+            # OwletteService.__init__), so a Firebase re-init re-wires it.
+            self._connection_status_manager = None
 
             # Initialize Firebase client
             self.firebase_client = None
@@ -230,6 +243,26 @@ if __name__ == '__main__':
 
                         logging.info(f"Firebase config - site_id: {site_id}, project_id: {project_id}")
                         logging.info(f"Firebase API base: {api_base}")
+
+                        # Network-ready gate. A cold boot reaches service start
+                        # before the NIC has a route; constructing AuthManager /
+                        # FirebaseClient in that window burns the first token
+                        # refresh and arms a backoff for nothing. Bounded (90s)
+                        # and non-fatal — we always proceed.
+                        try:
+                            from health_probe import wait_for_network, reprobe_if_network_error
+                            if wait_for_network(api_base or self._api_base):
+                                # The startup probe ran before this gate, so on
+                                # a cold boot its network_error verdict predates
+                                # the NIC coming up. Refresh it so the early
+                                # status write below publishes the truth.
+                                self._health_state = reprobe_if_network_error(
+                                    self._health_state,
+                                    shared_utils.CONFIG_PATH,
+                                    api_base or self._api_base,
+                                )
+                        except Exception as e:
+                            logging.warning(f"Network gate error (proceeding anyway): {e}")
 
                         # Initialize AuthManager
                         auth_manager = AuthManager(api_base=api_base)
@@ -270,19 +303,27 @@ if __name__ == '__main__':
         except Exception as e:
             logging.error(f"Failed to write early service status: {e}")
 
+        # The Firebase client reached CONNECTED inside MockService above, before
+        # anything was listening. Wire the listener and publish that state now
+        # rather than leaving the tray's badge red until main() gets here.
+        try:
+            _service_instance._wire_connection_status_listener()
+        except Exception as e:
+            logging.error(f"Failed to wire the connection status listener: {e}")
+
         # NOW register signal handlers (after _service_instance exists)
         signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
         signal.signal(signal.SIGTERM, signal_handler)  # Termination request
         signal.signal(signal.SIGBREAK, signal_handler) # Ctrl+Break (Windows)
         logging.info("Signal handlers registered for graceful shutdown")
 
-        # CRITICAL: On Windows, NSSM sends console control events, not POSIX signals
-        # We need to register a Windows console control handler
+        # On Windows a console stop arrives as a console control event, not a
+        # POSIX signal, so register a Windows console control handler too.
         if sys.platform == 'win32':
             try:
                 import win32api
                 def windows_handler(ctrl_type):
-                    """Handle Windows console control events from NSSM"""
+                    """Handle Windows console control events"""
                     ctrl_names = {
                         0: 'CTRL_C_EVENT',
                         1: 'CTRL_BREAK_EVENT',
@@ -305,28 +346,43 @@ if __name__ == '__main__':
             except Exception as e:
                 logging.error(f"Failed to register Windows control handler: {e}")
 
+        # The console handler above covers console events. This is the signal
+        # that cannot be missed: owlette-host reports STOP_PENDING the moment a
+        # stop is accepted and then waits 20s for this process to exit on its
+        # own, so the watcher below always gets there first.
+        try:
+            _service_instance.start_scm_stop_watcher()
+        except Exception as e:
+            logging.error(f"Failed to start the SCM stop watcher: {e}")
+
         logging.info("Starting main service loop...")
         _service_instance.main()
+
+        # Check if service requested a restart (exit code 42/43 — the host
+        # relaunches immediately on either; see agent/host/src/supervisor.rs)
+        exit_code = getattr(_service_instance, '_restart_exit_code', 0)
 
         # Cleanup before exiting
         logging.info("Main loop exited - performing cleanup...")
         if _service_instance.firebase_client:
-            # Only stop if still running (signal handler may have already stopped it)
+            # Only stop if still running (main()'s finally block and the signal
+            # handler both stop it first on their respective paths — this is the
+            # fallback for when one of them failed part-way through).
             if hasattr(_service_instance.firebase_client, 'running') and _service_instance.firebase_client.running:
                 try:
-                    _service_instance.firebase_client.stop()
+                    # Owlette-initiated restart (42/43) comes straight back —
+                    # skip the offline flush so presence doesn't flap.
+                    _service_instance.firebase_client.stop(intentional=bool(exit_code))
                     logging.info("Firebase client stopped")
                 except Exception as e:
                     logging.error(f"Error stopping Firebase client: {e}")
             else:
                 logging.info("Firebase client already stopped (by signal handler)")
 
-        # Check if service requested a restart (exit code 42 triggers NSSM auto-restart)
-        exit_code = getattr(_service_instance, '_restart_exit_code', 0)
         if exit_code:
-            logging.info(f"Service exiting with code {exit_code} for NSSM restart")
+            logging.info(f"Service exiting with code {exit_code} for an immediate host restart")
         else:
-            logging.info("Service stopped cleanly (exit 0 — NSSM will not restart)")
+            logging.info("Service stopped cleanly (exit 0 — the host stops the service)")
         sys.exit(exit_code)
 
     except KeyboardInterrupt:

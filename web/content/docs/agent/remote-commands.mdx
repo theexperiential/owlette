@@ -40,9 +40,20 @@ Both documents store command IDs as top-level map fields. A successful terminal 
 | `kill_process` | Terminate a process | `{process_name?, process_id?}` |
 | `set_launch_mode` | Set launch mode (`off`, `always`, or `scheduled`) | `{process_name?, process_id?, processId?, mode, schedules?}` |
 | `toggle_autolaunch` | Legacy launch-mode toggle | `{process_name?, process_id?, processId?, autolaunch}` |
-| `capture_screenshot` | Capture desktop screenshot | `{monitor}` (0=all, 1=primary, etc.) |
 
 For `set_launch_mode` and `toggle_autolaunch`, the agent matches `process_id` / `processId` first and falls back to `process_name`. `set_launch_mode` persists the requested `mode` and any supplied `schedules`.
+
+### screenshots and live view
+
+| command | description | data payload |
+|---------|-------------|--------------|
+| `capture_screenshot` | Capture desktop screenshot | `{monitor}` (0=all, 1=primary, etc.) |
+| `start_live_view` | Start a repeating screenshot loop | `{interval?, duration?}` |
+| `stop_live_view` | Stop the live-view loop | `{}` |
+
+`capture_screenshot` is registered on the agent command router (`agent/src/machine_commands.py`), so it captures inside the active user's desktop session and uploads through the signed-URL flow rather than the legacy dispatch branch.
+
+`start_live_view` clamps `interval` to 5-60 seconds (default 10) and `duration` to 60-1800 seconds (default 600), then sets the machine's `liveView` flag until the duration expires or `stop_live_view` arrives.
 
 ### configuration
 
@@ -58,6 +69,7 @@ For `set_launch_mode` and `toggle_autolaunch`, the agent matches `process_id` / 
 | `cancel_installation` | Cancel an in-progress installer process | `{installer_name}` |
 | `uninstall_software` | Run a software uninstaller | `{software_name, uninstall_command, silent_flags?, installer_type?, verify_paths?, timeout_seconds?, deployment_id?}` |
 | `cancel_uninstall` | Cancel an in-progress uninstall process | `{software_name}` |
+| `refresh_software_inventory` | Force an immediate installed-software inventory sync | `{}` |
 
 ### project distribution
 
@@ -88,15 +100,30 @@ Legacy v1 ZIP distribution still ships in the agent for older dashboard paths:
 
 The agent does not provide a remote self-uninstall command. Remote software removal uses `uninstall_software` for third-party applications.
 
-### ai/cortex tools
+### display topology
 
 | command | description | data payload |
 |---------|-------------|--------------|
-| `mcp_tool_call` | Execute a Cortex tool | `{tool_name, tool_params, chat_id?}` |
+| `apply_display_topology` | Validate and apply a monitor layout, then arm the auto-revert watchdog | `{layout, applyId}` |
+| `ack_display_topology` | Acknowledge an in-flight apply and cancel auto-revert | `{applyId}` |
+| `enumerate_display_modes` | Build and upload the supported display-mode catalogue | `{}` |
+| `test_display_apply` | Read-only helper smoke test — query plus validate against the live layout, never an apply | `{}` |
 
-<Callout type="info" title={"Cortex tool reference"}>
+`apply_display_topology` and `ack_display_topology` also accept `apply_id` as an alias for `applyId`. The apply arms a 30-second revert watchdog: if no `ack_display_topology` carrying the same id arrives before the deadline, the agent restores the previous configuration. `enumerate_display_modes` writes to `sites/{siteId}/machines/{machineId}/hardware/displayModes` and skips the upload when the topology signature matches the last successful one.
 
-See the [Cortex Tools Reference](/docs/reference/cortex-tools) for the canonical tool list with parameters, tiers, and allowed commands.
+### ai/hoot tools
+
+| command | description | data payload |
+|---------|-------------|--------------|
+| `mcp_tool_call` | Execute a hoot tool | `{tool_name, tool_params, chat_id?}` |
+| `cancel_mcp_tool` | Kill the process tree of an in-flight `mcp_tool_call` and mark it `cancelled` | `{target_command_id}` |
+| `provision_cortex_key` | Encrypt and store the local hoot provider key in the agent's `config.json` | `{api_key, provider?}` |
+
+`cancel_mcp_tool` is handled inside the agent's Firestore client rather than the service dispatch chain, and runs on the fast command lane so it can interrupt the call it targets. Cancelling is idempotent — an unknown or already-finished target returns a safe error. `provision_cortex_key` defaults `provider` to `anthropic`.
+
+<Callout type="info" title={"hoot tool reference"}>
+
+See the [hoot tools reference](/docs/reference/hoot-tools) for the canonical tool list with parameters, tiers, and allowed commands.
 
 </Callout>
 ---
@@ -155,7 +182,7 @@ Progress updates are also merged into the completed document under the same comm
 
 When the web API queues a command, `POST /api/sites/{siteId}/machines/{machineId}/commands` accepts `type`, `params`, and optional `timeout_seconds`, then returns `202` with `{commandId, status: "pending"}`.
 
-Poll `GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}` for the command result. The status route returns `pending`, `in_progress`, `completed`, `failed`, or a 404/timeout. Cortex tool execution polls completion internally about every 1.5 seconds.
+Poll `GET /api/sites/{siteId}/machines/{machineId}/commands/{commandId}` for the command result. The status route returns `pending`, `in_progress`, `completed`, `failed`, or a 404/timeout. hoot tool execution polls completion internally about every 1.5 seconds.
 
 ---
 

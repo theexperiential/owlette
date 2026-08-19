@@ -5,7 +5,9 @@ import { generateUnsubscribeToken } from '@/app/api/unsubscribe/route';
 import { getResend, FROM_EMAIL, ENV_LABEL } from '@/lib/resendClient.server';
 import { wrapEmailLayout, emailDataTable, emailTimestamp, EMAIL_COLORS, SEVERITY_COLORS, METRIC_LABELS, escapeHtml, safeEmailSubject } from '@/lib/emailTemplates.server';
 import { fireWebhooks } from '@/lib/webhookSender.server';
+import { tapTalonMatcher } from '@/lib/talons/matcher.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { hootInternalSecret } from '@/lib/hootInternalSecret';
 
 /**
  * POST /api/alerts/trigger
@@ -13,7 +15,8 @@ import { apiError } from '@/lib/apiErrorResponse';
  * Internal endpoint called by the Cloud Function when a threshold alert rule
  * is breached. Sends email and/or webhook notifications.
  *
- * Authentication: x-internal-secret header matching CORTEX_INTERNAL_SECRET.
+ * Authentication: x-internal-secret header matching the hoot internal secret
+ * (deployed env var: CORTEX_INTERNAL_SECRET — see lib/hootInternalSecret.ts).
  *
  * Request body:
  * - siteId: string
@@ -30,7 +33,7 @@ export async function POST(request: NextRequest) {
   try {
     // Verify internal secret
     const secret = request.headers.get('x-internal-secret');
-    const expectedSecret = process.env.CORTEX_INTERNAL_SECRET;
+    const expectedSecret = hootInternalSecret();
 
     if (!expectedSecret || secret !== expectedSecret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -140,6 +143,12 @@ export async function POST(request: NextRequest) {
         },
       });
     }
+
+    // Talon tap: the only place a threshold breach enters the system, so it is
+    // the only place a threshold talon can be matched. Fire-and-forget by
+    // contract — a talon run can capture a screenshot and call a vision model,
+    // and the cloud function calling us is waiting on this response.
+    tapTalonMatcher(db, siteId, { kind: 'threshold', metric, operator, value, machineId });
 
     console.log(
       `[alerts/trigger] Processed threshold alert: ${ruleName} on ${machineId} ` +

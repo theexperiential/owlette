@@ -36,6 +36,7 @@ import time
 import json
 import datetime
 import atexit
+import re
 import shlex
 import subprocess
 import tempfile
@@ -51,19 +52,19 @@ except ImportError as e:
     # Note: logging not initialized yet, so we can't log here
 
 # Health probe (stdlib-only module, safe to import unconditionally)
-from health_probe import HealthProbe, HealthState, STATUS_OK
+from health_probe import HealthProbe, HealthState, STATUS_OK, reprobe_if_network_error, wait_for_network
 
 # Error monitoring (optional, no-ops if not configured)
 import sentry_utils
 
 
 def _handle_unhandled_exception(exc_type, exc_value, exc_tb):
-    """Log unhandled exceptions before NSSM restarts the service."""
+    """Log unhandled exceptions before the service host restarts the agent."""
     if issubclass(exc_type, KeyboardInterrupt):
         sys.__excepthook__(exc_type, exc_value, exc_tb)
         return
     logging.critical(
-        "UNHANDLED EXCEPTION — service will be restarted by NSSM:",
+        "UNHANDLED EXCEPTION — the service host will restart the agent:",
         exc_info=(exc_type, exc_value, exc_tb)
     )
     sentry_utils.capture_exception((exc_type, exc_value, exc_tb))
@@ -92,10 +93,53 @@ MAX_RELAUNCH_ATTEMPTS = 3
 SLEEP_INTERVAL = 5
 TIME_TO_INIT = 60
 
+# Status the desktop app writes into tmp/app_states.json for a PID it is about
+# to terminate on the operator's behalf, immediately before the terminate.
+#
+# It exists because the desktop app has no Firebase client: the legacy GUI could
+# kill a process and write its own `process_restarted` audit event, and without a
+# marker the service would see the PID vanish and raise a `process_crash` alert
+# for an operator-initiated restart. KILLED would suppress the alert but also
+# lose the audit trail, so this is a third state — expected exit, still worth
+# recording. See handle_process()'s crash-detection branch.
+PROCESS_RESTARTING_STATUS = 'RESTARTING'
+
+# How long a launched restart prompt is treated as still on screen.
+#
+# The prompt used to be a separate python process, so "is it up?" was a process
+# scan; it is now a window inside the single-instance desktop app, which the
+# service cannot see. The countdown itself runs for two minutes and the operator
+# can pause it, so this is deliberately generous — the gate only suppresses
+# duplicate prompts and repeat notifications, and _handle_dismiss_reboot_pending
+# clears it the moment an admin dismisses from the dashboard.
+RESTART_PROMPT_ACTIVE_SECONDS = 300
+
 # Throttle for _write_service_status(). Main loop calls it every SLEEP_INTERVAL;
 # the GUI treats the file as stale after 120s, so a 30s refresh floor is safe
 # and cuts ~83% of writes when content is unchanged.
 MIN_STATUS_WRITE_INTERVAL = 30
+
+# How often the SCM is asked whether an operator has stopped this service.
+#
+# This is the agent's primary shutdown signal, and since 3.0.0 it is also the
+# only one the service host relies on: owlette-host reports STOP_PENDING the
+# moment the SCM accepts a stop and then waits, precisely so this poll can see
+# it. (Under NSSM the signal was a console Control-C sent on a best-effort
+# basis — it had to attach to the application's console first, and when that
+# failed there was no signal at all: the agent was terminated with no chance to
+# flush `online: false` or log anything, 2026-08-13 14:17. That is the incident
+# this watcher was written for and the reason the host was written at all.)
+SCM_STOP_POLL_INTERVAL = 0.25
+
+# How long the watcher assumes it has once STOP_PENDING appears.
+#
+# owlette-host gives the agent 20s to exit on its own before it terminates it
+# (supervisor::CHILD_STOP_GRACE), so that is the budget the shutdown has to fit
+# inside; overrunning it is logged as a warning. It was 4.5s under NSSM — three
+# 1500 ms stop methods and then TerminateProcess — which the incident bears out:
+# the stop control landed at 14:17:05.7 and the first TerminateProcess at
+# 14:17:10.3. Keep this in step with CHILD_STOP_GRACE in agent/host.
+SCM_STOP_GRACE_SECONDS = 20.0
 
 
 def _init_status_writer_logger():
@@ -233,6 +277,30 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self._last_status_signature = None
         self._last_status_write_time = 0.0
 
+        # Once-only guard for graceful_shutdown(). The console handler and the
+        # SCM watcher can both fire for the same stop, and neither is allowed to
+        # log agent_stopped twice or race the Firestore offline write.
+        self._shutdown_lock = threading.Lock()
+        self._shutdown_trigger = None
+
+        # Per-process launch serialisation. Three threads reach the launch
+        # path — the monitor loop, the slow-command worker (start/restart/
+        # set_launch_mode), and the Firestore config listener — and nothing
+        # made "decide it isn't running" and "launch it" atomic, so two of
+        # them could each observe an absent PID and each launch. Keyed by
+        # process id: launching one process must not stall monitoring of the
+        # others. RLock because kill_and_relaunch_process holds it across a
+        # terminate plus a launch.
+        self._launch_locks = {}
+        self._launch_locks_guard = threading.Lock()
+        # Earliest time.monotonic() at which the main loop's Case-4 recovery
+        # (Firebase enabled but no running client) may try a reinit. Armed to
+        # now+300s after each failed attempt.
+        self._firebase_reinit_not_before = 0.0
+        # ConnectionManager the status-file listener is registered against, so
+        # re-initialising the Firebase client re-wires it against the new one.
+        self._connection_status_manager = None
+
         # Write early status so tray can show health alerts before Firebase init
         self._write_service_status_early()
 
@@ -244,6 +312,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
         self._scm_stop_requested = False
         self.tray_icon_pid = None
         self.cortex_pid = None
+        # time.monotonic() deadline past which a launched reboot-countdown prompt
+        # is no longer assumed to be on screen (see _is_restart_prompt_active).
+        self._restart_prompt_until = 0.0
+        # De-spams the "desktop app not found" warning to one line per episode.
+        self._desktop_exe_missing_logged = False
         self.relaunch_attempts = {} # Restart attempts for each process
         self.first_start = True # First start of this service
         self.last_started = {} # Last time a process was started
@@ -347,6 +420,27 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
                     logging.debug(f"Firebase config - site: {site_id}, project: {project_id}")
 
+                    # Network-ready gate. A cold boot reaches service start
+                    # before the NIC has a route; constructing AuthManager /
+                    # FirebaseClient in that window burns the first token
+                    # refresh and arms a backoff for nothing. Bounded (90s)
+                    # and non-fatal — we always proceed. Same helper the
+                    # hosted path (owlette_runner.MockService) calls.
+                    try:
+                        if wait_for_network(api_base):
+                            # The startup probe ran before this gate, so on a
+                            # cold boot its network_error verdict predates the
+                            # NIC coming up. Refresh it now that the host
+                            # answered, and republish so the tray isn't left
+                            # rendering the stale snapshot.
+                            refreshed = reprobe_if_network_error(
+                                self._health_state, shared_utils.CONFIG_PATH, api_base)
+                            if refreshed is not self._health_state:
+                                self._health_state = refreshed
+                                self._write_service_status_early()
+                    except Exception as e:
+                        logging.warning(f"Network gate error (proceeding anyway): {e}")
+
                     # Initialize OAuth authentication manager
                     from auth_manager import AuthManager
                     auth_manager = AuthManager(api_base=api_base)
@@ -439,14 +533,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             sync_result = self.firebase_client.sync_config_on_startup()
             logging.info(f"Config sync on reinit: {sync_result}")
 
-            # Wire state listener BEFORE start() so the CONNECTED event
-            # writes the status file immediately (tray polls every 1s)
-            def _on_connection_change(event):
-                try:
-                    self._write_service_status()
-                except Exception:
-                    pass
-            self.firebase_client.connection_manager.add_state_listener(_on_connection_change)
+            # Re-wire the status-file listener against the new connection
+            # manager, and publish the state it already reached during
+            # construction (the tray polls the file every second).
+            self._wire_connection_status_listener()
 
             # Wire health callback so connection failures update health state + alert
             self.firebase_client.connection_manager.set_health_callback(
@@ -466,8 +556,10 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # Cache site timezone for schedule evaluation
             self._cached_site_timezone = self.firebase_client.site_timezone
 
-            # Clear any stale health errors (e.g. config_error from startup before site was joined)
-            self._update_health_state('ok', 'ok', 'Firebase connected successfully')
+            # Stale health errors (e.g. config_error from before the site was
+            # joined) are cleared by _wire_connection_status_listener above —
+            # state-driven, so a re-init whose connect FAILED keeps its error
+            # instead of being stamped ok unconditionally here.
 
             return True
 
@@ -504,6 +596,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'enabled': False,
                     'connected': False,
                     'site_id': '',
+                    'site_name': '',
                     'last_heartbeat': 0
                 },
                 'health': self._health_section()
@@ -526,7 +619,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         Creates/updates C:\\ProgramData\\owlette\\tmp\\service_status.json with:
         - Service running state
         - Firebase enabled/connected state
-        - Site ID
+        - Site ID, and the site's display name when it is known
         - Last heartbeat timestamp
         - Service version
         - Health probe results
@@ -565,12 +658,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
             firebase_enabled = shared_utils.read_config(['firebase', 'enabled']) or False
             firebase_connected = False
             site_id = ''
+            site_name = ''
             last_heartbeat = 0
 
             if self.firebase_client:
                 try:
                     firebase_connected = self.firebase_client.is_connected()
                     site_id = self.firebase_client.site_id or ''
+                    # The site's display name, when the client has been able to
+                    # read it. Read straight off the client rather than cached
+                    # here, so a reconnect that picks up a rename reaches the
+                    # next status write with no second copy to keep in step.
+                    site_name = getattr(self.firebase_client, 'site_name', None) or ''
                     # Get last heartbeat time if available
                     if hasattr(self.firebase_client, '_last_heartbeat_time'):
                         last_heartbeat = int(self.firebase_client._last_heartbeat_time)
@@ -589,6 +688,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     'enabled': firebase_enabled,
                     'connected': firebase_connected,
                     'site_id': site_id,
+                    'site_name': site_name,
                     'last_heartbeat': last_heartbeat
                 },
                 'health': health_section
@@ -602,6 +702,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 bool(firebase_enabled),
                 bool(firebase_connected),
                 site_id,
+                # In the signature so a site the operator renamed, or a name
+                # that only arrived on the second connection attempt, reaches
+                # the desktop app on the next tick instead of on the refresh
+                # floor half a minute later.
+                site_name,
                 health_section.get('status'),
                 health_section.get('error_code'),
             )
@@ -650,6 +755,251 @@ class OwletteService(win32serviceutil.ServiceFramework):
             except Exception:
                 pass
 
+    def _clear_health_error_on_connect(self):
+        """Reset the health state to ok — call only when the connection is live.
+
+        A live Firestore connection disproves every verdict the health state
+        can carry: the boot-time probe's config_error / auth_error /
+        network_error, and the connection_failure the health callback records
+        during an outage. Those are snapshots of a past moment; without this
+        reset they outlive the condition they described — a machine that booted
+        before DHCP finished kept flashing a red tray icon for the rest of its
+        uptime while `firebase.connected` sat true in the same status document
+        (TEC-B4A, 2026-08-17). Idempotent: an ok state is left untouched.
+        """
+        health = getattr(self, '_health_state', None)
+        if health is not None and health.status == STATUS_OK:
+            return
+        self._update_health_state(STATUS_OK, STATUS_OK, 'Connected to owlette cloud')
+
+    def _wire_connection_status_listener(self):
+        """Keep tmp/service_status.json in step with the cloud connection.
+
+        The tray reads that file every second and paints the connection badge
+        from it, so the file *is* the tray's view of connectivity. A listener on
+        its own is not enough to make that view honest: the initial
+        CONNECTING -> CONNECTED transition happens inside FirebaseClient's
+        constructor, long before main() reaches the point where the listener
+        used to be registered — and on a startup whose config sync is slow
+        (15s is normal, and it sits between the two) the badge stayed red until
+        the first main-loop status write, ~25s after the connection was
+        actually established. The immediate write below is what closes that gap.
+
+        The same two moments also settle the health state: a transition to
+        CONNECTED — and a manager that is already CONNECTED when the listener
+        is wired, which is how the constructor-time connect arrives here —
+        clears whatever error the startup probe or a past outage recorded.
+        The failure direction is symmetric and already lives on this manager:
+        set_health_callback records connection_failure on BACKOFF/FATAL_ERROR.
+
+        Idempotent per connection manager, so _initialize_firebase_client can
+        call it again after replacing the client and get the new one wired.
+        """
+        if not self.firebase_client:
+            return
+
+        manager = getattr(self.firebase_client, 'connection_manager', None)
+        if manager is None:
+            return
+
+        from connection_manager import ConnectionState
+
+        if manager is not self._connection_status_manager:
+            def _on_connection_change(event):
+                # Fires on every transition, so a disconnect turns the badge red
+                # as quickly as a connect turns it green. The write is throttled
+                # by content signature (MIN_STATUS_WRITE_INTERVAL), and
+                # `connected` is part of that signature, so a transition always
+                # writes and a steady state still costs nothing.
+                try:
+                    if event.new_state == ConnectionState.CONNECTED:
+                        self._clear_health_error_on_connect()
+                except Exception as e:
+                    logging.debug(f"Health clear on connection change failed: {e}")
+                try:
+                    self._write_service_status()
+                except Exception as e:
+                    logging.debug(f"Status write on connection change failed: {e}")
+
+            manager.add_state_listener(_on_connection_change)
+            self._connection_status_manager = manager
+
+        # Publish the state that is already current — the transition this
+        # listener exists for has usually happened by now.
+        try:
+            if manager.state == ConnectionState.CONNECTED:
+                self._clear_health_error_on_connect()
+        except Exception as e:
+            logging.debug(f"Health clear on listener wire failed: {e}")
+        try:
+            self._write_service_status()
+        except Exception as e:
+            logging.debug(f"Initial connection status write failed: {e}")
+
+    def graceful_shutdown(self, trigger):
+        """Flush presence and log the shutdown. Runs at most once per process.
+
+        Every operator-initiated stop has to come through here: the machine is
+        marked offline in Firestore, an agent_stopped event is logged, the
+        session is recorded as a clean external stop, and the status file is
+        left saying the service is down.
+
+        Two independent triggers call it — the console control handler, and
+        the SCM watcher that notices STOP_PENDING whether or not any console
+        event ever arrives. Whichever gets here first does the work; the other
+        returns immediately.
+
+        Args:
+            trigger: Short name of what noticed the stop, for the log.
+
+        Returns:
+            True if this call performed the shutdown, False if it was already
+            done (or under way on another thread).
+        """
+        with self._shutdown_lock:
+            if self._shutdown_trigger is not None:
+                logging.debug(
+                    f"[SHUTDOWN] {trigger} ignored — already handled by "
+                    f"{self._shutdown_trigger}"
+                )
+                return False
+            self._shutdown_trigger = trigger
+
+        started = time.monotonic()
+        logging.warning(f"=== SERVICE STOP ({trigger}) === flushing presence")
+        self.is_alive = False
+
+        if self.firebase_client:
+            try:
+                version = shared_utils.get_app_version()
+                self.firebase_client.log_event(
+                    action='agent_stopped',
+                    level='info',
+                    details=f'owlette agent v{version} shutting down gracefully'
+                )
+                logging.info("[SHUTDOWN] agent_stopped event logged")
+            except Exception as e:
+                logging.error(f"[SHUTDOWN] Failed to log agent_stopped: {e}")
+
+            # Compare-and-set: an owlette_reboot/owlette_shutdown intent set
+            # moments earlier by _handle_reboot_machine must win over this.
+            try:
+                import session_state
+                session_state.set_intent_if_none("external_clean")
+            except Exception as e:
+                logging.debug(f"[SHUTDOWN] set_intent_if_none failed: {e}")
+
+            # This is the write that marks the machine offline.
+            try:
+                self.firebase_client.stop()
+                logging.info("[SHUTDOWN] Firebase client stopped, machine offline")
+            except Exception as e:
+                logging.error(f"[SHUTDOWN] Error stopping Firebase client: {e}")
+        else:
+            logging.warning("[SHUTDOWN] No Firebase client — presence not flushed")
+
+        try:
+            self._write_service_status(running=False)
+        except Exception as e:
+            logging.debug(f"[SHUTDOWN] Final status write failed: {e}")
+
+        elapsed = time.monotonic() - started
+        if elapsed > SCM_STOP_GRACE_SECONDS:
+            logging.warning(
+                f"=== SERVICE STOP COMPLETE ({trigger}) === took {elapsed:.1f}s, "
+                f"longer than the {SCM_STOP_GRACE_SECONDS}s the service host allows — the "
+                f"offline write may not have landed"
+            )
+        else:
+            logging.info(f"=== SERVICE STOP COMPLETE ({trigger}) === in {elapsed:.1f}s")
+        return True
+
+    def _query_scm_stop_requested(self):
+        """True once the SCM reports this service is stopping.
+
+        Kept separate from the polling loop so the decision can be exercised
+        without a service. Any failure to read the SCM is reported as "not
+        stopping" — a watcher that cannot see the SCM must not invent a stop.
+        """
+        try:
+            manager = win32service.OpenSCManager(
+                None, None, win32service.SC_MANAGER_CONNECT)
+        except Exception as e:
+            logging.debug(f"[SCM WATCH] Could not open the SCM: {e}")
+            return False
+
+        try:
+            service = win32service.OpenService(
+                manager, shared_utils.SERVICE_NAME, win32service.SERVICE_QUERY_STATUS)
+        except Exception as e:
+            logging.debug(f"[SCM WATCH] Could not open {shared_utils.SERVICE_NAME}: {e}")
+            return False
+        finally:
+            try:
+                win32service.CloseServiceHandle(manager)
+            except Exception:
+                pass
+
+        try:
+            state = win32service.QueryServiceStatus(service)[1]
+        except Exception as e:
+            logging.debug(f"[SCM WATCH] Could not query service status: {e}")
+            return False
+        finally:
+            try:
+                win32service.CloseServiceHandle(service)
+            except Exception:
+                pass
+
+        return state in (win32service.SERVICE_STOP_PENDING,
+                         win32service.SERVICE_STOPPED)
+
+    def start_scm_stop_watcher(self):
+        """Watch the SCM for a stop this process was never told about.
+
+        NSSM's graceful stop was a console Control-C it could only deliver if it
+        managed to attach to the application's console; when that failed the
+        agent was terminated with no signal at all, which is how a machine came
+        to sit on the dashboard as online with an eleven-minute-old heartbeat.
+        STOP_PENDING is set the moment the stop control is accepted and cannot
+        be missed — owlette-host reports it and then waits for this shutdown to
+        finish — so it is polled here as the trigger that always fires.
+
+        Runs on its own daemon thread — never on the main loop, which must not
+        block — and exits as soon as it has handed off to graceful_shutdown().
+        """
+        def _watch():
+            failures = 0
+            while self.is_alive:
+                try:
+                    if self._query_scm_stop_requested():
+                        logging.warning(
+                            "[SCM WATCH] Service is stopping and no shutdown "
+                            "signal reached us — flushing presence now"
+                        )
+                        self.graceful_shutdown('scm_stop')
+                        return
+                    failures = 0
+                except Exception as e:
+                    failures += 1
+                    logging.debug(f"[SCM WATCH] Poll failed ({failures}): {e}")
+                    # A watcher that cannot read the SCM is useless and must not
+                    # spin forever logging about it; the console handler is
+                    # still in place either way.
+                    if failures >= 10:
+                        logging.warning(
+                            "[SCM WATCH] Giving up after 10 consecutive failures"
+                        )
+                        return
+                time.sleep(SCM_STOP_POLL_INTERVAL)
+
+        thread = threading.Thread(
+            target=_watch, name='owlette-scm-stop-watch', daemon=True)
+        thread.start()
+        logging.info(
+            f"SCM stop watcher started (polling every {SCM_STOP_POLL_INTERVAL}s)")
+        return thread
+
     def _update_health_state(self, status: str, error_code: str, message: str):
         """
         Update health state and propagate to IPC file, Firestore (if connected),
@@ -672,9 +1022,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self._health_state.status = status
                 self._health_state.error_code = error_code
                 self._health_state.error_message = message
+                # checked_at answers "when was this verdict reached", not
+                # "when did the boot-time probe run" — refresh it on every
+                # update so a cleared or re-raised state carries its own time.
+                self._health_state.checked_at = int(_time.time())
 
             self._write_service_status()
-            logging.warning(f"[HEALTH] Status updated: {status} — {error_code}: {message}")
+            # Recovery to ok is routine; anything else is worth a warning.
+            level = logging.INFO if status == STATUS_OK else logging.WARNING
+            logging.log(level, f"[HEALTH] Status updated: {status} — {error_code}: {message}")
 
         except Exception as e:
             logging.debug(f"_update_health_state write failed: {e}")
@@ -852,19 +1208,28 @@ class OwletteService(win32serviceutil.ServiceFramework):
         """
         # 1. Arm hard-exit FIRST. If anything below wedges (e.g. set_intent
         #    blocks on a corrupt state file, main loop takes >30s to unwind),
-        #    the timer guarantees the process dies so NSSM restarts us.
+        #    the timer guarantees the process dies so the host restarts us.
         def _hard_exit():
             try:
                 if getattr(self, '_scm_stop_requested', False):
                     logging.info("[WATCHDOG] Hard-exit aborted — SCM stop in progress, yielding to operator")
                     return
-                # Flush offline presence before dying so dashboards don't show
-                # ~heartbeat-timeout of stale "online" after a watchdog exit.
+                # Stop the client WITHOUT the offline flush: the host restarts
+                # us immediately, so writing online:false here only makes the
+                # dashboard flap. Run it on a worker with a bounded join so a
+                # wedged client can never defeat the hard-exit guarantee.
                 try:
-                    if self.firebase_client and self.firebase_client.connected:
-                        self.firebase_client._update_presence(False)
+                    if self.firebase_client:
+                        stopper = threading.Thread(
+                            target=self.firebase_client.stop,
+                            kwargs={'intentional': True},
+                            name='watchdog-firebase-stop',
+                            daemon=True,
+                        )
+                        stopper.start()
+                        stopper.join(timeout=5.0)
                 except Exception as e:
-                    logging.debug(f"[WATCHDOG] offline presence flush failed: {e}")
+                    logging.debug(f"[WATCHDOG] Firebase client stop failed: {e}")
                 logging.error(f"[WATCHDOG] Hard-exit timer firing with code {exit_code}")
             finally:
                 os._exit(exit_code)
@@ -893,63 +1258,38 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     def SvcStop(self):
         # Signal self-restart watchdog to yield — if an exit-43 hard-exit timer
-        # is in flight, it will abort so this clean exit-0 path wins and NSSM
-        # respects the operator's stop intent.
+        # is in flight, it will abort so this clean exit-0 path wins and the
+        # host respects the operator's stop intent.
         self._scm_stop_requested = True
 
-        # Try to report service status (may fail when running under NSSM)
+        # Try to report service status (may fail when hosted by owlette-host,
+        # which owns the SCM handle)
         try:
             self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         except AttributeError:
-            # Running under NSSM - service control handler not fully initialized
-            logging.info("SvcStop called under NSSM mode (service control handler not available)")
+            # Hosted by owlette-host — this process has no SCM control handler
+            logging.info("SvcStop called under the service host (no SCM control handler here)")
 
         # Log service stop with stack trace info to identify caller
         import inspect
         caller_frame = inspect.currentframe().f_back
         caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_lineno}" if caller_frame else "unknown"
         logging.warning(f"=== SERVICE STOP REQUESTED === (called from {caller_info})")
-        logging.info("Service stop requested - setting machine offline in Firebase...")
-        self.is_alive = False
 
-        # Log Agent Stopped event to Firestore BEFORE stopping client
-        firebase_connected = self.firebase_client and self.firebase_client.is_connected()
-        logging.info(f"SvcStop - Firebase client available: {self.firebase_client is not None}, connected: {firebase_connected}")
+        # One shutdown path for every trigger: this, the console control
+        # handler, and the SCM stop watcher. It flushes presence, logs
+        # agent_stopped, records the clean external stop and writes the final
+        # status file — once, whichever of them gets here first.
+        self.graceful_shutdown('svc_stop')
 
-        if firebase_connected:
-            try:
-                # Note: agent_stopped is logged by signal handler in owlette_runner.py
-                # (most reliable - always executes even if service is killed quickly)
-                # No need to log here to avoid duplicate events
-                logging.info("SvcStop - agent_stopped will be logged by signal handler")
-                # Give Firebase a moment to flush any pending writes
-                time.sleep(0.5)
-            except Exception as log_err:
-                logging.error(f"SvcStop - Failed to log agent_stopped event: {log_err}")
-                logging.exception("Full traceback:")
-        else:
-            logging.warning("SvcStop - Firebase client not available - cannot log agent_stopped event")
-
-        # Stop Firebase client (this sets machine offline)
-        if self.firebase_client:
-            try:
-                self.firebase_client.stop()
-                logging.info("[OK] Firebase client stopped and machine set to offline")
-            except Exception as e:
-                logging.error(f"[ERROR] Error stopping Firebase client: {e}")
-
-        # Close any open owlette windows (GUI, prompts, etc.)
+        # Close any open owlette windows (GUI, prompts, etc.). The desktop app
+        # is not one of them and is deliberately left running — see the note
+        # above _is_tray_alive().
         self.close_owlette_windows()
 
-        self.terminate_tray_icon()
         self.terminate_cortex()
 
-        # Write final status (service stopped) for tray icon
-        self._write_service_status(running=False)
-
         win32event.SetEvent(self.hWaitStop)
-
-        logging.info("=== SERVICE STOP COMPLETE ===")
 
     # While service runs
     def SvcDoRun(self):
@@ -1107,62 +1447,82 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         # Note: Gmail and Slack notifications removed - use Firebase for centralized monitoring
     
-    # Terminate the tray icon process if it exists
-    def terminate_tray_icon(self):
-        if self.tray_icon_pid:
-            try:
-                psutil.Process(self.tray_icon_pid).terminate()
-            except psutil.NoSuchProcess:
-                logging.error("No such process to terminate.")
-            except psutil.AccessDenied:
-                logging.error("Access denied while trying to terminate the process.")
-            except Exception as e:
-                logging.error(f"An unexpected error occurred while terminating the process: {e}")
+    # The service used to terminate the tray icon on the way out. It no longer
+    # does: the desktop app owns its own lifetime (it is a single instance, it
+    # can be started from the user's startup shortcut, and its footer is where
+    # an operator starts a stopped service from). Killing it on shutdown left a
+    # machine with a stopped service and no UI to start it again — which is
+    # exactly what the leave-site flow ran into on 2026-08-13.
 
     def _is_tray_alive(self):
-        """Check if the tray icon process is still running using tracked PID.
-        Falls back to a process scan only if we don't have a PID."""
+        """Check whether the desktop app (which supplies the tray icon) is running.
+
+        The tracked PID is only the fast path, and it is validated against the
+        image name because the desktop app is a single instance: when the app is
+        already up, our CreateProcessAsUser launch is folded into it and the
+        process we recorded exits within a second. Without the pid file below
+        that would look like "tray died" every cycle and relaunch forever.
+        """
         # Fast path: check tracked PID
         if self.tray_icon_pid:
             try:
                 proc = psutil.Process(self.tray_icon_pid)
-                if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                if (proc.is_running()
+                        and proc.status() != psutil.STATUS_ZOMBIE
+                        and (proc.name() or '').lower() == shared_utils.DESKTOP_EXE_NAME):
                     return True
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
             # PID is stale — clear it
             self.tray_icon_pid = None
 
-        # Slow path: the tray may have been launched by the Startup shortcut (not by us),
-        # so we don't have its PID.  Do a process scan, but this is rare.
-        if shared_utils.is_script_running('owlette_tray.py'):
+        # Authoritative path: the marker the desktop app writes for its whole
+        # lifetime. Also covers the app being launched by the {userstartup}
+        # shortcut rather than by us, and survives a service restart.
+        pid = shared_utils.read_desktop_pid(shared_utils.TRAY_PID_PATH)
+        if pid:
+            self.tray_icon_pid = pid
             return True
 
         return False
 
     def _try_launch_tray(self):
-        """Launch the tray icon with cooldown to avoid thrashing.
+        """Launch the desktop app in tray mode, with cooldown to avoid thrashing.
         Returns True if launched (or already running), False if skipped/failed."""
-        tray_script = 'owlette_tray.py'
-
         # Already running?
         if self._is_tray_alive():
             return True
 
-        # Cooldown — don't spam launches if the tray keeps crashing
+        # Cooldown — don't spam launches if the app keeps crashing, and don't
+        # retry a failing launch on every 5s tick either. Stamped before the
+        # attempt so a failure (missing exe, no interactive session) is paced
+        # the same as a crash-loop.
         now = time.time()
         elapsed = now - self._tray_last_launch_time
         if elapsed < self._tray_launch_cooldown:
             return False
+        self._tray_last_launch_time = now
 
         # Try to launch
-        if self.launch_python_script_as_user(tray_script):
-            self._tray_last_launch_time = now
+        if self.launch_desktop_app_as_user(shared_utils.DESKTOP_TRAY_ARG):
             logging.info("Tray icon launched")
             return True
         else:
-            logging.debug("Could not launch tray icon (no user session?)")
+            # launch_desktop_app_as_user already logged why (missing exe or no
+            # interactive session).
+            logging.debug("Could not launch tray icon")
             return False
+
+    def _is_restart_prompt_active(self):
+        """True while a reboot countdown prompt is believed to be on screen.
+
+        The prompt is a window inside the single-instance desktop app now, not a
+        separate process, so there is nothing for the service to scan for; it
+        tracks its own launch instead (see RESTART_PROMPT_ACTIVE_SECONDS). The
+        gate is conservative in the right direction — expiring early would
+        re-prompt an operator who is already looking at the countdown.
+        """
+        return time.monotonic() < self._restart_prompt_until
 
     # ─── Cortex Process Management ──────────────────────────────────────
 
@@ -1351,7 +1711,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         last_pid = fallback_pid
                         discovered = True
                 if last_pid and Util.is_pid_running(last_pid):
-                    shared_utils.graceful_terminate(last_pid)
+                    shared_utils.graceful_terminate(
+                        last_pid, exe_path=target.get('exe_path'))
                     shared_utils.update_process_status_in_json(
                         last_pid, 'KILLED', self.firebase_client, process_id=process_list_id)
                     # Mark as killed (not deleted) so the main loop doesn't treat
@@ -1365,10 +1726,26 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         'result': f'Process {process_name} was not running'}
             else:
                 # restart_process (also used for start): relaunch if running, else launch.
+                discovered = False
+                if not (last_pid and Util.is_pid_running(last_pid)):
+                    # Same reasoning as kill_process above: an off-mode or
+                    # otherwise untracked instance is live but absent from
+                    # last_started, and launching on top of it duplicates it.
+                    # This path runs unattended from hoot tier-2 self-healing,
+                    # so nobody is watching to catch the second instance.
+                    fallback_pid = (
+                        self._find_running_process_by_exe(
+                            target.get('exe_path', ''), target.get('file_path', ''), strict=True)
+                        if target.get('exe_path') else None
+                    )
+                    if fallback_pid:
+                        last_pid = fallback_pid
+                        discovered = True
                 if last_pid and Util.is_pid_running(last_pid):
                     new_pid = self.kill_and_relaunch_process(last_pid, target)
+                    note = ' (PID discovered by exe/file_path lookup)' if discovered else ''
                     return {'status': 'completed',
-                            'result': f'Process {process_name} restarted (new PID {new_pid})'}
+                            'result': f'Process {process_name} restarted (new PID {new_pid}){note}'}
                 new_pid = self.handle_process_launch(target)
                 return {'status': 'completed',
                         'result': f'Process {process_name} started (PID {new_pid})'}
@@ -1441,11 +1818,57 @@ class OwletteService(win32serviceutil.ServiceFramework):
         """
         return shared_utils.find_running_process_by_exe(exe_path, file_path, strict=strict)
 
+    def _launch_lock_for(self, process_list_id):
+        """The launch lock for one process entry, created on first use."""
+        with self._launch_locks_guard:
+            lock = self._launch_locks.get(process_list_id)
+            if lock is None:
+                lock = threading.RLock()
+                self._launch_locks[process_list_id] = lock
+            return lock
+
+    def _adopt_running_instance(self, process):
+        """Adopt a live instance of `process` that the service isn't tracking.
+
+        Returns its PID (and records it in last_started) or None.
+
+        Used by the operator-initiated start paths, where last_started is not
+        proof of absence: recover_running_processes never adopts an off-mode
+        process, so a perfectly healthy instance can be live and untracked, and
+        launching on top of it is what produces duplicates.
+
+        strict=True is load-bearing, not caution. Several instances of one
+        executable are the norm for the apps Owlette supervises — every
+        TouchDesigner project is the same TouchDesigner.exe with a different
+        .toe — so a bare image-name match is never enough to call one of them
+        "this process". Strict requires either an exact exe-path match that is
+        unique on the box, or a basename match corroborated by file_path
+        appearing in the command line. With several candidates and nothing to
+        disambiguate it returns None, and we launch rather than adopt a
+        stranger — the same trade kill_process makes.
+        """
+        exe_path = process.get('exe_path', '')
+        if not exe_path:
+            return None
+        pid = self._find_running_process_by_exe(
+            exe_path, process.get('file_path', ''), strict=True)
+        if not pid:
+            return None
+        process_list_id = process['id']
+        self.last_started[process_list_id] = {
+            'time': datetime.datetime.now(), 'pid': pid}
+        shared_utils.update_process_status_in_json(
+            pid, 'RUNNING', self.firebase_client, process_id=process_list_id)
+        logging.info(
+            f"[OK] Adopted already-running '{Util.get_process_name(process)}' "
+            f"(PID {pid}) instead of launching a duplicate")
+        return pid
+
     def _enable_privileges(self):
         """Enable critical privileges in the service process token.
 
         LocalSystem has SE_TCB_PRIVILEGE assigned but it may not be enabled
-        in the inherited token (e.g. when NSSM spawns the Python child process).
+        in the inherited token (e.g. when the service host spawns this process).
         WTSQueryUserToken requires it to be enabled. We also enable
         SeAssignPrimaryTokenPrivilege and SeIncreaseQuotaPrivilege which
         CreateProcessAsUser needs.
@@ -1705,31 +2128,32 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.error(f"Failed to create elevated install token: {e}")
             return None, None
 
-    # Start a python script as a user
-    def launch_python_script_as_user(self, script_name, args=None):
-        try:
-            # Get full path to Python interpreter (handles bundled Python installations)
-            try:
-                python_exe = shared_utils.get_python_exe_path()
-            except FileNotFoundError as e:
-                logging.error(f"Cannot launch script {script_name}: {e}")
-                return False
+    # Start a command line in the interactive user's session
+    def _launch_command_as_user(self, command_line, description):
+        """CreateProcessAsUser on the interactive desktop.
 
+        Shared by the python-script launcher and the desktop-app launcher, so
+        the token refresh and the STARTUPINFO stay in one place.
+
+        Returns the new PID, or None when there is no interactive session or the
+        launch failed.
+        """
+        try:
             # Refresh token to handle session changes since service startup
             self._refresh_user_token()
             if not self.console_user_token:
-                logging.error(f"Cannot launch script {script_name}: no interactive user session")
-                return False
+                logging.error(f"Cannot launch {description}: no interactive user session")
+                return None
 
             # Use a fresh STARTUPINFO with the interactive desktop so the tray icon
-            # (and any other UI script) can access the notification area / create windows.
-            # Without lpDesktop, the process inherits the service's hidden desktop.
+            # (and any other UI process) can access the notification area / create
+            # windows. Without lpDesktop, the process inherits the service's hidden
+            # desktop.
             si = win32process.STARTUPINFO()
             si.dwFlags = win32process.STARTF_USESHOWWINDOW
             si.wShowWindow = win32con.SW_HIDE
             si.lpDesktop = "WinSta0\\Default"
 
-            command_line = f'"{python_exe}" "{shared_utils.get_path(script_name)}" {args}' if args else f'"{python_exe}" "{shared_utils.get_path(script_name)}"'
             _, _, pid, _ = win32process.CreateProcessAsUser(self.console_user_token,
                 None,  # Application Name
                 command_line,  # Command Line
@@ -1740,14 +2164,86 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self.environment,
                 None,
                 si)
-            if 'owlette_tray.py' in script_name:
-                self.tray_icon_pid = pid
-            elif 'owlette_cortex.py' in script_name:
-                self.cortex_pid = pid
-            return True
+            return pid
         except Exception as e:
-            logging.error(f"Failed to start process: {e}")
+            logging.error(f"Failed to start {description}: {e}")
+            return None
+
+    # Start a python script as a user
+    def launch_python_script_as_user(self, script_name, args=None):
+        # Get full path to Python interpreter (handles bundled Python installations)
+        try:
+            python_exe = shared_utils.get_python_exe_path()
+        except FileNotFoundError as e:
+            logging.error(f"Cannot launch script {script_name}: {e}")
             return False
+
+        script_path = shared_utils.get_path(script_name)
+        command_line = f'"{python_exe}" "{script_path}" {args}' if args else f'"{python_exe}" "{script_path}"'
+        pid = self._launch_command_as_user(command_line, f"script {script_name}")
+        if pid is None:
+            return False
+
+        if 'owlette_cortex.py' in script_name:
+            self.cortex_pid = pid
+        return True
+
+    # Start the desktop app (tray icon, config window, restart prompt) as a user
+    def launch_desktop_app_as_user(self, *args):
+        """Launch owlette-desktop.exe in the interactive session.
+
+        The desktop app replaces owlette_tray.py and owlette_gui.py: `--tray`
+        asks for a tray icon with no window, `--restart-prompt` for the reboot
+        countdown. It is a single instance, so a launch while it is already
+        running is forwarded to the live process and this one exits — which is
+        exactly how a `--restart-prompt` reaches an app that is already in the
+        tray.
+
+        Returns True when the launch was issued.
+        """
+        exe_path = shared_utils.get_desktop_exe_path()
+        if not exe_path:
+            # Not a crash: a machine mid-upgrade (or a dev box that has not
+            # built the app) simply has no local UI, and everything else the
+            # service does is unaffected. Warn once per episode and drop to
+            # debug after that — on a machine that will never have the app this
+            # would otherwise be a WARNING every cooldown, forever.
+            expected = os.path.join(
+                os.path.dirname(os.path.dirname(shared_utils.get_path())),
+                'app',
+                shared_utils.DESKTOP_EXE_NAME,
+            )
+            message = (
+                f"Desktop app not found - expected {expected}. "
+                f"No local UI will be available on this machine."
+            )
+            if self._desktop_exe_missing_logged:
+                logging.debug(message)
+            else:
+                logging.warning(message)
+                self._desktop_exe_missing_logged = True
+            return False
+
+        # Found it again after an absence — let the next disappearance warn.
+        self._desktop_exe_missing_logged = False
+
+        # Launched detached rather than as our own child: a tree-walking stop
+        # service by terminating the whole process tree below the program it
+        # started, which used to take the operator's UI down with it — the tray
+        # icon included, leaving no way to start the service back up. See
+        # shared_utils.build_detached_launch_command for the mechanism.
+        command_line = shared_utils.build_detached_launch_command(exe_path, args)
+        description = f"desktop app ({' '.join(args) if args else 'no args'})"
+        pid = self._launch_command_as_user(command_line, description)
+        if pid is None:
+            return False
+
+        # The pid above belongs to the cmd.exe that hands off, not to the app,
+        # so nothing is recorded here. _is_tray_alive() adopts the real pid from
+        # tmp/tray.pid on the next check — the same marker that already covered
+        # an app started by the user's startup shortcut.
+        logging.info(f"Launched {description} (detached)")
+        return True
 
     def execute_in_user_session(self, job_type, code, timeout=30, trusted=False):
         """Execute code in the interactive user's desktop session.
@@ -1936,10 +2432,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # then uses ShellExecuteEx (ctypes) to launch the target with full
         # desktop/GPU context. The PID is returned immediately from the process handle.
         import json as json_module
+        import uuid
 
+        # os.getpid() is the service PID — constant for the whole service
+        # lifetime — so a second-resolution timestamp was the only thing
+        # separating two launches. Command threads and the monitor loop can
+        # both be in here at once (see _launch_lock_for), and two launches in the
+        # same second would then share both paths: one helper reads the
+        # other's args and the finally-block below deletes the file the other
+        # is still waiting on. The suffix makes each handoff unique.
         tmp_dir = shared_utils.get_data_path('tmp')
-        pid_file = os.path.join(tmp_dir, f'pid_{int(time.time())}_{os.getpid()}.txt')
-        args_file = os.path.join(tmp_dir, f'launch_{int(time.time())}_{os.getpid()}.json')
+        handoff = f'{int(time.time())}_{os.getpid()}_{uuid.uuid4().hex[:8]}'
+        pid_file = os.path.join(tmp_dir, f'pid_{handoff}.txt')
+        args_file = os.path.join(tmp_dir, f'launch_{handoff}.json')
 
         try:
             launch_args = {
@@ -2074,20 +2579,43 @@ class OwletteService(win32serviceutil.ServiceFramework):
             attempts = self.relaunch_attempts.get(process_name, 0 if self.first_start else 1)
 
             process_list_id = shared_utils.fetch_process_id_by_name(process_name, shared_utils.read_config())
-            relaunches_to_attempt = int(shared_utils.read_config(keys=['relaunch_attempts'], process_list_id=process_list_id))
-            if not relaunches_to_attempt:
+            # 0 means "relaunch forever, never escalate to a machine restart" —
+            # the escalation guard below is written for it (`!= 0`) and the
+            # operator-facing tooltip promises it. Only an absent or unparseable
+            # value falls back to the default: `not 0` is True, so defaulting on
+            # falsiness turned every explicit 0 into MAX_RELAUNCH_ATTEMPTS and
+            # made both the guard and the promise unreachable — a kiosk set to
+            # 0 specifically to avoid unattended reboots got one after 3 crashes.
+            raw_attempts = shared_utils.read_config(
+                keys=['relaunch_attempts'], process_list_id=process_list_id)
+            try:
+                relaunches_to_attempt = MAX_RELAUNCH_ATTEMPTS if raw_attempts in (None, '') \
+                    else int(raw_attempts)
+            except (TypeError, ValueError):
+                logging.warning(
+                    f"relaunch_attempts for '{process_name}' is not a number "
+                    f"({raw_attempts!r}) - falling back to {MAX_RELAUNCH_ATTEMPTS}")
                 relaunches_to_attempt = MAX_RELAUNCH_ATTEMPTS
+            if relaunches_to_attempt < 0:
+                relaunches_to_attempt = MAX_RELAUNCH_ATTEMPTS
+            unlimited = relaunches_to_attempt == 0
 
             # Check if restart prompt is running
-            if not shared_utils.is_script_running('prompt_restart.py'):
+            if not self._is_restart_prompt_active():
                 # If attempts are less than or equal to the relaunch attempts, log it
-                if 0 < attempts <= relaunches_to_attempt:
+                if unlimited and attempts > 0:
+                    self.log_and_notify(
+                        process,
+                        f'Process relaunch attempt: {attempts} (unlimited)'
+                    )
+                elif 0 < attempts <= relaunches_to_attempt:
                     self.log_and_notify(
                         process,
                         f'Process relaunch attempt: {attempts} of {relaunches_to_attempt}'
                     )
-                # If this is more than the maximum number of attempts allowed
-                if attempts > relaunches_to_attempt and relaunches_to_attempt != 0:
+                # If this is more than the maximum number of attempts allowed.
+                # `unlimited` never escalates — that is the whole point of 0.
+                if not unlimited and attempts > relaunches_to_attempt:
                     # Write reboot_pending to Firestore so dashboard can approve/dismiss remotely
                     if self.firebase_client and self.firebase_client.is_connected():
                         self.firebase_client.set_reboot_pending(
@@ -2097,11 +2625,11 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         )
 
                     # If a restart prompt isn't already running, open one (local fallback)
-                    started_restart_prompt = self.launch_python_script_as_user(
-                        shared_utils.get_path('prompt_restart.py'),
-                        None
+                    started_restart_prompt = self.launch_desktop_app_as_user(
+                        shared_utils.DESKTOP_RESTART_PROMPT_ARG
                     )
                     if started_restart_prompt:
+                        self._restart_prompt_until = time.monotonic() + RESTART_PROMPT_ACTIVE_SECONDS
                         self.log_and_notify(
                             process,
                             f'Terminated {process_name} {relaunches_to_attempt} times. System reboot imminent'
@@ -2122,6 +2650,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # Kill and restart a process
     def kill_and_relaunch_process(self, pid, process):
+        # Terminate-then-launch is one indivisible operation: the window
+        # between them is precisely when the monitor loop sees no live PID and
+        # launches a replacement of its own. Held across the whole sequence,
+        # so the loop's launch waits and then short-circuits on the PID this
+        # call records. Same lock handle_process_launch takes (reentrant).
+        with self._launch_lock_for(process.get('id', '')):
+            return self._kill_and_relaunch_locked(pid, process)
+
+    def _kill_and_relaunch_locked(self, pid, process):
         # Ensure process has not exceeded maximum relaunch attempts
         process_name = Util.get_process_name(process)
         if not self.reached_max_relaunch_attempts(process):
@@ -2129,8 +2666,9 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # Mark as KILLED before terminating so crash detection skips the alert
                 shared_utils.update_process_status_in_json(pid, 'KILLED', self.firebase_client, process_id=process.get('id'))
 
-                # Gracefully terminate (WM_CLOSE then hard kill)
-                shared_utils.graceful_terminate(pid)
+                # Gracefully terminate (WM_CLOSE then hard kill). exe_path
+                # lets it reap a cmd.exe wrapper's payload — see its docstring.
+                shared_utils.graceful_terminate(pid, exe_path=process.get('exe_path'))
 
                 # Log process kill event
                 if self.firebase_client and self.firebase_client.is_connected():
@@ -2147,6 +2685,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 if new_pid is None:
                     logging.error(f"Relaunch of {process_name} failed - no PID returned")
                     return None
+
+                # Record the new PID before releasing the launch lock. Callers
+                # also store it, but they do so after we return — and a thread
+                # blocked on the lock re-reads last_started the moment it is
+                # released, so leaving the gap open would let it conclude
+                # nothing is running and launch a duplicate.
+                self.last_started[process.get('id', '')] = {
+                    'time': datetime.datetime.now(), 'pid': new_pid}
 
                 self.log_and_notify(
                     process,
@@ -2215,8 +2761,26 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
     # Attempt to launch the process if not running
     def handle_process_launch(self, process):
+        # Snapshot the tracked PID before contending for the launch lock. Every
+        # caller decided "this needs launching" from state read outside the
+        # lock; if a concurrent launch lands while we wait, that decision is
+        # stale and launching anyway is exactly the duplicate we are guarding
+        # against. Re-checked against the post-lock value in _launch_locked().
+        pid_before_lock = self.last_started.get(process.get('id', ''), {}).get('pid')
+        with self._launch_lock_for(process.get('id', '')):
+            return self._launch_locked(process, pid_before_lock)
+
+    def _launch_locked(self, process, pid_before_lock):
         # Validate executable path before attempting launch
         process_id = process.get('id', '')
+        current_pid = self.last_started.get(process_id, {}).get('pid')
+        if (current_pid and current_pid != pid_before_lock
+                and Util.is_pid_running(current_pid)):
+            logging.info(
+                f"[OK] '{Util.get_process_name(process)}' was launched by another "
+                f"thread while this launch waited for the lock (PID {current_pid}) "
+                f"- not launching a second instance")
+            return current_pid
         exe_path = process.get('exe_path', '').strip()
         if not exe_path:
             process_name = Util.get_process_name(process)
@@ -2458,20 +3022,42 @@ class OwletteService(win32serviceutil.ServiceFramework):
             else:
                 # Process crashed or was manually closed
                 if last_pid:
-                    # Check if process was manually killed (don't log crash if it was)
+                    # Read the marker the terminating side left behind, if any.
+                    # KILLED     - the service or a dashboard command killed it
+                    # RESTARTING - an operator restarted it from the local app
+                    # Both mean "this exit was intended"; only RESTARTING is
+                    # worth an audit event, because the operator asked for it.
                     try:
                         results = shared_utils.read_json_from_file(shared_utils.RESULT_FILE_PATH)
                         # Defensive programming: ensure results is never None
                         if results is None:
                             results = {}
                         process_status = results.get(str(last_pid), {}).get('status', '')
-                        was_manually_killed = (process_status == 'KILLED')
                     except Exception as e:
                         logging.warning(f"Error checking manual kill status: {e}")
-                        was_manually_killed = False
+                        process_status = ''
+                    was_manually_killed = (process_status == 'KILLED')
+                    was_restarted = (process_status == PROCESS_RESTARTING_STATUS)
 
-                    # Only log crash if it wasn't manually killed and not shutting down
-                    if not was_manually_killed and not self._shutting_down:
+                    if self._shutting_down:
+                        logging.debug(f"Process {last_pid} stopped during reboot/shutdown - skipping crash alert")
+                    elif was_restarted:
+                        # The desktop app has no Firebase client of its own — the
+                        # legacy GUI wrote this event itself, and losing it is why
+                        # the marker exists. The relaunch happens below on the
+                        # normal autolaunch path, exactly as for a crash.
+                        process_name = Util.get_process_name(process)
+                        logging.info(f"Process {last_pid} ('{process_name}') was restarted from the local app - skipping crash alert")
+                        if self.firebase_client and self.firebase_client.is_connected():
+                            self.firebase_client.log_event(
+                                action='process_restarted',
+                                level='info',
+                                process_name=process_name,
+                                details=f'Manual restart from the local app - terminated PID {last_pid} (service will relaunch on next tick)'
+                            )
+                    elif was_manually_killed:
+                        logging.debug(f"Process {last_pid} was manually killed - skipping crash log")
+                    else:
                         process_name = Util.get_process_name(process)
 
                         # Best-effort screenshot capture before relaunch
@@ -2493,10 +3079,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash'
                             )
                         self._write_cortex_event(process_name, f'Process stopped unexpectedly (PID {last_pid} no longer running)', 'process_crash')
-                    elif self._shutting_down:
-                        logging.debug(f"Process {last_pid} stopped during reboot/shutdown - skipping crash alert")
-                    else:
-                        logging.debug(f"Process {last_pid} was manually killed - skipping crash log")
 
                 # Re-read config to get the latest launch_mode state
                 # (config may have changed via GUI/Firestore since the main loop started)
@@ -2693,9 +3275,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 self._last_seen_launch_schedules[process_id] = new_schedule_signature
                 continue
 
-            self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
+            # Record the transition as seen BEFORE applying it. Applying can
+            # block for seconds (an off->always transition launches the
+            # process), and this dict is what every other thread diffs against
+            # to decide whether a transition still needs applying. Updating it
+            # afterwards leaves a window in which a concurrent caller re-reads
+            # the old mode and applies the identical transition a second time.
             self._last_seen_launch_modes[process_id] = new_mode
             self._last_seen_launch_schedules[process_id] = new_schedule_signature
+            self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
 
         stale_process_ids = set(self._last_seen_launch_modes.keys()) - current_process_ids
         for process_id in stale_process_ids:
@@ -2878,9 +3466,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         )
 
                         if old_mode != new_mode or schedules_changed:
-                            self._apply_launch_mode_transition(process_id, old_mode, new_mode, new_proc)
+                            # Seen-state first, then apply — see the note in
+                            # _diff_and_apply_launch_modes. This runs on the
+                            # Firestore config-listener thread while the
+                            # monitor loop diffs the same dict every tick.
                             self._last_seen_launch_modes[process_id] = new_mode
                             self._last_seen_launch_schedules[process_id] = self._get_schedule_signature(new_proc)
+                            self._apply_launch_mode_transition(process_id, old_mode, new_mode, new_proc)
 
                 # Log summary
                 logging.info(f"Config update complete - Processes: {len(old_processes)} -> {len(new_processes)}, Removed: {len(removed_process_ids)}")
@@ -3030,7 +3622,21 @@ class OwletteService(win32serviceutil.ServiceFramework):
             # handlers (sync_pull, cancel_sync, rollback_to_version) register
             # via self._command_router and are dispatched here.
             if self._command_router.has_handler(cmd_type):
-                return self._command_router.dispatch(cmd_type, cmd_data, cmd_id, self)
+                try:
+                    return self._command_router.dispatch(cmd_type, cmd_data, cmd_id, self)
+                except Exception as e:
+                    # Router handlers signal failure two ways: an "Error: ..."
+                    # return (see sync_commands._failure) or a raise. Without
+                    # this catch the raise would fall through to the outer
+                    # handler below, whose message does NOT start with
+                    # "Error:" — and firebase_client._execute_command keys the
+                    # completed-vs-failed decision off exactly that prefix, so
+                    # a crashed handler would be recorded as a success.
+                    logging.error(
+                        f"Command handler for '{cmd_type}' raised: {e}",
+                        exc_info=True,
+                    )
+                    return f"Error: {cmd_type} failed: {e}"
 
             if cmd_type in ('restart_process', 'start_process'):
                 # Restart or start a specific process by public id or name.
@@ -3052,9 +3658,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         last_info = self.last_started.get(process_list_id, {})
                         last_pid = last_info.get('pid')
                         if cmd_type == 'start_process':
-                            self.last_started.pop(process_list_id, None)
                             if last_pid and Util.is_pid_running(last_pid):
                                 return f"Process {process_name} is already running with PID {last_pid}"
+                            # The tracked PID is not proof of absence. Off-mode
+                            # processes are never adopted by the monitor loop
+                            # (recover_running_processes skips them), so a live
+                            # instance leaves last_started empty and a bare
+                            # last_pid test launches a duplicate on top of it.
+                            # Same discovery fallback kill_process already uses.
+                            adopted_pid = self._adopt_running_instance(process)
+                            if adopted_pid:
+                                return (f"Process {process_name} is already running with "
+                                        f"PID {adopted_pid} (discovered by exe/file_path lookup)")
+                            self.last_started.pop(process_list_id, None)
                             new_pid = self.handle_process_launch(process)
                             # Log command execution
                             if self.firebase_client and self.firebase_client.is_connected():
@@ -3121,7 +3737,8 @@ class OwletteService(win32serviceutil.ServiceFramework):
                                 last_pid = fallback_pid
                                 discovered = True
                         if last_pid and Util.is_pid_running(last_pid):
-                            shared_utils.graceful_terminate(last_pid)
+                            shared_utils.graceful_terminate(
+                                last_pid, exe_path=process.get('exe_path'))
                             status = 'STOPPED' if cmd_type == 'stop_process' else 'KILLED'
                             action = 'process_stopped' if cmd_type == 'stop_process' else 'process_killed'
                             discovered_note = ' (PID discovered by exe/file_path lookup)' if discovered else ''
@@ -3191,9 +3808,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
                         and old_schedule_signature != new_schedule_signature
                     )
                     if old_mode != new_mode or schedules_changed:
-                        self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
+                        # Seen-state first, then apply — see the note in
+                        # _diff_and_apply_launch_modes. save_config() above has
+                        # already published the new mode, so the monitor loop's
+                        # next tick reads 'always' from disk; without this
+                        # ordering it would diff against a stale snapshot and
+                        # fire the same off->always launch we are about to.
                         self._last_seen_launch_modes[process_id] = new_mode
                         self._last_seen_launch_schedules[process_id] = new_schedule_signature
+                        self._apply_launch_mode_transition(process_id, old_mode, new_mode, process)
 
                     return f"Launch mode for {process_name} set to {new_mode}"
                 target = process_id or process_name
@@ -3509,6 +4132,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     # Launch installer via Windows Task Scheduler (survives service stop)
                     # This ensures installer keeps running even when Inno Setup kills the service
                     log_path = os.path.join(os.environ.get('ProgramData', 'C:\\ProgramData'), 'owlette', 'logs', 'installer_update.log')
+                    # Inno Setup APPENDS to /LOG, so this file grows for the
+                    # life of the machine and never ages out of
+                    # cleanup_old_logs (every update refreshes its mtime).
+                    # Rotate once here — the last moment before the installer
+                    # opens it — so the worst case stays bounded.
+                    shared_utils.rotate_log_if_oversized(log_path)
                     silent_flags = f'/VERYSILENT /NORESTART /SUPPRESSMSGBOXES /ALLUSERS /LOG="{log_path}"'
                     task_name = f"OwletteUpdate_{int(time.time())}"
 
@@ -4089,8 +4718,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 return f"Unknown command type: {cmd_type}"
 
         except Exception as e:
-            error_msg = f"Error executing command {cmd_type}: {e}"
-            logging.error(error_msg)
+            # "Error:" prefix is required, not stylistic: firebase_client's
+            # _execute_command writes status:'failed' only for results that
+            # start with it. Without the colon this read as an error to a
+            # human but was recorded in firestore as a completed command.
+            error_msg = f"Error: executing command {cmd_type}: {e}"
+            logging.error(error_msg, exc_info=True)
             return error_msg
 
     def _check_display_topology(self):
@@ -4266,6 +4899,19 @@ class OwletteService(win32serviceutil.ServiceFramework):
 
         log_event already stamps machineId + timestamp (SERVER_TIMESTAMP), so
         we don't duplicate those here.
+
+        The same ``payload`` is handed to ``send_display_alert``, which posts
+        it to ``/api/agent/alert`` for email + webhook delivery. Two distinct
+        sinks: the log write owns the dashboard feed and the talon bridge, the
+        alert owns out-of-band delivery — neither substitutes for the other.
+        ``send_display_alert`` is non-blocking (daemon thread + retry queue)
+        and drops event types with no routing entry itself, so callers hand it
+        every event unconditionally.
+
+        ``payload`` carries the ``suppressAlert`` / ``correlatedApplyId`` flags
+        stamped by ``_emit_display_change_events`` when the event lands inside
+        the post-apply suppression window; the routing endpoint reads them off
+        ``data`` to skip email while still firing the webhook.
         """
         try:
             details = json.dumps(payload, separators=(',', ':'), sort_keys=True)
@@ -4277,6 +4923,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
             level=severity,
             details=details,
         )
+        self.firebase_client.send_display_alert(event_type, payload)
 
     @staticmethod
     def _auto_restore_values_equal(label: str, live_value, assigned_value) -> bool:
@@ -4812,11 +5459,16 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.warning(f"_run_auto_restore failed: {e}")
 
     def _maybe_dispatch_roost_scrub(self):
-        """Run roost scrub_all_due() on a daemon thread if not already in-flight.
+        """Run roost scrub + content-store reap on a daemon thread if idle.
 
         Called from the main loop every ROOST_SCRUB_CHECK_ITERATIONS. Single-flight:
         if a previous scrub thread is still alive, this iteration is a no-op.
-        Scrub runs off-loop so a long re-hash never stalls process monitoring.
+        Both jobs run off-loop so a long re-hash never stalls process monitoring.
+
+        The reap runs after the scrub and independently of it: it collects
+        cached chunks that no in-flight distribution references and that are
+        older than the reaper's age threshold, which is what stops a failed
+        distribution's downloaded bytes from sitting on disk forever.
         """
         if self._roost_scrub_thread is not None and self._roost_scrub_thread.is_alive():
             return
@@ -4841,6 +5493,21 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 # exc_info so an unexpected failure (e.g. a schema mismatch)
                 # surfaces its stack instead of just a bare message.
                 logging.warning(f"roost scrub failed: {e}", exc_info=True)
+
+            # Separate try: a scrub failure must not skip the reap (and vice
+            # versa) — they share nothing but the state DB handle.
+            try:
+                from sync_commands import _state_for
+                from sync_scrub import reap_orphan_chunks
+                report = reap_orphan_chunks(_state_for(self))
+                if report.deleted or report.failed:
+                    logging.info(
+                        f"roost content-store reap: deleted {report.deleted} orphan "
+                        f"chunk(s), {report.bytes_freed / (1024 * 1024):.1f} MiB freed, "
+                        f"{report.failed} failed"
+                    )
+            except Exception as e:
+                logging.warning(f"roost content-store reap failed: {e}", exc_info=True)
 
         t = threading.Thread(target=_run_scrub, daemon=True, name='roost-scrub')
         t.start()
@@ -5525,16 +6192,12 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 del self.relaunch_attempts[process_name]
                 logging.info(f"Reset relaunch counter for {process_name}")
 
-            # Kill the local restart prompt if it's still running
-            if shared_utils.is_script_running('prompt_restart.py'):
-                try:
-                    import subprocess
-                    subprocess.run(
-                        ['taskkill', '/F', '/IM', 'pythonw.exe', '/FI', 'WINDOWTITLE eq *restart*'],
-                        capture_output=True
-                    )
-                except Exception:
-                    pass
+            # Re-arm the local prompt. The countdown window belongs to the
+            # desktop app, which owns closing it; what the service must do is
+            # drop its own "a prompt is up" gate, so a later exceedance can
+            # prompt again instead of being suppressed for the rest of the
+            # window (see _is_restart_prompt_active).
+            self._restart_prompt_until = 0.0
 
             self.firebase_client.log_event(
                 action='command_executed',
@@ -6245,6 +6908,156 @@ with open(out_path, 'wb') as f:
                 f"migration will retry on next boot (idempotent — paths no longer exist)"
             )
 
+    # Per-launch scheduled tasks created by agents older than 2.1.1, which
+    # launched supervised processes through Task Scheduler instead of
+    # CreateProcessAsUser. Both families were meant to be deleted seconds after
+    # the launch, but the delete sat on a path that exceptions skipped, so a
+    # long-lived box accumulates them. Anchored full-name matches: these two
+    # shapes are generated only by Owlette and appear nowhere else.
+    #   OwletteProcess_<uuid>_<epoch>  — 2.0.26-2.0.54 (schtasks CLI)
+    #   Owlette_Launch_<helper pid>    — 2.0.56 (Task Scheduler COM)
+    LEGACY_LAUNCH_TASK_PATTERNS = (
+        re.compile(r'^OwletteProcess_[0-9a-fA-F-]{8,36}_\d{9,11}$'),
+        re.compile(r'^Owlette_Launch_\d+$'),
+    )
+
+    def _sweep_legacy_launch_tasks(self):
+        """One-time removal of per-launch scheduled tasks left by pre-2.1.1 agents.
+
+        These are inert — the COM-created ones carry no trigger at all and the
+        schtasks-created ones a single one-time trigger dated to their creation
+        day — so this is hygiene, not a live-fire fix: they clutter Task
+        Scheduler and get mistaken for a second Owlette autostart.
+
+        Deliberately narrow, because deleting a task an operator created would
+        be far worse than leaving litter:
+          * anchored full-name match on the two generated shapes only. A
+            prefix match would take `Owlette_Test_*` and anything else a
+            technician named Owlette-something.
+          * never `OwletteUpdate_*` / `OwletteRecovery_*` — those are current,
+            and one may be mid-flight right now. The post-update handler owns
+            those and reaps them on its own path.
+          * a task must have no trigger, or exactly one non-repeating trigger
+            whose start boundary is in the past. Anything with a live trigger
+            did not come from these code paths; it is logged and left alone.
+
+        Gated by a one-shot flag file next to the roost-cache migration.
+        """
+        if os.name != 'nt':
+            return
+
+        program_data = os.environ.get('PROGRAMDATA', 'C:\\ProgramData')
+        flag_dir = os.path.join(program_data, 'Owlette', '.migrations')
+        flag_path = os.path.join(flag_dir, 'legacy-launch-tasks-swept')
+        if os.path.exists(flag_path):
+            return
+
+        def _is_inert(task_name):
+            """True if the task can never fire on its own again.
+
+            Reads the task's XML rather than trusting the name: the name tells
+            us Owlette generated it, this tells us removing it is safe.
+            """
+            try:
+                result = subprocess.run(
+                    ['schtasks', '/Query', '/TN', task_name, '/XML', 'ONE'],
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                if result.returncode != 0 or not result.stdout.strip():
+                    return False
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(result.stdout)
+                ns = {'t': 'http://schemas.microsoft.com/windows/2004/02/mit/task'}
+                triggers = root.find('t:Triggers', ns)
+                if triggers is None or len(triggers) == 0:
+                    return True  # demand-start only — the COM-created shape
+                if len(triggers) > 1:
+                    return False
+                trigger = triggers[0]
+                # A repeating trigger fires again regardless of start date.
+                if trigger.find('t:Repetition', ns) is not None:
+                    return False
+                enabled = trigger.find('t:Enabled', ns)
+                if enabled is not None and (enabled.text or '').strip().lower() == 'false':
+                    return True
+                boundary = trigger.find('t:StartBoundary', ns)
+                if boundary is None or not (boundary.text or '').strip():
+                    return False
+                start = datetime.datetime.fromisoformat(boundary.text.strip())
+                if start.tzinfo is not None:
+                    start = start.replace(tzinfo=None)
+                return start < datetime.datetime.now()
+            except Exception as e:
+                logging.debug(f"legacy task sweep: could not inspect {task_name}: {e}")
+                return False
+
+        removed, skipped = 0, 0
+        try:
+            result = subprocess.run(
+                ['schtasks', '/Query', '/FO', 'LIST'],
+                capture_output=True, text=True, timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            if result.returncode != 0:
+                logging.debug("legacy task sweep: schtasks query failed - will retry next start")
+                return
+
+            seen = set()
+            for line in result.stdout.splitlines():
+                if not line.lower().startswith('taskname:'):
+                    continue
+                # "TaskName: \Owlette_Launch_40320" — tasks live at the root.
+                name = line.split(':', 1)[1].strip().lstrip('\\')
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                if not any(p.match(name) for p in self.LEGACY_LAUNCH_TASK_PATTERNS):
+                    continue
+                if not _is_inert(name):
+                    logging.info(
+                        f"legacy task sweep: leaving '{name}' in place - it has a "
+                        f"live trigger, so it did not come from the legacy launcher"
+                    )
+                    skipped += 1
+                    continue
+                delete = subprocess.run(
+                    ['schtasks', '/Delete', '/TN', name, '/F'],
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                if delete.returncode == 0:
+                    logging.info(f"legacy task sweep: removed stale launch task '{name}'")
+                    removed += 1
+                else:
+                    logging.warning(
+                        f"legacy task sweep: could not remove '{name}': "
+                        f"{(delete.stderr or '').strip()}"
+                    )
+                    skipped += 1
+        except Exception as e:
+            # Never block service start on housekeeping. No flag is written,
+            # so the next start retries.
+            logging.warning(f"legacy task sweep failed (non-fatal): {e}")
+            return
+
+        if removed or skipped:
+            logging.info(
+                f"legacy task sweep complete: {removed} removed, {skipped} left in place")
+
+        try:
+            os.makedirs(flag_dir, exist_ok=True)
+            with open(flag_path, 'w') as f:
+                f.write(
+                    f"legacy launch tasks swept at {datetime.datetime.now().isoformat()} "
+                    f"({removed} removed, {skipped} skipped)\n"
+                )
+        except OSError as e:
+            logging.warning(
+                f"legacy task sweep: could not write flag at {flag_path!r}: {e}; "
+                f"will re-run next start (idempotent — the tasks are already gone)"
+            )
+
     # Main main
     def main(self):
 
@@ -6253,7 +7066,7 @@ with open(out_path, 'wb') as f:
         self.startup_info.dwFlags = win32process.STARTF_USESHOWWINDOW
 
         # Enable critical privileges before first token acquisition.
-        # LocalSystem has these assigned but NSSM child process may inherit them disabled.
+        # LocalSystem has these assigned but the child process may inherit them disabled.
         self._enable_privileges()
 
         # Initial user token acquisition. This is refreshed before each process launch
@@ -6277,7 +7090,18 @@ with open(out_path, 'wb') as f:
         self._try_launch_tray()
 
         logging.info("Service initialization complete")
-        shared_utils.log_startup_system_snapshot()
+        # The system snapshot is WMI (Win32_Processor) + GPU-driver backed and
+        # can take seconds on a cold GPU driver. It produces log lines only, so
+        # it runs on a daemon thread — nothing on the startup path (Firebase
+        # connect, first presence write) waits on it.
+        try:
+            threading.Thread(
+                target=shared_utils.log_startup_system_snapshot,
+                name='startup-snapshot',
+                daemon=True,
+            ).start()
+        except Exception as e:
+            logging.warning(f"Could not start system snapshot thread (non-fatal): {e}")
         shared_utils.log_startup_config_summary()
 
         # Check for update marker (indicates a self-update was in progress)
@@ -6290,6 +7114,15 @@ with open(out_path, 'wb') as f:
             self._migrate_legacy_roost_cache()
         except Exception as e:
             logging.warning(f"Legacy roost cache migration errored (non-fatal): {e}")
+
+        # One-shot removal of per-launch scheduled tasks left behind by agents
+        # older than 2.1.1. Not gated on the update marker — these predate any
+        # 3.0.0 self-update, so a box that upgrades keeps them forever
+        # otherwise. Flag-file gated; idempotent no-op once complete.
+        try:
+            self._sweep_legacy_launch_tasks()
+        except Exception as e:
+            logging.warning(f"Legacy launch-task sweep errored (non-fatal): {e}")
 
         # Classify the prior session — detects unexpected reboots, BSODs,
         # crashes, and operator-initiated reboots that bypassed Owlette.
@@ -6317,18 +7150,15 @@ with open(out_path, 'wb') as f:
                 # Register config update callback
                 self.firebase_client.register_config_update_callback(self.handle_config_update)
 
+                # Before the config sync, not after: the sync routinely takes
+                # 15 seconds, and until this runs the status file still says
+                # disconnected — which the tray paints as a red badge on a
+                # machine that has been connected since its constructor ran.
+                self._wire_connection_status_listener()
+
                 # Sync config: pull from Firestore (source of truth), or seed if new machine
                 sync_result = self.firebase_client.sync_config_on_startup()
                 logging.info(f"Config sync on startup: {sync_result}")
-
-                # Wire state listener BEFORE start() so the CONNECTED event
-                # writes the status file immediately (tray polls every 1s)
-                def _on_connection_change(event):
-                    try:
-                        self._write_service_status()
-                    except Exception:
-                        pass
-                self.firebase_client.connection_manager.add_state_listener(_on_connection_change)
 
                 # Wire health callback
                 self.firebase_client.connection_manager.set_health_callback(
@@ -6515,19 +7345,19 @@ with open(out_path, 'wb') as f:
 
         try:
             while self.is_alive:
-                # Note: there is no "shutdown flag" mechanism. The tray's "exit"
-                # uses elevated `net stop OwletteService` (a controlled SCM stop),
-                # which NSSM respects without auto-restarting. A flag-based
-                # approach was tried previously but doesn't work — NSSM
-                # auto-restarts on any process exit, so the service would just
-                # come back up immediately after exiting cleanly.
+                # Note: there is no "shutdown flag" mechanism. The desktop
+                # app's "quit owlette" uses an elevated SCM stop, which the
+                # service host reports as a real stop and does not restart from.
+                # A flag-based approach was tried previously and doesn't work —
+                # a supervisor relaunches the child on any exit that isn't a
+                # deliberate clean one, so the service would come straight back.
 
-                # Check for restart flag from tray icon.
-                # Exit with code 42 so NSSM auto-restarts us (AppExit Default Restart).
-                # Code 42 is arbitrary non-zero — NSSM restarts on any non-zero exit.
+                # Check for the restart flag written by the desktop app.
+                # Exit 42 so the host relaunches us immediately (exit 0 would
+                # stop the service instead; see agent/host/src/supervisor.rs).
                 restart_flag = shared_utils.get_data_path('tmp/restart.flag')
                 if os.path.exists(restart_flag):
-                    logging.info("Restart flag detected — exiting for NSSM restart")
+                    logging.info("Restart flag detected — exiting for a host restart")
                     try:
                         os.remove(restart_flag)
                     except Exception as e:
@@ -6746,6 +7576,33 @@ with open(out_path, 'wb') as f:
                                     logging.error(f"[ERROR] Failed to stop Firebase client: {e}")
                             last_firebase_state = current_firebase_state
 
+                        # Case 4: Enabled with a site, but nothing serving it.
+                        # Reached when FirebaseClient construction raised at
+                        # startup, or when main()'s wiring block threw before
+                        # client.start() ran — the config transitions above
+                        # never fire for either (nothing about the config
+                        # changed), so without this the machine stays cloud-
+                        # dead until a service restart. A failed attempt arms
+                        # a 5-minute hold so an offline or unauthenticated
+                        # machine is retried calmly, not every 10 seconds.
+                        elif is_enabled and not self._shutting_down and (
+                            self.firebase_client is None
+                            or not getattr(self.firebase_client, 'running', False)
+                        ):
+                            if time.monotonic() >= self._firebase_reinit_not_before:
+                                logging.warning(
+                                    "Firebase is enabled but no running client is serving it - "
+                                    "attempting recovery reinitialization"
+                                )
+                                if self._initialize_or_restart_firebase_client():
+                                    logging.info("[OK] Firebase client recovered")
+                                    last_firebase_state = current_firebase_state
+                                else:
+                                    self._firebase_reinit_not_before = time.monotonic() + 300.0
+                                    logging.error(
+                                        "[ERROR] Firebase client recovery failed - next attempt in 300s"
+                                    )
+
                     except Exception as e:
                         logging.error(f"Error checking Firebase state: {e}")
 
@@ -6785,8 +7642,21 @@ with open(out_path, 'wb') as f:
                 time.sleep(SLEEP_INTERVAL)
         finally:
             # CRITICAL: Cleanup when loop exits (graceful shutdown or signal handler)
-            # This ensures machine is marked offline even when running in NSSM mode
+            # This ensures machine is marked offline even when hosted by owlette-host
             logging.warning("=== MAIN LOOP EXITING - PERFORMING CLEANUP ===")
+
+            # An operator stop is normally handled before the loop unwinds —
+            # graceful_shutdown() runs on the console handler's thread or the
+            # SCM watcher's, because the stop has a bounded budget (20s under
+            # owlette-host, 4.5s under the NSSM it replaced) and the loop cannot
+            # be relied on to get here inside that. When it did run, presence is already flushed and
+            # agent_stopped already logged; repeating either would double-log
+            # the event and re-run the client teardown.
+            already_shut_down = getattr(self, '_shutdown_trigger', None) is not None
+            if already_shut_down:
+                logging.info(
+                    f"Cleanup: shutdown already performed by {self._shutdown_trigger}"
+                )
 
             # Log Agent Stopped event to Firestore
             firebase_connected = self.firebase_client and self.firebase_client.is_connected()
@@ -6802,12 +7672,25 @@ with open(out_path, 'wb') as f:
             else:
                 logging.warning("Firebase client not available")
 
-            # Mark machine offline in Firestore
-            if self.firebase_client:
+            # Stop the Firebase client. An Owlette-initiated restart (tray
+            # restart flag → 42, self-restart watchdog → 43) is relaunched by
+            # the host at once, so skip the offline flush and leave presence
+            # alone — otherwise every restart flaps the dashboard. A genuine
+            # operator stop or shutdown (exit 0) still marks the machine offline.
+            intentional_restart = bool(getattr(self, '_restart_exit_code', 0))
+            if self.firebase_client and not already_shut_down:
                 try:
-                    logging.info("Calling firebase_client.stop() to mark machine offline...")
-                    self.firebase_client.stop()
-                    logging.info("[OK] Cleanup complete - machine marked offline")
+                    logging.info(
+                        "Stopping Firebase client for restart (presence left online)..."
+                        if intentional_restart
+                        else "Calling firebase_client.stop() to mark machine offline..."
+                    )
+                    self.firebase_client.stop(intentional=intentional_restart)
+                    logging.info(
+                        "[OK] Cleanup complete - restart pending, machine left online"
+                        if intentional_restart
+                        else "[OK] Cleanup complete - machine marked offline"
+                    )
                 except Exception as e:
                     logging.error(f"[ERROR] Error during cleanup: {e}")
 
@@ -6818,24 +7701,21 @@ with open(out_path, 'wb') as f:
             except Exception as e:
                 logging.error(f"Error closing windows: {e}")
 
-            # Terminate tray icon
-            try:
-                self.terminate_tray_icon()
-                logging.info("[OK] Tray icon terminated")
-            except Exception as e:
-                logging.error(f"Error terminating tray icon: {e}")
+            # The desktop app is deliberately left running — see the note above
+            # _is_tray_alive(). It survives a service stop now, which is the
+            # only way the operator can start the service again from its footer.
 
             logging.info("Service cleanup complete - exiting")
 
 if __name__ == '__main__':
-    # Check if running under NSSM (no command-line arguments)
+    # Check if running under the service host (no command-line arguments)
     # or being run directly for debugging/testing
     import sys
 
     if len(sys.argv) == 1:
-        # No arguments - running under NSSM or direct execution
+        # No arguments - hosted by owlette-host, or direct execution
         # Run the service main loop directly
-        print("Starting owlette service (NSSM mode)...")
+        print("Starting owlette service (hosted mode)...")
         service = OwletteService(None)
         service.SvcDoRun()
     else:

@@ -77,7 +77,12 @@ jobs:
       - name: install playwright chromium
         if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: web
-        run: npx playwright install --with-deps chromium
+        # No --with-deps: GitHub's Ubuntu runners already ship Chromium's
+        # system libraries, and --with-deps runs apt-get — which hangs for
+        # the whole job timeout whenever the runner's Azure apt mirror is
+        # down (2026-08-19: two 30-minute cancellations on PR #94, where a
+        # cache miss is guaranteed because browser caches don't cross refs).
+        run: npx playwright install chromium
 
       # `npm run e2e` does the production build then spins up emulators
       # (firebase emulators:exec) wrapping `npx playwright test`. The exec

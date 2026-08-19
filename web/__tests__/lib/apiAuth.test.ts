@@ -1094,6 +1094,14 @@ describe('applyAuthDeprecations', () => {
     expect(out).toBe(res);
     expect(res.headers.get('X-Roost-Deprecation')).toBeNull();
     expect(res.headers.get('X-Roost-Version-Missing')).toBeNull();
+    expect(res.headers.get('X-Owlette-Billing-Warning')).toBeNull();
+  });
+
+  it('emits both advisories together', () => {
+    const res = NextResponse.json({ ok: true });
+    applyAuthDeprecations(res, { isLegacy: true, missingVersion: true });
+    expect(res.headers.get('X-Roost-Deprecation')).toBe('legacy-key-scope-missing');
+    expect(res.headers.get('X-Roost-Version-Missing')).toBe('true');
   });
 
   it('appends X-Roost-Deprecation for legacy keys', () => {

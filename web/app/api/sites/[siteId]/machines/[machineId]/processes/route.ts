@@ -21,7 +21,7 @@ import {
   ProcessConfigError,
   PublicProcessConfig,
 } from '@/lib/processConfig.server';
-import { requireMachineAuthAndScope } from '@/app/api/_shared';
+import { applyAuthDeprecations, requireMachineAuthAndScope } from '@/app/api/_shared';
 import {
   createProcess,
   ActionInputError,
@@ -52,10 +52,13 @@ export const GET = withRateLimit(
 
       if (configProcesses === null) {
         // Config doc doesn't exist yet — treat as empty list, not 404.
-        return NextResponse.json({
-          ok: true,
-          data: { processes: [], nextPageToken: null },
-        });
+        return applyAuthDeprecations(
+          NextResponse.json({
+            ok: true,
+            data: { processes: [], nextPageToken: null },
+          }),
+          auth.scopeCheck,
+        );
       }
 
       const statusData = statusSnap.exists ? statusSnap.data() : null;
@@ -69,10 +72,13 @@ export const GET = withRateLimit(
         return shapeProcessForResponse(p, live);
       });
 
-      return NextResponse.json({
-        ok: true,
-        data: { processes: merged, nextPageToken: null },
-      });
+      return applyAuthDeprecations(
+        NextResponse.json({
+          ok: true,
+          data: { processes: merged, nextPageToken: null },
+        }),
+        auth.scopeCheck,
+      );
     } catch (error: unknown) {
       return errorResponse(error, 'sites/machines/processes GET');
     }
@@ -165,7 +171,13 @@ function shapeProcessForResponse(
     visibility: p.visibility || 'Show',
     time_delay: p.time_delay || '0',
     time_to_init: p.time_to_init || '10',
-    relaunch_attempts: p.relaunch_attempts || '3',
+    // 0 is meaningful — "relaunch forever, never escalate to a machine
+    // restart" — so it must survive the round trip. `|| '3'` treated it as
+    // absent and handed the operator back a 3 they never set.
+    relaunch_attempts:
+      p.relaunch_attempts === undefined || p.relaunch_attempts === null || p.relaunch_attempts === ''
+        ? '3'
+        : String(p.relaunch_attempts),
     autolaunch: p.autolaunch ?? false,
     launch_mode: p.launch_mode || 'off',
     schedules: p.schedules || null,

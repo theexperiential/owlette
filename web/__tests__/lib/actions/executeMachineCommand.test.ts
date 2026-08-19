@@ -541,7 +541,7 @@ describe('executeMachineCommand — per-type payload pass-through', () => {
     expect(entry.schedules).toEqual(schedules);
   });
 
-  it('mcp_tool_call forwards cortex tool envelope fields', async () => {
+  it('mcp_tool_call forwards hoot tool envelope fields', async () => {
     const fake = buildFakeDb();
     await executeMachineCommand(
       ctxFor(),

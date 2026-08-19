@@ -3,7 +3,7 @@ title: "errors"
 description: "Public API errors use application/problem+json. Clients should branch on the stable code field, not on human-readable detail text."
 ---
 
-**Last updated**: 2026-05-01
+**Last updated**: 2026-08-01
 
 ---
 
@@ -63,10 +63,10 @@ Unknown fields are forward-compatible extensions. Ignore fields you do not recog
 | `precondition_failed` | 412 | A required server-side precondition failed, such as missing referenced chunks. | Satisfy the precondition and retry. |
 | `version_stale` | 412 | `expectedCurrentVersionId` did not match the roost current pointer during publish. | Re-read the roost and retry if the publish is still intended. |
 | `payload_too_large` | 413 | Request exceeded an endpoint size limit. | Split the request or reduce payload size. |
-| `quota_exceeded` | 402 | Site or account quota would be exceeded. | Free usage, wait for reset, or upgrade. |
+| `quota_exceeded` | 402 | Site storage quota would be exceeded. | Free usage or delete old roost versions. |
 | `rate_limited` | 429 | Request or concurrency bucket exhausted. | Honor `Retry-After`; reduce concurrency. |
 | `machine_offline` | 409 | Machine command cannot be queued or completed because the target is offline. | Wait for the machine to reconnect or target another machine. |
-| `cortex_unavailable` | 400/423/503 | Cortex could not stream because the target was missing, disabled, or offline. | Fix the target/enablement issue or retry after the machine reconnects. |
+| `cortex_unavailable` | 400/423/503 | hoot could not stream because the target was missing, disabled, or offline. | Fix the target/enablement issue or retry after the machine reconnects. |
 | `service_unavailable` | 503 | Required dependency is temporarily unavailable. | Retry with backoff. |
 | `internal_error` | 500 | Unexpected server error. | Retry with backoff; quote `requestId` if it persists. |
 
@@ -108,7 +108,7 @@ The `Roost-Version` header was present but is not supported by the server. The r
 
 ### forbidden_field
 
-The request body included fields that are not accepted by that operation, such as extra fields on public Cortex send or rename requests.
+The request body included fields that are not accepted by that operation, such as extra fields on public hoot send or rename requests.
 
 ### version_ref_malformed
 
@@ -152,7 +152,7 @@ The request body exceeded an endpoint size limit. Split or reduce the payload.
 
 ### quota_exceeded
 
-The request would exceed a site, account, storage, bandwidth, or lifecycle quota.
+The request would exceed the site's roost storage quota.
 
 ### rate_limited
 
@@ -164,7 +164,7 @@ The requested machine command cannot proceed because the target machine is offli
 
 ### cortex_unavailable
 
-Cortex could not stream for the requested conversation because the target was invalid, disabled, or offline.
+hoot could not stream for the requested conversation because the target was invalid, disabled, or offline.
 
 ### service_unavailable
 
@@ -192,7 +192,7 @@ Do not blindly retry:
 - auth failures (`401`, `403`)
 - missing resources (`404`)
 - validation/idempotency mismatch failures (`400`, `422`)
-- quota failures (`402`) unless usage or plan state changed
+- quota failures (`402 quota_exceeded`) unless usage changed
 - precondition failures (`409`, `412`) until you have refreshed state
 
 For mutating retries, reuse the same `Idempotency-Key` only when the request method, path, query, and body are identical. See [idempotency.md](/docs/api/idempotency).

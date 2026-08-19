@@ -32,6 +32,7 @@ import {
 } from '@/lib/actions/updateDistributionPreset.server';
 import { deleteDistributionPreset } from '@/lib/actions/deleteDistributionPreset.server';
 import { DistributionPresetValidationError } from '@/lib/actions/createDistributionPreset.server';
+import { siteAuditActor } from '@/lib/actions/auditActor.server';
 
 type RouteParams = {
   siteId: string;
@@ -109,7 +110,12 @@ export const PATCH = authorizedSiteHandler<RouteParams>({
 
     try {
       await updateDistributionPreset(
-        { actor: ctx.actor, siteId: ctx.siteId, presetId: presetId as string },
+        {
+          actor: ctx.actor,
+          siteId: ctx.siteId,
+          presetId: presetId as string,
+          auditActor: siteAuditActor(ctx),
+        },
         {
           name: typeof body.name === 'string' ? body.name : undefined,
           description: typeof body.description === 'string' ? body.description : undefined,
@@ -155,6 +161,7 @@ export const DELETE = authorizedSiteHandler<RouteParams>({
         actor: ctx.actor,
         siteId: ctx.siteId,
         presetId: presetId as string,
+        auditActor: siteAuditActor(ctx),
       });
       return new NextResponse(null, { status: 204 });
     } catch (err) {

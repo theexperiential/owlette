@@ -65,9 +65,11 @@ test('create key reveals raw owk_live_* once, copies to clipboard, then list sho
     page.getByRole('button', { name: /^create your first key$/i }),
   ).toBeVisible();
 
-  // Open the create dialog via the header action.
+  // Open the create form via the header action. It is an inline disclosure
+  // now, not a modal — nesting a dialog inside the account-settings dialog
+  // would stack two focus traps, and the same panel serves both surfaces.
   await page.getByRole('button', { name: /^create key$/i }).click();
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('main');
   await expect(dialog.getByRole('heading', { name: /^create api key$/i })).toBeVisible();
 
   const keyName = `e2e-${Date.now()}`;
@@ -112,20 +114,77 @@ test('create key reveals raw owk_live_* once, copies to clipboard, then list sho
   await revealCard.getByRole('button', { name: 'dismiss' }).click();
   await expect(revealBanner).toBeHidden();
 
-  // List now contains the row with the prefix-only display ("owk_live_xxx•••").
-  // The raw key must NOT appear anywhere on the page.
+  // List now contains the row; the prefix-only display ("owk_live_xxx•••") is
+  // deferred behind the row's details disclosure, so expand it first. The raw
+  // key must NOT appear anywhere on the page.
   const expectedPrefix = rawKey.slice(0, 15);
   const keyRow = page.getByText(keyName);
   await expect(keyRow).toBeVisible();
+  await page.getByRole('button', { name: `show details for ${keyName}` }).click();
   await expect(page.locator('code', { hasText: expectedPrefix })).toBeVisible();
   await expect(page.getByText(rawKey, { exact: true })).toHaveCount(0);
 
-  // Reload — the one-time-reveal contract holds across navigations.
+  // Reload — the one-time-reveal contract holds across navigations. Expansion
+  // state resets with the page, so disclose the row again before asserting.
   await page.reload();
   await expect(
     page.getByRole('heading', { name: 'api keys', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText(keyName)).toBeVisible();
+  await page.getByRole('button', { name: `show details for ${keyName}` }).click();
   await expect(page.locator('code', { hasText: expectedPrefix })).toBeVisible();
   await expect(page.getByText(rawKey, { exact: true })).toHaveCount(0);
+});
+
+test('switching to custom carries the selected preset in, rather than resetting it', async ({
+  page,
+}) => {
+  await page.goto('/settings/api-keys');
+  await expect(
+    page.getByRole('heading', { name: 'api keys', exact: true }),
+  ).toBeVisible({ timeout: 10_000 });
+
+  await page.getByRole('button', { name: /^create key$/i }).click();
+  const main = page.getByRole('main');
+  await expect(main.getByRole('heading', { name: /^create api key$/i })).toBeVisible();
+
+  const keyName = `e2e-inherit-${Date.now()}`;
+  await main.getByLabel('name').fill(keyName);
+
+  // Pick operator. While a named preset is selected the scope <Select> is the
+  // only combobox on the surface — the per-row resource pickers appear with
+  // the custom builder, so this must happen before the switch.
+  await main.getByRole('combobox').click();
+  await page.getByRole('option', { name: 'operator' }).click();
+  // The selection must be committed before the next transition: on a cold
+  // server, re-opening the select while the 'operator' pick is still mid-commit
+  // silently carries the DEFAULT preset into custom (1 row, not 4).
+  await expect(main.getByRole('combobox').first()).toHaveText(/operator/);
+
+  // Now drop into the builder. This is the transition that used to discard the
+  // preset: the rows opened on one hardcoded site scope, so 3 of 4 resources
+  // and 14 of 16 grants vanished while "operator" left the screen at the same
+  // moment — and every validator, client and server, accepted the result.
+  await main.getByRole('combobox').first().click();
+  await page.getByRole('option', { name: 'custom' }).click();
+
+  // Four rows, one per operator resource — not the single seeded row.
+  await expect(main.getByPlaceholder('id (or * for all)')).toHaveCount(4);
+
+  const responsePromise = page.waitForResponse(
+    (res) => res.url().endsWith('/api/keys') && res.request().method() === 'POST',
+    { timeout: 10_000 },
+  );
+  await main.getByRole('button', { name: /^create key$/i }).click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(200);
+
+  // The wire body is what actually matters: it must still be operator.
+  const sent = JSON.parse(response.request().postData() ?? '{}');
+  expect(sent.scopes).toEqual([
+    { resource: 'roost', id: '*', permissions: ['read', 'write', 'deploy', 'rollback'] },
+    { resource: 'site', id: '*', permissions: ['read', 'write', 'deploy', 'rollback'] },
+    { resource: 'machine', id: '*', permissions: ['read', 'write', 'deploy', 'rollback'] },
+    { resource: 'chat', id: '*', permissions: ['read', 'write', 'deploy', 'rollback'] },
+  ]);
 });

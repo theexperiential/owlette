@@ -6,7 +6,7 @@
  *   preUploadCheck   — HTTPS callable. The tusd pre-create hook (wave 2b.1)
  *                      calls this before issuing a signed upload URL. On
  *                      admission the pending-bytes reservation is written
- *                      atomically; on denial a 402 with an upgrade CTA
+ *                      atomically; on denial a 402 (site out of storage)
  *                      returns to tusd which propagates to the client.
  *
  *   reconcileQuota   — scheduled daily. Rebuilds `usedBytes` from the
@@ -28,10 +28,9 @@ import {
   admitUpload,
   ALARM_LEVELS,
   newAlarmCrossings,
-  PLAN_LIMITS_BYTES,
   reportQuota,
+  SITE_STORAGE_BYTES,
   type AlarmLevel,
-  type PlanTier,
   type QuotaState,
 } from './lib/quotaLogic';
 
@@ -78,8 +77,6 @@ export interface StorageMetrics {
 
 export interface SiteDirectory {
   listSiteIds(): Promise<string[]>;
-  /** Read the plan tier from billing. Defaults to 'free' if missing. */
-  readTier(siteId: string): Promise<PlanTier>;
 }
 
 /* --------------------------------------------------------------------- */
@@ -99,11 +96,7 @@ export interface PreUploadResponse {
     reason?: string;
     remainingBytes?: number;
     planLimitBytes?: number;
-    upgrade?: {
-      currentTier: PlanTier;
-      suggestedTier: PlanTier;
-      message: string;
-    };
+    denialHint?: { message: string };
   };
 }
 
@@ -137,19 +130,12 @@ export async function runPreUploadCheck(
     };
   }
 
-  const [tier, existing] = await Promise.all([
-    deps.directory.readTier(req.siteId),
-    deps.quota.read(req.siteId),
-  ]);
+  const existing = await deps.quota.read(req.siteId);
 
   const state: QuotaState = existing?.state ?? {
-    tier,
     usedBytes: 0,
     pendingBytes: 0,
   };
-  // directory is the source of truth for tier; never let a stale cached
-  // tier in the quota doc grant more than the customer actually pays for.
-  state.tier = tier;
 
   const decision = admitUpload({ state, requestedBytes: req.requestedBytes });
 
@@ -159,13 +145,9 @@ export async function runPreUploadCheck(
       body: {
         allowed: false,
         reason: decision.reason,
-        remainingBytes: decision.report.unlimited
-          ? undefined
-          : decision.report.remainingBytes,
-        planLimitBytes: decision.report.unlimited
-          ? undefined
-          : decision.report.planLimitBytes,
-        upgrade: decision.upgradeCta,
+        remainingBytes: decision.report.remainingBytes,
+        planLimitBytes: decision.report.planLimitBytes,
+        denialHint: decision.denialHint,
       },
     };
   }
@@ -184,12 +166,8 @@ export async function runPreUploadCheck(
     status: 200,
     body: {
       allowed: true,
-      remainingBytes: decision.report.unlimited
-        ? undefined
-        : decision.report.remainingBytes - req.requestedBytes,
-      planLimitBytes: decision.report.unlimited
-        ? undefined
-        : decision.report.planLimitBytes,
+      remainingBytes: decision.report.remainingBytes - req.requestedBytes,
+      planLimitBytes: decision.report.planLimitBytes,
     },
   };
 }
@@ -220,8 +198,7 @@ export async function reconcileOneSite(
 ): Promise<SiteReconcileResult | null> {
   const now = deps.now ? deps.now() : new Date();
 
-  const [tier, existing, usedBytes] = await Promise.all([
-    deps.directory.readTier(siteId),
+  const [existing, usedBytes] = await Promise.all([
     deps.quota.read(siteId),
     deps.metrics.usedBytes(siteId),
   ]);
@@ -229,7 +206,6 @@ export async function reconcileOneSite(
   // preserve previously-tracked pendingBytes, but let the TTL prune by
   // passing `now` to rewrite — store impl expires stale reservations.
   const nextState: QuotaState = {
-    tier,
     usedBytes,
     pendingBytes: existing?.state.pendingBytes ?? 0,
   };
@@ -331,19 +307,6 @@ function getDefaultDirectory(): SiteDirectory {
       const snap = await db.collection('sites').listDocuments();
       return snap.map((d) => d.id);
     },
-    async readTier(siteId: string) {
-      const snap = await db.collection('sites').doc(siteId).get();
-      const raw = snap.exists ? (snap.data() as { plan?: string }).plan : undefined;
-      if (
-        raw === 'free' ||
-        raw === 'starter' ||
-        raw === 'pro' ||
-        raw === 'enterprise'
-      ) {
-        return raw;
-      }
-      return 'free';
-    },
   };
 }
 
@@ -367,18 +330,16 @@ function getDefaultQuotaStore(): QuotaStore {
       ]);
       if (!doc.exists) return null;
       const data = doc.data() as {
-        tier?: PlanTier;
         usedBytes?: number;
         lastAlarmLevel?: AlarmLevel;
       };
-      const tier = data.tier ?? 'free';
       const usedBytes = data.usedBytes ?? 0;
       const pendingBytes = pendingSnap.docs.reduce(
         (n, d) => n + ((d.data() as { bytes?: number }).bytes ?? 0),
         0,
       );
       return {
-        state: { tier, usedBytes, pendingBytes },
+        state: { usedBytes, pendingBytes },
         lastAlarmLevel: (data.lastAlarmLevel as AlarmLevel) ?? 0,
       };
     },
@@ -402,9 +363,8 @@ function getDefaultQuotaStore(): QuotaStore {
       batch.set(
         quotaDoc(siteId),
         {
-          tier: state.tier,
           usedBytes: state.usedBytes,
-          planLimitBytes: PLAN_LIMITS_BYTES[state.tier],
+          planLimitBytes: SITE_STORAGE_BYTES,
           lastReconciledAt: FieldValue.serverTimestamp(),
         },
         { merge: true },

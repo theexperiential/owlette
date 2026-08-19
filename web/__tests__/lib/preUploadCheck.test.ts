@@ -234,16 +234,6 @@ describe('checkQuota', () => {
     expect(checkQuota(1 * GB, undefined)).toBeNull();
   });
 
-  it('returns null for unlimited (Infinity) plans', () => {
-    expect(
-      checkQuota(1 * GB, {
-        planLimitBytes: Infinity,
-        usedBytes: 1 * GB,
-        pendingBytes: 0,
-      }),
-    ).toBeNull();
-  });
-
   it('returns null when well under threshold', () => {
     // 1 GB upload on a 5 GB plan currently at 1 GB → 2 GB total, <80%
     expect(
@@ -251,6 +241,7 @@ describe('checkQuota', () => {
         planLimitBytes: 5 * GB,
         usedBytes: 1 * GB,
         pendingBytes: 0,
+        roostAvailable: true,
       }),
     ).toBeNull();
   });
@@ -261,6 +252,7 @@ describe('checkQuota', () => {
       planLimitBytes: 5 * GB,
       usedBytes: 3.5 * GB,
       pendingBytes: 0,
+      roostAvailable: true,
     });
     expect(c).not.toBeNull();
     expect(c!.severity).toBe('warning');
@@ -273,6 +265,7 @@ describe('checkQuota', () => {
       planLimitBytes: 5 * GB,
       usedBytes: 4 * GB,
       pendingBytes: 0,
+      roostAvailable: true,
     });
     expect(c).not.toBeNull();
     expect(c!.severity).toBe('error');
@@ -286,6 +279,7 @@ describe('checkQuota', () => {
       planLimitBytes: 5 * GB,
       usedBytes: 4 * GB,
       pendingBytes: 1 * GB,
+      roostAvailable: true,
     });
     expect(c?.severity).toBe('error');
   });

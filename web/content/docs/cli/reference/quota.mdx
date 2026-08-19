@@ -1,6 +1,6 @@
 ---
 title: "quota"
-description: "quota inspects a site's storage + bandwidth usage against its tier limit. site-scoped: both verbs require --site . read-only — quotas are managed server-side by the billing layer. tier: [ready] for both verbs."
+description: "quota inspects a site's storage + bandwidth usage against its limit. site-scoped: both verbs require --site . read-only — quotas are managed server-side. tier: [ready] for both verbs."
 ---
 
 verbs:
@@ -12,7 +12,7 @@ verbs:
 
 ## quota show
 
-prints the current storage snapshot for a site: tier, committed + pending bytes, the limit (or "unlimited" for byo-bucket plans), the most recent reconciliation timestamp, and any active alarm firings. human mode renders an ascii progress bar; `--json` returns the full snapshot for scripting.
+prints the current storage snapshot for a site: committed + pending bytes, the limit, the most recent reconciliation timestamp, and any active alarm firings. human mode renders an ascii progress bar; `--json` returns the full snapshot for scripting.
 
 ```bash
 owlette quota show --site <siteId> [--json]
@@ -28,7 +28,6 @@ owlette quota show --site <siteId> [--json]
 # human-readable snapshot
 owlette quota show --site site-1
 # site       site-1
-# tier       pro
 #
 # storage: 12.4 GiB / 50.0 GiB (25%) [#####...............]
 #   pending: 240 MiB (in-flight uploads, not yet committed)
@@ -36,7 +35,7 @@ owlette quota show --site site-1
 ```
 
 ```bash
-# extract the fraction used for a billing alert script
+# extract the fraction used for an alerting script
 owlette --json quota show --site site-1 | jq '.fractionUsed'
 ```
 
@@ -107,7 +106,7 @@ backing: `GET /api/sites/{siteId}/quota/history?period=<window>`.
 
 - **scope**: site-scoped — `--site <siteId>` is required on both verbs
 - **tier**: `[ready]` — both endpoints are fully public
-- **alarms**: `quota show` surfaces the rolling list of alarm firings (each with timestamp + threshold percentage). billing-managed; the cli is read-only here
-- **pending vs committed**: `pendingBytes` are in-flight uploads that haven't been finalized yet. only `committedBytes` count toward the tier limit
+- **alarms**: `quota show` surfaces the rolling list of alarm firings (each with timestamp + threshold percentage). server-managed; the cli is read-only here
+- **pending vs committed**: `pendingBytes` are in-flight uploads that haven't been finalized yet. only `committedBytes` count toward the storage limit
 - **history granularity**: one bucket per UTC day. partial days at the head of the window are included with whatever has been recorded so far
 - **related**: [overview](/docs/cli/overview) (json envelope), [site](/docs/cli/reference/site) (find your site ids), [roost](/docs/cli/reference/roost) (the main thing eating your storage)

@@ -1,8 +1,10 @@
 /**
- * Unit tests for per-customer quota enforcement (roost wave 2b.5).
+ * Unit tests for per-site quota enforcement.
  *
  * Covers pure logic in lib/quotaLogic.ts and the dep-injected
  * orchestrators in quotaEnforce.ts with in-memory fakes.
+ *
+ * A flat SITE_STORAGE_BYTES allowance applies to every site.
  */
 
 import { describe, it } from 'node:test';
@@ -11,10 +13,9 @@ import {
   admitUpload,
   ALARM_LEVELS,
   newAlarmCrossings,
-  PLAN_LIMITS_BYTES,
   reportQuota,
+  SITE_STORAGE_BYTES,
   type AlarmLevel,
-  type PlanTier,
   type QuotaState,
 } from '../src/lib/quotaLogic';
 import {
@@ -26,7 +27,18 @@ import {
 } from '../src/quotaEnforce';
 
 const GB = 1024 ** 3;
+const TB = 1024 ** 4;
 const NOW = new Date('2026-04-20T00:00:00Z');
+
+/* --------------------------------------------------------------------- */
+/*  storage allowance                                                    */
+/* --------------------------------------------------------------------- */
+
+describe('storage allowance', () => {
+  it('every site carries 1 TiB of included storage', () => {
+    assert.equal(SITE_STORAGE_BYTES, 1_099_511_627_776);
+  });
+});
 
 /* --------------------------------------------------------------------- */
 /*  reportQuota                                                          */
@@ -34,28 +46,26 @@ const NOW = new Date('2026-04-20T00:00:00Z');
 
 describe('reportQuota', () => {
   it('reports zero usage cleanly', () => {
-    const r = reportQuota({ tier: 'free', usedBytes: 0, pendingBytes: 0 });
+    const r = reportQuota({ usedBytes: 0, pendingBytes: 0 });
     assert.equal(r.fractionUsed, 0);
     assert.equal(r.atCap, false);
     assert.equal(r.alarmLevel, 0);
-    assert.equal(r.remainingBytes, PLAN_LIMITS_BYTES.free);
+    assert.equal(r.remainingBytes, SITE_STORAGE_BYTES);
   });
 
   it('sums used + pending toward the cap', () => {
     const r = reportQuota({
-      tier: 'free',
-      usedBytes: 3 * GB,
-      pendingBytes: 1 * GB,
+      usedBytes: 900 * GB,
+      pendingBytes: 100 * GB,
     });
-    assert.equal(r.committedBytes, 4 * GB);
-    assert.equal(r.remainingBytes, 1 * GB);
+    assert.equal(r.committedBytes, 1000 * GB);
+    assert.equal(r.remainingBytes, 24 * GB); // 1 TiB = 1024 GiB
     assert.equal(r.atCap, false);
   });
 
   it('atCap flips at exactly 100%', () => {
     const r = reportQuota({
-      tier: 'free',
-      usedBytes: 5 * GB,
+      usedBytes: 1 * TB,
       pendingBytes: 0,
     });
     assert.equal(r.atCap, true);
@@ -64,8 +74,7 @@ describe('reportQuota', () => {
 
   it('reports alarm level 0.5 when between 50%-79%', () => {
     const r = reportQuota({
-      tier: 'free',
-      usedBytes: 3.5 * GB,
+      usedBytes: 600 * GB, // 58.6 %
       pendingBytes: 0,
     });
     assert.equal(r.alarmLevel, 0.5);
@@ -73,28 +82,14 @@ describe('reportQuota', () => {
 
   it('reports alarm level 0.8 when between 80%-99%', () => {
     const r = reportQuota({
-      tier: 'free',
-      usedBytes: 4.5 * GB,
+      usedBytes: 900 * GB, // 87.9 %
       pendingBytes: 0,
     });
     assert.equal(r.alarmLevel, 0.8);
   });
 
-  it('enterprise = unlimited; no alarms, no atCap', () => {
-    const r = reportQuota({
-      tier: 'enterprise',
-      usedBytes: 100 * GB,
-      pendingBytes: 0,
-    });
-    assert.equal(r.unlimited, true);
-    assert.equal(r.atCap, false);
-    assert.equal(r.remainingBytes, Infinity);
-    assert.ok(Number.isNaN(r.fractionUsed));
-  });
-
   it('clamps negative committedBytes at 0 (defensive)', () => {
     const r = reportQuota({
-      tier: 'free',
       usedBytes: -10,
       pendingBytes: 0,
     });
@@ -138,64 +133,38 @@ describe('newAlarmCrossings', () => {
 describe('admitUpload', () => {
   it('admits a request that fits comfortably', () => {
     const d = admitUpload({
-      state: { tier: 'free', usedBytes: 1 * GB, pendingBytes: 0 },
-      requestedBytes: 1 * GB,
+      state: { usedBytes: 100 * GB, pendingBytes: 0 },
+      requestedBytes: 10 * GB,
     });
     assert.equal(d.allowed, true);
     assert.equal(d.status, 200);
   });
 
-  it('denies an already-at-cap site with 402 + upgrade CTA', () => {
+  it('denies an already-at-cap site with 402 + a free-up-space hint', () => {
     const d = admitUpload({
-      state: { tier: 'free', usedBytes: 5 * GB, pendingBytes: 0 },
+      state: { usedBytes: 1 * TB, pendingBytes: 0 },
       requestedBytes: 1024,
     });
     assert.equal(d.allowed, false);
     assert.equal(d.status, 402);
     assert.equal(d.reason, 'quota_exceeded');
-    assert.equal(d.upgradeCta?.currentTier, 'free');
-    assert.equal(d.upgradeCta?.suggestedTier, 'starter');
+    assert.match(d.denialHint?.message ?? '', /1 TB per site/);
   });
 
   it('denies a request that WOULD cross the cap with 402 + would_exceed', () => {
     const d = admitUpload({
-      state: { tier: 'free', usedBytes: 4 * GB, pendingBytes: 0 },
-      requestedBytes: 2 * GB, // 4 + 2 = 6 > 5
+      state: { usedBytes: 1000 * GB, pendingBytes: 0 },
+      requestedBytes: 100 * GB, // 1000 + 100 > 1024
     });
     assert.equal(d.allowed, false);
     assert.equal(d.status, 402);
     assert.equal(d.reason, 'quota_would_exceed');
   });
 
-  it('suggests the cheapest tier that accommodates the target size', () => {
-    // starter=25GB, pro=100GB. needing 30GB → skip starter, suggest pro.
-    const d = admitUpload({
-      state: { tier: 'free', usedBytes: 30 * GB, pendingBytes: 0 },
-      requestedBytes: 1024,
-    });
-    assert.equal(d.upgradeCta?.suggestedTier, 'pro');
-  });
-
-  it('suggests enterprise when even pro tier cannot hold the target', () => {
-    const d = admitUpload({
-      state: { tier: 'pro', usedBytes: 200 * GB, pendingBytes: 0 },
-      requestedBytes: 1024,
-    });
-    assert.equal(d.upgradeCta?.suggestedTier, 'enterprise');
-  });
-
-  it('enterprise is always admitted', () => {
-    const d = admitUpload({
-      state: { tier: 'enterprise', usedBytes: 10_000 * GB, pendingBytes: 0 },
-      requestedBytes: 1_000 * GB,
-    });
-    assert.equal(d.allowed, true);
-  });
-
   it('counts pending against cap so concurrent admits cannot overcommit', () => {
-    // 3 GB used + 2 GB pending = 5 GB committed; next 1 KB would exceed.
+    // 900 GB used + 124 GB pending = 1 TiB committed; next 1 KB would exceed.
     const d = admitUpload({
-      state: { tier: 'free', usedBytes: 3 * GB, pendingBytes: 2 * GB },
+      state: { usedBytes: 900 * GB, pendingBytes: 124 * GB },
       requestedBytes: 1024,
     });
     assert.equal(d.allowed, false);
@@ -204,7 +173,7 @@ describe('admitUpload', () => {
 
   it('rejects non-positive requestedBytes with 400', () => {
     const d = admitUpload({
-      state: { tier: 'free', usedBytes: 0, pendingBytes: 0 },
+      state: { usedBytes: 0, pendingBytes: 0 },
       requestedBytes: 0,
     });
     assert.equal(d.allowed, false);
@@ -225,10 +194,9 @@ interface FakeQuotaState {
   alarmWrites: Array<{ level: AlarmLevel; crossings: AlarmLevel[]; at: Date }>;
 }
 
-function fakeDirectory(tier: PlanTier, sites: string[] = ['s']): SiteDirectory {
+function fakeDirectory(sites: string[] = ['s']): SiteDirectory {
   return {
     async listSiteIds() { return sites; },
-    async readTier() { return tier; },
   };
 }
 
@@ -266,28 +234,29 @@ function fakeMetrics(bytes: number): StorageMetrics {
 describe('runPreUploadCheck', () => {
   it('admits a valid request and reserves pending', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'free', usedBytes: 1 * GB, pendingBytes: 0 },
+      read: { usedBytes: 100 * GB, pendingBytes: 0 },
       lastAlarmLevel: 0,
       reservations: new Map(),
       rewrites: [],
       alarmWrites: [],
     };
     const r = await runPreUploadCheck(
-      { siteId: 's', reservationId: 'u-1', requestedBytes: 1 * GB },
+      { siteId: 's', reservationId: 'u-1', requestedBytes: 10 * GB },
       {
-        directory: fakeDirectory('free'),
+        directory: fakeDirectory(),
         quota: fakeQuotaStore(state),
         now: () => NOW,
       },
     );
     assert.equal(r.status, 200);
     assert.equal(r.body.allowed, true);
-    assert.equal(state.reservations.get('u-1')?.bytes, 1 * GB);
+    assert.equal(r.body.planLimitBytes, SITE_STORAGE_BYTES);
+    assert.equal(state.reservations.get('u-1')?.bytes, 10 * GB);
   });
 
-  it('denies at-cap with 402 + upgrade hint; does NOT reserve', async () => {
+  it('denies at-cap with 402 + free-up-space hint; does NOT reserve', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'free', usedBytes: 5 * GB, pendingBytes: 0 },
+      read: { usedBytes: 1 * TB, pendingBytes: 0 },
       lastAlarmLevel: 1.0,
       reservations: new Map(),
       rewrites: [],
@@ -296,20 +265,20 @@ describe('runPreUploadCheck', () => {
     const r = await runPreUploadCheck(
       { siteId: 's', reservationId: 'u-1', requestedBytes: 1024 },
       {
-        directory: fakeDirectory('free'),
+        directory: fakeDirectory(),
         quota: fakeQuotaStore(state),
         now: () => NOW,
       },
     );
     assert.equal(r.status, 402);
     assert.equal(r.body.allowed, false);
-    assert.equal(r.body.upgrade?.suggestedTier, 'starter');
+    assert.match(r.body.denialHint?.message ?? '', /1 TB per site/);
     assert.equal(state.reservations.size, 0);
   });
 
   it('rejects malformed requests with 400', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'free', usedBytes: 0, pendingBytes: 0 },
+      read: { usedBytes: 0, pendingBytes: 0 },
       lastAlarmLevel: 0,
       reservations: new Map(),
       rewrites: [],
@@ -318,7 +287,7 @@ describe('runPreUploadCheck', () => {
     const r = await runPreUploadCheck(
       { siteId: '', reservationId: '', requestedBytes: 0 },
       {
-        directory: fakeDirectory('free'),
+        directory: fakeDirectory(),
         quota: fakeQuotaStore(state),
       },
     );
@@ -326,25 +295,6 @@ describe('runPreUploadCheck', () => {
     assert.equal(r.body.reason, 'invalid_request');
   });
 
-  it('uses directory-authoritative tier even if cached state disagrees', async () => {
-    // cached state says 'enterprise' but billing says 'free' → enforce free.
-    const state: FakeQuotaState = {
-      read: { tier: 'enterprise', usedBytes: 5 * GB, pendingBytes: 0 },
-      lastAlarmLevel: 0,
-      reservations: new Map(),
-      rewrites: [],
-      alarmWrites: [],
-    };
-    const r = await runPreUploadCheck(
-      { siteId: 's', reservationId: 'u-1', requestedBytes: 1024 },
-      {
-        directory: fakeDirectory('free'),
-        quota: fakeQuotaStore(state),
-      },
-    );
-    assert.equal(r.status, 402);
-    assert.equal(r.body.allowed, false);
-  });
 });
 
 /* --------------------------------------------------------------------- */
@@ -354,16 +304,16 @@ describe('runPreUploadCheck', () => {
 describe('reconcileOneSite', () => {
   it('does not fire alarms when usage stays below 50%', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'free', usedBytes: 0, pendingBytes: 0 },
+      read: { usedBytes: 0, pendingBytes: 0 },
       lastAlarmLevel: 0,
       reservations: new Map(),
       rewrites: [],
       alarmWrites: [],
     };
     const result = await reconcileOneSite('s', {
-      directory: fakeDirectory('free'),
+      directory: fakeDirectory(),
       quota: fakeQuotaStore(state),
-      metrics: fakeMetrics(1 * GB),
+      metrics: fakeMetrics(400 * GB), // 39 %
       now: () => NOW,
     });
     assert.equal(result?.crossings.length, 0);
@@ -372,16 +322,16 @@ describe('reconcileOneSite', () => {
 
   it('fires 50% alarm when crossing the threshold', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'free', usedBytes: 0, pendingBytes: 0 },
+      read: { usedBytes: 0, pendingBytes: 0 },
       lastAlarmLevel: 0,
       reservations: new Map(),
       rewrites: [],
       alarmWrites: [],
     };
     const r = await reconcileOneSite('s', {
-      directory: fakeDirectory('free'),
+      directory: fakeDirectory(),
       quota: fakeQuotaStore(state),
-      metrics: fakeMetrics(3 * GB),
+      metrics: fakeMetrics(600 * GB), // 58.6 %
       now: () => NOW,
     });
     assert.deepEqual(r?.crossings, [0.5]);
@@ -390,16 +340,16 @@ describe('reconcileOneSite', () => {
 
   it('fires every unfired level on a big jump (0 → 100%)', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'free', usedBytes: 0, pendingBytes: 0 },
+      read: { usedBytes: 0, pendingBytes: 0 },
       lastAlarmLevel: 0,
       reservations: new Map(),
       rewrites: [],
       alarmWrites: [],
     };
     const r = await reconcileOneSite('s', {
-      directory: fakeDirectory('free'),
+      directory: fakeDirectory(),
       quota: fakeQuotaStore(state),
-      metrics: fakeMetrics(5 * GB),
+      metrics: fakeMetrics(1 * TB),
       now: () => NOW,
     });
     assert.deepEqual(r?.crossings, [0.5, 0.8, 1.0]);
@@ -407,19 +357,20 @@ describe('reconcileOneSite', () => {
 
   it('does not refire when usage stays at the same alarm level', async () => {
     const state: FakeQuotaState = {
-      read: { tier: 'free', usedBytes: 4.6 * GB, pendingBytes: 0 },
+      read: { usedBytes: 900 * GB, pendingBytes: 0 },
       lastAlarmLevel: 0.8, // already at 80% alarm
       reservations: new Map(),
       rewrites: [],
       alarmWrites: [],
     };
     const r = await reconcileOneSite('s', {
-      directory: fakeDirectory('free'),
+      directory: fakeDirectory(),
       quota: fakeQuotaStore(state),
-      metrics: fakeMetrics(4.7 * GB), // still in 80% band
+      metrics: fakeMetrics(950 * GB), // still in 80% band
       now: () => NOW,
     });
     assert.equal(r?.crossings.length, 0);
     assert.equal(state.alarmWrites.length, 0);
   });
+
 });

@@ -8,7 +8,7 @@ const DEFAULT_SECURITY = [
   { firebaseIdToken: [] },
 ];
 
-const REFERENCE_DESCRIPTION = `The Owlette API lets you programmatically manage sites, machines, processes, installer deployments, Roost content/version workflows, Cortex conversations, quotas, audit logs, and webhooks.
+const REFERENCE_DESCRIPTION = `The Owlette API lets you programmatically manage sites, machines, processes, installer deployments, Roost content/version workflows, Hoot conversations, quotas, audit logs, and webhooks.
 
 ## Authentication
 
@@ -38,7 +38,7 @@ Responses may include \`RateLimit-Limit\`, \`RateLimit-Remaining\`, \`RateLimit-
 
 ## Models
 
-The **Models** section at the end of this reference documents the reusable object shapes the API is built from — \`Site\`, \`Machine\`, \`Process\`, \`CortexConversation\`, and so on. These are reference definitions, not endpoints: every operation that returns a machine returns the \`Machine\` shape, every operation that returns a site returns the \`Site\` shape, and so on. Browse them to understand the fields you will send in request bodies and receive in responses.`;
+The **Models** section at the end of this reference documents the reusable object shapes the API is built from — \`Site\`, \`Machine\`, \`Process\`, \`HootConversation\`, and so on. These are reference definitions, not endpoints: every operation that returns a machine returns the \`Machine\` shape, every operation that returns a site returns the \`Site\` shape, and so on. Browse them to understand the fields you will send in request bodies and receive in responses.`;
 
 export interface OpenApiOperation {
   path: string;
@@ -229,8 +229,10 @@ function inferAuthScopeNotes(path: string, method: string, operation: JsonRecord
     return protectedNotes(['device-code:pairing'], 'Device-code creation and polling are public pairing steps; authorization requires an authenticated user session.');
   }
 
-  if (path.startsWith('/api/cortex')) {
-    return protectedNotes([`chat=<siteId>:${permission}`], 'API-key Cortex access is site-scoped; write access can send messages but server-side tools remain capability limited.');
+  // `/api/cortex` is the deprecated back-compat alias of `/api/hoot`; both are
+  // documented, so both need the same scope note.
+  if (path.startsWith('/api/hoot') || path.startsWith('/api/cortex')) {
+    return protectedNotes([`chat=<siteId>:${permission}`], 'API-key Hoot access is site-scoped; write access can send messages but server-side tools remain capability limited.');
   }
 
   if (path.startsWith('/api/webhooks') || path.startsWith('/api/events/stream')) {

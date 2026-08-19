@@ -19,10 +19,15 @@ design:
 - chunked SHA-256 (no whole-file load) so a 50GB file doesn't OOM the agent.
 - skips files in 'failed' state (already known broken — no need to re-confirm).
 
+also owns the LOCAL content-store reaper (`reap_orphan_chunks`): the
+same walk-the-state-DB machinery answers "which cached chunks is nothing
+waiting on any more", and something has to actually delete them — a failed
+distribution otherwise keeps every byte it downloaded, forever.
+
 NOT this module's job:
 - triggering the scrub (separate cron / scheduled task)
 - repairing detected drift (operator decides; could trigger a re-pull)
-- garbage collecting old versions (chunk GC is wave 2b.4, server-side)
+- garbage collecting old versions in R2 (chunk GC is wave 2b.4, server-side)
 """
 
 from __future__ import annotations
@@ -31,11 +36,13 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
+from sync_downloader import _default_content_store
 from sync_version import Version, VersionFile, fetch_version, VersionError
 from sync_state import SyncState
 
@@ -62,6 +69,26 @@ def _default_scrub_report_dir() -> str:
 
 DEFAULT_SCRUB_REPORT_DIR = _default_scrub_report_dir()
 _SCRUB_BUFFER_BYTES = 1024 * 1024  # 1 MiB read buffer
+
+# retention for the JSON scrub reports. the agent dispatches a scrub every
+# hour, so without a cap this directory gains a file per due distribution
+# per run for the life of the machine. reports are a debugging aid — the
+# recent ones are the useful ones.
+MAX_SCRUB_REPORTS = 50
+MAX_SCRUB_REPORT_AGE_SECONDS = 30 * 24 * 3600
+
+# a cached chunk has to be this old before the reaper will touch it, even
+# when the state DB says nothing references it. the gap covers the window
+# between "sync_downloader wrote the blob" and "start_distribution / the
+# chunk row is visible + the distribution is in an active state", plus any
+# out-of-band writer we haven't thought of. 24h is far longer than any
+# single distribution takes and still bounds the leak to one day.
+DEFAULT_ORPHAN_MIN_AGE_SECONDS = 24 * 3600
+
+# content-store filenames are the chunk's lowercase sha-256 hex digest,
+# optionally with a `.partial` suffix while a download is in flight.
+# anything else in the store was not written by us — leave it alone.
+_CHUNK_NAME_RE = re.compile(r'^([0-9a-f]{64})(\.partial)?$')
 
 
 @dataclass
@@ -300,9 +327,155 @@ def scrub_all_due(
     return reports
 
 
+# ─── content-store reaper ────────────────────────────────────────────
+
+
+@dataclass
+class ReapReport:
+    """summary of one content-store reap pass."""
+    scanned: int = 0            # chunk-shaped files examined
+    deleted: int = 0            # orphans removed (or, in dry-run, selected)
+    bytes_freed: int = 0
+    kept_referenced: int = 0    # still needed by an in-flight distribution
+    kept_recent: int = 0        # younger than min_age_seconds
+    kept_unrecognized: int = 0  # not a chunk filename — never ours to delete
+    failed: int = 0             # delete errors (locked file, ACL, AV)
+    dry_run: bool = False
+    deleted_hashes: List[str] = field(default_factory=list)
+
+
+def reap_orphan_chunks(
+    state: SyncState,
+    content_store: Optional[str] = None,
+    min_age_seconds: int = DEFAULT_ORPHAN_MIN_AGE_SECONDS,
+    dry_run: bool = False,
+) -> ReapReport:
+    """
+    delete cached chunks that no in-flight distribution needs any more.
+
+    a chunk is reaped when BOTH hold:
+      1. its hash is not referenced by a distribution in an active state
+         (see sync_state.ACTIVE_DISTRIBUTION_STATES). committed / failed /
+         cancelled rows are history — the assembler releases a committed
+         distribution's chunks itself, and a failed one is never resumed.
+      2. it is older than `min_age_seconds` (default 24h). this is the
+         belt-and-braces guard: a distribution that has written blobs but
+         hasn't registered its rows yet keeps its bytes regardless of what
+         the state DB currently says.
+
+    `.partial` sidecars are reaped under the same two rules — an abandoned
+    partial download is exactly the leak this is here to stop.
+
+    best-effort by construction: a file we cannot delete is counted and
+    logged, never raised. returns a ReapReport for the caller to log or
+    surface. `dry_run=True` selects and reports without deleting.
+    """
+    store = Path(os.path.expanduser(content_store or _default_content_store()))
+    report = ReapReport(dry_run=dry_run)
+    if not store.is_dir():
+        logger.debug(f"sync_scrub: content store {store} does not exist — nothing to reap")
+        return report
+
+    referenced = state.list_referenced_chunk_hashes()
+    cutoff = time.time() - max(0, min_age_seconds)
+
+    for path, chunk_hash in _iter_content_store(store, report):
+        report.scanned += 1
+        if chunk_hash in referenced:
+            report.kept_referenced += 1
+            continue
+        try:
+            st = path.stat()
+        except OSError:
+            # vanished between scandir and stat — nothing to do.
+            continue
+        if st.st_mtime > cutoff:
+            report.kept_recent += 1
+            continue
+        if dry_run:
+            report.deleted += 1
+            report.bytes_freed += st.st_size
+            report.deleted_hashes.append(chunk_hash)
+            continue
+        try:
+            path.unlink()
+        except OSError as e:
+            report.failed += 1
+            logger.warning(
+                f"sync_scrub: could not reap orphan chunk {path.name[:12]}… "
+                f"at {path!s}: {e}"
+            )
+            continue
+        report.deleted += 1
+        report.bytes_freed += st.st_size
+        report.deleted_hashes.append(chunk_hash)
+        logger.debug(f"sync_scrub: reaped orphan chunk {path.name} ({st.st_size} bytes)")
+
+    if report.deleted or report.failed:
+        # sample the hashes so an operator can correlate the reap with a
+        # specific distribution without turning on debug logging, but cap
+        # it — a 125k-chunk store must not write 125k log lines.
+        sample = ', '.join(h[:12] + '…' for h in report.deleted_hashes[:10])
+        more = '' if len(report.deleted_hashes) <= 10 else f" (+{len(report.deleted_hashes) - 10} more)"
+        verb = 'would reap' if dry_run else 'reaped'
+        logger.info(
+            f"sync_scrub: content-store reap — {verb} {report.deleted} orphan "
+            f"chunk(s), {report.bytes_freed / (1024 * 1024):.1f} MiB; kept "
+            f"{report.kept_referenced} referenced + {report.kept_recent} recent; "
+            f"{report.failed} failed. hashes: {sample}{more}"
+        )
+    else:
+        logger.debug(
+            f"sync_scrub: content-store reap — nothing to collect "
+            f"({report.scanned} chunk(s) scanned, {report.kept_referenced} referenced, "
+            f"{report.kept_recent} too recent)"
+        )
+    return report
+
+
+def _iter_content_store(store: Path, report: ReapReport) -> Iterable[Tuple[Path, str]]:
+    """
+    yield (path, chunk_hash) for every chunk-shaped file in the sharded
+    content store (`<store>/<2 hex>/<64 hex>[.partial]`).
+
+    anything that isn't a regular file with a chunk-shaped name is counted
+    in `report.kept_unrecognized` and skipped — the reaper only ever deletes
+    files it can prove it wrote. symlinks are skipped for the same reason.
+    """
+    try:
+        with os.scandir(str(store)) as shards:
+            shard_entries = list(shards)
+    except OSError as e:
+        logger.warning(f"sync_scrub: cannot list content store {store}: {e}")
+        return
+    for shard in shard_entries:
+        try:
+            if not shard.is_dir(follow_symlinks=False):
+                report.kept_unrecognized += 1
+                continue
+            with os.scandir(shard.path) as it:
+                entries = list(it)
+        except OSError as e:
+            logger.warning(f"sync_scrub: cannot list content-store shard {shard.path}: {e}")
+            continue
+        for entry in entries:
+            try:
+                if not entry.is_file(follow_symlinks=False):
+                    report.kept_unrecognized += 1
+                    continue
+            except OSError:
+                continue
+            m = _CHUNK_NAME_RE.match(entry.name)
+            if m is None:
+                report.kept_unrecognized += 1
+                continue
+            yield Path(entry.path), m.group(1)
+
+
 def _write_report(report: ScrubReport, report_dir: str) -> None:
     """
-    write the scrub report as JSON for local debugging + replay.
+    write the scrub report as JSON for local debugging + replay, then trim
+    the report directory so it can't grow without bound.
 
     best-effort: any error (mkdir failure, disk full, permission denied)
     logs a warning but does NOT raise — the in-memory report is still
@@ -320,3 +493,55 @@ def _write_report(report: ScrubReport, report_dir: str) -> None:
         )
     except OSError as e:
         logger.warning(f"sync_scrub: could not persist report to {target}: {e}")
+        return
+    _prune_old_reports(rd)
+
+
+def _prune_old_reports(
+    report_dir: Path,
+    keep: int = MAX_SCRUB_REPORTS,
+    max_age_seconds: int = MAX_SCRUB_REPORT_AGE_SECONDS,
+) -> int:
+    """
+    delete scrub reports that are beyond the newest `keep` OR older than
+    `max_age_seconds`. returns the number deleted.
+
+    the agent scrubs on an hourly dispatch, so without this the report
+    directory gains a file per due-distribution per run, forever — nothing
+    else cleans it (shared_utils.cleanup_old_logs only walks the logs root
+    and only matches `*.log`).
+
+    only files matching our own `scrub_*.json` naming are considered, and
+    every failure is swallowed: a report we can't delete is disk noise, not
+    a reason to fail a scrub.
+    """
+    try:
+        entries = [p for p in report_dir.glob('scrub_*.json') if p.is_file()]
+    except OSError as e:
+        logger.warning(f"sync_scrub: could not list report dir {report_dir}: {e}")
+        return 0
+
+    stamped = []
+    for p in entries:
+        try:
+            stamped.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+    stamped.sort(key=lambda t: t[0], reverse=True)  # newest first
+
+    cutoff = time.time() - max_age_seconds
+    deleted = 0
+    for index, (mtime, path) in enumerate(stamped):
+        if index < keep and mtime >= cutoff:
+            continue
+        try:
+            path.unlink()
+            deleted += 1
+        except OSError as e:
+            logger.warning(f"sync_scrub: could not delete old report {path}: {e}")
+    if deleted:
+        logger.info(
+            f"sync_scrub: trimmed {deleted} old scrub report(s) from {report_dir} "
+            f"(keeping the newest {keep} within {max_age_seconds // 86400}d)"
+        )
+    return deleted

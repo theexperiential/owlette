@@ -42,7 +42,7 @@ export function Footer() {
 
   // Hide footer on admin pages (admin panel has its own footer)
   // Hide footer on landing page (has its own LandingFooter)
-  if (pathname?.startsWith('/admin') || pathname === '/' || pathname?.startsWith('/cortex')) {
+  if (pathname?.startsWith('/admin') || pathname === '/' || pathname?.startsWith('/hoot')) {
     return null;
   }
 

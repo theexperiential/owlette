@@ -267,7 +267,7 @@ export function PasskeyManager({ userId, compact = false }: PasskeyManagerProps)
 
       {/* Delete confirmation dialog */}
       <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-        <DialogContent className="border-border bg-secondary text-white max-w-sm">
+        <DialogContent className="border-border bg-secondary text-white sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-white">remove passkey</DialogTitle>
             <DialogDescription className="text-muted-foreground">

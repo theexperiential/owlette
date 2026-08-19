@@ -2459,6 +2459,20 @@ def _emit_audit(
 
     Replaces 6+ inline ``try: fb_client.log_event(...); except Exception: ...``
     blocks scattered across the apply / watchdog / revert code paths.
+
+    Two sinks, both required:
+
+      1. ``log_event`` — writes ``sites/{siteId}/logs``, which drives the
+         dashboard event feed and the talon log bridge
+         (``functions/src/talonLogEvents.ts``). Unchanged.
+      2. ``send_display_alert`` — posts to ``/api/agent/alert`` so the routed
+         events reach email + webhook delivery. Non-blocking (daemon thread,
+         queued for retry on failure) and it drops the actions with no routing
+         entry itself, so every audit action can be handed to it verbatim.
+
+    The human-readable ``details`` line is merged into the alert payload so
+    webhook receivers render it (``webhookSender.extractFields`` reads
+    ``data.details``) — ``extras`` wins if it already carries the key.
     """
     if fb_client is None:
         return
@@ -2471,6 +2485,13 @@ def _emit_audit(
         )
     except Exception as log_err:  # pragma: no cover — logging must never break callers
         logger.debug('_emit_audit(%s) failed: %s', action, log_err)
+
+    try:
+        alert_data = {'details': details}
+        alert_data.update(extras or {})
+        fb_client.send_display_alert(action, alert_data)
+    except Exception as alert_err:  # alerting must never break the apply path
+        logger.debug('_emit_audit(%s) alert dispatch failed: %s', action, alert_err)
 
 
 def _trigger_profile_resync(firebase_client) -> None:

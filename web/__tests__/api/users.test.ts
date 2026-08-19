@@ -252,10 +252,73 @@ const mockRunTransaction = jest.fn(
   },
 );
 
+/**
+ * Collection-group view, keyed on the last collection segment of a path.
+ * `DELETE /api/users/{uid}` uses one to count the talons the deleted account
+ * authored across every site, so the mock has to answer it.
+ */
+function makeCollectionGroupRef(collectionId: string): unknown {
+  const wheres: WhereClause[] = [];
+  const ref: Record<string, unknown> = {
+    where: (field: string, op: string, value: unknown) => {
+      wheres.push({ field, op, value });
+      return ref;
+    },
+    orderBy: () => ref,
+    get: jest.fn(async () => {
+      const matches: Array<{ path: string; id: string; data: Record<string, unknown> }> = [];
+      for (const [colPath, docs] of Object.entries(collectionDocs)) {
+        const segments = colPath.split('/');
+        if (segments[segments.length - 1] !== collectionId) continue;
+        for (const d of docs) {
+          matches.push({ path: colPath, id: d.id, data: d.data });
+        }
+      }
+      const filtered = matches.filter((m) =>
+        wheres.every((w) => (w.op === '==' ? m.data[w.field] === w.value : true)),
+      );
+      return {
+        docs: filtered.map((m) => {
+          const segments = m.path.split('/');
+          const parentDocId = segments.length >= 2 ? segments[segments.length - 2] : null;
+          return {
+            id: m.id,
+            exists: true,
+            data: () => m.data,
+            ref: { parent: { parent: parentDocId ? { id: parentDocId } : null } },
+          };
+        }),
+      };
+    }),
+  };
+  return ref;
+}
+
+/** Write batch — the talon store commits a reassignment through one. */
+function makeBatch() {
+  const ops: Array<() => Promise<void>> = [];
+  return {
+    set: (
+      ref: { set: (d: Record<string, unknown>) => Promise<void> },
+      data: Record<string, unknown>,
+    ) => ops.push(() => ref.set(data)),
+    update: (
+      ref: { update: (p: Record<string, unknown>) => Promise<void> },
+      patch: Record<string, unknown>,
+    ) => ops.push(() => ref.update(patch)),
+    delete: (ref: { delete: () => Promise<void> }) => ops.push(() => ref.delete()),
+    commit: async () => {
+      for (const op of ops) await op();
+    },
+  };
+}
+
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
     collection: (name: string) => makeCollectionRef([name]),
+    collectionGroup: (id: string) => makeCollectionGroupRef(id),
     runTransaction: mockRunTransaction,
+    batch: makeBatch,
   }),
   getAdminAuth: () => ({
     verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')),
@@ -273,6 +336,7 @@ import { POST as promotePOST } from '@/app/api/users/[uid]/promote/route';
 import { POST as demotePOST } from '@/app/api/users/[uid]/demote/route';
 import { POST as assignSitesPOST } from '@/app/api/users/[uid]/assign-sites/route';
 import { POST as removeSitesPOST } from '@/app/api/users/[uid]/remove-sites/route';
+import { GET as userTalonsGET } from '@/app/api/users/[uid]/talons/route';
 
 /* -------------------------------------------------------------------------- */
 /*  Fixtures                                                                  */
@@ -997,5 +1061,158 @@ describe('DELETE /api/users/{uid}', () => {
     });
 
     expect(res.status).toBe(403);
+  });
+
+  /* ---------------------------------------------------------------------- */
+  /*  talons the deleted account authored                                    */
+  /* ---------------------------------------------------------------------- */
+
+  describe('authored talons', () => {
+    function seedTalon(siteId: string, talonId: string, data: Record<string, unknown>): void {
+      const colPath = `sites/${siteId}/talons`;
+      const merged = {
+        name: talonId,
+        enabled: true,
+        outputs: [{ type: 'email' }],
+        ...data,
+      };
+      docStore[`${colPath}/${talonId}`] = { data: merged };
+      if (!collectionDocs[colPath]) collectionDocs[colPath] = [];
+      collectionDocs[colPath].push({ id: talonId, data: merged });
+    }
+
+    it('reports the count without moving anything by default', async () => {
+      authedAsSuperadminWithKey('admin');
+      seedUser('alice', { role: 'admin' });
+      seedUser('bob', { role: 'admin', sites: ['site-a'] });
+      seedTalon('site-a', 't1', { createdBy: 'alice' });
+
+      const req = createMockRequest(
+        'http://localhost/api/users/alice?successorUid=bob',
+        { method: 'DELETE' },
+      );
+      const res = await detailDELETE(req, {
+        params: Promise.resolve({ uid: 'alice' }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.authoredTalonCount).toBe(1);
+      expect(body.reassignedTalonIds).toEqual([]);
+      expect(docStore['sites/site-a/talons/t1']?.data?.createdBy).toBe('alice');
+    });
+
+    it('hands them to the site-ownership successor when reassignTalons=true', async () => {
+      authedAsSuperadminWithKey('admin');
+      seedUser('alice', { role: 'admin' });
+      seedUser('bob', { role: 'admin', sites: ['site-a'] });
+      seedTalon('site-a', 't1', { createdBy: 'alice' });
+
+      const req = createMockRequest(
+        'http://localhost/api/users/alice?successorUid=bob&reassignTalons=true',
+        { method: 'DELETE' },
+      );
+      const res = await detailDELETE(req, {
+        params: Promise.resolve({ uid: 'alice' }),
+      });
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.reassignedTalonIds).toEqual(['t1']);
+      expect(docStore['sites/site-a/talons/t1']?.data?.createdBy).toBe('bob');
+    });
+
+    it('refuses reassignTalons without a successor to hand them to', async () => {
+      authedAsSuperadminWithKey('admin');
+      seedUser('alice', { role: 'admin' });
+
+      const req = createMockRequest(
+        'http://localhost/api/users/alice?reassignTalons=true',
+        { method: 'DELETE' },
+      );
+      const res = await detailDELETE(req, {
+        params: Promise.resolve({ uid: 'alice' }),
+      });
+
+      expect(res.status).toBe(400);
+      expect(docStore['users/alice']?.data?.deletedAt).toBeUndefined();
+    });
+  });
+});
+
+/* ========================================================================== */
+/*  GET /api/users/{uid}/talons                                              */
+/* ========================================================================== */
+
+describe('GET /api/users/{uid}/talons', () => {
+  function seedTalon(siteId: string, talonId: string, data: Record<string, unknown>): void {
+    const colPath = `sites/${siteId}/talons`;
+    const merged = { name: talonId, enabled: true, ...data };
+    docStore[`${colPath}/${talonId}`] = { data: merged };
+    if (!collectionDocs[colPath]) collectionDocs[colPath] = [];
+    collectionDocs[colPath].push({ id: talonId, data: merged });
+  }
+
+  it('tallies the authored talons per site across the fleet', async () => {
+    authedAsSuperadminWithKey('read');
+    seedTalon('site-a', 't1', { name: 'lobby', createdBy: 'alice' });
+    seedTalon('site-a', 't2', { name: 'atrium', createdBy: 'alice' });
+    seedTalon('site-b', 't3', { name: 'dock', createdBy: 'alice' });
+    seedTalon('site-b', 't4', { name: 'other', createdBy: 'bob' });
+
+    const res = await userTalonsGET(
+      createMockRequest('http://localhost/api/users/alice/talons'),
+      { params: Promise.resolve({ uid: 'alice' }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.count).toBe(3);
+    expect(body.sites).toEqual(
+      expect.arrayContaining([
+        { siteId: 'site-a', count: 2 },
+        { siteId: 'site-b', count: 1 },
+      ]),
+    );
+    expect(body.talons.map((t: { talonId: string }) => t.talonId).sort()).toEqual([
+      't1',
+      't2',
+      't3',
+    ]);
+  });
+
+  it('answers zero for someone who never wrote one', async () => {
+    authedAsSuperadminWithKey('read');
+
+    const res = await userTalonsGET(
+      createMockRequest('http://localhost/api/users/nobody/talons'),
+      { params: Promise.resolve({ uid: 'nobody' }) },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ uid: 'nobody', count: 0, sites: [], talons: [] });
+  });
+
+  it('rejects a non-superadmin', async () => {
+    authedAsNonSuperadminWithKey('read');
+
+    const res = await userTalonsGET(
+      createMockRequest('http://localhost/api/users/alice/talons'),
+      { params: Promise.resolve({ uid: 'alice' }) },
+    );
+
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects a uid that would escape the document path', async () => {
+    authedAsSuperadminWithKey('read');
+
+    const res = await userTalonsGET(
+      createMockRequest('http://localhost/api/users/bad/talons'),
+      { params: Promise.resolve({ uid: '../escape' }) },
+    );
+
+    expect(res.status).toBe(400);
   });
 });

@@ -9,23 +9,22 @@
 ## Tech Stack
 
 - **Language**: Python 3.9+ (type hints encouraged)
-- **Platform**: Windows Service via NSSM (not pywin32 ServiceFramework directly)
+- **Platform**: Windows Service via `owlette-host` (`agent/host`, Rust) — not pywin32 ServiceFramework directly, and not NSSM since 3.0.0
 - **Cloud**: Firestore REST API (`firestore_rest_client.py`) — NOT Firebase Admin SDK
 - **Auth**: OAuth two-token system (access + refresh) with Fernet AES encrypted storage
 - **Process Management**: psutil, pywin32, Task Scheduler (schtasks)
-- **GUI**: CustomTkinter (`owlette_gui.py`)
-- **System Tray**: pystray (`owlette_tray.py`)
-- **Build**: Inno Setup with embedded Python 3.11 + NSSM (not PyInstaller)
+- **Local UI**: none in python — the Tauri desktop app in `desktop/` owns the tray, the config window and the reboot prompt (3.0.0+)
+- **Build**: Inno Setup with embedded Python 3.11 (not PyInstaller), plus a `tauri build --no-bundle` step for the desktop exe and a `cargo build --release` step for the service host
 
 ---
 
-## Module Map (21 files in `agent/src/`)
+## Module Map (`agent/src/`, ~40 modules — the tables below cover the load-bearing ones)
 
 ### Core Service
 | Module | Purpose |
 |--------|---------|
 | `owlette_service.py` | Main Windows service — process monitoring loop (10s interval), command handling, crash recovery |
-| `owlette_runner.py` | NSSM-compatible bridge — translates NSSM console signals to service lifecycle |
+| `owlette_runner.py` | Host↔service bridge — SCM stop watcher, exit codes, service lifecycle |
 | `shared_utils.py` | Config loading, logging, system metrics, file paths, atomic JSON writes |
 
 ### Firebase Chain
@@ -41,18 +40,22 @@
 | Module | Purpose |
 |--------|---------|
 | `owlette_scout.py` | Process responsiveness checker — sends WM_NULL to window handles |
-| `prompt_restart.py` | UI prompt when process exceeds relaunch limits (countdown to reboot) |
 
 ### User-Facing
+The local UI lives in `desktop/` (Tauri), not here. The service launches
+`{app}\app\owlette-desktop.exe` with `--tray` for the notification-area icon and
+`--restart-prompt` for the relaunch-limit countdown; the app talks back through
+`config.json`, `tmp/app_states.json` and `tmp/service_status.json` under the
+`Global\OwletteJsonFileMutex` contract. See `desktop/README.md`.
+
 | Module | Purpose |
 |--------|---------|
-| `owlette_gui.py` | CustomTkinter configuration GUI (separate process) |
-| `owlette_tray.py` | System tray icon — reads `service_status.json` for status colors |
+| `session_exec.py` | Runs python/cmd/PowerShell in the interactive session (CreateProcessAsUser) |
 
 ### Installation & Updates
 | Module | Purpose |
 |--------|---------|
-| `configure_site.py` | OAuth registration during install — localhost:8765 callback server |
+| `configure_site.py` | Pairing (device code) during install, plus the desktop app's CLI back end for join/leave/report-issue/reboot |
 | `owlette_updater.py` | Self-update bootstrap — stop service → download → silent install → verify |
 | `installer_utils.py` | Download/execute/cancel remote installers (deployment system) |
 
@@ -61,7 +64,6 @@
 |--------|---------|
 | `project_utils.py` | Project directory management |
 | `registry_utils.py` | Windows registry queries (installed software list) |
-| `cleanup_commands.py` | Firestore command queue cleanup |
 
 > **Full architecture details**: See `skills/resources/agent-architecture.md`
 > **Build system details**: See `skills/resources/installer-build-system.md`
@@ -84,7 +86,7 @@ Existing commands: `restart_process`, `kill_process`, `set_launch_mode`, `update
 
 - Process states: `RUNNING`, `STALLED`, `KILLED`, `STOPPED`, `INACTIVE`
 - Main loop in `handle_process()` runs every 10s per configured process
-- Two-stage launch: Task Scheduler first (escapes NSSM job object), CreateProcessAsUser fallback
+- Two-stage launch: Task Scheduler first (managed processes are never descendants of the agent), CreateProcessAsUser fallback
 - Hang detection: 3-stage confirmation (0-10s watch → 10-15s confirm → 15s+ kill)
 - Crash recovery: `recover_running_processes()` validates PIDs against `exe_path` on startup
 
@@ -152,7 +154,7 @@ When a process crashes or fails to start, the agent sends an email alert via the
 
 | Path | Purpose |
 |------|---------|
-| `C:\ProgramData\Owlette\` | Installation directory (agent code, Python, NSSM) + runtime data |
+| `C:\ProgramData\Owlette\` | Installation directory (agent code, Python, the service host) + runtime data |
 | `C:\ProgramData\Owlette\config\config.json` | Runtime configuration |
 | `C:\ProgramData\Owlette\logs\service.log` | Service logs (rotating) |
 | `C:\ProgramData\Owlette\logs\tray.log` | Tray icon logs |
@@ -167,7 +169,7 @@ When a process crashes or fails to start, the agent sends an email alert via the
 ## Build Commands
 
 ```bash
-# Full build (first time, downloads Python + NSSM, ~5-10 min)
+# Full build (first time, downloads Python and builds the desktop app + service host, ~5-10 min)
 cd agent
 build_installer_full.bat
 

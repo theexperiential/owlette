@@ -28,7 +28,6 @@ export interface AccountRateLimit {
 
 export interface AccountQuotaSummary {
   siteId?: string;
-  tier?: string;
   usedBytes?: number;
   pendingBytes?: number;
   limitBytes?: number | null;

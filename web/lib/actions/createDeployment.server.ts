@@ -2,7 +2,7 @@
  * createDeployment action core (security-boundary-migration wave 3.3).
  *
  * Lifted from the api-sprint wave-1 body of
- * `web/app/api/sites/[siteId]/deployments/route.ts` so cortex (`invokeAsSystem`)
+ * `web/app/api/sites/[siteId]/deployments/route.ts` so hoot (`invokeAsSystem`)
  * and the route shim share the same single source of truth. Public contract
  * is preserved bit-for-bit — the route shim continues to surface every
  * existing field exactly as before.

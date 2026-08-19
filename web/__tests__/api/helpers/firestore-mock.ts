@@ -157,3 +157,46 @@ export function querySnapshot(
     })),
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/*  site ownership + api-key auth helpers                                     */
+/* -------------------------------------------------------------------------- */
+
+const ALL_PERMISSIONS = ['read', 'write', 'deploy', 'rollback', 'admin'] as const;
+
+/** Default owner uid used by `seedSiteOwner` / `apiKeyAuth`. */
+export const SITE_OWNER = 'user-1';
+
+/**
+ * Seed `sites/{siteId}` with an `owner`, for routes that resolve ownership
+ * off the site doc. Clears the map first so a scenario can't inherit the
+ * previous test's.
+ */
+export function seedSiteOwner(siteId: string, owner: string = SITE_OWNER): void {
+  mocks.siteDocs.clear();
+  mocks.siteDocs.set(siteId, { owner });
+}
+
+/**
+ * A `ResolvedAuth` carrying an api key with wildcard scopes, so the scope
+ * check is never what answers the request.
+ */
+export function apiKeyAuth(userId = SITE_OWNER): {
+  userId: string;
+  keyContext: Record<string, unknown>;
+} {
+  return {
+    userId,
+    keyContext: {
+      keyId: 'key-billing-test',
+      environment: 'live',
+      expiresAt: Date.now() + 60_000,
+      isLegacy: false,
+      scopes: ['site', 'roost', 'machine', 'chat'].map((resource) => ({
+        resource,
+        id: '*',
+        permissions: [...ALL_PERMISSIONS],
+      })),
+    },
+  };
+}

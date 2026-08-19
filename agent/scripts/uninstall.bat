@@ -4,8 +4,13 @@ setlocal enabledelayedexpansion
 :: ============================================================================
 :: Owlette Service Uninstallation Script
 :: ============================================================================
-:: This script uninstalls the Owlette Windows service
-:: Run with administrator privileges
+:: Stops and deregisters the Owlette Windows service.
+:: Run with administrator privileges.
+::
+:: 3.0.0: `owlette-host uninstall` replaces the nssm stop/remove pair. It waits
+:: for the service to reach STOPPED before deregistering it, which is what gives
+:: the agent time to flush `online: false` to Firestore - the old script's
+:: fixed sleeps were working around `nssm stop` returning early.
 :: ============================================================================
 
 echo.
@@ -17,6 +22,7 @@ echo.
 :: Get the installation directory
 cd /d "%~dp0.."
 set "INSTALL_DIR=%CD%"
+set "HOST_EXE=%INSTALL_DIR%\tools\owlette-host.exe"
 
 :: ============================================================================
 :: Check for administrator privileges
@@ -33,53 +39,28 @@ if %errorLevel% neq 0 (
 :: ============================================================================
 :: Stop and remove service
 :: ============================================================================
-echo Checking for Owlette service...
-"%INSTALL_DIR%\tools\nssm.exe" status OwletteService >nul 2>&1
+if not exist "%HOST_EXE%" (
+    echo Service host not found at "%HOST_EXE%".
+    echo Nothing to uninstall from this directory.
+    echo.
+    pause
+    exit /b 0
+)
+
+echo Stopping and deregistering the service...
+"%HOST_EXE%" uninstall
 
 if %errorLevel% equ 0 (
-    echo Stopping service...
-    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService
-
-    :: Wait up to 10 seconds for service to stop gracefully
-    :: This allows the service to cleanly set online=false in Firestore
-    echo Waiting for service to stop gracefully...
-    set WAIT_COUNT=0
-    :WAIT_LOOP
-    "%INSTALL_DIR%\tools\nssm.exe" status OwletteService | findstr /C:"SERVICE_STOPPED" >nul 2>&1
-    if !errorLevel! equ 0 goto SERVICE_STOPPED
-
-    timeout /t 1 /nobreak >nul
-    set /a WAIT_COUNT+=1
-    if !WAIT_COUNT! lss 10 goto WAIT_LOOP
-
-    :: If service didn't stop after 10 seconds, force stop
-    echo Service did not stop gracefully, forcing...
-    "%INSTALL_DIR%\tools\nssm.exe" stop OwletteService
-    timeout /t 1 /nobreak >nul
-
-    :SERVICE_STOPPED
-    echo Service stopped successfully
-
-    :: SAFETY MARGIN: Wait additional 3 seconds for Firestore sync
-    echo Waiting for Firestore sync to complete...
-    timeout /t 3 /nobreak >nul
-
-    echo Removing service...
-    "%INSTALL_DIR%\tools\nssm.exe" remove OwletteService confirm
-
-    if %errorLevel% equ 0 (
-        echo.
-        echo ========================================
-        echo Service Uninstalled Successfully
-        echo ========================================
-        echo.
-    ) else (
-        echo ERROR: Failed to remove service
-        pause
-        exit /b 1
-    )
+    echo.
+    echo ========================================
+    echo Service Uninstalled Successfully
+    echo ========================================
+    echo.
 ) else (
-    echo Service not found. Already uninstalled?
+    echo ERROR: Failed to remove service
+    echo Check the host log at: %ProgramData%\Owlette\logs\service_host.log
+    pause
+    exit /b 1
 )
 
 echo.

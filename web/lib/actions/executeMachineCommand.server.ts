@@ -4,7 +4,7 @@
  * security-boundary-migration wave 3.1. Lifted from the body of
  * `web/app/api/sites/[siteId]/machines/[machineId]/commands/route.ts`
  * (api-sprint wave 2 — track 2A) so it can be reused from the public
- * route + future server-side callers (cortex tool dispatch via
+ * route + future server-side callers (hoot tool dispatch via
  * `invokeAsSystem`, scheduled jobs).
  *
  * Allowlist enforcement, machine-offline check, command-id mint,
@@ -43,7 +43,7 @@ import { FieldValue } from 'firebase-admin/firestore';
  * - `restart_process` / `start_process` / `stop_process` /
  *   `kill_process` - process-control commands emitted by the public API.
  * - `cancel_mcp_tool` — kill an in-flight `mcp_tool_call` subprocess by
- *   its command id (cortex cancel button — `/api/cortex/cancel-tool`).
+ *   its command id (hoot cancel button — `/api/hoot/cancel-tool`).
  * - `update_owlette` — agent self-update command issued by
  *   `lib/firebase.ts:sendOwletteUpdateCommand`.
  */

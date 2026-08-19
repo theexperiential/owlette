@@ -121,6 +121,18 @@ beforeEach(async () => {
         targets: [MACHINE_X],
       },
     );
+    await setDoc(doc(db, 'config', SITE_A, 'talon_presets', 'talon-preset-1'), {
+      name: 'morning wall check',
+      template: {
+        name: 'morning wall check',
+        trigger: { type: 'event', eventTypes: ['exe_missing'] },
+        condition: { type: 'none' },
+        outputs: [{ type: 'email' }],
+        cooldownMinutes: 60,
+      },
+      isBuiltIn: false,
+      order: 100,
+    });
     await setDoc(doc(db, 'system_presets', 'system-preset-1'), {
       name: 'TouchDesigner',
       software_name: 'TouchDesigner',
@@ -603,6 +615,31 @@ describe('preset and template control-plane writes', () => {
         },
       ),
     );
+  });
+
+  test('member cannot write talon presets directly', async () => {
+    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
+
+    await assertFails(
+      setDoc(doc(db, 'config', SITE_A, 'talon_presets', 'talon-direct'), {
+        name: 'direct talon preset',
+        template: {
+          name: 'direct talon preset',
+          trigger: { type: 'event', eventTypes: ['exe_missing'] },
+          condition: { type: 'none' },
+          outputs: [{ type: 'email' }],
+          cooldownMinutes: 60,
+        },
+        isBuiltIn: false,
+        order: 100,
+      }),
+    );
+  });
+
+  test('member cannot delete talon presets directly', async () => {
+    const db = await asUser(MEMBER_UID, 'member', [SITE_A]);
+
+    await assertFails(deleteDoc(doc(db, 'config', SITE_A, 'talon_presets', 'talon-preset-1')));
   });
 
   test('superadmin cannot create system presets directly', async () => {

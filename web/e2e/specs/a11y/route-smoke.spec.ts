@@ -3,8 +3,8 @@ import { AxeBuilder } from '@axe-core/playwright';
 import { roleState } from '../../helpers/roles';
 import { TEST_USERS } from '../../helpers/seed';
 import {
-  clearCortexFixture,
-  seedCortexFixture,
+  clearHootFixture,
+  seedHootFixture,
   seedLogEvents,
   seedSystemPreset,
 } from '../../helpers/coverageSeed';
@@ -80,9 +80,9 @@ test.describe('authenticated a11y smoke', () => {
     await expectNoSeriousA11yViolations(page);
   });
 
-  test('cortex keyed state has no serious/critical axe violations', async ({ page }) => {
-    await seedCortexFixture({ userId: TEST_USERS.admin.uid });
-    await page.goto('/cortex');
+  test('hoot keyed state has no serious/critical axe violations', async ({ page }) => {
+    await seedHootFixture({ userId: TEST_USERS.admin.uid });
+    await page.goto('/hoot');
     await expect(page.getByPlaceholder(/ask about this machine/i)).toBeVisible();
     await expectNoSeriousA11yViolations(page);
   });
@@ -99,13 +99,13 @@ test.describe('superadmin a11y smoke', () => {
   });
 });
 
-test.describe('member no-key cortex a11y smoke', () => {
+test.describe('member no-key hoot a11y smoke', () => {
   test.use(roleState('member'));
 
-  test('cortex no-key overlay has no serious/critical axe violations', async ({ page }) => {
-    await clearCortexFixture(TEST_USERS.member.uid);
-    await page.goto('/cortex');
-    await expect(page.getByText(/cortex requires an LLM API key/i)).toBeVisible();
+  test('hoot no-key overlay has no serious/critical axe violations', async ({ page }) => {
+    await clearHootFixture(TEST_USERS.member.uid);
+    await page.goto('/hoot');
+    await expect(page.getByText(/hoot requires an LLM API key/i)).toBeVisible();
     await expectNoSeriousA11yViolations(page);
   });
 });

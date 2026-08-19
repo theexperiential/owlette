@@ -21,6 +21,24 @@ const nextConfig: NextConfig = {
   },
   async redirects() {
     return [
+      // Cortex became hoot in 3.0.0. These three docs pages carried the old
+      // name in their URL; the app's own /cortex -> /hoot redirects set the
+      // precedent, and these paths are linked from outside the repo.
+      {
+        source: '/docs/dashboard/cortex',
+        destination: '/docs/dashboard/hoot',
+        permanent: true,
+      },
+      {
+        source: '/docs/api/cortex',
+        destination: '/docs/api/hoot',
+        permanent: true,
+      },
+      {
+        source: '/docs/reference/cortex-tools',
+        destination: '/docs/reference/hoot-tools',
+        permanent: true,
+      },
       {
         source: '/owlette/api/developer-preview-checklist',
         destination: '/docs/api',
@@ -69,6 +87,20 @@ const nextConfig: NextConfig = {
       {
         source: '/docs/api/launch-runbook',
         destination: '/docs/api',
+        permanent: true,
+      },
+      // cortex → hoot rename. `/hoot` is the canonical route; these keep
+      // bookmarks, shared conversation links, and anything that still points at
+      // the old path working. The API surface keeps its own back-compat aliases
+      // under `app/api/cortex/*` (see web/lib/hoot/WIRE_NAMES.md).
+      {
+        source: '/cortex',
+        destination: '/hoot',
+        permanent: true,
+      },
+      {
+        source: '/cortex/:chatId',
+        destination: '/hoot/:chatId',
         permanent: true,
       },
       {

@@ -66,7 +66,7 @@ describe('/api/openapi', () => {
     expect(commandSample).toContain('/api/sites/$SITE_ID/machines/$MACHINE_ID/commands');
     expect(commandSample).not.toContain('{siteId}');
 
-    expect(findOperation(spec, 'post', '/api/cortex/conversations')?.['x-required-scopes'])
+    expect(findOperation(spec, 'post', '/api/hoot/conversations')?.['x-required-scopes'])
       .toContain('chat=<siteId>:write');
     expect(findOperation(spec, 'post', '/api/installer/upload')?.['x-required-scopes'])
       .toContain('installer=*:write');

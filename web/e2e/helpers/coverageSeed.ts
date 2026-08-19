@@ -147,7 +147,7 @@ export async function seedLiveViewFixture(
     );
 }
 
-export async function clearCortexFixture(userId: string, siteId = 'site-A'): Promise<void> {
+export async function clearHootFixture(userId: string, siteId = 'site-A'): Promise<void> {
   const db = getAdminDb();
   await db.collection('users').doc(userId).collection('settings').doc('llm').delete();
   await db.collection('sites').doc(siteId).collection('settings').doc('llm').delete();
@@ -157,7 +157,7 @@ export async function clearCortexFixture(userId: string, siteId = 'site-A'): Pro
   ]);
 }
 
-export async function seedCortexFixture(opts: {
+export async function seedHootFixture(opts: {
   userId: string;
   siteId?: string;
   machineId?: string;

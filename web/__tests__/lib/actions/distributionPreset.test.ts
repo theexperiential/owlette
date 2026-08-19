@@ -62,6 +62,11 @@ jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => buildCollectionRoot(),
 }));
 
+const mockEmitMutation = jest.fn();
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
+}));
+
 function buildCollectionRoot() {
   return {
     collection: (name: string) => buildCollection(name),
@@ -102,11 +107,14 @@ const ACTOR: UserActor = {
   sites: ['site-a'],
 };
 
+const AUDIT_ACTOR = 'user:uid_alice';
+
 beforeEach(() => {
   setCalls.length = 0;
   updateCalls.length = 0;
   deleteCalls.length = 0;
   updateShouldThrow = null;
+  mockEmitMutation.mockClear();
 });
 
 /* ------------------------------------------------------------------------- */
@@ -116,7 +124,7 @@ beforeEach(() => {
 describe('createDistributionPreset', () => {
   it('writes a preset to config/{siteId}/project_distribution_presets/<id>', async () => {
     const result = await createDistributionPreset(
-      { actor: ACTOR, siteId: 'site-a' },
+      { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
       {
         name: 'My Custom Preset',
         description: 'a thing',
@@ -147,7 +155,7 @@ describe('createDistributionPreset', () => {
 
   it('strips undefined optional fields before writing', async () => {
     await createDistributionPreset(
-      { actor: ACTOR, siteId: 'site-a' },
+      { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
       { name: 'Bare', order: 0 },
     );
     expect(setCalls).toHaveLength(1);
@@ -166,7 +174,7 @@ describe('createDistributionPreset', () => {
 
   it('trims the preset name', async () => {
     await createDistributionPreset(
-      { actor: ACTOR, siteId: 'site-a' },
+      { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
       { name: '  Padded  ', order: 0 },
     );
     expect(setCalls[0].payload.name).toBe('Padded');
@@ -174,7 +182,7 @@ describe('createDistributionPreset', () => {
 
   it('honors isBuiltIn=true when caller passes it', async () => {
     await createDistributionPreset(
-      { actor: ACTOR, siteId: 'site-a' },
+      { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
       { name: 'BuiltIn-ish', order: 0, isBuiltIn: true },
     );
     expect(setCalls[0].payload.isBuiltIn).toBe(true);
@@ -183,20 +191,20 @@ describe('createDistributionPreset', () => {
   describe('validation', () => {
     it('rejects empty name', async () => {
       await expect(
-        createDistributionPreset({ actor: ACTOR, siteId: 'site-a' }, { name: '', order: 0 }),
+        createDistributionPreset({ actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' }, { name: '', order: 0 }),
       ).rejects.toThrow(DistributionPresetValidationError);
     });
 
     it('rejects whitespace-only name', async () => {
       await expect(
-        createDistributionPreset({ actor: ACTOR, siteId: 'site-a' }, { name: '   ', order: 0 }),
+        createDistributionPreset({ actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' }, { name: '   ', order: 0 }),
       ).rejects.toThrow(DistributionPresetValidationError);
     });
 
     it('rejects oversized name', async () => {
       await expect(
         createDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
           { name: 'x'.repeat(101), order: 0 },
         ),
       ).rejects.toThrow(/100 chars/);
@@ -204,14 +212,14 @@ describe('createDistributionPreset', () => {
 
     it('rejects name with no alphanumerics', async () => {
       await expect(
-        createDistributionPreset({ actor: ACTOR, siteId: 'site-a' }, { name: '---', order: 0 }),
+        createDistributionPreset({ actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' }, { name: '---', order: 0 }),
       ).rejects.toThrow(/alphanumeric/);
     });
 
     it('rejects non-string description', async () => {
       await expect(
         createDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
           { name: 'ok', order: 0, description: 123 as unknown as string },
         ),
       ).rejects.toThrow(/description/);
@@ -220,7 +228,7 @@ describe('createDistributionPreset', () => {
     it('rejects non-string project_url', async () => {
       await expect(
         createDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
           { name: 'ok', order: 0, project_url: 5 as unknown as string },
         ),
       ).rejects.toThrow(/project_url/);
@@ -229,7 +237,7 @@ describe('createDistributionPreset', () => {
     it('rejects non-string extract_path', async () => {
       await expect(
         createDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
           { name: 'ok', order: 0, extract_path: {} as unknown as string },
         ),
       ).rejects.toThrow(/extract_path/);
@@ -238,7 +246,7 @@ describe('createDistributionPreset', () => {
     it('rejects non-array verify_files', async () => {
       await expect(
         createDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
           { name: 'ok', order: 0, verify_files: 'main.toe' as unknown as string[] },
         ),
       ).rejects.toThrow(/verify_files/);
@@ -247,7 +255,7 @@ describe('createDistributionPreset', () => {
     it('rejects verify_files with non-string entries', async () => {
       await expect(
         createDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
           { name: 'ok', order: 0, verify_files: ['main.toe', 1 as unknown as string] },
         ),
       ).rejects.toThrow(/verify_files/);
@@ -256,7 +264,7 @@ describe('createDistributionPreset', () => {
     it('rejects non-finite order', async () => {
       await expect(
         createDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
           { name: 'ok', order: Infinity },
         ),
       ).rejects.toThrow(/order/);
@@ -265,7 +273,7 @@ describe('createDistributionPreset', () => {
     it('rejects missing order', async () => {
       await expect(
         createDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
           { name: 'ok' } as unknown as { name: string; order: number },
         ),
       ).rejects.toThrow(/order/);
@@ -280,7 +288,7 @@ describe('createDistributionPreset', () => {
 describe('updateDistributionPreset', () => {
   it('built-in override: setDoc merge with isBuiltIn=true forced', async () => {
     await updateDistributionPreset(
-      { actor: ACTOR, siteId: 'site-a', presetId: 'builtin-touchdesigner-project' },
+      { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'builtin-touchdesigner-project' },
       { name: 'TD overridden', order: 0, project_url: 'https://x' },
     );
     expect(setCalls).toHaveLength(1);
@@ -299,7 +307,7 @@ describe('updateDistributionPreset', () => {
 
   it('custom edit: update() with serverTimestamp updatedAt', async () => {
     await updateDistributionPreset(
-      { actor: ACTOR, siteId: 'site-a', presetId: 'projdist-mine-12345' },
+      { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'projdist-mine-12345' },
       { name: 'renamed' },
     );
     expect(updateCalls).toHaveLength(1);
@@ -320,7 +328,7 @@ describe('updateDistributionPreset', () => {
     updateShouldThrow = { code: 5 };
     await expect(
       updateDistributionPreset(
-        { actor: ACTOR, siteId: 'site-a', presetId: 'projdist-ghost' },
+        { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'projdist-ghost' },
         { name: 'renamed' },
       ),
     ).rejects.toThrow(DistributionPresetNotFoundError);
@@ -330,7 +338,7 @@ describe('updateDistributionPreset', () => {
     updateShouldThrow = { code: 'not-found' };
     await expect(
       updateDistributionPreset(
-        { actor: ACTOR, siteId: 'site-a', presetId: 'projdist-ghost' },
+        { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'projdist-ghost' },
         { name: 'renamed' },
       ),
     ).rejects.toThrow(DistributionPresetNotFoundError);
@@ -340,7 +348,7 @@ describe('updateDistributionPreset', () => {
     updateShouldThrow = new Error('connection lost');
     await expect(
       updateDistributionPreset(
-        { actor: ACTOR, siteId: 'site-a', presetId: 'projdist-real' },
+        { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'projdist-real' },
         { name: 'renamed' },
       ),
     ).rejects.toThrow('connection lost');
@@ -348,7 +356,7 @@ describe('updateDistributionPreset', () => {
 
   it('strips undefined fields from partial update', async () => {
     await updateDistributionPreset(
-      { actor: ACTOR, siteId: 'site-a', presetId: 'projdist-mine-12345' },
+      { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'projdist-mine-12345' },
       { project_url: 'https://x' },
     );
     expect(updateCalls[0].payload).not.toHaveProperty('name');
@@ -361,7 +369,7 @@ describe('updateDistributionPreset', () => {
     it('rejects malformed presetId', async () => {
       await expect(
         updateDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a', presetId: 'bad id with spaces' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'bad id with spaces' },
           { name: 'ok' },
         ),
       ).rejects.toThrow(/presetId/);
@@ -370,7 +378,7 @@ describe('updateDistributionPreset', () => {
     it('rejects empty-string name on partial update', async () => {
       await expect(
         updateDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a', presetId: 'projdist-x-1' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'projdist-x-1' },
           { name: '' },
         ),
       ).rejects.toThrow(/name/);
@@ -379,7 +387,7 @@ describe('updateDistributionPreset', () => {
     it('rejects bad verify_files on partial update', async () => {
       await expect(
         updateDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a', presetId: 'projdist-x-1' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'projdist-x-1' },
           { verify_files: [1 as unknown as string] },
         ),
       ).rejects.toThrow(/verify_files/);
@@ -388,7 +396,7 @@ describe('updateDistributionPreset', () => {
     it('rejects non-finite order on partial update', async () => {
       await expect(
         updateDistributionPreset(
-          { actor: ACTOR, siteId: 'site-a', presetId: 'projdist-x-1' },
+          { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'projdist-x-1' },
           { order: NaN },
         ),
       ).rejects.toThrow(/order/);
@@ -404,6 +412,7 @@ describe('deleteDistributionPreset', () => {
   it('calls delete on the preset doc', async () => {
     await deleteDistributionPreset({
       actor: ACTOR,
+      auditActor: AUDIT_ACTOR,
       siteId: 'site-a',
       presetId: 'projdist-mine-12345',
     });
@@ -416,6 +425,7 @@ describe('deleteDistributionPreset', () => {
   it('also handles built-in preset ids (deleting an override)', async () => {
     await deleteDistributionPreset({
       actor: ACTOR,
+      auditActor: AUDIT_ACTOR,
       siteId: 'site-a',
       presetId: 'builtin-touchdesigner-project',
     });
@@ -429,9 +439,92 @@ describe('deleteDistributionPreset', () => {
     await expect(
       deleteDistributionPreset({
         actor: ACTOR,
+        auditActor: AUDIT_ACTOR,
         siteId: 'site-a',
         presetId: 'bad id with spaces',
       }),
     ).rejects.toThrow(/presetId/);
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+/*  audit emission                                                           */
+/* ------------------------------------------------------------------------- */
+
+describe('distribution preset audit emission', () => {
+  it('emits preset.create on create', async () => {
+    const result = await createDistributionPreset(
+      { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a' },
+      { name: 'My Custom Preset', order: 1 },
+    );
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        siteId: 'site-a',
+        actor: AUDIT_ACTOR,
+        targetId: result.presetId,
+        attributes: expect.objectContaining({
+          verb: 'preset.create',
+          family: 'distribution',
+          presetId: result.presetId,
+        }),
+      }),
+    );
+  });
+
+  it('emits preset.update on a built-in override', async () => {
+    await updateDistributionPreset(
+      { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'builtin-touchdesigner-project' },
+      { name: 'renamed' },
+    );
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        targetId: 'builtin-touchdesigner-project',
+        attributes: expect.objectContaining({
+          verb: 'preset.update',
+          family: 'distribution',
+          isBuiltInOverride: true,
+        }),
+      }),
+    );
+  });
+
+  it('does not emit when the custom update target is missing', async () => {
+    updateShouldThrow = { code: 5 };
+
+    await expect(
+      updateDistributionPreset(
+        { actor: ACTOR, auditActor: AUDIT_ACTOR, siteId: 'site-a', presetId: 'projdist-ghost' },
+        { name: 'x' },
+      ),
+    ).rejects.toBeInstanceOf(DistributionPresetNotFoundError);
+
+    expect(mockEmitMutation).not.toHaveBeenCalled();
+  });
+
+  it('emits preset.delete on delete', async () => {
+    await deleteDistributionPreset({
+      actor: ACTOR,
+      auditActor: AUDIT_ACTOR,
+      siteId: 'site-a',
+      presetId: 'projdist-mine-12345',
+    });
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'process_mutated',
+        targetId: 'projdist-mine-12345',
+        attributes: expect.objectContaining({
+          verb: 'preset.delete',
+          family: 'distribution',
+        }),
+      }),
+    );
   });
 });

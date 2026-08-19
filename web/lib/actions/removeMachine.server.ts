@@ -40,6 +40,7 @@
 
 import { Firestore } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import logger from '@/lib/logger';
 
 const AGENT_REFRESH_TOKEN_DELETE_BATCH_SIZE = 500;
@@ -47,6 +48,8 @@ const AGENT_REFRESH_TOKEN_DELETE_BATCH_SIZE = 500;
 export interface RemoveMachineInput {
   siteId: string;
   machineId: string;
+  /** Audit actor string ("user:<uid>" or "apiKey:<keyId>"). */
+  auditActor: string;
   /** Inject a Firestore instance — tests pass a mock; production omits. */
   db?: Firestore;
 }
@@ -164,6 +167,19 @@ export async function removeMachine(
       },
     });
   }
+
+  emitMutation({
+    kind: 'site_mutated',
+    siteId,
+    actor: input.auditActor,
+    targetId: machineId,
+    attributes: {
+      verb: 'machine.remove',
+      endpoint: 'machines',
+      method: 'DELETE',
+      machineId,
+    },
+  });
 
   return {
     siteId,

@@ -46,11 +46,11 @@ export function createModel(config: LlmConfig): LanguageModel {
 }
 
 /**
- * Build the system prompt for the owlette cortex chat assistant.
+ * Build the system prompt for the owlette hoot chat assistant.
  *
  * Handles both single-machine mode (siteMode=false) and site-wide mode
  * (siteMode=true, tool calls fan out to every online machine in the site).
- * Local Cortex running on the agent has its own CLAUDE.md constitution loaded
+ * Local Hoot running on the agent has its own CLAUDE.md constitution loaded
  * via Agent SDK and does not use this prompt.
  */
 export interface ProcessSummary {
@@ -87,7 +87,7 @@ When reporting events, logs, or timestamps, always contextualize them relative t
   }
 
   if (siteMode) {
-    return `You are owlette cortex, an AI assistant for managing media servers, digital signage, kiosks, and interactive installations. You operate in site-wide mode — your tool calls will be sent to ALL online machines in the site simultaneously and results will be aggregated.
+    return `You are hoot, owlette's AI assistant for managing media servers, digital signage, kiosks, and interactive installations. You operate in site-wide mode — your tool calls will be sent to ALL online machines in the site simultaneously and results will be aggregated.
 
 ${coreRules}
 
@@ -100,7 +100,7 @@ LANGUAGE: You manage remote machines, not the operator's personal computer. Alwa
 FORMATTING: Your responses are rendered with full Markdown support. Use proper Markdown syntax: tables with | delimiters and separator rows, **bold**, ## headers, \`code blocks\`, and bullet lists. Never use plain-text column alignment — always use Markdown tables.`;
   }
 
-  return `You are owlette cortex, an AI assistant for managing media servers, digital signage, kiosks, and interactive installations. You are connected to machine "${machineName}".
+  return `You are hoot, owlette's AI assistant for managing media servers, digital signage, kiosks, and interactive installations. You are connected to machine "${machineName}".
 
 ${coreRules}
 
@@ -145,9 +145,9 @@ export const DEFAULT_AUTONOMOUS_DIRECTIVE =
   'Keep all configured processes running and machines operational. When a process crashes, check agent logs and system event logs for errors, restart the process. If a restart fails twice, escalate to site admins.';
 
 /**
- * Build the system prompt for autonomous Cortex (server-side fallback).
+ * Build the system prompt for autonomous Hoot (server-side fallback).
  *
- * Only used when local Cortex is offline — local Cortex uses Agent SDK with
+ * Only used when local Hoot is offline — local Hoot uses Agent SDK with
  * its own CLAUDE.md constitution and builds this prompt dynamically.
  */
 export function buildAutonomousSystemPrompt(
@@ -155,7 +155,7 @@ export function buildAutonomousSystemPrompt(
   directive: string,
   eventContext: string
 ): string {
-  return `You are owlette cortex operating in AUTONOMOUS mode. You have been triggered by a system alert — no human initiated this conversation. You specialize in managing interactive and immersive media installations (TouchDesigner, Unreal Engine, Unity, digital signage, media walls, kiosks).
+  return `You are hoot, owlette's AI assistant, operating in AUTONOMOUS mode. You have been triggered by a system alert — no human initiated this conversation. You specialize in managing interactive and immersive media installations (TouchDesigner, Unreal Engine, Unity, digital signage, media walls, kiosks).
 
 YOUR DIRECTIVE: ${directive || DEFAULT_AUTONOMOUS_DIRECTIVE}
 

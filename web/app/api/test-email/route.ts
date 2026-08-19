@@ -26,7 +26,7 @@ export const EMAIL_TEMPLATES = [
   { id: 'agent_alert', label: 'agent connection failure', description: 'agent lost connection to cloud' },
   { id: 'threshold_alert', label: 'threshold alert', description: 'metric breached a configured threshold' },
   { id: 'machines_offline', label: 'machines offline', description: 'stale heartbeat detected by health check' },
-  { id: 'cortex_escalation', label: 'cortex escalation', description: 'autonomous investigation could not resolve issue' },
+  { id: 'cortex_escalation', label: 'hoot escalation', description: 'autonomous investigation could not resolve issue' },
   { id: 'welcome', label: 'welcome email', description: 'sent to new users on signup' },
   { id: 'user_signup', label: 'admin signup notification', description: 'admin notified of new user registration' },
 ] as const;
@@ -178,8 +178,8 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
         .replace(/\n/g, '<br>');
 
       const content = `
-        <h2 style="color:${EMAIL_COLORS.amber};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">cortex escalation: TouchDesigner</h2>
-        <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">owlette cortex investigated an issue autonomously but was unable to resolve it. human attention is needed.</p>
+        <h2 style="color:${EMAIL_COLORS.amber};margin:0 0 12px;font-size:18px;font-weight:700;text-transform:lowercase;">hoot escalation: TouchDesigner</h2>
+        <p style="margin:0 0 20px;color:${EMAIL_COLORS.muted};">owlette hoot investigated an issue autonomously but was unable to resolve it. human attention is needed.</p>
         ${emailDataTable([
           { label: 'site', value: 'downtown-gallery' },
           { label: 'machine', value: 'LOBBY-PC-01' },
@@ -188,15 +188,15 @@ function buildTemplateEmail(templateId: string): { subject: string; html: string
           { label: 'time', value: ts },
           { label: 'environment', value: ENV_LABEL },
         ])}
-        <h3 style="color:${EMAIL_COLORS.cyan};margin:24px 0 12px;font-size:15px;font-weight:600;text-transform:lowercase;">cortex investigation report</h3>
+        <h3 style="color:${EMAIL_COLORS.cyan};margin:24px 0 12px;font-size:15px;font-weight:600;text-transform:lowercase;">hoot investigation report</h3>
         <div style="background:${EMAIL_COLORS.bodyBg};border:1px solid ${EMAIL_COLORS.border};padding:14px;border-radius:6px;font-family:'Courier New',Courier,monospace;font-size:12px;line-height:1.6;color:${EMAIL_COLORS.muted};overflow:auto;">
           ${escapedReport}
         </div>
-        <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">review the autonomous conversation in the cortex dashboard for full details.</p>
+        <p style="margin:20px 0 0;color:${EMAIL_COLORS.muted};font-size:13px;">review the autonomous conversation in the hoot dashboard for full details.</p>
       `;
       return {
-        subject: `cortex escalation: TouchDesigner on LOBBY-PC-01`,
-        html: wrapEmailLayout(content, { preheader: 'cortex escalation: TouchDesigner on LOBBY-PC-01', unsubscribeUrl: '#unsubscribe-preview' }),
+        subject: `hoot escalation: TouchDesigner on LOBBY-PC-01`,
+        html: wrapEmailLayout(content, { preheader: 'hoot escalation: TouchDesigner on LOBBY-PC-01', unsubscribeUrl: '#unsubscribe-preview' }),
       };
     }
 

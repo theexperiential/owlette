@@ -25,7 +25,7 @@ owlette roost push ./my-project --to rst_my_project_id --site site-1
 - `machine` - list machines, inspect machine state, view deployments, and run supported machine actions.
 - `audit-log` - list and inspect site audit-log records for operational history.
 - `quota` - inspect current quota usage and usage history for a site.
-- `chat` - create, list, send, rename, and delete cortex chat sessions.
+- `chat` - create, list, send, rename, and delete hoot chat sessions.
 - `deploy` - manage classic installer deploys; use `roost deploy` for content-addressed project deploys.
 - `process` - manage process lifecycle on site machines.
 - `key` - create, list, rotate, and revoke api keys.
@@ -38,6 +38,18 @@ owlette roost push ./my-project --to rst_my_project_id --site site-1
 - `trigger` - fire a synthetic webhook payload directly or through the probe API.
 - `whoami` - print the active user, scopes, environment, profile, and api host.
 - `version` - print cli and server version compatibility details.
+
+## free-trial notice
+
+While your account is on its free trial, the cli prints a one-line reminder to
+stderr, at most once per command:
+
+```
+owlette: trial ends 2026-08-15T00:00:00.000Z; choose a plan to keep API access
+```
+
+stdout is untouched, so `--json` output stays pipeable into `jq`. Once the
+trial ends, commands fail with `402 trial_expired` until a plan is chosen.
 
 full docs at [docs/cli/overview.md](https://github.com/owlette-app/owlette/tree/main/docs/cli/overview.md) (or owlette.app/docs/cli once published).
 

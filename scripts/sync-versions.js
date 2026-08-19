@@ -22,7 +22,22 @@ const VERSION_FILES = {
   product: path.join(ROOT, 'VERSION'),
   agent: path.join(ROOT, 'agent', 'VERSION'),
   web: path.join(ROOT, 'web', 'package.json'),
+  desktopPkg: path.join(ROOT, 'desktop', 'package.json'),
+  tauriConf: path.join(ROOT, 'desktop', 'src-tauri', 'tauri.conf.json'),
 };
+
+// Cargo.toml needs its own writer — TOML, and only the [package] version may
+// change (dependency `version = "..."` keys must not match).
+const CARGO_TOML = path.join(ROOT, 'desktop', 'src-tauri', 'Cargo.toml');
+
+function writeCargoVersion(version) {
+  const content = fs.readFileSync(CARGO_TOML, 'utf8');
+  const updated = content.replace(
+    /^(version = ")\d+\.\d+\.\d+(")/m,
+    `$1${version}$2`,
+  );
+  fs.writeFileSync(CARGO_TOML, updated, 'utf8');
+}
 
 // Documentation files with version references
 const DOC_FILES = {
@@ -156,6 +171,7 @@ function showVersions() {
   console.log(`  Product:  ${readVersion(VERSION_FILES.product)}`);
   console.log(`  Agent:    ${readVersion(VERSION_FILES.agent)}`);
   console.log(`  Web:      ${readVersion(VERSION_FILES.web)}`);
+  console.log(`  Desktop:  ${readVersion(VERSION_FILES.desktopPkg)}`);
   console.log('\n  Note: Firestore rules version is independent (tracks schema changes)\n');
 }
 
@@ -180,6 +196,16 @@ function syncVersions(newVersion) {
   writeVersion(VERSION_FILES.web, newVersion);
   console.log(`  ✅ Updated web/package.json → ${newVersion}`);
 
+  writeVersion(VERSION_FILES.desktopPkg, newVersion);
+  console.log(`  ✅ Updated desktop/package.json → ${newVersion}`);
+
+  writeVersion(VERSION_FILES.tauriConf, newVersion);
+  console.log(`  ✅ Updated desktop/src-tauri/tauri.conf.json → ${newVersion}`);
+
+  writeCargoVersion(newVersion);
+  console.log(`  ✅ Updated desktop/src-tauri/Cargo.toml → ${newVersion}`);
+  console.log('     (Cargo.lock and package-lock.json follow on the next build/install)');
+
   // Update documentation files
   if (updateDocVersion(DOC_FILES.readme, newVersion, oldVersion)) {
     console.log(`  ✅ Updated README.md → ${newVersion}`);
@@ -199,6 +225,12 @@ function syncVersions(newVersion) {
   console.log('   2. Commit changes: git commit -am "chore: Bump version to ' + newVersion + '"');
   console.log('   3. Create tag: git tag v' + newVersion);
   console.log('   4. Push with tags: git push origin main --tags\n');
+  // Deliberately *after* the build, not here: a bump has no installer to
+  // photograph yet, and this script must stay side-effect-free (it edits version
+  // files and nothing else). Release time is when the docs have to match what
+  // ships. See .claude/skills/build-system.md → "Agent Installer Release".
+  console.log('   After building the installer: cd web && npm run screenshots:desktop');
+  console.log('   (refreshes the agent docs screenshots from the shipping desktop app)\n');
 }
 
 // Main

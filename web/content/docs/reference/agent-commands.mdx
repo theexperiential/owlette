@@ -168,7 +168,7 @@ The public route shim still requires `process_name` for `set_launch_mode`; direc
 | `ack_display_topology` | optional `applyId`/`apply_id` | Acknowledge the in-flight display apply and cancel auto-revert when the ID matches. |
 | `test_display_apply` | none | Run a read-only display helper smoke test without applying a topology change. |
 
-### cortex and agent update
+### hoot and agent update
 
 | type | fields | behavior |
 |------|--------|----------|
@@ -194,7 +194,7 @@ admin actions.
 |------|--------|----------|
 | `update_config` | `config` | Replace local config while preserving the local Firebase auth section. |
 | `toggle_autolaunch` | `process_name` or `process_id`/`processId`, `autolaunch` | Legacy compatibility path. Matches process id first, falls back to name, then sets launch mode to `always` or `off` and updates derived `autolaunch`. |
-| `provision_cortex_key` | `api_key`, optional `provider` | Encrypt and store a local Cortex provider key in config. Defaults provider to `anthropic`. |
+| `provision_cortex_key` | `api_key`, optional `provider` | Encrypt and store a local hoot provider key in config. Defaults provider to `anthropic`. |
 
 ### software deployment
 

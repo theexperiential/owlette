@@ -1,12 +1,12 @@
 /**
  * Per-conversation chat-noun routes.
  *
- *   POST   /api/cortex/conversations/{conversationId}  — append a user message + stream
- *   PATCH  /api/cortex/conversations/{conversationId}  — rename (title-only)
- *   DELETE /api/cortex/conversations/{conversationId}  — soft-delete (true-idempotent)
+ *   POST   /api/hoot/conversations/{conversationId}  — append a user message + stream
+ *   PATCH  /api/hoot/conversations/{conversationId}  — rename (title-only)
+ *   DELETE /api/hoot/conversations/{conversationId}  — soft-delete (true-idempotent)
  *
  * `/api/chat/{conversationId}` remains a compatibility alias; the
- * `/api/cortex/conversations/{conversationId}` path is canonical.
+ * `/api/hoot/conversations/{conversationId}` path is canonical.
  *
  * All three verbs require `chat=<siteId>:write`. siteId is read from the
  * conversation document (the URL only carries the conversation id) and
@@ -25,7 +25,11 @@ import {
 } from '@/lib/apiErrors';
 import { withIdempotency } from '@/lib/idempotency';
 import { emitMutation } from '@/lib/auditLogClient';
-import { requireChatAuthAndScope, readAndParseJsonBody } from '@/app/api/_shared';
+import {
+  applyAuthDeprecations,
+  requireChatAuthAndScope,
+  readAndParseJsonBody,
+} from '@/app/api/_shared';
 import {
   appendMessage,
   ChatStorageError,
@@ -36,7 +40,7 @@ import {
   type ChatRole,
 } from '@/lib/chatStorage.server';
 import { getAdminDb } from '@/lib/firebase-admin';
-import { runCortexStream, SITE_TARGET_ID } from '@/lib/cortexStream.server';
+import { runHootStream, SITE_TARGET_ID } from '@/lib/hootStream.server';
 import type { ModelMessage } from 'ai';
 
 interface RouteContext {
@@ -88,7 +92,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         type: ProblemType.ValidationFailed,
         title: 'forbidden_field',
         status: 400,
-        detail: 'public Cortex send accepts only `role` and `content`',
+        detail: 'public Hoot send accepts only `role` and `content`',
         code: 'forbidden_field',
         errors: { body: [`unexpected fields: ${extraFields.join(', ')}`] },
       });
@@ -97,7 +101,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     const role = body.role;
     if (typeof role !== 'string' || !VALID_ROLES.includes(role as ChatRole)) {
       return problemValidation(
-        'field `role` must be `user` for public Cortex conversations',
+        'field `role` must be `user` for public Hoot conversations',
         { 'body.role': ['invalid role'] },
       );
     }
@@ -160,7 +164,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
           content: m.content,
         }));
 
-        const streamResult = await runCortexStream({
+        const streamResult = await runHootStream({
           db: getAdminDb(),
           userId: auth.userId,
           siteId: refreshed.siteId,
@@ -202,7 +206,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         if (!streamResult.ok) {
           return problem({
             type: ProblemType.ServiceUnavailable,
-            title: 'cortex stream unavailable',
+            title: 'hoot stream unavailable',
             status: streamResult.status,
             detail: streamResult.error,
             code: 'cortex_unavailable',
@@ -217,7 +221,10 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
         // and we rely on the user-message append being naturally
         // idempotent at the transport layer (same key, same content =
         // same write).
-        return streamResult.response as unknown as NextResponse;
+        return applyAuthDeprecations(
+          streamResult.response as unknown as NextResponse,
+          auth.scopeCheck,
+        );
       },
       { requireKey: true },
     );
@@ -318,13 +325,16 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
           },
         });
 
-        return NextResponse.json({
-          ok: true,
-          data: {
-            conversationId,
-            title: renamed.title,
-          },
-        });
+        return applyAuthDeprecations(
+          NextResponse.json({
+            ok: true,
+            data: {
+              conversationId,
+              title: renamed.title,
+            },
+          }),
+          auth.scopeCheck,
+        );
       },
     );
   } catch (err) {
@@ -400,13 +410,16 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
           },
         });
 
-        return NextResponse.json({
-          ok: true,
-          data: {
-            conversationId,
-            alreadyDeleted: result.alreadyDeleted,
-          },
-        });
+        return applyAuthDeprecations(
+          NextResponse.json({
+            ok: true,
+            data: {
+              conversationId,
+              alreadyDeleted: result.alreadyDeleted,
+            },
+          }),
+          auth.scopeCheck,
+        );
       },
     );
   } catch (err) {

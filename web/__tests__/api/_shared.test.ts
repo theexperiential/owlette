@@ -17,15 +17,24 @@ jest.mock('@/lib/apiAuth.server', () => {
   // not `statusCode`.
   class ApiAuthError extends Error {
     status: number;
-    constructor(status: number, message: string) {
+    code?: string;
+    details?: Record<string, unknown>;
+    constructor(
+      status: number,
+      message: string,
+      opts?: { code?: string; details?: Record<string, unknown> },
+    ) {
       super(message);
       this.status = status;
+      this.code = opts?.code;
+      this.details = opts?.details;
     }
   }
   return {
     ApiAuthError,
     requireAdminOrIdToken: jest.fn(),
     assertUserHasSiteAccess: jest.fn(),
+    requireApiKeyBilling: jest.fn(),
   };
 });
 
@@ -188,6 +197,8 @@ describe('_shared.ts (v2 route helpers)', () => {
       await expect(requireSiteScope('user-1', 'site_abc')).rejects.toThrow('unrelated');
     });
   });
+
+  // ─── requireBillingOrProblem ──────────────────────────────────────
 
   // ─── validateResourceId ──────────────────────────────────────────
 

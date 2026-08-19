@@ -1,6 +1,6 @@
 ---
 title: "email alerts"
-description: "Owlette sends email notifications for machine health, process, threshold, Cortex, and display-event alerts. Superadmins manage alert rules in Admin Panel -> alerts (/admin/alerts) and test email delivery in Admin Panel -> email (/admin/email). Individual recipients manage their own delivery preferences in account settings -> alerts."
+description: "Owlette sends email notifications for machine health, process, threshold, hoot, and display-event alerts. Superadmins manage alert rules in Admin Panel -> alerts (/admin/alerts) and test email delivery in Admin Panel -> email (/admin/email). Individual recipients manage their own delivery preferences in account settings -> alerts."
 ---
 
 ---
@@ -9,12 +9,12 @@ description: "Owlette sends email notifications for machine health, process, thr
 
 | category | trigger | preference gate | delivery path |
 |----------|---------|-----------------|---------------|
-| **Machine offline** | A previously online machine has a heartbeat older than 3 minutes | `healthAlerts` | `GET /api/cron/health-check` sends per-site emails and respects a 1-hour per-machine cooldown |
+| **Machine offline** | A previously online machine has a heartbeat older than 5 minutes | `healthAlerts` | `GET /api/cron/health-check` sends per-site emails and respects a 1-hour per-machine cooldown |
 | **Agent connection failure** | The agent posts a `connection_failure` event | `healthAlerts` | `POST /api/agent/alert` sends immediately, subject to the agent-alert rate limit |
 | **Process crashed** | The agent posts `process_crash` for a monitored process | `processAlerts` | `POST /api/agent/alert` queues the event; `GET /api/cron/process-alerts` sends a digest |
 | **Process failed to start** | The agent posts `process_start_failed` | `processAlerts` | Same process-alert queue and digest path |
 | **Threshold alert** | A saved metric rule is breached | `thresholdAlerts` | Cloud Functions evaluates rules and calls `POST /api/alerts/trigger` |
-| **Cortex escalation** | Autonomous Cortex cannot resolve an issue and marks an escalation pending | `cortexAlerts` | `POST /api/cortex/escalation` or cron-style `GET /api/cortex/escalation` sends escalation emails |
+| **hoot escalation** | Autonomous hoot cannot resolve an issue and marks an escalation pending | `cortexAlerts` | `POST /api/hoot/escalation` or cron-style `GET /api/hoot/escalation` sends escalation emails |
 | **Display event** | A routed display event needs email delivery | `displayAlerts` | `POST /api/agent/alert` sends critical display emails immediately or queues a display digest |
 
 Display email delivery is not enabled for every display event. The current email-routed events are `display_monitor_removed`, `display_apply_failed`, `display_auto_revert_fired`, and `display_sync_lost`. `display_monitor_removed` and `display_auto_revert_fired` bypass the digest queue and send immediately; other routed display emails are drained by `GET /api/cron/display-alerts`.
@@ -52,7 +52,7 @@ Each user's **account settings -> alerts** section controls:
 - **Machine offline alerts** (`healthAlerts`)
 - **Process crash alerts** (`processAlerts`)
 - **Threshold alerts** (`thresholdAlerts`)
-- **Cortex escalation alerts** (`cortexAlerts`)
+- **hoot escalation alerts** (`cortexAlerts`)
 - **Display events** (`displayAlerts`)
 - **Additional CC recipients** (`alertCcEmails`, maximum 5)
 - **Muted machines** (`mutedMachines`)
@@ -72,7 +72,7 @@ Alert preferences default to enabled unless the stored preference is explicitly 
 | `ADMIN_EMAIL_PROD` | production | Fallback recipient and default test-email target in production |
 | `ADMIN_EMAIL_DEV` | development | Fallback recipient and default test-email target in development |
 | `CRON_SECRET` | yes for cron alerts | Shared secret for health, process, and display alert cron endpoints |
-| `CORTEX_INTERNAL_SECRET` | yes for threshold and Cortex flows | Shared secret for `/api/alerts/trigger`, Cortex autonomous flows, and the Cortex escalation POST route |
+| `CORTEX_INTERNAL_SECRET` | yes for threshold and hoot flows | Shared secret for `/api/alerts/trigger`, hoot autonomous flows, and the hoot escalation POST route |
 
 ### cron routes
 
@@ -83,7 +83,7 @@ Configure the cron caller to include the expected secret header for each route:
 | `GET /api/cron/health-check` | every 5 minutes | `X-Cron-Secret: <CRON_SECRET>` | detects stale machine heartbeats |
 | `GET /api/cron/process-alerts` | every 3 minutes | `X-Cron-Secret: <CRON_SECRET>` | drains `pending_process_alerts` after a 2-minute accumulation window |
 | `GET /api/cron/display-alerts` | every 3 minutes | `X-Cron-Secret: <CRON_SECRET>` | drains `pending_display_alerts` after a 2-minute accumulation window |
-| `GET /api/cortex/escalation` | cron-style polling | `Authorization: Bearer <CRON_SECRET>` | processes pending Cortex escalation events |
+| `GET /api/hoot/escalation` | cron-style polling | `Authorization: Bearer <CRON_SECRET>` | processes pending hoot escalation events (`/api/cortex/escalation` is a working alias) |
 
 Threshold alerts are not drained by a cron route. The metrics Cloud Function evaluates stored rules and calls `POST /api/alerts/trigger` with `x-internal-secret: <CORTEX_INTERNAL_SECRET>`.
 

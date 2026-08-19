@@ -1,0 +1,216 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AppStates } from './processStatus'
+
+const terminatePid = vi.fn()
+
+vi.mock('@/lib/ipc', () => ({ terminatePid: (...args: unknown[]) => terminatePid(...args) }))
+
+const { NoLiveInstanceError, stopProcess } = await import('./processControl')
+
+const entry = { id: 'a', name: 'player', exe_path: 'C:/apps/player.exe' }
+
+/** A table with one running generation of `entry`. */
+function running(): AppStates {
+  return { '4242': { id: 'a', status: 'RUNNING', timestamp: 10 } }
+}
+
+function deps(states: AppStates) {
+  let current = states
+  const mutateStates = vi.fn(async (transform: (states: AppStates) => AppStates) => {
+    current = transform(current)
+    return current
+  })
+  return {
+    readStates: vi.fn(async () => current),
+    mutateStates,
+    get states() {
+      return current
+    },
+  }
+}
+
+beforeEach(() => {
+  terminatePid.mockReset()
+  terminatePid.mockResolvedValue({
+    method: 'wm_close',
+    waitedMs: 120,
+    windowsClosed: 1,
+    imagePath: 'C:\\apps\\player.exe',
+  })
+})
+
+/** Run the terminate, reporting what the table said about pid 4242 at that moment. */
+function terminateObserving(io: ReturnType<typeof deps>) {
+  const observed: { status?: unknown } = {}
+  terminatePid.mockImplementation(async () => {
+    observed.status = io.states['4242']?.status
+    return {
+      method: 'wm_close',
+      waitedMs: 120,
+      windowsClosed: 1,
+      imagePath: 'C:\\apps\\player.exe',
+    }
+  })
+  return observed
+}
+
+describe('kill', () => {
+  it('terminates the live pid and marks it so the service leaves it alone', async () => {
+    const io = deps(running())
+
+    const result = await stopProcess(entry, 'kill', io)
+
+    expect(terminatePid).toHaveBeenCalledWith(4242, 'C:/apps/player.exe')
+    expect(result).toMatchObject({ pid: 4242, marker: 'KILLED' })
+    expect(io.states['4242']).toEqual({ id: 'a', status: 'KILLED', timestamp: 10 })
+  })
+
+  it('claims nothing until the process is actually gone', async () => {
+    const io = deps(running())
+    const observed = terminateObserving(io)
+
+    await stopProcess(entry, 'kill', io)
+
+    // KILLED asserts a fact. Writing it first would be a lie if the kill failed.
+    expect(observed.status).toBe('RUNNING')
+  })
+})
+
+describe('restart', () => {
+  it('marks the pid RESTARTING and lets the service relaunch it', async () => {
+    const io = deps(running())
+
+    const result = await stopProcess(entry, 'restart', io)
+
+    expect(terminatePid).toHaveBeenCalledOnce()
+    expect(result.marker).toBe('RESTARTING')
+    expect(io.states['4242']).toEqual({ id: 'a', status: 'RESTARTING', timestamp: 10 })
+  })
+
+  it('writes the marker before the kill, or the exit reads as a crash', async () => {
+    const io = deps(running())
+    const observed = terminateObserving(io)
+
+    await stopProcess(entry, 'restart', io)
+
+    // The service polls: an exit it sees before the marker lands costs a false
+    // crash alert, a screenshot and a Cortex event.
+    expect(observed.status).toBe('RESTARTING')
+  })
+
+  it('writes it again after the kill, over the RUNNING the service wrote meanwhile', async () => {
+    const io = deps(running())
+    terminatePid.mockImplementation(async () => {
+      // What the service does on every tick for a pid it can still see: closing
+      // a process takes seconds, and it is alive for all of them.
+      await io.mutateStates((states) => ({
+        ...states,
+        '4242': { ...states['4242'], status: 'RUNNING' },
+      }))
+      return { method: 'terminated', waitedMs: 5000, windowsClosed: 1, imagePath: 'C:\\apps\\player.exe' }
+    })
+
+    await stopProcess(entry, 'restart', io)
+
+    expect(io.states['4242'].status).toBe('RESTARTING')
+  })
+
+  it('takes the marker back when the kill fails', async () => {
+    const io = deps(running())
+    terminatePid.mockRejectedValue(new Error('could not open process 4242: access is denied'))
+
+    await expect(stopProcess(entry, 'restart', io)).rejects.toThrow(/access is denied/)
+
+    // Nothing exited, so nothing may claim the operator caused an exit.
+    expect(io.states['4242']).toEqual({ id: 'a', status: 'RUNNING', timestamp: 10 })
+  })
+
+  it('takes the marker back when the pid had already gone', async () => {
+    const io = deps(running())
+    terminatePid.mockResolvedValue({
+      method: 'not_found',
+      waitedMs: 0,
+      windowsClosed: 0,
+      imagePath: null,
+    })
+
+    await expect(stopProcess(entry, 'restart', io)).rejects.toBeInstanceOf(NoLiveInstanceError)
+
+    // A process that died a moment before the click really did crash, and the
+    // service must still be free to say so.
+    expect(io.states['4242'].status).toBe('RUNNING')
+  })
+})
+
+describe('identity check', () => {
+  it('falls back to the bare image name when the full path does not match', async () => {
+    terminatePid
+      .mockRejectedValueOnce(
+        new Error(
+          'pid 4242 is running C:\\apps\\v2\\player.exe, not C:/apps/player.exe — refusing to terminate it',
+        ),
+      )
+      .mockResolvedValueOnce({
+        method: 'terminated',
+        waitedMs: 5000,
+        windowsClosed: 0,
+        imagePath: 'C:\\apps\\v2\\player.exe',
+      })
+
+    const result = await stopProcess(entry, 'kill', deps(running()))
+
+    expect(terminatePid.mock.calls.map(([, image]) => image)).toEqual([
+      'C:/apps/player.exe',
+      'player.exe',
+    ])
+    expect(result.method).toBe('terminated')
+  })
+
+  it('gives up when the pid is running something else entirely', async () => {
+    terminatePid.mockRejectedValue(
+      new Error('pid 4242 is running C:\\windows\\notepad.exe, not player.exe — refusing to terminate it'),
+    )
+
+    await expect(stopProcess(entry, 'kill', deps(running()))).rejects.toThrow(/refusing/)
+  })
+
+  it('does not retry a failure that is not an identity mismatch', async () => {
+    terminatePid.mockRejectedValue(new Error('could not open process 4242: access is denied'))
+
+    await expect(stopProcess(entry, 'kill', deps(running()))).rejects.toThrow(/access is denied/)
+    expect(terminatePid).toHaveBeenCalledOnce()
+  })
+
+  it('sends a script entry as the cmd.exe it really runs as', async () => {
+    await stopProcess({ ...entry, exe_path: 'C:/apps/start.bat' }, 'kill', deps(running()))
+
+    expect(terminatePid).toHaveBeenCalledWith(4242, 'cmd.exe')
+  })
+})
+
+describe('nothing to stop', () => {
+  it('reports no live instance when the entry owns no pid', async () => {
+    await expect(stopProcess(entry, 'kill', deps({}))).rejects.toBeInstanceOf(NoLiveInstanceError)
+    expect(terminatePid).not.toHaveBeenCalled()
+  })
+
+  it('reports no live instance when the pid has already gone', async () => {
+    terminatePid.mockResolvedValue({
+      method: 'not_found',
+      waitedMs: 0,
+      windowsClosed: 0,
+      imagePath: null,
+    })
+    const io = deps(running())
+
+    await expect(stopProcess(entry, 'kill', io)).rejects.toBeInstanceOf(NoLiveInstanceError)
+    // Nothing was killed, so nothing may claim it was.
+    expect(io.mutateStates).not.toHaveBeenCalled()
+  })
+
+  it('refuses to guess when the entry has no executable', async () => {
+    await expect(stopProcess({ id: 'a', name: 'x' }, 'kill', deps(running()))).rejects.toThrow(
+      /no exe path/,
+    )
+  })
+})

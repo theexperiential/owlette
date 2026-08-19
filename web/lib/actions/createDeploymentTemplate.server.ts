@@ -10,7 +10,9 @@
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import type { SiteHandlerContext } from '@/lib/authorizedHandler.server';
+import { siteAuditActor } from './auditActor.server';
 
 export interface CreateDeploymentTemplateInput {
   name: string;
@@ -142,6 +144,20 @@ export async function createDeploymentTemplate(
   }
 
   await templateRef.set(payload);
+
+  emitMutation({
+    kind: 'process_mutated',
+    siteId: ctx.siteId,
+    actor: siteAuditActor(ctx),
+    targetId: templateId,
+    attributes: {
+      verb: 'preset.create',
+      endpoint: 'presets/deployment-template',
+      method: 'POST',
+      family: 'deployment-template',
+      presetId: templateId,
+    },
+  });
 
   return { templateId, siteId: ctx.siteId };
 }

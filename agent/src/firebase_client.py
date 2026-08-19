@@ -45,6 +45,39 @@ from firestore_rest_client import FirestoreRestClient, SERVER_TIMESTAMP, DELETE_
 from connection_manager import ConnectionManager, ConnectionState, ConnectionEvent
 
 
+# Display events that `POST /api/agent/alert` knows how to route to email
+# and/or webhook delivery. Mirrors the ten keys of `DISPLAY_EVENT_ROUTING` in
+# `web/lib/alerts/displayEventRouting.ts` (and `TALON_LOG_ACTIONS` in
+# `functions/src/talonLogEvents.ts`, minus `process_restarted`). Duplicated
+# rather than fetched because the agent must route offline; the endpoint
+# re-validates against the real table, so drift here degrades to "the event
+# is log-only", never to a bad write.
+#
+# Deliberately EXCLUDED — display audit actions that exist for the event feed
+# and have no routing entry: `display_auto_restore_fired`,
+# `display_apply_acked`, `display_revert_deferred`,
+# `display_auto_restore_skipped_unfixable`,
+# `display_auto_restore_circuit_breaker_tripped`. Sending those would land in
+# the endpoint's generic-event branch, which writes its own log document —
+# duplicating the event the agent already logged.
+DISPLAY_ALERT_EVENT_TYPES = frozenset({
+    # email + webhook
+    'display_monitor_removed',
+    'display_apply_failed',
+    'display_auto_revert_fired',
+    'display_sync_lost',
+    # webhook only
+    'display_drift',
+    'display_monitor_swapped',
+    'display_mosaic_disabled',
+    'display_apply_refused_mosaic',
+    # in-dashboard only (no delivery, but the endpoint still accepts and
+    # rate-limits them, and the routing table owns that decision — not us)
+    'display_monitor_added',
+    'display_apply_succeeded',
+})
+
+
 def should_emit_progress(
     prev_state: Optional[dict],
     status: str,
@@ -222,11 +255,32 @@ class FirebaseClient:
         # a 'completed'/'failed' result from the dead subprocess.
         self._cancelled_commands: set = set()
 
-        # Cached site timezone (fetched from sites/{siteId} on connect)
+        # Cached site metadata (one read of sites/{siteId} per connect).
+        # site_timezone drives schedule evaluation; site_name is the operator-
+        # facing label the desktop app shows instead of the site id, published
+        # through tmp/service_status.json. Both stay None when the site document
+        # cannot be read, and every consumer falls back to the id.
         self.site_timezone: Optional[str] = None
+        self.site_name: Optional[str] = None
+        # Set when the site document came back denied: that answer does not
+        # change for the life of this client, so it is reported once and not
+        # asked again. Cleared by construction, which is what a site change
+        # produces (_initialize_or_restart_firebase_client).
+        self._site_metadata_denied: bool = False
+        # Set once the API name lookup has failed and said so. Unlike the
+        # Firestore denial this only silences the log, never the retry — the
+        # route may simply not be deployed yet at this agent's api_base, and
+        # the next connect should pick it up without a service restart.
+        self._site_name_api_warned: bool = False
 
         # Track last synced software inventory hash to prevent unnecessary writes
         self._last_software_inventory_hash: Optional[str] = None
+
+        # Wall-clock time of the last heartbeat write that landed (presence or
+        # metrics — both carry lastHeartbeat). Published by the service into
+        # tmp/service_status.json for the desktop surfaces; 0.0 until the
+        # first write lands.
+        self._last_heartbeat_time: float = 0.0
 
         # Hardware profile state (schemaVersion 1)
         # _last_profile_check: monotonic timestamp of the last build_profile() call
@@ -349,16 +403,25 @@ class FirebaseClient:
             return  # Don't send data if not started
 
         try:
-            # Fetch site timezone for schedule evaluation
-            self._fetch_site_timezone()
-
-            # Send immediate heartbeat and metrics
+            # PRESENCE FIRST. The bare presence write needs no hardware data, so
+            # it lands within milliseconds of the socket coming up. Everything
+            # below it is slower — the site-metadata read is another round trip,
+            # and _ensure_profile() runs WMI + nvidia-smi enumeration that can
+            # take tens of seconds against a cold GPU driver. Ordering presence
+            # ahead of both makes time-to-online the connect time rather than
+            # the enumeration time. Same ordering as start().
             self._update_presence(True)
             self.logger.debug("Heartbeat sent after connection")
+
+            # Fetch site metadata: timezone for schedule evaluation, display
+            # name for the desktop app's status surfaces.
+            self._fetch_site_metadata()
 
             # Ensure hardware profile is uploaded once on (re)connect — on a
             # signature change this writes the new profile doc before metrics,
             # so consumers never see metrics referencing a stale profileHash.
+            # INVARIANT: profile upload always precedes the first metrics write
+            # on this path; only presence may move ahead of it.
             self._ensure_profile()
 
             metrics = shared_utils.get_system_metrics()
@@ -435,18 +498,124 @@ class FirebaseClient:
     # Site Metadata
     # =========================================================================
 
-    def _fetch_site_timezone(self):
-        """Fetch and cache the site timezone from Firestore."""
+    def _fetch_site_metadata(self):
+        """Fetch and cache the site's display name, and its timezone where readable.
+
+        Two sources, tried in order:
+
+          1. ``GET /api/agent/site`` — the agent's own bearer token names its
+             site, and the route projects that site's ``name`` and nothing
+             else. This is the path that works today.
+          2. A direct read of ``sites/{siteId}`` — the original path, kept as a
+             fallback should the rules ever grant agents site-level reads, and
+             the only source of ``timezone``. Today it is denied:
+             `firestore.rules` scopes an agent to its machine subtree, so this
+             403s, says so once, and stops asking.
+
+        Runs on connect and on every reconnect — there is no polling loop, so a
+        site renamed on the dashboard reaches this machine at its next
+        connection, the same cadence the timezone has always had. A failed
+        lookup leaves the cached values as they were: the site did not change,
+        only our view of it.
+
+        Callers must treat both as optional. `_write_service_status` publishes
+        the name for the desktop app, which falls back to the site id whenever
+        it is absent.
+        """
+        if self._fetch_site_name_from_api():
+            return
+        self._fetch_site_metadata_from_firestore()
+
+    def _fetch_site_name_from_api(self) -> bool:
+        """Resolve the site's display name through the web API.
+
+        Returns True when the API answered for this site — the name is now
+        cached, or the site genuinely has none — and False when the caller
+        should fall back to the Firestore read.
+
+        Name-only by design. The route deliberately does not return the site's
+        timezone: a non-None `site_timezone` switches schedule evaluation from
+        machine-local time to site time for every process on this machine, and
+        that fleet-wide change is deferred, not something to arrive as a side
+        effect of labelling the desktop footer.
+        """
+        try:
+            token = self.auth_manager.get_valid_token()
+            api_base = shared_utils.get_api_base_url()
+            import requests
+            response = requests.get(
+                f"{api_base}/agent/site",
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=10,
+            )
+            if response.status_code != 200:
+                self._warn_site_name_api_once(
+                    f"HTTP {response.status_code} from {api_base}/agent/site"
+                )
+                return False
+
+            name = response.json().get('name')
+            self.site_name = name.strip() if isinstance(name, str) and name.strip() else None
+            if self.site_name:
+                self.logger.info(f"Site name: {self.site_name}")
+            return True
+        except Exception as e:
+            self._warn_site_name_api_once(str(e))
+            return False
+
+    def _warn_site_name_api_once(self, detail: str):
+        """Report an API name-lookup failure once, then keep quiet about it.
+
+        Deliberately does not latch the failure the way a Firestore denial
+        does: an unreachable or not-yet-deployed endpoint is a temporary fact
+        about the server, not a permanent one about this agent's permissions,
+        so every connect tries again. Only the log noise is suppressed.
+        """
+        if self._site_name_api_warned:
+            self.logger.debug(f"Site name lookup failed: {detail}")
+            return
+        self._site_name_api_warned = True
+        self.logger.warning(
+            f"Could not resolve this site's display name via the API — "
+            f"falling back to the site id: {detail}"
+        )
+
+    def _fetch_site_metadata_from_firestore(self):
+        """Read `sites/{siteId}` directly for the name and timezone.
+
+        The original path, and still the only source of `site_timezone`. An
+        agent token cannot satisfy the site-document rule today, so in practice
+        this denies once per run and then no-ops; it stays wired so a future
+        rule grant needs no agent change.
+        """
+        if self._site_metadata_denied:
+            return
         try:
             if not self.db:
                 return
             site_doc = self.db.get_document(f"sites/{self.site_id}")
             if site_doc:
                 self.site_timezone = site_doc.get('timezone') or None
+                self.site_name = site_doc.get('name') or None
                 if self.site_timezone:
                     self.logger.info(f"Site timezone: {self.site_timezone}")
+                if self.site_name:
+                    self.logger.info(f"Site name: {self.site_name}")
         except Exception as e:
-            self.logger.debug(f"Could not fetch site timezone: {e}")
+            # A denial is an answer, not an outage: the agent's token either
+            # carries site-level read access or it never will, so it is said
+            # once — plainly, because a debug-level swallow is what hid this
+            # for so long — and not asked again on every reconnect. Anything
+            # else (a dropped socket, a timeout) is worth retrying, quietly.
+            detail = str(e).lower()
+            if '403' in detail or 'forbidden' in detail or 'permission' in detail:
+                self._site_metadata_denied = True
+                self.logger.warning(
+                    f"Not permitted to read sites/{self.site_id} — this machine cannot read "
+                    f"its site's timezone (the display name comes from the API instead): {e}"
+                )
+            else:
+                self.logger.debug(f"Could not fetch site metadata: {e}")
 
     # =========================================================================
     # Public Properties
@@ -492,11 +661,26 @@ class FirebaseClient:
         # Start watchdog for thread supervision
         self.connection_manager.start_watchdog()
 
-        # Send immediate heartbeat and metrics if connected
+        # Send immediate heartbeat and metrics if connected.
+        # ORDER IS LOAD-BEARING: _update_presence writes only online +
+        # lastHeartbeat and needs no hardware data, so it must fire BEFORE the
+        # first _upload_metrics — that call's _ensure_profile() performs the
+        # WMI + nvidia-smi enumeration, which is slow on a cold boot. Presence
+        # first means the dashboard sees the machine as soon as it is reachable
+        # instead of after enumeration completes. Mirrored in _on_connected().
         if self.connected:
             try:
                 self._update_presence(True)
                 self.logger.info("Initial heartbeat sent - machine is now online")
+
+                # Site metadata, in the same position it holds in _on_connected:
+                # after presence, before the first metrics upload. It has to
+                # happen here as well as there — the connection established by
+                # the constructor completes before `running` is True, so
+                # _on_connected returns early and never fetches it on a start
+                # that never reconnects. OwletteService reads site_timezone
+                # immediately after this call returns.
+                self._fetch_site_metadata()
 
                 metrics = shared_utils.get_system_metrics()
                 upload_ok = self._upload_metrics(metrics)
@@ -568,17 +752,33 @@ class FirebaseClient:
         except Exception as e:
             self.logger.warning(f"Could not pre-populate seen commands: {e}")
 
-    def stop(self):
-        """Stop all background threads and set machine offline."""
-        self.logger.info("Stopping Firebase client and setting machine offline...")
+    def stop(self, intentional: bool = False):
+        """Stop all background threads and set machine offline.
+
+        Args:
+            intentional: True when the agent is exiting in order to come
+                straight back — the tray-triggered restart (exit 42) and the
+                self-restart watchdog (exit 43). Those paths are back online in
+                ~15s, so flushing `online: false` on the way out only produces a
+                visible offline/online flap (and can trigger an offline alert)
+                for a machine that never really went away. Heartbeat staleness
+                still covers the case where the restart fails to come back.
+                Genuine operator stops (net stop, shutdown) leave this False so
+                the dashboard reflects the machine going down immediately.
+        """
+        if intentional:
+            self.logger.info("Stopping Firebase client (intentional restart - leaving presence untouched)...")
+        else:
+            self.logger.info("Stopping Firebase client and setting machine offline...")
 
         # Set machine as offline BEFORE stopping threads (critical for clean shutdown)
-        if self.connected and self.db:
+        if not intentional and self.connected and self.db:
+            # Bound outside the try so the failure log below can always read it.
+            max_attempts = 3
             try:
                 presence_ref = self.db.collection('sites').document(self.site_id)\
                     .collection('machines').document(self.machine_id)
 
-                max_attempts = 3
                 for attempt in range(max_attempts):
                     try:
                         presence_ref.set({
@@ -633,7 +833,7 @@ class FirebaseClient:
         This is the main loop that also handles reconnection via ConnectionManager.
 
         Intervals:
-        - 5s when GUI is open (user actively monitoring)
+        - 5s while the desktop app's window is open (user actively monitoring)
         - 30s when processes are running (active monitoring)
         - 120s when idle (minimal overhead)
         """
@@ -654,7 +854,13 @@ class FirebaseClient:
                         except Exception as e:
                             self.logger.error(f"Token validation/refresh failed: {e}")
                             self.connection_manager.report_error(e, "Token validation")
-                            time.sleep(60)
+                            # Short stall. A 60s wait here consumed the entire
+                            # heartbeat margin on its own (idle beat is 120s and
+                            # the server calls a machine offline at 300s), and a
+                            # transient failure right after boot stalled the very
+                            # first heartbeat. auth_manager already paces the real
+                            # retry cadence; this sleep only paces the loop.
+                            time.sleep(15)
                             continue
 
                         # Upload metrics (this is the heartbeat — it writes
@@ -681,12 +887,20 @@ class FirebaseClient:
                         if upload_ok:
                             self.connection_manager.report_success()
 
-                        # Adaptive interval based on activity
-                        gui_running = shared_utils.is_script_running('owlette_gui.py')
+                        # Adaptive interval based on activity.
+                        #
+                        # "Someone is watching" is now the desktop app's main
+                        # window being on screen, read from tmp/gui.pid. The
+                        # previous test scanned running processes for a python
+                        # image running owlette_gui.py, which cannot match the
+                        # native owlette-desktop.exe — and the app lives in the
+                        # tray, so process lifetime is not the same question as
+                        # window visibility any more.
+                        window_open = shared_utils.is_desktop_window_open()
 
-                        if gui_running:
+                        if window_open:
                             interval = 5
-                            mode = 'GUI active'
+                            mode = 'UI window open'
                         else:
                             processes = metrics.get('processes', {})
                             any_process_active = any(
@@ -924,6 +1138,7 @@ class FirebaseClient:
             }, merge=True)
 
             if online:
+                self._last_heartbeat_time = time.time()
                 self.logger.debug("Heartbeat: Machine online")
             else:
                 self.logger.info(f"[OK] Machine marked OFFLINE in Firestore (site: {self.site_id}, machine: {self.machine_id})")
@@ -1473,6 +1688,7 @@ class FirebaseClient:
                 'metrics.gpu': DELETE_FIELD,
             })
 
+            self._last_heartbeat_time = time.time()
             return True
 
         except Exception as e:
@@ -2338,8 +2554,34 @@ class FirebaseClient:
         })
 
     def send_display_alert(self, event_type: str, data: dict):
-        """Backward-compatible wrapper for display alerts."""
-        self.send_alert(event_type, data)
+        """Route a display event to ``POST /api/agent/alert``.
+
+        Callers are the two display-event funnels — ``display_manager._emit_audit``
+        and ``owlette_service._emit_display_event`` — which ALSO write the event
+        to ``sites/{siteId}/logs``. The log write drives the dashboard feed and
+        the talon bridge; this call drives email + webhook delivery. Neither
+        replaces the other.
+
+        Only the event types in ``DISPLAY_ALERT_EVENT_TYPES`` are forwarded.
+        The endpoint's generic-event branch would otherwise write a SECOND log
+        document for the display audit actions that have no routing entry
+        (``display_apply_acked``, ``display_revert_deferred``, …), duplicating
+        them in the dashboard feed.
+
+        Never raises: alert delivery is best-effort and must not break the
+        audit-log path it is bolted onto. ``send_alert`` itself is non-blocking
+        (daemon thread + pending queue drained on reconnect), so this returns
+        immediately and is safe to call from the main service loop.
+        """
+        if event_type not in DISPLAY_ALERT_EVENT_TYPES:
+            self.logger.debug(
+                f"[ALERT] Display event {event_type} has no alert routing; log-only"
+            )
+            return
+        try:
+            self.send_alert(event_type, data)
+        except Exception as e:  # dispatch must never break the audit-log caller
+            self.logger.debug(f"[ALERT] send_display_alert({event_type}) failed: {e}")
 
     def send_alert(self, event_type: str, data: dict):
         """Send a generic agent alert to the web API.

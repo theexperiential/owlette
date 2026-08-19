@@ -76,8 +76,8 @@ test('episode 4 — keep a process alive', async ({ browser }) => {
 
         // [b03] the essential fields — fill name / launch mode / exe / file path (~19.8s).
         await typewrite(page, page.locator('#edit-name'), 'TouchDesigner', 65);
-        // Launch mode segmented control — click "Always On".
-        const alwaysOnPill = page.getByRole('button', { name: 'Always On' }); // VERIFY: segmented control renders a <button> with literal text "Always On"
+        // Launch mode segmented control — click "always on".
+        const alwaysOnPill = page.getByRole('button', { name: 'always on' }); // VERIFY: segmented control renders a <button> with literal text "always on"
         await clickWithCursor(page, alwaysOnPill);
         await typewrite(
           page,
@@ -153,8 +153,8 @@ test('episode 4 — keep a process alive', async ({ browser }) => {
         // touchdesigner.exe AND the newly-created "TouchDesigner" — so
         // `.locator('div').filter(...).first()` resolves to the outer
         // rounded process-list container (MachineCardView.tsx:762), which
-        // wraps both rows. Inside that container the "Always On" /
-        // "Scheduled" segmented-control buttons appear twice (one per row).
+        // wraps both rows. Inside that container the "always on" /
+        // "scheduled" segmented-control buttons appear twice (one per row).
         // `.first()` at the end of each button locator picks the seeded
         // touchdesigner.exe row's controls (first in DOM order — the seeded
         // process is at index 0, see fixtures.ts).
@@ -167,15 +167,15 @@ test('episode 4 — keep a process alive', async ({ browser }) => {
           .filter({ hasText: /^touchdesigner\.exe/ })
           .first();
         await centerInView(page, tdRow);
-        // The Off / Always On / Scheduled inline toggle group (3 buttons in a row).
-        await highlight(page, tdRow.getByRole('button', { name: /^Always On$/ }).first(), 1500);
-        await highlight(page, tdRow.getByRole('button', { name: /^Scheduled$/ }).first(), 1500);
+        // The off / always on / scheduled inline toggle group (3 buttons in a row).
+        await highlight(page, tdRow.getByRole('button', { name: /^always on$/ }).first(), 1500);
+        await highlight(page, tdRow.getByRole('button', { name: /^scheduled$/ }).first(), 1500);
         // Restart / kill / edit buttons live in the same row — use aria-label patterns
         // set on the row (restart ${name}, kill ${name}).
         await highlight(page, tdRow.getByRole('button', { name: /^restart touchdesigner\.exe$/ }), 1500);
         await highlight(page, tdRow.getByRole('button', { name: /^kill touchdesigner\.exe$/ }), 1500);
         // The pencil/edit button has no aria-label — fall back to icon-button neighbor.
-        // It sits between Scheduled and restart in the action group.
+        // It sits between scheduled and restart in the action group.
         await narrate(page, 'b07 day-to-day controls', 20);
       },
     );

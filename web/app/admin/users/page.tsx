@@ -13,6 +13,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { toast } from '@/lib/toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { ManageUserSitesDialog } from '@/components/ManageUserSitesDialog';
+import { NO_SUCCESSOR, TalonSuccessorPicker } from '@/components/TalonSuccessorPicker';
+import { useTalonReassign, type UserAuthoredTalons } from '@/hooks/useTalonReassign';
+import { eligibleTalonSuccessors } from '@/lib/talonSuccessors';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -129,10 +132,21 @@ export default function UserManagementPage() {
   const [roleChangeDialogOpen, setRoleChangeDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<{ uid: string; email: string; role: UserRole; sites: string[] } | null>(null);
   const [userToDelete, setUserToDelete] = useState<{ uid: string; email: string } | null>(null);
+  const [authoredTalons, setAuthoredTalons] = useState<UserAuthoredTalons | null>(null);
+  const [successorUid, setSuccessorUid] = useState<string>(NO_SUCCESSOR);
   const [userToChangeRole, setUserToChangeRole] = useState<{ uid: string; email: string; currentRole: UserRole; newRole: UserRole } | null>(null);
   const [deletions, setDeletions] = useState<DeletionView[]>([]);
   const [deletionsLoading, setDeletionsLoading] = useState(false);
   const [activity, setActivity] = useState<Record<string, UserActivity>>({});
+  const { fetchUserAuthored } = useTalonReassign();
+
+  // Successors for the deletion flow: the same successor named for site
+  // ownership also inherits the talons, so the operator is asked once. No
+  // siteId — the API re-checks eligibility per site and reports refusals.
+  const successorCandidates = useMemo(
+    () => eligibleTalonSuccessors(users, { excludeUid: userToDelete?.uid }),
+    [users, userToDelete?.uid],
+  );
 
   // Show/hide deleted accounts in the users table, persisted per device so the
   // choice survives reloads. Defaults to shown — hiding them is opt-in, since
@@ -278,20 +292,58 @@ export default function UserManagementPage() {
     }
 
     setUserToDelete({ uid: userId, email });
+    setSuccessorUid(NO_SUCCESSOR);
+    setAuthoredTalons(null);
     setDeleteConfirmDialogOpen(true);
+
+    // Fleet-wide talon lookup, fired as the dialog opens: the operator has to
+    // see what the deletion breaks before they confirm it, not after. Failure
+    // is non-fatal — the dialog still works, it just can't warn.
+    void (async () => {
+      try {
+        setAuthoredTalons(await fetchUserAuthored(userId));
+      } catch (err) {
+        console.error('Error fetching authored talons:', err);
+      }
+    })();
   };
 
   const handleConfirmDelete = async () => {
     if (!userToDelete) return;
 
+    const successor = successorUid === NO_SUCCESSOR ? undefined : successorUid;
     setDeletingUser(userToDelete.uid);
     setDeleteConfirmDialogOpen(false);
 
     try {
-      await deleteUser(userToDelete.uid);
+      const result = await deleteUser(userToDelete.uid, {
+        successorUid: successor,
+        // Only when a successor was actually chosen — the API refuses the flag
+        // on its own, and an unchosen successor means "let them lapse".
+        reassignTalons: Boolean(successor) && (authoredTalons?.count ?? 0) > 0,
+      });
       toast.success('user deleted', {
         description: `${userToDelete.email} has been permanently deleted.`,
       });
+
+      const reassignedCount = result.reassignedTalonIds?.length ?? 0;
+      if (reassignedCount > 0) {
+        toast.success('talons reassigned', {
+          description: `${reassignedCount} talon${
+            reassignedCount === 1 ? '' : 's'
+          } moved to a new owner.`,
+        });
+      }
+      // A per-site refusal (successor isn't a member there) has to be visible:
+      // those talons are now authored by a deleted account and will not run.
+      const failures = result.talonReassignFailures ?? [];
+      if (failures.length > 0) {
+        toast.error('some talons could not be reassigned', {
+          description: `${failures.length} site${
+            failures.length === 1 ? '' : 's'
+          } refused the successor — those talons will stop running.`,
+        });
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       toast.error('deletion failed', {
@@ -300,6 +352,7 @@ export default function UserManagementPage() {
     } finally {
       setDeletingUser(null);
       setUserToDelete(null);
+      setAuthoredTalons(null);
     }
   };
 
@@ -703,6 +756,7 @@ export default function UserManagementPage() {
           userSites={selectedUser.sites}
           onAssignSite={assignSiteToUser}
           onRemoveSite={removeSiteFromUser}
+          allUsers={users}
         />
       )}
 
@@ -787,10 +841,28 @@ export default function UserManagementPage() {
               are you sure you want to delete <strong className="text-foreground">{userToDelete?.email}</strong>?
             </DialogDescription>
           </DialogHeader>
-          <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-4 my-4">
-            <p className="text-red-300 text-sm">
-              this action cannot be undone. all user data will be permanently removed.
-            </p>
+          <div className="my-4 space-y-3">
+            <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-4">
+              <p className="text-red-300 text-sm">
+                this action cannot be undone. all user data will be permanently removed.
+              </p>
+            </div>
+            {/* Renders itself away when the count is zero, so the common case
+                keeps the dialog it always had. */}
+            <TalonSuccessorPicker
+              count={authoredTalons?.count ?? 0}
+              talonNames={(authoredTalons?.talons ?? []).map((talon) => talon.name)}
+              consequence="the account is deleted"
+              candidates={successorCandidates}
+              value={successorUid}
+              onChange={setSuccessorUid}
+              idPrefix="user-delete"
+            />
+            {(authoredTalons?.count ?? 0) > 0 && successorUid !== NO_SUCCESSOR && (
+              <p className="text-xs text-muted-foreground">
+                this admin also inherits any sites this user owns.
+              </p>
+            )}
           </div>
           <DialogFooter className="gap-2">
             <Button

@@ -1,13 +1,13 @@
 /**
  * `owlette chat new | list | send | delete | rename`.
  *
- * Drives the canonical public Cortex conversation routes:
+ * Drives the canonical public hoot conversation routes:
  *
- *   POST   /api/cortex/conversations                      — start a conversation
- *   GET    /api/cortex/conversations?siteId=&page_size=... — list conversations
- *   POST   /api/cortex/conversations/{conversationId}      — append message + stream reply
- *   PATCH  /api/cortex/conversations/{conversationId}      — rename
- *   DELETE /api/cortex/conversations/{conversationId}      — soft delete
+ *   POST   /api/hoot/conversations                      — start a conversation
+ *   GET    /api/hoot/conversations?siteId=&page_size=... — list conversations
+ *   POST   /api/hoot/conversations/{conversationId}      — append message + stream reply
+ *   PATCH  /api/hoot/conversations/{conversationId}      — rename
+ *   DELETE /api/hoot/conversations/{conversationId}      — soft delete
  *
  * `send` consumes both stream protocols the server can emit today:
  *   `0:"<json-encoded delta>"\n` → text delta (write to stdout immediately)
@@ -26,7 +26,7 @@
 import { Command } from 'commander';
 import { randomUUID } from 'crypto';
 import { loadConfig } from '../config';
-import { fetchWithTimeout } from '../lib/http';
+import { fetchWithTimeout, noteBillingWarning } from '../lib/http';
 import {
   isJson,
   renderTable,
@@ -68,11 +68,11 @@ interface MutationResponse {
 export function registerChatCommands(program: Command): void {
   const chat =
     (program.commands.find((c) => c.name() === 'chat') as Command | undefined) ??
-    program.command('chat').description('cortex ai chat');
+    program.command('chat').description('hoot ai chat');
 
   // Overwrite any earlier stub description so the help text stays
   // canonical regardless of registration order.
-  chat.description('cortex ai chat');
+  chat.description('hoot ai chat');
 
   // Drop any earlier sub-command registrations (e.g. stubs from a prior
   // load) so a fresh re-register doesn't double-list verbs.
@@ -89,7 +89,7 @@ export function registerChatCommands(program: Command): void {
 
   chat
     .command('new')
-    .description('start a new cortex conversation')
+    .description('start a new hoot conversation')
     .requiredOption('--site <siteId>', 'site id to scope the conversation to')
     .option('--machine <machineId>', 'optional machine id (omit for site-wide)')
     .option('--title <title>', 'optional human-readable title')
@@ -110,7 +110,7 @@ export function registerChatCommands(program: Command): void {
         : `cli-chat-new-${randomUUID()}`;
       let res: Response;
       try {
-        res = await fetchWithTimeout(`${apiUrl}/api/cortex/conversations`, {
+        res = await fetchWithTimeout(`${apiUrl}/api/hoot/conversations`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -121,7 +121,7 @@ export function registerChatCommands(program: Command): void {
         });
       } catch (err) {
         unconfirmedMutationFatal({
-          operation: 'POST /api/cortex/conversations',
+          operation: 'POST /api/hoot/conversations',
           idempotencyKey,
           cause: err,
         });
@@ -135,7 +135,7 @@ export function registerChatCommands(program: Command): void {
       };
       if (!res.ok) {
         fatal(
-          `POST /api/cortex/conversations failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
+          `POST /api/hoot/conversations failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
         );
         return;
       }
@@ -160,7 +160,7 @@ export function registerChatCommands(program: Command): void {
 
   chat
     .command('list')
-    .description('list cortex conversations on a site')
+    .description('list hoot conversations on a site')
     .requiredOption('--site <siteId>', 'site id to list conversations for')
     .option('--limit <n>', 'page size (1-100, default 20)')
     .option('--cursor <token>', 'opaque page_token from a previous response')
@@ -180,7 +180,7 @@ export function registerChatCommands(program: Command): void {
       }
       if (opts.cursor) params.set('page_token', String(opts.cursor));
 
-      const res = await fetchWithTimeout(`${apiUrl}/api/cortex/conversations?${params.toString()}`, {
+      const res = await fetchWithTimeout(`${apiUrl}/api/hoot/conversations?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const raw = (await res.json().catch(() => ({}))) as {
@@ -191,7 +191,7 @@ export function registerChatCommands(program: Command): void {
       };
       if (!res.ok) {
         fatal(
-          `GET /api/cortex/conversations failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
+          `GET /api/hoot/conversations failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
         );
         return;
       }
@@ -252,7 +252,7 @@ export function registerChatCommands(program: Command): void {
       let res: Response;
       try {
         res = await fetch(
-          `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
+          `${apiUrl}/api/hoot/conversations/${encodeURIComponent(conversationId)}`,
           {
             method: 'POST',
             headers: {
@@ -268,7 +268,7 @@ export function registerChatCommands(program: Command): void {
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
         process.stderr.write(
-          `owlette: POST /api/cortex/conversations/${conversationId} did not return a confirmed response: ${detail}\n` +
+          `owlette: POST /api/hoot/conversations/${conversationId} did not return a confirmed response: ${detail}\n` +
             '  inspect the conversation before retrying: run `owlette chat list` and view the conversation in the UI.\n' +
             '  retrying may append the message twice.\n',
         );
@@ -276,20 +276,26 @@ export function registerChatCommands(program: Command): void {
         return;
       }
 
+      // Bare `fetch` on purpose — fetchWithTimeout's 30s signal would sever the
+      // streamed reply — so the trial advisory is surfaced by hand. Outside the
+      // try: a fault here is not an unconfirmed mutation and must not be
+      // reported as one.
+      noteBillingWarning(res);
+
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as {
           detail?: string;
           code?: string;
         };
         fatal(
-          `POST /api/cortex/conversations/${conversationId} failed (${res.status}, ${data.code ?? 'unknown'}): ${data.detail ?? JSON.stringify(data)}`,
+          `POST /api/hoot/conversations/${conversationId} failed (${res.status}, ${data.code ?? 'unknown'}): ${data.detail ?? JSON.stringify(data)}`,
         );
         return;
       }
 
       const body = res.body;
       if (!body) {
-        fatal(`POST /api/cortex/conversations/${conversationId} returned an empty body`);
+        fatal(`POST /api/hoot/conversations/${conversationId} returned an empty body`);
         return;
       }
 
@@ -306,7 +312,7 @@ export function registerChatCommands(program: Command): void {
       };
 
       const emitStreamError = (detail: string): void => {
-        process.stderr.write(`\nowlette: cortex error — ${detail}\n`);
+        process.stderr.write(`\nowlette: hoot error — ${detail}\n`);
         process.exitCode = 1;
       };
 
@@ -383,7 +389,7 @@ export function registerChatCommands(program: Command): void {
 
   chat
     .command('delete <conversationId>')
-    .description('soft-delete a cortex conversation')
+    .description('soft-delete a hoot conversation')
     .option('--yes', 'skip the confirmation prompt')
     .option(
       '--idempotency-key <key>',
@@ -415,7 +421,7 @@ export function registerChatCommands(program: Command): void {
       let res: Response;
       try {
         res = await fetchWithTimeout(
-          `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
+          `${apiUrl}/api/hoot/conversations/${encodeURIComponent(conversationId)}`,
           {
             method: 'DELETE',
             headers: {
@@ -426,7 +432,7 @@ export function registerChatCommands(program: Command): void {
         );
       } catch (err) {
         unconfirmedMutationFatal({
-          operation: `DELETE /api/cortex/conversations/${conversationId}`,
+          operation: `DELETE /api/hoot/conversations/${conversationId}`,
           idempotencyKey,
           cause: err,
         });
@@ -440,7 +446,7 @@ export function registerChatCommands(program: Command): void {
       };
       if (!res.ok) {
         fatal(
-          `DELETE /api/cortex/conversations/${conversationId} failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
+          `DELETE /api/hoot/conversations/${conversationId} failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
         );
         return;
       }
@@ -463,7 +469,7 @@ export function registerChatCommands(program: Command): void {
 
   chat
     .command('rename <conversationId> <title>')
-    .description('rename a cortex conversation')
+    .description('rename a hoot conversation')
     .option(
       '--idempotency-key <key>',
       'optional Idempotency-Key header (auto-generated if omitted)',
@@ -478,7 +484,7 @@ export function registerChatCommands(program: Command): void {
       let res: Response;
       try {
         res = await fetchWithTimeout(
-          `${apiUrl}/api/cortex/conversations/${encodeURIComponent(conversationId)}`,
+          `${apiUrl}/api/hoot/conversations/${encodeURIComponent(conversationId)}`,
           {
             method: 'PATCH',
             headers: {
@@ -491,7 +497,7 @@ export function registerChatCommands(program: Command): void {
         );
       } catch (err) {
         unconfirmedMutationFatal({
-          operation: `PATCH /api/cortex/conversations/${conversationId}`,
+          operation: `PATCH /api/hoot/conversations/${conversationId}`,
           idempotencyKey,
           cause: err,
         });
@@ -505,7 +511,7 @@ export function registerChatCommands(program: Command): void {
       };
       if (!res.ok) {
         fatal(
-          `PATCH /api/cortex/conversations/${conversationId} failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
+          `PATCH /api/hoot/conversations/${conversationId} failed (${res.status}, ${raw.code ?? 'unknown'}): ${raw.detail ?? JSON.stringify(raw)}`,
         );
         return;
       }

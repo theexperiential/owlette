@@ -1,7 +1,7 @@
 # Owlette Installer & Build System Reference
 
 **Last Updated**: 2026-03-12
-**Applies To**: `agent/` build pipeline, Inno Setup installer, NSSM service management
+**Applies To**: `agent/` build pipeline, Inno Setup installer, the owlette-host service host
 
 This document covers the complete build-to-installation pipeline. Read this before modifying any build scripts, the Inno Setup script, or the installation/update flow.
 
@@ -33,9 +33,9 @@ This document covers the complete build-to-installation pipeline. Read this befo
 [2/9] Download Python 3.11.8 embedded (python.org → build/python-embed.zip)
 [3/9] Configure python311._pth (import paths for embedded runtime)
 [4/9] Bootstrap pip (get-pip.py)
-[5/9] Install requirements.txt (the slow step)
-[6/9] Copy tkinter from system Python 3.11 (C:\Program Files\Python311)
-[7/9] Download NSSM 2.24 (nssm.cc → build/nssm.zip)
+[5/9] Install requirements.txt (the slow step) + delete the SDK's bundled claude.exe (242MB)
+[6/9] Build the desktop app (npx tauri build --no-bundle → owlette-desktop.exe)
+[7/9] Build the service host (cargo build --release in agent/host → owlette-host.exe)
 [8/9] Assemble installer_package/ directory
 [9/9] Compile with Inno Setup → Owlette-Installer-v{VERSION}.exe
 ```
@@ -43,28 +43,27 @@ This document covers the complete build-to-installation pipeline. Read this befo
 ### Package Structure (what gets bundled)
 ```
 build/installer_package/
-├── python/              Embedded Python 3.11 runtime (~100MB)
+├── python/              Embedded Python 3.11 runtime
 │   ├── python.exe       Console Python
-│   ├── pythonw.exe      GUI Python (no console window)
+│   ├── pythonw.exe      GUI Python (no console window) — hosts cortex + session_exec
 │   ├── python311._pth   Import path configuration
-│   ├── Lib/
-│   │   ├── tkinter/     Copied from system Python (for GUI)
-│   │   └── site-packages/  All pip dependencies
-│   ├── _tkinter.pyd     Tkinter C extension
-│   ├── tcl86t.dll       Tcl/Tk libraries
-│   └── tcl/             Tcl runtime
+│   └── Lib/
+│       └── site-packages/  All pip dependencies
 ├── agent/
-│   ├── src/             All Python source files
+│   ├── src/             All Python source files (__pycache__ stripped)
 │   ├── icons/           Application icons (ICO/PNG)
 │   └── VERSION          Version file
+├── app/
+│   └── owlette-desktop.exe  Tauri desktop app — tray, config window, reboot prompt
 ├── tools/
-│   └── nssm.exe         Windows service manager (v2.24)
+│   └── owlette-host.exe Windows service host (built from agent/host)
 └── scripts/
     ├── install.bat      Service installation
-    ├── uninstall.bat    Service removal
-    ├── launch_gui.bat   Start configuration GUI (pythonw.exe)
-    └── launch_tray.bat  Start system tray icon (pythonw.exe)
+    └── uninstall.bat    Service removal
 ```
+
+No tkinter/tcl: the python UI was deleted in 3.0.0 and the embedded runtime has
+never shipped a GUI toolkit of its own.
 
 ### Embedded Python Configuration (`python311._pth`)
 ```
@@ -76,7 +75,7 @@ Lib\site-packages    # Third-party packages
 import site          # Enables site.main() for pip
 ```
 
-**Important**: Tkinter must be copied from a system Python 3.11 installation. The embedded distribution doesn't include it. Without tkinter at `C:\Program Files\Python311`, the GUI won't work.
+**Important**: `..\agent\src` on that path is what lets `{app}\app\owlette-desktop.exe`'s sibling python scripts import each other from any working directory. Never edit `python311._pth` without understanding embedded-Python import resolution — breaking it kills every import.
 
 ---
 
@@ -130,11 +129,11 @@ During upgrades, config.json must survive reinstallation:
    - `WizardSilent() == True` → skip restore, service syncs from Firestore automatically
 
 ### Uninstallation Steps
-1. `nssm stop OwletteService`
-2. `nssm remove OwletteService confirm`
-3. Remove Windows Defender exclusion
-4. Delete installation directory
-5. Prompt user about `C:\ProgramData\Owlette\` config/logs/tokens
+1. `owlette-host uninstall` (stops the service, waits for STOPPED so the agent
+   can flush `online: false`, then deregisters it)
+2. Remove Windows Defender exclusion
+3. Delete installation directory
+4. Prompt user about `C:\ProgramData\Owlette\` config/logs/tokens
    - Silent uninstall: always preserve (for upgrades)
    - Interactive: ask user
 
@@ -179,47 +178,77 @@ During installation, the agent authenticates via browser-based OAuth:
 
 ---
 
-## NSSM Service Configuration (`install.bat`)
+## Service Configuration (`install.bat` → `owlette-host install`)
+
+`install.bat` no longer configures anything itself: it calls
+`tools\owlette-host.exe install`, and every property below is written by
+`agent/host/src/registration.rs`. That is deliberate — the registration a
+machine ends up with is a property of the shipped binary, not of whichever
+batch file last ran.
 
 ### Service Properties
 ```
 Service Name:    OwletteService
 Display Name:    Owlette Service
 Account:         LocalSystem (elevated privileges for process management)
-Start Type:      SERVICE_AUTO_START
-Console:         Disabled (AppNoConsole=1)
-Dependencies:    Tcpip, Dnscache (waits for network)
-Application:     C:\ProgramData\Owlette\python\python.exe
-Arguments:       C:\ProgramData\Owlette\agent\src\owlette_runner.py
-Working Dir:     C:\ProgramData\Owlette\agent\src
+Start Type:      SERVICE_AUTO_START, DelayedAutostart explicitly 0
+Dependencies:    Tcpip, Dnscache, NlaSvc (waits for a real network stack)
+ImagePath:       "C:\ProgramData\Owlette\tools\owlette-host.exe" run
+Child:           C:\ProgramData\Owlette\python\python.exe
+                 C:\ProgramData\Owlette\agent\src\owlette_runner.py
+Working Dir:     C:\ProgramData\Owlette\agent\src (the child's cwd)
+Console:         CREATE_NO_WINDOW on the child
+Failure actions: restart after 5s, 5s, 60s; reset after 1 day;
+                 also on non-crash failures
 ```
+
+`owlette-host install` is also the migration: it stops and deletes any existing
+registration (logging when the one it replaced was NSSM) before creating its
+own. Nothing under `%ProgramData%\Owlette` is touched.
 
 ### Log Rotation
 ```
 Stdout:          C:\ProgramData\Owlette\logs\service_stdout.log
 Stderr:          C:\ProgramData\Owlette\logs\service_stderr.log
-Rotate:          Daily + on size (10MB max)
+Host log:        C:\ProgramData\Owlette\logs\service_host.log
+Rotate:          On size — 10MB per child stream, 2MB for the host log,
+                 one sibling kept (`<name>.log.1`)
 ```
 
 ### Restart Behavior
-- **Exit code 0**: Exit (don't restart — user intentionally stopped)
-- **Any other exit code**: Restart (crash recovery)
+| child exit | host response |
+|---|---|
+| 42 (restart flag) / 43 (self-restart watchdog) | relaunch immediately |
+| 0 | stop the service — a clean exit is the agent saying it is done |
+| anything else | relaunch after 5s; 5 crashes in 5 minutes → 60s, logged as a crash loop |
 
-This is why `owlette_runner.py` uses `sys.exit(0)` for graceful shutdown — NSSM won't auto-restart.
+This is why `owlette_runner.py` uses `sys.exit(0)` for graceful shutdown and
+`sys.exit(42)` for a self-restart.
+
+### Stopping
+The host reports `STOP_PENDING` to the SCM and waits up to 20s for the agent to
+exit on its own. `owlette_service.start_scm_stop_watcher()` polls that state
+every 250ms and runs `graceful_shutdown()` — flush `online: false`, log
+`agent_stopped`, record a clean external stop. Only after the grace window does
+the host terminate the child, and it terminates **only** the process it
+launched: managed processes and the desktop app are never in scope.
 
 ---
 
 ## owlette_runner.py Bridge
 
-**Why it exists**: NSSM manages console applications. The Owlette service uses `win32serviceutil.ServiceFramework` which is a Windows Service API. `owlette_runner.py` bridges this gap by:
+**Why it exists**: the host runs a console application. The Owlette service
+class is built on `win32serviceutil.ServiceFramework`, a Windows Service API.
+`owlette_runner.py` bridges the gap by:
 
 1. Creating a `MockService` that mimics ServiceFramework attributes
 2. Binding `OwletteService.main()` to the mock instance
-3. Running `main()` as a regular Python process (NSSM-compatible)
+3. Running `main()` as a regular Python process
 
-**Signal handling is critical**: NSSM sends SIGTERM ~4 seconds before killing the process. The runner must:
+**The stop path is critical**: the SCM stop watcher (started by the runner) is
+what notices a stop. It must:
 - Set `is_alive = False` to break the main loop
-- Log `agent_stopped` event to Firestore (happens during signal handler!)
+- Log `agent_stopped` event to Firestore
 - Call `firebase_client.stop()` to mark machine offline
 - Exit with code 0
 
@@ -230,8 +259,9 @@ This is why `owlette_runner.py` uses `sys.exit(0)` for graceful shutdown — NSS
 Triggered by `update_owlette` command from web dashboard:
 
 ```
-1. Verify admin privileges and NSSM exists
-2. Stop OwletteService via NSSM (wait 10s + 3s Firestore sync margin)
+1. Verify admin privileges
+2. Launch the installer as a SYSTEM scheduled task, so it outlives the service
+   it is about to stop
 3. Download installer from URL
    - 3 retries with exponential backoff (5s, 10s, 20s)
    - 5-minute timeout per attempt
@@ -242,10 +272,10 @@ Triggered by `update_owlette` command from web dashboard:
    - Silent mode skips OAuth (ShouldConfigureSite returns false)
    - install.bat runs → stops old service → installs new → starts
 5. Cleanup temporary installer file
-6. Verify service started (wait 10s, check NSSM status)
+6. Verify service started (a SYSTEM recovery task checks after 5 min and runs `net start` if it is not)
 ```
 
-**Safety**: If update fails, the old service configuration remains and NSSM will restart it (non-zero exit code from updater).
+**Safety**: If the update fails, the old installation is untouched and the service host restarts the agent from whatever is on disk.
 
 ---
 
@@ -257,7 +287,7 @@ C:\ProgramData\Owlette\                  Installation + data directory
 ├── agent\src\                           Python source code
 ├── agent\icons\                         Application icons
 ├── agent\VERSION                        Version file
-├── tools\nssm.exe                       Service manager
+├── tools\owlette-host.exe               Windows service host
 ├── scripts\                             Batch launchers
 ├── unins000.exe                         Inno Setup uninstaller
 ├── config\                              Runtime configuration
@@ -267,10 +297,10 @@ C:\ProgramData\Owlette\                  Installation + data directory
 ├── config\config.json                   Process + Firebase configuration
 ├── logs\                                All log files
 │   ├── service.log                      Main service log (RotatingFileHandler)
-│   ├── service_stdout.log               NSSM stdout capture
-│   ├── service_stderr.log               NSSM stderr capture
-│   ├── tray.log                         Tray icon log
-│   ├── gui.log                          GUI log
+│   ├── service_stdout.log               Agent stdout, captured by the host
+│   ├── service_stderr.log               Agent stderr, captured by the host
+│   ├── service_host.log                 The host itself: spawns, exits, stops
+│   ├── tray.log / gui.log               Legacy python UI logs (pre-3.0.0; the desktop app writes neither)
 │   ├── oauth_debug.log                  OAuth flow debug
 │   └── owlette_updater.log              Update process log
 ├── cache\firebase_cache.json            Offline Firestore config cache
@@ -278,15 +308,33 @@ C:\ProgramData\Owlette\                  Installation + data directory
 └── .tokens.enc                          Encrypted OAuth tokens (hidden file)
 
 Start Menu\Programs\Owlette\             Shortcuts
-├── Owlette Configuration                → launch_gui.bat
-├── Owlette                              → launch_tray.bat
+├── Owlette Configuration                → app\owlette-desktop.exe
+├── Owlette                              → app\owlette-desktop.exe --tray   [AppUserModelID]
 ├── View Logs                            → C:\ProgramData\Owlette\logs\
 ├── Edit Configuration                   → config.json
 └── Uninstall Owlette
 
 Startup\                                 Auto-start on login
-└── Owlette Tray                         → launch_tray.bat
+└── Owlette                              → app\owlette-desktop.exe --tray   [AppUserModelID]
 ```
+
+The `AppUserModelID` (`app.owlette.desktop`) on those two shortcuts is
+load-bearing, not cosmetic: Windows silently discards toasts from an unpackaged
+app that no Start-menu shortcut registers an id for, and the notification call
+still returns success.
+
+**Exactly two shortcuts carry it, and both are named "Owlette".** Windows draws
+a toast's attribution line from the *name* of a registered shortcut, and with
+several carrying the same id it does not specify which one it picks — so
+"Owlette Configuration" deliberately has no id (a third registrar made toasts
+read "Owlette Configuration" in 3.0.0 testing), and the startup shortcut is
+`Owlette.lnk`, not the `Owlette Tray.lnk` it was called through 2.x.
+
+The desktop app's own "start on login" toggle writes and deletes that same
+startup shortcut with the same id (`desktop/src-tauri/src/startup_link.rs`), so
+setup recreating it on every upgrade is what repairs a 2.x machine's shortcut —
+and also what re-enables the toggle for anyone who turned it off. The old
+`Owlette Tray.lnk` name is removed by both `[InstallDelete]` and the toggle.
 
 ---
 
@@ -322,8 +370,4 @@ Service reads at runtime: shared_utils.get_app_version()
 
 **Service won't start after update**: Check `C:\ProgramData\Owlette\logs\service_stderr.log` for Python import errors. May need a full rebuild if dependencies changed.
 
-**"nssm.cc is unavailable and no local NSSM"**: nssm.cc goes down occasionally (503/empty response). The build script falls back to `C:\ProgramData\Owlette\tools\nssm.exe`. If that doesn't exist either, copy it from the existing Owlette installation at `C:\Owlette\tools\nssm.exe`:
-```
-copy C:\Owlette\tools\nssm.exe C:\ProgramData\Owlette\tools\nssm.exe
-```
-Then re-run the build. The fallback location is permanently seeded after the first copy.
+**"cargo not found on PATH"** (step 7): the service host is built from source in `agent/host`. Install the Rust toolchain with rustup; the build script prepends `%USERPROFILE%\.cargo\bin` itself, so cargo does not have to be on the system PATH. There is no download step and no fallback binary to seed — since 3.0.0 the build depends on nobody else's host being up for this.

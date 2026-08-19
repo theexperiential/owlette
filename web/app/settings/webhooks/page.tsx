@@ -93,132 +93,134 @@ export default function WebhooksSettingsPage() {
   return (
     <div className="min-h-screen bg-background">
       <PageHeader currentPage="webhooks" />
-      <main className="max-w-4xl mx-auto px-6 py-8">
-        {/* Developer-preview banner. Subscription management, manual probes,
-            delivery history, and retry are all live. Automatic dispatch of
-            roost lifecycle events (`version.published`, `version.rolled_back`,
-            `deployment.*`) is deferred — the routes carry explicit TODOs.
-            We surface that gap here rather than letting users subscribe
-            silently to events that won't fire. */}
-        <div className="mb-6 rounded-md border border-accent-cyan/30 bg-accent-cyan/10 px-4 py-3">
-          <div className="flex items-start gap-3">
-            <span className="inline-flex items-center rounded-full border border-accent-cyan/30 bg-accent-cyan/20 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent-cyan flex-shrink-0">
-              developer preview
-            </span>
-            <div className="text-xs text-foreground/80 leading-relaxed">
-              subscription management, the manual <code className="text-[11px] bg-card px-1 rounded">/api/webhooks/probe</code> endpoint,
-              delivery history, and retry are live. <strong>automatic dispatch</strong> of roost lifecycle events
-              (<code className="text-[11px]">version.published</code>, <code className="text-[11px]">version.rolled_back</code>,
-              <code className="text-[11px]">deployment.*</code>) is not wired yet — subscriptions are accepted but those
-              events will not fire until a future release.
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+          {/* Developer-preview banner. Subscription management, manual probes,
+              delivery history, and retry are all live. Automatic dispatch of
+              roost lifecycle events (`version.published`, `version.rolled_back`,
+              `deployment.*`) is deferred — the routes carry explicit TODOs.
+              We surface that gap here rather than letting users subscribe
+              silently to events that won't fire. It stays up on a gated site
+              that still has subscriptions: it is a caveat about delivery, which
+              is exactly what those subscriptions are still doing. */}
+          <div className="mb-6 rounded-md border border-accent-cyan/30 bg-accent-cyan/10 px-4 py-3">
+            <div className="flex items-start gap-3">
+              <span className="inline-flex items-center rounded-full border border-accent-cyan/30 bg-accent-cyan/20 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-accent-cyan flex-shrink-0">
+                developer preview
+              </span>
+              <div className="text-xs text-foreground/80 leading-relaxed">
+                subscription management, the manual <code className="text-[11px] bg-card px-1 rounded">/api/webhooks/probe</code> endpoint,
+                delivery history, and retry are live. <strong>automatic dispatch</strong> of roost lifecycle events
+                (<code className="text-[11px]">version.published</code>, <code className="text-[11px]">version.rolled_back</code>,
+                <code className="text-[11px]">deployment.*</code>) is not wired yet — subscriptions are accepted but those
+                events will not fire until a future release.
+              </div>
             </div>
           </div>
-        </div>
-        <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold text-white flex items-center gap-2">
-              <Webhook className="h-5 w-5" />
-              webhooks
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              subscribe to roost events — version publishes, deploy rollouts, quota warnings — with
-              hmac-signed http callbacks.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {userSites.length > 1 && (
-              <Select value={selectedSite} onValueChange={setUserPickedSite}>
-                <SelectTrigger className="w-48 bg-card border-border text-white">
-                  <SelectValue placeholder="pick a site" />
-                </SelectTrigger>
-                <SelectContent>
-                  {userSites.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            <Button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              disabled={!selectedSite}
-              className="text-gray-900 cursor-pointer"
-            >
-              <Plus className="h-4 w-4 mr-1" /> create webhook
-            </Button>
-          </div>
-        </div>
-
-        {revealedSecret && (
-          <Card className="border-accent-cyan/50 bg-accent-cyan/5 p-4 mb-6 relative">
-            <button
-              type="button"
-              onClick={() => setRevealedSecret(null)}
-              className="absolute top-3 right-3 text-muted-foreground hover:text-white cursor-pointer"
-              aria-label="dismiss"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <p className="text-sm text-accent-cyan font-medium pr-6 mb-2">
-              signing secret issued — copy it now. it will not be shown again.
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs bg-background border border-border rounded px-3 py-2 text-white font-mono break-all select-all">
-                {revealedSecret}
-              </code>
-              <CopyButton
-                value={revealedSecret}
-                className="h-9 border-border text-accent-cyan hover:bg-muted"
-              />
-            </div>
-          </Card>
-        )}
-
-        {!selectedSite ? (
-          <Card className="border-border bg-card/50 p-8 text-center">
-            <p className="text-sm text-white">no sites available</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              you need site access to manage webhooks. ask a site admin to add you.
-            </p>
-          </Card>
-        ) : loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : webhooks.length === 0 ? (
-          <Card className="border-border bg-card/50 p-8 text-center space-y-3">
-            <Webhook className="h-8 w-8 text-muted-foreground mx-auto" />
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
             <div>
-              <p className="text-sm text-white">no webhooks yet</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                subscribe to events so your ci/cd, slack bot, or monitoring can react to roost
-                activity.
+              <h1 className="text-2xl font-semibold text-white flex items-center gap-2">
+                <Webhook className="h-5 w-5" />
+                webhooks
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                subscribe to roost events — version publishes, deploy rollouts, quota warnings — with
+                hmac-signed http callbacks.
               </p>
             </div>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setCreateOpen(true)}
-              className="text-gray-900 cursor-pointer"
-            >
-              <Plus className="h-3.5 w-3.5 mr-1" /> create your first webhook
-            </Button>
-          </Card>
-        ) : (
-          <div className="space-y-3">
-            {webhooks.map((w) => (
-              <WebhookCard
-                key={w.id}
-                webhook={w}
-                siteId={selectedSite}
-                onChanged={() => void refresh(selectedSite)}
-                onSecretRotated={setRevealedSecret}
-              />
-            ))}
+            <div className="flex items-center gap-2">
+              {userSites.length > 1 && (
+                <Select value={selectedSite} onValueChange={setUserPickedSite}>
+                  <SelectTrigger className="w-48 bg-card border-border text-white">
+                    <SelectValue placeholder="pick a site" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {userSites.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+              <Button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                disabled={!selectedSite}
+                className="text-gray-900 cursor-pointer"
+              >
+                <Plus className="h-4 w-4 mr-1" /> create webhook
+              </Button>
+            </div>
           </div>
-        )}
+
+          {revealedSecret && (
+            <Card className="border-accent-cyan/50 bg-accent-cyan/5 p-4 mb-6 relative">
+              <button
+                type="button"
+                onClick={() => setRevealedSecret(null)}
+                className="absolute top-3 right-3 text-muted-foreground hover:text-white cursor-pointer"
+                aria-label="dismiss"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              <p className="text-sm text-accent-cyan font-medium pr-6 mb-2">
+                signing secret issued — copy it now. it will not be shown again.
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 text-xs bg-background border border-border rounded px-3 py-2 text-white font-mono break-all select-all">
+                  {revealedSecret}
+                </code>
+                <CopyButton
+                  value={revealedSecret}
+                  className="h-9 border-border text-accent-cyan hover:bg-muted"
+                />
+              </div>
+            </Card>
+          )}
+
+          {!selectedSite ? (
+            <Card className="border-border bg-card/50 p-8 text-center">
+              <p className="text-sm text-white">no sites available</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                you need site access to manage webhooks. ask a site admin to add you.
+              </p>
+            </Card>
+          ) : loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : webhooks.length === 0 ? (
+            <Card className="border-border bg-card/50 p-8 text-center space-y-3">
+              <Webhook className="h-8 w-8 text-muted-foreground mx-auto" />
+              <div>
+                <p className="text-sm text-white">no webhooks yet</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  subscribe to events so your ci/cd, slack bot, or monitoring can react to roost
+                  activity.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => setCreateOpen(true)}
+                className="text-gray-900 cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" /> create your first webhook
+              </Button>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {webhooks.map((w) => (
+                <WebhookCard
+                  key={w.id}
+                  webhook={w}
+                  siteId={selectedSite}
+                  onChanged={() => void refresh(selectedSite)}
+                  onSecretRotated={setRevealedSecret}
+                />
+              ))}
+            </div>
+          )}
       </main>
 
       {selectedSite && (

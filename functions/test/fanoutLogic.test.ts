@@ -166,10 +166,15 @@ describe('evaluateWave', () => {
     assert.equal(e.settled, false);
   });
 
-  it('empty wave is settled=false, failureRate=0', () => {
+  it('empty wave settles vacuously (nothing left in flight), failureRate=0', () => {
+    // regression (spike 2026-08-13): this used to report settled=false,
+    // which parked every 1-machine rollout at stage "fleet" forever —
+    // the lone target is the canary, so the fleet wave is empty and an
+    // "unsettled" empty wave could never reach `complete`.
     const e = evaluateWave([]);
     assert.equal(e.total, 0);
-    assert.equal(e.settled, false);
+    assert.equal(e.pending, 0);
+    assert.equal(e.settled, true);
     assert.equal(e.failureRate, 0);
   });
 });
@@ -297,5 +302,89 @@ describe('nextStage', () => {
     const e = evaluateWave(wave({ succeeded: 10 }));
     assert.equal(nextStage('complete', e), null);
     assert.equal(nextStage('aborted', e), null);
+  });
+
+  it('empty fleet wave → complete (nothing to wait for)', () => {
+    const t = nextStage('fleet', evaluateWave([]));
+    assert.ok(t);
+    assert.equal(t!.stage, 'complete');
+  });
+
+  it('empty canary wave → no transition (never promotes on nothing)', () => {
+    // `settled` alone must not move the machine: an empty canary means
+    // selectCanary had no machines to work with, not a passing wave.
+    assert.equal(nextStage('canary', evaluateWave([])), null);
+  });
+});
+
+/* --------------------------------------------------------------------- */
+/*  Single-machine rollouts (canary === the whole fleet)                 */
+/* --------------------------------------------------------------------- */
+
+describe('single-machine rollout', () => {
+  const VERSION = 'vrs_single_machine';
+
+  it('puts the only machine in the canary and leaves the fleet wave empty', () => {
+    const r = selectCanary(['machine-solo'], VERSION);
+    assert.deepEqual(r.canary, ['machine-solo']);
+    assert.deepEqual(r.fleet, []);
+  });
+
+  it('happy path: canary succeeds → fleet promotion → complete', () => {
+    const { canary, fleet } = selectCanary(['machine-solo'], VERSION);
+
+    // 1. the agent reports `committed`, which coerces to `succeeded`.
+    const canaryEval = evaluateWave(
+      canary.map((machineId) => ({ machineId, status: 'succeeded' as const })),
+    );
+    assert.equal(canaryEval.settled, true);
+    const promote = nextStage('canary', canaryEval);
+    assert.ok(promote);
+    assert.equal(promote!.stage, 'fleet');
+
+    // 2. the fleet wave is empty, so it settles immediately — this is the
+    // transition distributionFanout.ts cascades to in the same
+    // transaction. Before the fix it returned null and the rollout was
+    // stuck at stage "fleet" with nothing left to trigger it.
+    const fleetEval = evaluateWave(
+      fleet.map((machineId) => ({ machineId, status: 'pending' as const })),
+    );
+    const finish = nextStage('fleet', fleetEval);
+    assert.ok(finish);
+    assert.equal(finish!.stage, 'complete');
+  });
+
+  it('failure path: the only machine fails → aborted, never promoted', () => {
+    const { canary } = selectCanary(['machine-solo'], VERSION);
+    const canaryEval = evaluateWave(
+      canary.map((machineId) => ({ machineId, status: 'failed' as const })),
+    );
+
+    // 1/1 = 100% failure, far past the 25% abort gate.
+    assert.equal(canaryEval.failureRate, 1);
+    assert.equal(canaryShouldAbort(canaryEval), true);
+    assert.equal(canaryShouldPromote(canaryEval), false);
+
+    const t = nextStage('canary', canaryEval);
+    assert.ok(t);
+    assert.equal(t!.stage, 'aborted');
+    assert.match(t!.reason, /1\/1 targets failed/);
+  });
+
+  it('failure path: a cancelled sync aborts the same way as a failure', () => {
+    const canaryEval = evaluateWave([
+      { machineId: 'machine-solo', status: 'cancelled' },
+    ]);
+    const t = nextStage('canary', canaryEval);
+    assert.ok(t);
+    assert.equal(t!.stage, 'aborted');
+  });
+
+  it('stays in flight while the only machine is still downloading', () => {
+    const canaryEval = evaluateWave([
+      { machineId: 'machine-solo', status: 'in_progress' },
+    ]);
+    assert.equal(canaryEval.settled, false);
+    assert.equal(nextStage('canary', canaryEval), null);
   });
 });

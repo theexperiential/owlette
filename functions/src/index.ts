@@ -33,6 +33,7 @@ export { exportSecurityBoundaryAuditDevDaily } from './securityBoundaryAuditExpo
 export { emitWebhook, processRetryQueue } from './webhookDispatch';
 export { sweepExpiredApiKeysDaily } from './apiKeyExpire';
 export { sweepExpiredIdempotencyCacheDaily } from './idempotencyCleanup';
+export { onTalonLogEventCreated } from './talonLogEvents';
 // reconcileDeploymentStatus / reconcileDistributionStatus (wave-2.4) removed
 // 2026-05-30: both triggered on commands/pending, but the agent only ever
 // writes command status to commands/completed, so they never fired (inert).

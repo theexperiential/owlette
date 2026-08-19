@@ -45,6 +45,7 @@ const EXPECTED_TIER2 = [
   'manage_windows_service',
   'configure_gpu_tdr',
   'manage_windows_update',
+  'suppress_setup_screens',
   'manage_notifications',
   'configure_power_plan',
   // Wave 2
@@ -55,6 +56,10 @@ const EXPECTED_TIER2 = [
   'get_event_logs_filtered',
   'manage_windows_feature',
   'show_notification',
+  // Talons (wave 3) — site-level automations, executed server-side.
+  'create_talon',
+  'list_talons',
+  'set_talon_enabled',
 ] as const;
 
 const EXPECTED_TIER3 = [
@@ -315,6 +320,9 @@ describe('mcp-tools: agent parity', () => {
     'update_process',
     'add_process',
     'delete_process',
+    'create_talon',
+    'list_talons',
+    'set_talon_enabled',
   ];
 
   it('server-side tools have web definitions', () => {

@@ -24,6 +24,7 @@ import { authorizedSiteHandler } from '@/lib/authorizedHandler.server';
 import { Capability } from '@/lib/capabilities';
 import { withIdempotency } from '@/lib/idempotency';
 import { removeMachine } from '@/lib/actions/removeMachine.server';
+import { siteAuditActor } from '@/lib/actions/auditActor.server';
 
 interface RouteParams {
   params: Promise<{ siteId: string; machineId: string }>;
@@ -110,6 +111,7 @@ export const DELETE = authorizedSiteHandler<PathParams>({
         const result = await removeMachine({
           siteId: ctx.siteId,
           machineId,
+          auditActor: siteAuditActor(ctx),
         });
 
         return applyAuthDeprecations(

@@ -21,15 +21,19 @@ owlette_service.py          Main Windows service (ServiceFramework)
   ├── project_utils.py      Project directory management
   └── registry_utils.py     Windows registry queries (installed software)
 
-owlette_runner.py           NSSM-compatible runner (bridges NSSM → service main loop)
-owlette_gui.py              CustomTkinter configuration GUI (separate process)
-owlette_tray.py             System tray icon (separate process, reads IPC status file)
+owlette_runner.py           The process owlette-host supervises (bridges the host → service main loop)
 owlette_updater.py          Self-update bootstrap (stop service → download → silent install)
-configure_site.py           OAuth registration during installation (localhost:8765 callback)
+configure_site.py           Pairing + join/leave/report-issue/reboot CLI (also the desktop app's back end)
 owlette_scout.py            Process responsiveness checker (sends WM_NULL to window)
-cleanup_commands.py          Firestore command queue cleanup
-prompt_restart.py           UI prompt when process exceeds relaunch limits
+session_exec.py             Runs code in the interactive desktop session (CreateProcessAsUser)
 ```
+
+The local UI is **not** python. `desktop/` (Tauri 2 + React) ships as
+`{app}\app\owlette-desktop.exe` and provides the tray icon, the configuration
+window and the reboot countdown; the service launches it with `--tray` /
+`--restart-prompt`. It replaced `owlette_gui.py`, `owlette_tray.py` and
+`prompt_restart.py` in 3.0.0. See `desktop/README.md` for the service seam
+(`config.json`, `app_states.json`, `service_status.json`, the named mutex).
 
 ---
 
@@ -95,7 +99,7 @@ schtasks /Create /TN "OwletteProcess_{id}" /TR "{command}" /SC ONCE /ST 00:00 /R
 schtasks /Run /TN "OwletteProcess_{id}"
 schtasks /Delete /TN "OwletteProcess_{id}" /F
 ```
-**Why**: Processes launched by Task Scheduler run under svchost.exe, NOT under the NSSM job object. This means they survive service restarts. If launched directly via CreateProcessAsUser, NSSM's job object would kill all child processes when the service stops.
+**Why**: Processes launched by Task Scheduler run under svchost.exe, so they are not descendants of the agent at all and survive service restarts unconditionally. This was originally a defence against NSSM's process-tree kill; owlette-host (3.0.0) terminates only the process it launched, but the detachment stays because a managed show must survive anything that walks the tree — a manual `taskkill /T`, a remote-management tool, an operator's Task Manager "end process tree".
 
 **Stage 2 — CreateProcessAsUser (fallback)**:
 Used when schtasks fails (no user logged in, permission issues).
@@ -162,14 +166,12 @@ Processes use a `launch_mode` field instead of a binary `autolaunch` toggle:
 
 **Backward compatibility**: The `autolaunch` field is still derived and written to Firestore status for any consumers that read it (true when `launch_mode` is `always`, or `scheduled` and within window).
 
-**GUI**: Uses `CTkOptionMenu` dropdown (off / always / scheduled) instead of the old `CTkSwitch` toggle.
-
-**Web**: Uses segmented mode buttons instead of a Switch component.
+**Desktop app / Web**: Both use a segmented control (off / always / scheduled).
 
 ### Relaunch Limits
 - Per-process config: `relaunch_attempts` (default: 3, 0 = unlimited)
 - Tracked in `self.relaunch_attempts[process_name]`
-- When exceeded: launches `prompt_restart.py` (countdown to machine reboot)
+- When exceeded: launches the desktop app with `--restart-prompt` (countdown to machine reboot)
 - Counter resets after prompt is shown
 
 ---

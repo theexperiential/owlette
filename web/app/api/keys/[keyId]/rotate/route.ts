@@ -125,6 +125,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       // empty scopes[] triggers the legacy bypass path — but users should
       // create a fresh scoped key rather than rotate legacy ones. We preserve
       // whatever scopes exist verbatim.
+      //
+      // Rotation INHERITS the old environment rather than forcing
+      // MINTED_API_KEY_ENVIRONMENT, deliberately — do not "fix" this. Two
+      // reasons: the inheritance is published contract (openapi.yaml), and
+      // `environment` is part of the idempotency cache key
+      // (hashCacheKey(userId, environment, ...) in lib/idempotency.ts), so
+      // flipping a rotating key from test to live would silently re-namespace
+      // its cached responses mid-flight. A legacy test key rotates to a test
+      // key; only brand-new keys are forced live.
       const environment: ApiKeyEnvironment =
         (oldKey.environment as ApiKeyEnvironment) ?? 'live';
       const scopes = Array.isArray(oldKey.scopes) ? oldKey.scopes : [];

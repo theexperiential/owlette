@@ -11,7 +11,9 @@
  */
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import type { SiteHandlerContext } from '@/lib/authorizedHandler.server';
+import { siteAuditActor } from './auditActor.server';
 
 /** Mirrors web/hooks/useFirestore.ts:RestartScheduleEntry. */
 export interface RestartScheduleEntryInput {
@@ -138,6 +140,21 @@ export async function createRestartPreset(
   if (input.enabled !== undefined) payload.enabled = input.enabled;
 
   await presetRef.set(payload);
+
+  emitMutation({
+    kind: 'process_mutated',
+    siteId: ctx.siteId,
+    actor: siteAuditActor(ctx),
+    targetId: presetId,
+    attributes: {
+      verb: 'preset.create',
+      endpoint: 'presets/reboot',
+      method: 'POST',
+      family: 'reboot',
+      presetId,
+      isBuiltIn: input.isBuiltIn,
+    },
+  });
 
   return { presetId, siteId: ctx.siteId };
 }

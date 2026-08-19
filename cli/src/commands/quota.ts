@@ -28,13 +28,11 @@ interface QuotaAlarm {
 
 interface QuotaSnapshot {
   siteId: string;
-  tier: string;
   usedBytes: number;
   pendingBytes: number;
   committedBytes: number;
   limitBytes: number | null;
   fractionUsed: number | null;
-  unlimited: boolean;
   lastAlarmLevel: number;
   lastAlarmAt: string | null;
   lastReconciledAt: string | null;
@@ -164,13 +162,13 @@ const BAR_WIDTH = 20;
 function formatQuotaSnapshot(q: QuotaSnapshot): string {
   const out: string[] = [];
   out.push(`site       ${q.siteId}`);
-  out.push(`tier       ${q.tier}`);
   out.push('');
 
-  if (q.unlimited || q.limitBytes === null) {
-    out.push(
-      `storage:   ${humanBytes(q.committedBytes)} used (unlimited — byo bucket)`,
-    );
+  if (q.limitBytes === null) {
+    // The API reports a finite cap; the schema still marks the field
+    // nullable, so render what we do know instead of a bar against an
+    // unknown limit.
+    out.push(`storage: ${humanBytes(q.committedBytes)} used`);
   } else {
     out.push(formatProgressLine('storage', q.committedBytes, q.limitBytes));
   }
@@ -202,7 +200,8 @@ function formatQuotaSnapshot(q: QuotaSnapshot): string {
 
 /**
  * Render a single quota dimension as `<label>: <used> / <limit> (NN%) [bar]`.
- * `limit` must be > 0; callers handle the unlimited / null case separately.
+ * `limit` must be > 0; callers handle the no-entitlement / null case
+ * separately.
  */
 function formatProgressLine(label: string, used: number, limit: number): string {
   const fraction = limit > 0 ? Math.min(1, Math.max(0, used / limit)) : 0;

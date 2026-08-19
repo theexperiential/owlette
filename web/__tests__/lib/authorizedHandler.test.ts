@@ -30,6 +30,13 @@ let siteDoc: { exists: boolean; data: () => unknown } = {
   exists: true,
   data: () => ({ owner: 'uid_alice' }),
 };
+// `customers/{uid}` for the control-plane billing gate. Absent by default,
+// which `resolveBillingState()` reads as `'trialing'` — the posture every
+// pre-existing test in this file assumes.
+let customerDoc: { exists: boolean; data: () => unknown } = {
+  exists: false,
+  data: () => undefined,
+};
 
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
@@ -53,6 +60,9 @@ function buildDoc(path: string): unknown {
       }
       if (path.startsWith('sites/')) {
         return Promise.resolve(siteDoc);
+      }
+      if (path.startsWith('customers/')) {
+        return Promise.resolve(customerDoc);
       }
       return Promise.resolve({ exists: false, data: () => undefined });
     },
@@ -205,6 +215,7 @@ beforeEach(() => {
   };
   userDoc = { exists: true, data: () => ({ role: 'admin', sites: ['site-a'] }) };
   siteDoc = { exists: true, data: () => ({ owner: 'uid_alice' }) };
+  customerDoc = { exists: false, data: () => undefined };
   requireScopeMock.mockReturnValue({ isLegacy: false });
   assertUserHasSiteAccessMock.mockResolvedValue({ siteId: 'site-a', siteData: {} });
 });
@@ -486,6 +497,10 @@ describe('authorizedSiteHandler — handler error path', () => {
     expect(errorEntry).toBeDefined();
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/*  control-plane billing lockout (billing-system wave 0.6)                   */
+/* -------------------------------------------------------------------------- */
 
 /* -------------------------------------------------------------------------- */
 /*  authorizedPlatformHandler                                                 */

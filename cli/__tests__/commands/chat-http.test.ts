@@ -32,6 +32,7 @@ function installFetchStub(payload: unknown, status = 200): FetchCall[] {
       return {
         ok: status >= 200 && status < 300,
         status,
+        headers: new Headers(),
         json: async () => payload,
         text: async () => JSON.stringify(payload),
       } as Response;
@@ -59,6 +60,7 @@ function installStreamingFetchStub(frames: string[]): FetchCall[] {
       return {
         ok: true,
         status: 200,
+        headers: new Headers(),
         body,
         json: async () => ({}),
         text: async () => '',
@@ -97,7 +99,7 @@ afterEach(() => {
 /* -------------------- new -------------------- */
 
 describe('owlette chat new', () => {
-  it('POSTs /api/cortex/conversations with siteId + Bearer + auto Idempotency-Key', async () => {
+  it('POSTs /api/hoot/conversations with siteId + Bearer + auto Idempotency-Key', async () => {
     const calls = installFetchStub({ ok: true, data: { conversationId: 'conv_1' } });
     const program = buildProgram();
     await program.parseAsync(
@@ -105,7 +107,7 @@ describe('owlette chat new', () => {
       { from: 'user' },
     );
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toBe('https://dev.test/api/cortex/conversations');
+    expect(calls[0]!.url).toBe('https://dev.test/api/hoot/conversations');
     expect(calls[0]!.init.method).toBe('POST');
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer owk_live_testtoken');
@@ -188,7 +190,7 @@ describe('owlette chat new', () => {
 /* -------------------- list -------------------- */
 
 describe('owlette chat list', () => {
-  it('GETs /api/cortex/conversations with siteId + Bearer auth', async () => {
+  it('GETs /api/hoot/conversations with siteId + Bearer auth', async () => {
     const calls = installFetchStub({
       ok: true,
       data: { conversations: [], nextPageToken: '' },
@@ -198,7 +200,7 @@ describe('owlette chat list', () => {
       ['--json', 'chat', 'list', '--site', 'site-1'],
       { from: 'user' },
     );
-    expect(calls[0]!.url).toBe('https://dev.test/api/cortex/conversations?siteId=site-1');
+    expect(calls[0]!.url).toBe('https://dev.test/api/hoot/conversations?siteId=site-1');
     expect((calls[0]!.init.method ?? 'GET').toUpperCase()).toBe('GET');
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer owk_live_testtoken');
@@ -274,14 +276,14 @@ describe('owlette chat list', () => {
 /* -------------------- send -------------------- */
 
 describe('owlette chat send', () => {
-  it('POSTs /api/cortex/conversations/:id with role=user + content + auto Idempotency-Key', async () => {
+  it('POSTs /api/hoot/conversations/:id with role=user + content + auto Idempotency-Key', async () => {
     const calls = installStreamingFetchStub([`0:"hello"\n`, `d:{"finishReason":"stop"}\n`]);
     const program = buildProgram();
     await program.parseAsync(
       ['chat', 'send', 'conv_1', 'hi there'],
       { from: 'user' },
     );
-    expect(calls[0]!.url).toBe('https://dev.test/api/cortex/conversations/conv_1');
+    expect(calls[0]!.url).toBe('https://dev.test/api/hoot/conversations/conv_1');
     expect(calls[0]!.init.method).toBe('POST');
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer owk_live_testtoken');
@@ -399,7 +401,7 @@ describe('owlette chat send', () => {
 /* -------------------- delete -------------------- */
 
 describe('owlette chat delete', () => {
-  it('DELETEs /api/cortex/conversations/:id with Bearer + auto Idempotency-Key when --yes is supplied', async () => {
+  it('DELETEs /api/hoot/conversations/:id with Bearer + auto Idempotency-Key when --yes is supplied', async () => {
     const calls = installFetchStub({
       ok: true,
       data: { conversationId: 'conv_1', alreadyDeleted: false },
@@ -409,7 +411,7 @@ describe('owlette chat delete', () => {
       ['--json', 'chat', 'delete', 'conv_1', '--yes'],
       { from: 'user' },
     );
-    expect(calls[0]!.url).toBe('https://dev.test/api/cortex/conversations/conv_1');
+    expect(calls[0]!.url).toBe('https://dev.test/api/hoot/conversations/conv_1');
     expect(calls[0]!.init.method).toBe('DELETE');
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer owk_live_testtoken');
@@ -441,7 +443,7 @@ describe('owlette chat delete', () => {
 /* -------------------- rename -------------------- */
 
 describe('owlette chat rename', () => {
-  it('PATCHes /api/cortex/conversations/:id with title body + auto Idempotency-Key', async () => {
+  it('PATCHes /api/hoot/conversations/:id with title body + auto Idempotency-Key', async () => {
     const calls = installFetchStub({
       ok: true,
       data: { conversationId: 'conv_1', title: 'new title' },
@@ -451,7 +453,7 @@ describe('owlette chat rename', () => {
       ['--json', 'chat', 'rename', 'conv_1', 'new title'],
       { from: 'user' },
     );
-    expect(calls[0]!.url).toBe('https://dev.test/api/cortex/conversations/conv_1');
+    expect(calls[0]!.url).toBe('https://dev.test/api/hoot/conversations/conv_1');
     expect(calls[0]!.init.method).toBe('PATCH');
     const headers = calls[0]!.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer owk_live_testtoken');

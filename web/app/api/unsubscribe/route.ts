@@ -16,6 +16,7 @@ const ALERT_PREFERENCES = {
   thresholdAlerts: false,
   cortexAlerts: false,
   displayAlerts: false,
+  talonAlerts: false,
 };
 
 function getSecret(): string {

@@ -121,10 +121,41 @@ test.afterEach(async () => {
   await cleanupApiKeys(ADMIN_UID);
 });
 
-function rowByPrefix(page: import('@playwright/test').Page, prefix: string) {
+function rowByName(page: import('@playwright/test').Page, name: string) {
   return page
-    .locator('code', { hasText: `${prefix}•••` })
-    .locator('xpath=ancestor::div[contains(@class, "rounded-md")][1]');
+    .locator('div.rounded-md.border')
+    .filter({ has: page.locator('p.font-medium', { hasText: name }) })
+    .first();
+}
+
+/**
+ * Expand a row and read the key prefix it reveals.
+ *
+ * KeyCard collapses the prefix and the scope summary behind a per-row toggle —
+ * the row itself carries only name, status and the three dates, which is what
+ * gives the name a readable column inside the account-settings dialog.
+ */
+async function revealedPrefix(row: ReturnType<typeof rowByName>): Promise<string> {
+  await row.getByRole('button', { name: /^show details for / }).click();
+  return (await row.locator('code').innerText()).trim();
+}
+
+/**
+ * Pick an item out of a row's overflow menu.
+ *
+ * The three per-row actions live in one dropdown now; three buttons on an
+ * active row versus one on an expired row was an 80px swing that came out of
+ * the only flexible column, so no two rows agreed on where their columns
+ * started. Radix renders the menu in a portal, so the item is located on
+ * `page`, never inside the row.
+ */
+async function chooseRowAction(
+  page: import('@playwright/test').Page,
+  row: ReturnType<typeof rowByName>,
+  item: RegExp,
+) {
+  await row.getByRole('button', { name: /^actions for / }).click();
+  await page.getByRole('menuitem', { name: item }).click();
 }
 
 test('rotate issues a new key, reveals it once, and stamps the original as rotated (grace)', async ({
@@ -139,9 +170,11 @@ test('rotate issues a new key, reveals it once, and stamps the original as rotat
     page.getByRole('heading', { name: 'api keys', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
 
-  const oldRow = rowByPrefix(page, keyOne.keyPrefix);
+  const oldRow = rowByName(page, 'rotate target');
   await expect(oldRow).toBeVisible();
   await expect(oldRow.getByText('active', { exact: true })).toBeVisible();
+  // The prefix is still shown — one toggle away rather than in the row.
+  expect(await revealedPrefix(oldRow)).toBe(`${keyOne.keyPrefix}•••`);
 
   const rotateResponsePromise = page.waitForResponse(
     (res) =>
@@ -150,12 +183,7 @@ test('rotate issues a new key, reveals it once, and stamps the original as rotat
     { timeout: 10_000 },
   );
 
-  // The rotate button is icon-only — KeyCard wraps a lucide RefreshCw inside a
-  // Radix Tooltip, but Radix tooltip text is not exposed as the button's
-  // accessible name in the DOM (it's a sibling popover with aria-describedby).
-  // Locate by the icon's class instead. (UI gap: KeyCard's rotate/revoke
-  // buttons should grow explicit aria-labels.)
-  await oldRow.locator('button:has(svg.lucide-refresh-cw)').click();
+  await chooseRowAction(page, oldRow, /^rotate$/);
 
   const rotateResponse = await rotateResponsePromise;
   expect(rotateResponse.status()).toBe(200);
@@ -175,11 +203,27 @@ test('rotate issues a new key, reveals it once, and stamps the original as rotat
   ).toBeVisible();
   await expect(page.locator('code', { hasText: rotatePayload.key })).toBeVisible();
 
-  await expect(oldRow.getByText('rotated (grace)', { exact: true })).toBeVisible();
-  await expect(oldRow.getByText(/old key stops working/)).toBeVisible();
+  // `oldRow` was `.first()` of the rows named "rotate target" — after rotation
+  // the successor (newest, still in the usable group) takes that slot, so
+  // re-locate the predecessor by its grace badge, mirroring `newRow` below.
+  const gracedRow = page
+    .locator('div.rounded-md.border')
+    .filter({ has: page.locator('p.font-medium', { hasText: 'rotate target' }) })
+    .filter({ hasText: 'rotated (grace)' })
+    .first();
+  await expect(gracedRow.getByText('rotated (grace)', { exact: true })).toBeVisible();
+  await expect(gracedRow.getByText(/old key stops working/)).toBeVisible();
 
-  const newRow = rowByPrefix(page, rotatePayload.keyPrefix);
+  // Rotation carries the name across, so both rows are called "rotate target";
+  // the badge is what separates the successor from its predecessor.
+  const newRow = page
+    .locator('div.rounded-md.border')
+    .filter({ has: page.locator('p.font-medium', { hasText: 'rotate target' }) })
+    .filter({ hasText: 'active' })
+    .first();
   await expect(newRow.getByText('active', { exact: true })).toBeVisible();
+  // ...and expanding it proves the successor really carries the new prefix.
+  expect(await revealedPrefix(newRow)).toBe(`${rotatePayload.keyPrefix}•••`);
 
   const oldRecord = await getAdminDb()
     .collection('users')
@@ -209,12 +253,12 @@ test('revoke removes the targeted key from the list and deletes both firestore d
     page.getByRole('heading', { name: 'api keys', exact: true }),
   ).toBeVisible({ timeout: 10_000 });
 
-  const revokeRow = rowByPrefix(page, keyTwo.keyPrefix);
+  const revokeRow = rowByName(page, 'revoke target');
   await expect(revokeRow).toBeVisible();
 
-  // Same Radix-tooltip caveat as the rotate test — locate the trash button by
-  // its lucide icon class rather than the (non-attached) tooltip text.
-  await revokeRow.locator('button:has(svg.lucide-trash-2)').click();
+  // An active key revokes from the overflow menu; a terminal one keeps a bare
+  // trash button, since a menu holding a single item is ceremony.
+  await chooseRowAction(page, revokeRow, /^revoke$/);
   await expect(revokeRow.getByText('revoke?', { exact: true })).toBeVisible();
 
   const revokeResponsePromise = page.waitForResponse(
@@ -229,8 +273,8 @@ test('revoke removes the targeted key from the list and deletes both firestore d
   const revokeResponse = await revokeResponsePromise;
   expect(revokeResponse.status()).toBe(200);
 
-  await expect(rowByPrefix(page, keyTwo.keyPrefix)).toHaveCount(0);
-  await expect(rowByPrefix(page, keyOne.keyPrefix)).toBeVisible();
+  await expect(rowByName(page, 'revoke target')).toHaveCount(0);
+  await expect(rowByName(page, 'rotate target')).toBeVisible();
 
   const recordSnap = await getAdminDb()
     .collection('users')

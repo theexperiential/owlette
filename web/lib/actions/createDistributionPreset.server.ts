@@ -24,6 +24,7 @@
 
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import type { UserActor } from '@/lib/capabilities';
 
 export interface CreateDistributionPresetInput {
@@ -39,6 +40,8 @@ export interface CreateDistributionPresetInput {
 export interface CreateDistributionPresetContext {
   actor: UserActor;
   siteId: string;
+  /** Audit actor string ("user:<uid>" or "apiKey:<keyId>"). */
+  auditActor: string;
 }
 
 export interface CreateDistributionPresetResult {
@@ -130,6 +133,21 @@ export async function createDistributionPreset(
   });
 
   await presetRef.set(payload);
+
+  emitMutation({
+    kind: 'process_mutated',
+    siteId: ctx.siteId,
+    actor: ctx.auditActor,
+    targetId: presetId,
+    attributes: {
+      verb: 'preset.create',
+      endpoint: 'presets/distribution',
+      method: 'POST',
+      family: 'distribution',
+      presetId,
+      isBuiltIn: input.isBuiltIn === true,
+    },
+  });
 
   return { presetId };
 }

@@ -3,7 +3,7 @@
  *
  * Two-layer per-capability rate limiter with separate buckets for user and
  * system actors. The two buckets are completely isolated — system traffic
- * cannot consume user-bucket tokens and vice versa — so cortex bursts and
+ * cannot consume user-bucket tokens and vice versa — so hoot bursts and
  * scheduled-job traffic don't squeeze human operators out of their quota.
  *
  *   layer 1 — in-memory token bucket (best-effort optimization only)
@@ -82,6 +82,7 @@ export const USER_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
   [CapabilityEnum.SITE_MEMBER_MANAGE]: { perMinute: 30 },
   [CapabilityEnum.WEBHOOK_MANAGE]: { perMinute: 30 },
   [CapabilityEnum.SITE_LOGS_MANAGE]: { perMinute: 30 },
+  [CapabilityEnum.TALON_MANAGE]: { perMinute: 30 },
   [CapabilityEnum.USER_ROLE_MANAGE]: { perMinute: 10 },
   [CapabilityEnum.USER_DELETE]: { perMinute: 5 },
   [CapabilityEnum.SYSTEM_PRESET_MANAGE]: { perMinute: 30 },
@@ -92,7 +93,7 @@ export const USER_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
 };
 
 /**
- * Default system-bucket limits — 5x user. Cortex autonomous mode produces
+ * Default system-bucket limits — 5x user. Hoot autonomous mode produces
  * legitimate burst traffic when reconciling many machines (e.g. reacting
  * to a fleet-wide drift event), and scheduled-cleanup jobs sweep large
  * windows in tight loops. Both need headroom user traffic doesn't.
@@ -109,6 +110,7 @@ export const SYSTEM_LIMITS: Readonly<Record<Capability, CapabilityLimit>> = {
   [CapabilityEnum.SITE_MEMBER_MANAGE]: { perMinute: 150 },
   [CapabilityEnum.WEBHOOK_MANAGE]: { perMinute: 150 },
   [CapabilityEnum.SITE_LOGS_MANAGE]: { perMinute: 150 },
+  [CapabilityEnum.TALON_MANAGE]: { perMinute: 150 },
   [CapabilityEnum.USER_ROLE_MANAGE]: { perMinute: 50 },
   [CapabilityEnum.USER_DELETE]: { perMinute: 25 },
   [CapabilityEnum.SYSTEM_PRESET_MANAGE]: { perMinute: 150 },
@@ -141,7 +143,7 @@ type RateLimitObservationSource = 'in_memory' | 'firestore';
 
 /**
  * Resolve which bucket an actor lives in. User sessions and api keys both
- * map to `'user'`; cortex / scheduled jobs map to `'system'`.
+ * map to `'user'`; hoot / scheduled jobs map to `'system'`.
  */
 export function bucketForActor(actor: Actor): Bucket {
   return actor.type === 'system' ? 'system' : 'user';

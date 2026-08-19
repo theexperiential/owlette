@@ -1,23 +1,23 @@
 import { test, expect } from '@playwright/test';
+import { assertNoHorizontalOverflow } from '../../helpers/mobile';
 import { roleState } from '../../helpers/roles';
 import { TEST_USERS, seedMachine } from '../../helpers/seed';
 import {
-  seedCortexFixture,
+  seedHootFixture,
   seedLogEvents,
   seedSystemPreset,
 } from '../../helpers/coverageSeed';
 
 test.describe('mobile authenticated shells', () => {
-  test.use({
-    ...roleState('admin'),
-    viewport: { width: 390, height: 844 },
-    isMobile: true,
-  });
+  // Viewport / isMobile / hasTouch come from the `mobile-chromium` project in
+  // playwright.config.ts, which owns every spec under specs/mobile/**.
+  test.use(roleState('admin'));
 
   test('dashboard list controls render without clipping', async ({ page }) => {
     await seedMachine('site-A', 'e2e-mobile-machine');
     await page.goto('/dashboard');
     await expect(page.getByText('e2e-mobile-machine')).toBeVisible();
+    await assertNoHorizontalOverflow(page);
   });
 
   test('logs mobile filters and rows render', async ({ page }) => {
@@ -27,27 +27,30 @@ test.describe('mobile authenticated shells', () => {
     await page.getByRole('button', { name: /show filters/i }).click();
     await expect(page.getByTestId('logs-filter-level')).toBeVisible();
     await expect(page.getByText('TouchDesigner', { exact: true }).first()).toBeVisible();
+    // The filter panel is only mounted in this state — responsive-acceptance
+    // measures /logs with the filters closed, so this is the open-panel width.
+    await assertNoHorizontalOverflow(page);
   });
 
-  test('cortex mobile target selector and input render', async ({ page }) => {
-    await seedCortexFixture({ userId: TEST_USERS.admin.uid });
-    await page.goto('/cortex');
-    await expect(page.getByLabel(/cortex target/i)).toBeVisible();
+  test('hoot mobile target selector and input render', async ({ page }) => {
+    await seedHootFixture({ userId: TEST_USERS.admin.uid });
+    await page.goto('/hoot');
+    await expect(page.getByLabel(/hoot target/i)).toBeVisible();
     await expect(page.getByPlaceholder(/ask about this machine/i)).toBeVisible();
+    await assertNoHorizontalOverflow(page);
   });
 });
 
 test.describe('mobile superadmin shells', () => {
-  test.use({
-    ...roleState('superadmin'),
-    viewport: { width: 390, height: 844 },
-    isMobile: true,
-  });
+  test.use(roleState('superadmin'));
 
   test('admin sidebar route and presets mobile cards render', async ({ page }) => {
     await seedSystemPreset('e2e-mobile-system-preset', { name: 'E2E Mobile Template' });
     await page.goto('/admin/presets');
     await expect(page.getByRole('heading', { name: /template library/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /edit E2E Mobile Template/i }).first()).toBeVisible();
+    // /admin/presets is not in responsive-acceptance's route list — this is the
+    // only overflow assertion covering it.
+    await assertNoHorizontalOverflow(page);
   });
 });

@@ -194,7 +194,7 @@ export function MachineContextMenu({
                 variant="ghost"
                 size="sm"
                 data-testid="machine-context-menu-trigger"
-                className="h-8 w-8 p-0 bg-card border border-border text-muted-foreground hover:text-white"
+                className="h-8 w-8 pointer-coarse:h-10 pointer-coarse:w-10 p-0 bg-card border border-border text-muted-foreground hover:text-white"
                 onClick={(e) => {
                   // Prevent row click event from firing
                   e.stopPropagation();

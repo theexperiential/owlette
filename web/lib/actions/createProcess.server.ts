@@ -3,7 +3,7 @@
  *
  * Extracted from `web/app/api/sites/[siteId]/machines/[machineId]/processes/route.ts`
  * (POST) so it can be reused from the public route + future server-side
- * callers (cortex tool dispatch, scheduled jobs).
+ * callers (hoot tool dispatch, scheduled jobs).
  *
  * Pure-ish logic: validates the input, runs the transactional
  * `withProcessLock` write, emits the audit event. Auth + capability +

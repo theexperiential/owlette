@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { getDoc, doc } from 'firebase/firestore';
@@ -29,6 +29,19 @@ export default function AddMachinePage() {
   const [isAuthorizing, setIsAuthorizing] = useState(false);
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [machineId, setMachineId] = useState<string | null>(null);
+  /**
+   * Whether the current selection was made for the user (the single-site
+   * convenience below) rather than chosen by them.
+   *
+   * This effect re-runs as auth resolves: `user` settles before `role` does,
+   * so the first pass sees `isSuperadmin === false` and takes the membership
+   * branch, which returns a narrower list than a superadmin actually has. If
+   * that narrow list happens to hold exactly one site it gets auto-selected,
+   * and the corrected wider list arriving afterwards used to leave the stale
+   * selection in place — authorizing a machine against a site the operator
+   * never chose. A deliberate choice is never withdrawn.
+   */
+  const autoSelectedRef = useRef(false);
 
   // Get pairing phrase from URL query params (from agent browser auto-open)
   useEffect(() => {
@@ -85,9 +98,20 @@ export default function AddMachinePage() {
         }
 
         setSites(fetchedSites);
-        if (fetchedSites.length === 1) {
-          setSelectedSiteId(fetchedSites[0].id);
-        }
+        setSelectedSiteId((prev) => {
+          // Exactly one choice — pick it, and record that we did.
+          if (fetchedSites.length === 1) {
+            autoSelectedRef.current = true;
+            return fetchedSites[0].id;
+          }
+          // The list changed under an auto-selection: withdraw it.
+          if (autoSelectedRef.current) {
+            autoSelectedRef.current = false;
+            return '';
+          }
+          // Keep a deliberate choice, unless the site is no longer offered.
+          return prev && fetchedSites.some((s) => s.id === prev) ? prev : '';
+        });
       } catch (error: unknown) {
         console.error('Error fetching sites:', error);
         toast.error('Failed to load sites');

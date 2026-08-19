@@ -72,6 +72,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<Ro
         name: typeof data.name === 'string' ? data.name : siteId,
         plan: typeof data.plan === 'string' ? data.plan : null,
         tier,
+        tierUpgradedAt: timestampToIso(data.tierUpgradedAt),
         timezone: typeof data.timezone === 'string' ? data.timezone : null,
         owner: typeof data.owner === 'string' ? data.owner : null,
         createdAt: timestampToIso(data.createdAt),

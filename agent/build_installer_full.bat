@@ -8,6 +8,14 @@ setlocal enabledelayedexpansion
 :: Run this script to build a complete installer from scratch
 :: ============================================================================
 
+:: The embedded interpreter's python311._pth enables `import site` so pip works,
+:: which also exposes THIS machine's user site-packages (%APPDATA%\Python\...)
+:: to every python/pip call below. That leaks the build machine's unrelated
+:: packages into dependency resolution: pip reports conflicts against packages
+:: that are not in the installer, and `pip list`/`pip freeze` describe a tree
+:: that is not the one being shipped. Seal it off for the whole build.
+set PYTHONNOUSERSITE=1
+
 echo.
 echo ========================================
 echo Owlette Embedded Installer Builder
@@ -49,7 +57,7 @@ echo.
 :: Step 1: Clean previous builds
 :: ============================================================================
 echo [1/9] Cleaning previous builds...
-:: Keep downloads\ cache intact — only wipe the build output
+:: Keep downloads\ cache intact - only wipe the build output
 if exist "build" (
     rmdir /s /q build 2>nul
 )
@@ -131,135 +139,179 @@ echo Pip installed successfully!
 :: Step 5: Install dependencies
 :: ============================================================================
 echo [5/9] Installing dependencies (this may take a few minutes)...
-:: Install only from PyPI (no custom indexes) and verify TLS
-"%~dp0build\python\python.exe" -m pip install --no-warn-script-location --ignore-installed --only-binary=:all: -r "%~dp0requirements.txt"
+:: Wheels only, so no package runs arbitrary setup.py code at build time. GPUtil
+:: is the sole exception - it has never published a wheel - and is named here
+:: explicitly. It used to be handled by a blanket "retry with source builds"
+:: fallback, which meant the --only-binary pass failed on EVERY build and the
+:: real install was the unconstrained retry, permitting source builds for all
+:: 77 packages. Naming the exception keeps the guarantee for the other 76: a
+:: missing wheel for anything else now fails the build instead of widening it.
+::
+:: Deliberately NOT --ignore-installed. get-pip (step 4) bootstraps its own
+:: setuptools/packaging/wheel, and --ignore-installed skips pip's uninstall
+:: step, so the pinned versions were written over the bootstrap's files while
+:: its .dist-info survived. Every installer shipped two setuptools and two
+:: packaging metadata dirs; importlib.metadata then resolved by directory scan
+:: order, so a scanner on a fleet machine read the newer (patched) version
+:: while the older (vulnerable) code was what actually executed.
+"%~dp0build\python\python.exe" -m pip install --no-warn-script-location --only-binary=:all: --no-binary=GPUtil -r "%~dp0requirements.txt"
 if errorlevel 1 (
-    echo WARNING: Some packages may not have binary wheels, retrying with source builds...
-    "%~dp0build\python\python.exe" -m pip install --no-warn-script-location --ignore-installed -r "%~dp0requirements.txt"
-    if errorlevel 1 (
-        echo ERROR: Failed to install dependencies
+    echo ERROR: Failed to install dependencies
+    pause
+    exit /b 1
+)
+
+:: Drop the Claude CLI that claude-agent-sdk vendors. It is a 242 MB single-file
+:: node bundle - nearly 60%% of the uncompressed payload - and it reappears on
+:: every clean pip install, which is why this is scripted rather than a one-off
+:: cleanup. Cortex fetches its own CLI on demand instead (cortex_cli_fetch), so
+:: nothing imports this path at runtime; the SDK only falls back to it when no
+:: `cli_path` is supplied.
+set "CLAUDE_BUNDLED=%~dp0build\python\Lib\site-packages\claude_agent_sdk\_bundled"
+if exist "%CLAUDE_BUNDLED%\claude.exe" (
+    echo Removing bundled Claude CLI ^(242 MB^) from the payload...
+    del /q "%CLAUDE_BUNDLED%\claude.exe"
+    if exist "%CLAUDE_BUNDLED%\claude.exe" (
+        echo ERROR: Could not delete "%CLAUDE_BUNDLED%\claude.exe"
         pause
         exit /b 1
     )
 )
-:: Verify installed packages have no dependency conflicts
+set "CLAUDE_BUNDLED="
+
+:: Verify installed packages have no dependency conflicts. Fatal: this was a
+:: non-fatal WARNING for as long as the tree had a standing conflict (wheel
+:: wanted packaging>=24.0 against our packaging==23.1), which trained everyone
+:: to ignore it and meant a conflict introduced by a future dependency bump
+:: would have shipped silently. The tree is clean now, so the check can gate.
 "%~dp0build\python\python.exe" -m pip check
 if errorlevel 1 (
-    echo WARNING: Dependency conflicts detected (non-fatal)
+    echo ERROR: Dependency conflicts detected - see above
+    pause
+    exit /b 1
 )
 echo Dependencies installed successfully!
 
 :: ============================================================================
-:: Step 6: Copy tkinter from system Python 3.11
+:: Step 6: Build the desktop app (Tauri)
 :: ============================================================================
-echo [6/9] Copying tkinter from system Python...
-set "PYTHON311_SOURCE="
-if defined PYTHON311_ROOT (
-    if exist "%PYTHON311_ROOT%\Lib\tkinter" if exist "%PYTHON311_ROOT%\DLLs\_tkinter.pyd" if exist "%PYTHON311_ROOT%\DLLs\tcl86t.dll" if exist "%PYTHON311_ROOT%\DLLs\tk86t.dll" if exist "%PYTHON311_ROOT%\tcl" set "PYTHON311_SOURCE=%PYTHON311_ROOT%"
+:: Replaces the old "copy tkinter/tcl from system Python 3.11" step: the python
+:: UI (owlette_gui.py / owlette_tray.py and friends) was deleted in 3.0.0, so the
+:: embedded interpreter no longer needs a GUI toolkit at all.
+::
+:: --no-bundle is deliberate: Inno Setup is this product's packager. Letting the
+:: Tauri bundler run would demand NSIS/WiX and produce a second, competing
+:: installer we do not ship. We want the release binary and nothing else.
+echo [6/9] Building the desktop app ^(Tauri, release^)...
+
+set "DESKTOP_DIR=%~dp0..\desktop"
+if not exist "%DESKTOP_DIR%\src-tauri\Cargo.toml" (
+    echo ERROR: Desktop app sources not found at "%DESKTOP_DIR%"
+    pause
+    exit /b 1
 )
-if not defined PYTHON311_SOURCE (
-    for /f "delims=" %%p in ('py -3.11 -c "import sys; print(sys.prefix)" 2^>nul') do (
-        if not defined PYTHON311_SOURCE (
-            if exist "%%p\Lib\tkinter" if exist "%%p\DLLs\_tkinter.pyd" if exist "%%p\DLLs\tcl86t.dll" if exist "%%p\DLLs\tk86t.dll" if exist "%%p\tcl" set "PYTHON311_SOURCE=%%p"
-        )
+
+:: rustup installs cargo per-user and does not always land on a service/CI PATH.
+if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+where cargo >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: cargo not found on PATH. Install the Rust toolchain ^(rustup^) first.
+    pause
+    exit /b 1
+)
+
+pushd "%DESKTOP_DIR%"
+
+:: Install dependencies ONLY when there are none. `npm ci` deletes node_modules
+:: before repopulating it, which would pull the rug out from under anything else
+:: working in this tree (a dev server, an editor, a parallel build). A clean CI
+:: machine has no node_modules and gets the reproducible install; a developer
+:: machine keeps the tree it already has.
+if not exist "node_modules" (
+    echo Installing desktop dependencies ^(npm ci^)...
+    call npm ci
+    if errorlevel 1 (
+        echo ERROR: npm ci failed in "%DESKTOP_DIR%"
+        popd
+        pause
+        exit /b 1
     )
-)
-if not defined PYTHON311_SOURCE (
-    if exist "C:\Program Files\Python311\Lib\tkinter" if exist "C:\Program Files\Python311\DLLs\_tkinter.pyd" if exist "C:\Program Files\Python311\DLLs\tcl86t.dll" if exist "C:\Program Files\Python311\DLLs\tk86t.dll" if exist "C:\Program Files\Python311\tcl" set "PYTHON311_SOURCE=C:\Program Files\Python311"
-)
-
-if defined PYTHON311_SOURCE (
-    echo Using Python 3.11 from !PYTHON311_SOURCE!
-    echo Copying tkinter module...
-    xcopy /E /I /Y "!PYTHON311_SOURCE!\Lib\tkinter" build\python\Lib\tkinter\ >nul
-
-    echo Copying tkinter DLLs...
-    copy /Y "!PYTHON311_SOURCE!\DLLs\_tkinter.pyd" build\python\ >nul
-    copy /Y "!PYTHON311_SOURCE!\DLLs\tcl86t.dll" build\python\ >nul
-    copy /Y "!PYTHON311_SOURCE!\DLLs\tk86t.dll" build\python\ >nul
-
-    echo Copying tcl directory...
-    xcopy /E /I /Y "!PYTHON311_SOURCE!\tcl" build\python\tcl\ >nul
 ) else (
-    echo WARNING: Python 3.11 with tkinter not found.
-    echo          Set PYTHON311_ROOT or install Python 3.11 with tkinter to enable the GUI.
-    echo          Continuing without tkinter; core build will proceed.
+    echo Using the existing desktop node_modules.
 )
-set "PYTHON311_SOURCE="
+
+echo Compiling owlette-desktop.exe ^(this takes several minutes on a cold cache^)...
+call npx tauri build --no-bundle
+if errorlevel 1 (
+    echo ERROR: tauri build failed
+    popd
+    pause
+    exit /b 1
+)
+popd
+
+set "DESKTOP_EXE=%DESKTOP_DIR%\src-tauri\target\release\owlette-desktop.exe"
+if not exist "%DESKTOP_EXE%" (
+    echo ERROR: tauri build reported success but "%DESKTOP_EXE%" is missing
+    pause
+    exit /b 1
+)
+echo Desktop app built OK
 
 :: ============================================================================
-:: Step 7: Acquire NSSM (cached download or local install fallback)
+:: Step 7: Build the service host (Rust)
 :: ============================================================================
-echo [7/9] Acquiring NSSM...
+:: Replaces "acquire NSSM". 3.0.0 hosts OwletteService in our own supervisor
+:: (agent\host) instead of NSSM 2.24 - a 2014 binary, the last stable release
+:: there will ever be, which tree-killed its child's descendants on stop,
+:: ignored its own AppKillProcessTree setting, and delivered a stop only as a
+:: best-effort console Control-C that was silently not delivered in production.
+:: The host is ~320 KB, has one dependency (windows-service, the same crate the
+:: desktop app already drives the SCM with), and is built from source here, so
+:: the build no longer depends on nssm.cc being up either.
+echo [7/9] Building the service host ^(Rust, release^)...
 mkdir build\tools 2>nul
 
-:: Canonical SHA256 for the official nssm-2.24.zip. Cross-verified against
-:: the Chocolatey NSSM 2.24 package metadata (md5 B2EDD0E4..., sha1 BE7B3577...,
-:: sha256 below). The previous pin (923c35e4...) did not match the zip nssm.cc
-:: actually serves and broke every clean build.
-set NSSM_EXPECTED_HASH=727d1e42275c605e0f04aba98095c38a8e1e46def453cdffce42869428aa6743
-
-:: Prefer the vendored, hash-verified zip so the build never depends on
-:: nssm.cc being up (the site is chronically flaky — it served a 197-byte
-:: error page to CI runners). Falls through to download only if the vendored
-:: copy is somehow absent.
-mkdir downloads 2>nul
-if exist "vendor\nssm-2.24.zip" (
-    echo Using vendored NSSM 2.24...
-    copy /Y "vendor\nssm-2.24.zip" downloads\nssm.zip >nul
-    goto :verify_nssm
+set "HOST_DIR=%~dp0host"
+if not exist "%HOST_DIR%\Cargo.toml" (
+    echo ERROR: Service host sources not found at "%HOST_DIR%"
+    pause
+    exit /b 1
 )
 
-:: Use cached zip if present
-if exist "downloads\nssm.zip" goto :verify_nssm
-
-:: Try downloading
-echo Downloading NSSM 2.24 from nssm.cc...
-curl -L --max-time 30 -o downloads\nssm.zip https://nssm.cc/release/nssm-2.24.zip
+:: Step 6 already put rustup's per-user cargo on PATH; repeated here so this
+:: step keeps working if the desktop build above ever moves or is skipped.
+if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+where cargo >nul 2>&1
 if errorlevel 1 (
-    echo WARNING: Download failed, trying local installation...
-    del downloads\nssm.zip 2>nul
-    goto :nssm_local
-)
-:: Reject HTML error pages (a real zip is hundreds of KB)
-for %%F in (downloads\nssm.zip) do if %%~zF LSS 10240 (
-    echo WARNING: Downloaded file too small ^(%%~zF bytes^) - server returned error page
-    del downloads\nssm.zip
-    goto :nssm_local
+    echo ERROR: cargo not found on PATH. Install the Rust toolchain ^(rustup^) first.
+    pause
+    exit /b 1
 )
 
-:verify_nssm
-echo Verifying NSSM download checksum...
-set "NSSM_ACTUAL_HASH="
-for /f "skip=1 tokens=*" %%a in ('certutil -hashfile downloads\nssm.zip SHA256') do (
-    if not defined NSSM_ACTUAL_HASH set "NSSM_ACTUAL_HASH=%%a"
+pushd "%HOST_DIR%"
+call cargo build --release
+if errorlevel 1 (
+    echo ERROR: cargo build failed in "%HOST_DIR%"
+    popd
+    pause
+    exit /b 1
 )
-if /i "%NSSM_ACTUAL_HASH%"=="%NSSM_EXPECTED_HASH%" (
-    set "NSSM_ACTUAL_HASH="
-    goto :extract_nssm
+popd
+
+set "HOST_EXE=%HOST_DIR%\target\release\owlette-host.exe"
+if not exist "%HOST_EXE%" (
+    echo ERROR: cargo reported success but "%HOST_EXE%" is missing
+    pause
+    exit /b 1
 )
-echo WARNING: NSSM download checksum mismatch ^(actual: %NSSM_ACTUAL_HASH%^)
-echo          Falling back to local installation...
-set "NSSM_ACTUAL_HASH="
-del downloads\nssm.zip
-
-:nssm_local
-if exist "%ProgramData%\Owlette\tools\nssm.exe" (
-    echo Using locally installed NSSM from %ProgramData%\Owlette\tools\nssm.exe
-    copy /Y "%ProgramData%\Owlette\tools\nssm.exe" build\tools\ >nul
-    echo NSSM acquired from local installation OK
-    goto :nssm_done
+copy /Y "%HOST_EXE%" build\tools\ >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy "%HOST_EXE%"
+    pause
+    exit /b 1
 )
-echo ERROR: nssm.cc is unavailable and no local NSSM at %ProgramData%\Owlette\tools\nssm.exe
-pause
-exit /b 1
-
-:extract_nssm
-echo Extracting NSSM...
-powershell -Command "Expand-Archive -Path downloads\nssm.zip -DestinationPath build\nssm -Force"
-copy /Y build\nssm\nssm-2.24\win64\nssm.exe build\tools\ >nul
-
-:nssm_done
+echo Service host built OK
 
 :: ============================================================================
 :: Step 8: Create installer package structure
@@ -270,6 +322,7 @@ echo [8/9] Creating installer package...
 mkdir build\installer_package\python 2>nul
 mkdir build\installer_package\agent\src 2>nul
 mkdir build\installer_package\agent\icons 2>nul
+mkdir build\installer_package\app 2>nul
 mkdir build\installer_package\tools 2>nul
 mkdir build\installer_package\scripts 2>nul
 
@@ -283,9 +336,15 @@ xcopy /E /I /Y build\python\* build\installer_package\python\ >nul
 echo Copying VERSION file...
 copy /Y VERSION build\installer_package\agent\ >nul
 
-:: Copy agent source code
+:: Copy agent source code. __pycache__ is dropped afterwards: xcopy /E takes it
+:: along, and a build machine's cache carries .pyc for modules that no longer
+:: exist in src (the deleted python UI, for one) plus a second copy for every
+:: interpreter version that ever ran the tree.
 echo Copying agent source code...
 xcopy /E /I /Y src\* build\installer_package\agent\src\ >nul
+for /d /r "build\installer_package\agent\src" %%d in (__pycache__) do (
+    if exist "%%d" rmdir /s /q "%%d"
+)
 
 :: Copy Cortex constitution (Agent SDK loads via setting_sources=["project"])
 if exist CLAUDE.md (
@@ -295,9 +354,16 @@ if exist CLAUDE.md (
 
 :: Note: Config template not needed - configure_site.py creates config in ProgramData during installation
 
-:: Copy NSSM
-echo Copying NSSM...
-copy /Y build\tools\nssm.exe build\installer_package\tools\ >nul
+:: Copy the service host. Lands at {app}\tools\owlette-host.exe on the target -
+:: the slot nssm.exe used to occupy, and the path scripts\install.bat,
+:: configure_site.py and the uninstaller all resolve.
+echo Copying the service host...
+copy /Y build\tools\owlette-host.exe build\installer_package\tools\ >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy the service host into the installer package
+    pause
+    exit /b 1
+)
 
 :: Copy icons
 if exist "icons" (
@@ -305,12 +371,22 @@ if exist "icons" (
     xcopy /E /I /Y icons\* build\installer_package\agent\icons\ >nul
 )
 
-:: Copy installation scripts
+:: Copy the desktop app. Lands at {app}\app\owlette-desktop.exe on the target -
+:: the exact path shared_utils.get_desktop_exe_path() resolves.
+echo Copying desktop app...
+copy /Y "%DESKTOP_EXE%" build\installer_package\app\ >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy "%DESKTOP_EXE%"
+    pause
+    exit /b 1
+)
+
+:: Copy installation scripts. The launch_gui.bat / launch_tray.bat hops are gone
+:: with the python UI - the Start-menu and startup shortcuts now point straight
+:: at the desktop exe.
 echo Copying installation scripts...
 copy /Y scripts\install.bat build\installer_package\scripts\ >nul
 copy /Y scripts\uninstall.bat build\installer_package\scripts\ >nul
-copy /Y scripts\launch_gui.bat build\installer_package\scripts\ >nul
-copy /Y scripts\launch_tray.bat build\installer_package\scripts\ >nul
 
 :: ============================================================================
 :: Step 9: Compile with Inno Setup

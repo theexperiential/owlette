@@ -24,6 +24,7 @@ Download the packaged installer, run it as Administrator, and authorize the mach
 6. When the console appears, the agent prints the pairing phrase and authorization URL, then immediately begins waiting for authorization.
 7. Press Enter only if you want to open the pairing page in the local browser, or authorize from another device by visiting the displayed URL and entering the phrase. The agent is already polling, so pairing completes within seconds of approval.
 8. The agent stores credentials and installs the Windows service.
+9. On the final wizard page, leave **open owlette** checked and click Finish to bring up the local window. Silent installs skip this and never open a window.
 
 Pairing phrases expire after 10 minutes. Credentials are stored encrypted at `C:\ProgramData\Owlette\.tokens.enc`.
 
@@ -107,7 +108,7 @@ Example command payload:
 }
 ```
 
-In the dashboard deployment flow, provide the installer URL, silent flags, optional verify path from a preset/template when available, and target machines. For remote installs, ensure the command includes `sha256_checksum`; the current deployment dialog does not collect it directly.
+In the dashboard deployment flow, provide the installer URL, silent flags, optional verify path from a preset/template when available, and target machines. The dialog computes `sha256_checksum` server-side as soon as an installer URL is entered, and falls back to a manual hex field for URLs the web server cannot reach; a deployment cannot be submitted without one.
 
 ---
 
@@ -117,14 +118,16 @@ There are two distinct manual flows.
 
 ### packaged installer layout
 
-Use this only on a machine that already has the packaged layout under `C:\ProgramData\Owlette`. The service installer script expects embedded Python, NSSM, scripts, and agent source in that layout:
+Use this only on a machine that already has the packaged layout under `C:\ProgramData\Owlette`. The service installer script expects embedded Python, the service host, scripts, and agent source in that layout:
 
 - `C:\ProgramData\Owlette\python\python.exe`
-- `C:\ProgramData\Owlette\tools\nssm.exe`
+- `C:\ProgramData\Owlette\tools\owlette-host.exe`
 - `C:\ProgramData\Owlette\scripts\install.bat`
 - `C:\ProgramData\Owlette\agent\src\owlette_runner.py`
 
-To re-run pairing:
+To re-run pairing, open the owlette window on the machine and choose **join site** — from the app menu, or from the button in the status bar when the machine belongs to no site. A machine that still belongs to a site shows **leave site** there instead: leave first, then join. Both run the same pairing helper the installer does.
+
+The console equivalent:
 
 ```cmd
 cd /d C:\ProgramData\Owlette
@@ -191,10 +194,13 @@ After installation, verify the agent is running.
 
 ```text
 C:\ProgramData\Owlette\logs\service.log
+C:\ProgramData\Owlette\logs\service_host.log
 C:\ProgramData\Owlette\logs\service_stdout.log
 C:\ProgramData\Owlette\logs\service_stderr.log
 C:\ProgramData\Owlette\logs\pairing_debug.log
 ```
+
+`service_host.log` is owlette-host's own log: service registration, agent spawns, exit codes, restart backoff, and stop escalations. `service_stdout.log` and `service_stderr.log` are the supervised agent's raw output.
 
 Useful startup lines include:
 
@@ -216,7 +222,7 @@ The machine should appear in the selected site with:
 
 ### check system tray
 
-The owlette tray icon starts through the user's Startup folder. If it is not visible, check the hidden-icons overflow menu or launch **Owlette** from the Start menu.
+The owlette service launches the desktop app in tray mode as soon as an interactive session is available, so the tray icon appears without anyone starting it by hand. The installer also adds a startup shortcut for the installing user; that shortcut is what the **start on login** toggle in the app menu and the tray's right-click menu switches on and off, and turning it off never touches the service. If the icon is not visible, check the hidden-icons overflow menu or launch **Owlette** from the Start menu.
 
 ---
 
@@ -226,10 +232,10 @@ Use **Windows Settings** > **Apps** > **owlette** > **Uninstall**.
 
 The uninstaller:
 
-1. Stops `OwletteService`.
-2. Removes the NSSM service wrapper.
+1. Closes the desktop app.
+2. Stops and deregisters `OwletteService` by running `tools\owlette-host.exe uninstall`, which waits for the service to fully stop so the agent can report itself offline first.
 3. Removes the Windows Defender exclusions added by the installer.
-4. Removes installed component directories: `python\`, `agent\`, `tools\`, and `scripts\`.
+4. Removes installed component directories: `python\`, `agent\`, `app\`, `tools\`, and `scripts\`.
 5. Removes installed top-level files such as `README.md` and `LICENSE`.
 
 By default, it preserves user data under `C:\ProgramData\Owlette`, including:
@@ -251,10 +257,10 @@ The owlette installer is built with [Inno Setup](https://jrsoftware.org/isinfo.p
 | component | purpose |
 |-----------|---------|
 | Embedded Python | Python runtime; no system Python is needed for packaged installs |
-| NSSM | Windows service wrapper at `C:\ProgramData\Owlette\tools\nssm.exe` |
+| owlette-host | Windows service host at `C:\ProgramData\Owlette\tools\owlette-host.exe` — registers, starts, stops, and supervises `OwletteService` (replaced NSSM in 3.0.0) |
 | Agent source | Python modules under `C:\ProgramData\Owlette\agent\src\` |
-| Configuration GUI | Local configuration tool |
-| System tray | Background tray icon for status monitoring |
+| Desktop app | `C:\ProgramData\Owlette\app\owlette-desktop.exe` — the local configuration window and the tray icon, in one process |
+| WebView2 runtime | Microsoft's Evergreen bootstrapper, run only on machines that lack the runtime the desktop app renders in (common on LTSC/IoT kiosk images) |
 
 ---
 

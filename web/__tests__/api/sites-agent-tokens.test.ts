@@ -46,6 +46,11 @@ jest.mock('@/lib/logger', () => ({
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
+const mockEmitMutation = jest.fn();
+jest.mock('@/lib/auditLogClient', () => ({
+  emitMutation: (...args: unknown[]) => mockEmitMutation(...args),
+}));
+
 function tokenCollection(filters: Array<[string, unknown]> = []) {
   return {
     where: (field: string, _op: string, value: unknown) => tokenCollection([...filters, [field, value]]),
@@ -80,6 +85,7 @@ import { POST } from '@/app/api/sites/[siteId]/agent-tokens/revoke/route';
 beforeEach(() => {
   tokenDocs = [];
   deletedIds.length = 0;
+  mockEmitMutation.mockClear();
 });
 
 describe('/api/sites/{siteId}/agent-tokens', () => {
@@ -256,5 +262,81 @@ describe('/api/sites/{siteId}/agent-tokens/revoke', () => {
       { params: Promise.resolve({ siteId: 'site-a' }) },
     );
     expect(res.status).toBe(400);
+  });
+
+  it('emits a site_mutated audit with verb=agent_token.revoke and no token material', async () => {
+    tokenDocs = [{ id: 'delete-me', siteId: 'site-a', machineId: 'm1' }];
+
+    await POST(
+      new NextRequest('http://localhost/api/sites/site-a/agent-tokens/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machineId: 'm1' }),
+      }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+
+    expect(mockEmitMutation).toHaveBeenCalledTimes(1);
+    expect(mockEmitMutation).toHaveBeenCalledWith({
+      kind: 'site_mutated',
+      siteId: 'site-a',
+      actor: 'user:test-admin',
+      targetId: 'm1',
+      attributes: {
+        verb: 'agent_token.revoke',
+        endpoint: 'agent-tokens/revoke',
+        method: 'POST',
+        mode: 'machine',
+        revokedCount: 1,
+        machineId: 'm1',
+      },
+    });
+    // The `agent_refresh_tokens` doc id IS the token hash — it must never
+    // reach the audit attributes.
+    expect(JSON.stringify(mockEmitMutation.mock.calls[0][0])).not.toContain('delete-me');
+  });
+
+  it('emits mode=prune for a prune request', async () => {
+    const now = Date.now();
+    tokenDocs = [
+      { id: 'expired', siteId: 'site-a', expiresAt: lifecycleTs(now - 1000) },
+    ];
+
+    await POST(
+      new NextRequest('http://localhost/api/sites/site-a/agent-tokens/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prune: true }),
+      }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+
+    expect(mockEmitMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'site_mutated',
+        targetId: 'site-a',
+        attributes: expect.objectContaining({
+          verb: 'agent_token.revoke',
+          mode: 'prune',
+          revokedCount: 1,
+        }),
+      }),
+    );
+  });
+
+  it('does not emit when the token id is unknown', async () => {
+    tokenDocs = [];
+
+    const res = await POST(
+      new NextRequest('http://localhost/api/sites/site-a/agent-tokens/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokenId: 'nope' }),
+      }),
+      { params: Promise.resolve({ siteId: 'site-a' }) },
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockEmitMutation).not.toHaveBeenCalled();
   });
 });

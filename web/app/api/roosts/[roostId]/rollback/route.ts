@@ -26,9 +26,11 @@
  * `onRoostWritten` bails, then directly enqueues replay-safe nonce
  * `sync_pull` commands to each target machine.
  *
- * Webhook emission: NOT done inline. Publication of
- * `version.rolled_back` is the dispatcher's job in a follow-up wave
- * (currently nothing emits it — see TODO below).
+ * Webhook emission: a `version.rolled_back` event is queued for every
+ * subscription on the site once the pointer flip and the sync dispatch
+ * have landed. Queueing only — the scheduled pump in
+ * `functions/src/webhookDispatch.ts` owns delivery, backoff, and the
+ * billing gate. See `web/lib/roostWebhooks.server.ts`.
  *
  * Audit log: `version_pointer_changed` audit emission is structural
  * infra not yet wired up from any web route. See TODO below — for now
@@ -51,6 +53,7 @@ import {
   resolveVersion,
   ResolveVersionError,
 } from '@/lib/resolveVersion';
+import { emitRoostWebhook } from '@/lib/roostWebhooks.server';
 import {
   auditActorIdentifier,
   applyAuthDeprecations,
@@ -422,10 +425,22 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       requestedBy: auth.userId,
     });
 
-    // TODO(roost-webhooks): emit a `version.rolled_back` webhook event.
-    // Webhook publication is a separate dispatcher not yet wired up —
-    // same gap as `version.published`. Track in the wave-2
-    // webhook-emission task.
+    // Queue `version.rolled_back` for every subscriber. Awaited so the
+    // 200 means the event is durably queued; the scheduled retry pump in
+    // functions/src/webhookDispatch.ts does the actual POSTing. Never
+    // throws — a webhook outage must not fail a completed rollback.
+    await emitRoostWebhook({
+      db,
+      siteId: site.siteId,
+      event: 'version.rolled_back',
+      data: {
+        roostId,
+        siteId: site.siteId,
+        fromVersion: txResult.previousVersionId,
+        toVersion: resolved.versionId,
+        triggeredBy: auth.userId,
+      },
+    });
 
     const response = applyAuthDeprecations(
       NextResponse.json({

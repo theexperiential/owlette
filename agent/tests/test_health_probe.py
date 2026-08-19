@@ -18,11 +18,56 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from health_probe import (
     HealthProbe,
+    HealthState,
     STATUS_AUTH_ERROR,
     STATUS_CONFIG_ERROR,
     STATUS_NETWORK_ERROR,
     STATUS_OK,
+    reprobe_if_network_error,
 )
+
+
+class TestReprobeIfNetworkError(unittest.TestCase):
+    """reprobe_if_network_error() — the post-network-gate refresh.
+
+    The startup probe runs before the network gate, so a cold boot records
+    network_error moments before the NIC comes up. Once the gate reports the
+    host reachable, that verdict is a stale snapshot and must be re-derived.
+    """
+
+    def _state(self, status):
+        return HealthState(
+            status=status,
+            error_code=None if status == STATUS_OK else status,
+            error_message=None,
+            checked_at=0,
+        )
+
+    def test_a_network_error_verdict_is_reprobed(self):
+        fresh = self._state(STATUS_OK)
+        with patch.object(HealthProbe, 'run', return_value=fresh) as run:
+            result = reprobe_if_network_error(
+                self._state(STATUS_NETWORK_ERROR), '/tmp/config.json', 'https://owlette.app/api')
+        self.assertIs(result, fresh)
+        run.assert_called_once()
+
+    def test_a_missing_state_is_reprobed(self):
+        # A crashed probe left None behind — the refresh is the first real verdict.
+        fresh = self._state(STATUS_OK)
+        with patch.object(HealthProbe, 'run', return_value=fresh):
+            result = reprobe_if_network_error(None, '/tmp/config.json', 'https://owlette.app/api')
+        self.assertIs(result, fresh)
+
+    def test_other_verdicts_pass_through_untouched(self):
+        # config_error / auth_error / ok say something the gate's success
+        # cannot contradict — no probe runs, the same object comes back.
+        for status in (STATUS_OK, STATUS_CONFIG_ERROR, STATUS_AUTH_ERROR):
+            state = self._state(status)
+            with patch.object(HealthProbe, 'run') as run:
+                result = reprobe_if_network_error(
+                    state, '/tmp/config.json', 'https://owlette.app/api')
+            self.assertIs(result, state)
+            run.assert_not_called()
 
 
 def _make_probe(config_path: str, api_base: str = "https://owlette.app/api") -> HealthProbe:

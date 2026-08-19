@@ -21,6 +21,7 @@
 
 import { FieldValue } from 'firebase-admin/firestore';
 import { getAdminDb } from '@/lib/firebase-admin';
+import { emitMutation } from '@/lib/auditLogClient';
 import type { UserActor } from '@/lib/capabilities';
 import { DistributionPresetValidationError } from './createDistributionPreset.server';
 
@@ -37,6 +38,8 @@ export interface UpdateDistributionPresetContext {
   actor: UserActor;
   siteId: string;
   presetId: string;
+  /** Audit actor string ("user:<uid>" or "apiKey:<keyId>"). */
+  auditActor: string;
 }
 
 export class DistributionPresetNotFoundError extends Error {
@@ -110,6 +113,23 @@ export async function updateDistributionPreset(
     order: input.order,
   });
 
+  const emitUpdated = (isBuiltInOverride: boolean) =>
+    emitMutation({
+      kind: 'process_mutated',
+      siteId: ctx.siteId,
+      actor: ctx.auditActor,
+      targetId: ctx.presetId,
+      attributes: {
+        verb: 'preset.update',
+        endpoint: 'presets/distribution',
+        method: 'PATCH',
+        family: 'distribution',
+        presetId: ctx.presetId,
+        isBuiltInOverride,
+        fields: Object.keys(cleanUpdates),
+      },
+    });
+
   if (ctx.presetId.startsWith('builtin-')) {
     // Built-in override: setDoc with merge so it creates the override doc on
     // first edit. Force isBuiltIn=true so a malformed merge can't promote.
@@ -121,6 +141,7 @@ export async function updateDistributionPreset(
       },
       { merge: true },
     );
+    emitUpdated(true);
     return;
   }
 
@@ -139,4 +160,6 @@ export async function updateDistributionPreset(
     }
     throw err;
   }
+
+  emitUpdated(false);
 }

@@ -2,13 +2,11 @@ import type { OwletteClient } from '../lib/client';
 
 export interface QuotaSnapshot {
   siteId: string;
-  tier: string;
   usedBytes: number;
   pendingBytes: number;
   committedBytes: number;
   limitBytes: number | null;
   fractionUsed: number | null;
-  unlimited: boolean;
   lastAlarmLevel: number;
   lastAlarmAt: string | null;
   lastReconciledAt: string | null;

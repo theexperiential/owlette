@@ -35,7 +35,7 @@ export function RemoveMachineDialog({
 }: RemoveMachineDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="border-border bg-secondary text-white max-w-lg">
+      <DialogContent className="border-border bg-secondary text-white sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="text-white flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-red-400" />

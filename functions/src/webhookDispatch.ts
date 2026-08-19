@@ -302,15 +302,17 @@ export async function pumpRetryQueue(deps: AttemptDeps): Promise<{
   let succeeded = 0;
   let failed = 0;
   let retried = 0;
+  let attempted = 0;
 
   for (const record of due) {
+    attempted++;
     const result = await attemptDelivery(record, deps);
     if (result.outcome.kind === 'success') succeeded++;
     else if (result.outcome.kind === 'permanent_failure') failed++;
     else retried++;
   }
 
-  return { attempted: due.length, succeeded, failed, retried };
+  return { attempted, succeeded, failed, retried };
 }
 
 /* --------------------------------------------------------------------- */

@@ -3,7 +3,7 @@
  *
  * Writes structured authorization-decision records to
  * `sites/{siteId}/audit_log/{entryId}`. Every privileged action — whether
- * mediated by a user session, an api key, or a system actor (cortex, jobs)
+ * mediated by a user session, an api key, or a system actor (hoot, jobs)
  * — produces exactly one entry per (correlationId, outcome) pair. The
  * `correlationId` is the join key tying an audit decision to any related
  * state writes the action produced (the same id is stamped onto command
@@ -44,7 +44,8 @@ export type Role = 'member' | 'admin' | 'superadmin';
 export type SystemActorName =
   | 'cortex_autonomous'
   | 'cortex_provisioning'
-  | 'scheduled_cleanup';
+  | 'scheduled_cleanup'
+  | 'talon_runner';
 
 export type UserActor = {
   type: 'user';
@@ -72,7 +73,8 @@ export type AuditTargetKind =
   | 'user'
   | 'process'
   | 'preset'
-  | 'installer';
+  | 'installer'
+  | 'talon';
 
 export interface AuditTarget {
   kind: AuditTargetKind;

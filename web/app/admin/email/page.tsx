@@ -37,7 +37,7 @@ const EMAIL_TEMPLATES = [
   { id: 'agent_alert', label: 'agent connection failure', description: 'agent lost connection to cloud' },
   { id: 'threshold_alert', label: 'threshold alert', description: 'metric breached a configured threshold' },
   { id: 'machines_offline', label: 'machines offline', description: 'stale heartbeat detected by health check' },
-  { id: 'cortex_escalation', label: 'cortex escalation', description: 'autonomous investigation could not resolve issue' },
+  { id: 'cortex_escalation', label: 'hoot escalation', description: 'autonomous investigation could not resolve issue' },
   { id: 'welcome', label: 'welcome email', description: 'sent to new users on signup' },
   { id: 'user_signup', label: 'admin signup notification', description: 'admin notified of new user registration' },
 ] as const;

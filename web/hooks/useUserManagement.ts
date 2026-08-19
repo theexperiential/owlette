@@ -24,6 +24,18 @@ export interface UserData {
   deletedBy?: string;
 }
 
+/** What `DELETE /api/users/{uid}` reports back about the delete it performed. */
+export interface DeleteUserResponse {
+  uid: string;
+  alreadyDeleted: boolean;
+  deletedAt: number;
+  transferredSites?: string[];
+  /** Talons this user authored, fleet-wide — reported whether or not they moved. */
+  authoredTalonCount?: number;
+  reassignedTalonIds?: string[];
+  talonReassignFailures?: { siteId: string; detail: string }[];
+}
+
 /**
  * useUserManagement Hook
  *
@@ -198,16 +210,33 @@ export function useUserManagement(enabled: boolean) {
    * Delete a user
    *
    * @param userId - The user's UID
+   * @param options.successorUid - who inherits the sites this user owns. The
+   *   API refuses the delete without one when they own any.
+   * @param options.reassignTalons - also hand that successor the talons this
+   *   user authored. Opt-in: a talon with an AI step resolves its AUTHOR's
+   *   site access on every run, so deleting the author stops it — but silently
+   *   rewriting authorship is worse than an orphan the operator was shown.
    */
   const deleteUser = useCallback(
-    async (userId: string): Promise<void> => {
+    async (
+      userId: string,
+      options: { successorUid?: string; reassignTalons?: boolean } = {},
+    ): Promise<DeleteUserResponse> => {
       if (!db) {
         throw new Error('Firebase is not configured');
       }
 
       try {
-        const response = await fetch(`/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+        const params = new URLSearchParams();
+        if (options.successorUid) params.set('successorUid', options.successorUid);
+        if (options.reassignTalons) params.set('reassignTalons', 'true');
+        const query = params.toString();
+        const response = await fetch(
+          `/api/users/${encodeURIComponent(userId)}${query ? `?${query}` : ''}`,
+          { method: 'DELETE' },
+        );
         if (!response.ok) throw new Error(await readApiError(response, 'Failed to delete user'));
+        return (await response.json()) as DeleteUserResponse;
       } catch (err) {
         console.error('Error deleting user:', err);
         throw new Error(handleError(err));

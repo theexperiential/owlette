@@ -4,17 +4,12 @@
  * Locks down the marketing-critical pieces of the public landing page so
  * accidental copy/CTA edits show up in CI instead of in production. The
  * landing page is public, so this spec runs without a storage state.
- *
- * Animation timing (the RotatingWord cycle) is intentionally not asserted —
- * we only check that one of the rotator's prefix words is present at the
- * initial render, which is deterministic.
  */
 
 import { test, expect } from '@playwright/test';
+import { HERO_HEADLINE, HERO_SUBHEADLINE } from '../../helpers/landing';
 
 test.use({ storageState: { cookies: [], origins: [] } });
-
-const HERO_HEADLINE = /attention is all you need/i;
 
 test.describe('landing — hero', () => {
   test('hero renders', async ({ page }) => {
@@ -24,8 +19,7 @@ test.describe('landing — hero', () => {
       has: page.getByRole('heading', { name: HERO_HEADLINE }),
     }).first();
 
-    // Headline. The accessible name flattens the inline <br> so a single
-    // case-insensitive match works on both mobile and desktop layouts.
+    // Headline — whichever phrase this request rolled from HERO_HEADLINES.
     await expect(
       hero.getByRole('heading', { name: HERO_HEADLINE }),
     ).toBeVisible();
@@ -48,17 +42,8 @@ test.describe('landing — hero', () => {
     await expect(pillRow).toContainText('free during beta');
     await expect(pillRow).toContainText('FSL-1.1');
 
-    // Rotator subhead — the initial prefix word ('monitor') is rendered
-    // before any cycling kicks in. RotatingWord nests three spans:
-    //   1. an aria-hidden absolute "measurer" used for sizing
-    //   2. an outer inline-flex wrapper that carries width transitions
-    //   3. an inner span (`transition-all duration-400 ...`) holding the
-    //      actual visible word
-    // hasText matches both (2) and (3) via inherited text content. Anchor
-    // on the inner span's unique class so strict-mode lands a single hit.
-    await expect(
-      hero.locator('span.transition-all.duration-400').filter({ hasText: /^monitor$/ }),
-    ).toBeVisible();
+    // Subhead — static copy, so a plain text match is deterministic.
+    await expect(hero.getByText(HERO_SUBHEADLINE)).toBeVisible();
 
     // Owl eye SVG — animated eye carries the `animate-eye-ignite` class.
     await expect(hero.locator('svg.animate-eye-ignite')).toBeVisible();

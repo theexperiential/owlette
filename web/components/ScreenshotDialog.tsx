@@ -555,7 +555,7 @@ export function ScreenshotDialog({
 
     {/* Clear all confirmation dialog */}
     <Dialog open={confirmClearAll} onOpenChange={setConfirmClearAll}>
-      <DialogContent className="bg-card border-border max-w-sm">
+      <DialogContent className="bg-card border-border sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>clear screenshot history?</DialogTitle>
           <DialogDescription className="text-muted-foreground">

@@ -99,6 +99,27 @@ export class Keys {
     return res.data;
   }
 
+  /**
+   * Edit an existing key's scopes and/or name without reissuing the secret.
+   *
+   * `scopes` replaces the key's scope list outright — it is not merged with
+   * what is already there. Like {@link rotate} and {@link revoke}, this route
+   * takes a session or Firebase ID token; an api key cannot edit itself.
+   */
+  async update(
+    keyId: string,
+    changes: { name?: string; scopes?: ApiKeyScope[] },
+  ): Promise<ApiKeyRecord> {
+    const res = await this.client.request<{ success: true; key: ApiKeyRecord }>(
+      `/api/keys/${encodeURIComponent(keyId)}`,
+      {
+        method: 'PATCH',
+        body: changes,
+      },
+    );
+    return res.data.key;
+  }
+
   async revoke(keyId: string): Promise<void> {
     await this.client.request<{ success: true }>(`/api/keys/${encodeURIComponent(keyId)}`, {
       method: 'DELETE',

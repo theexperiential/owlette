@@ -151,7 +151,7 @@ These are server-side only. They wire `/api/cron/status-ping` to the hosted publ
 | `INSTATUS_COMPONENT_WEBHOOK_DELIVERY_ID` | Component id for webhook delivery |
 | `INSTATUS_COMPONENT_R2_UPLOADS_ID` | Component id for R2 uploads |
 | `INSTATUS_COMPONENT_FIRESTORE_ID` | Component id for Firestore |
-| `INSTATUS_COMPONENT_CORTEX_CHAT_ID` | Component id for Cortex chat |
+| `INSTATUS_COMPONENT_CORTEX_CHAT_ID` | Component id for hoot chat |
 
 Do not store the Instatus API key in docs or screenshots. Record only component ids and env var names in the operator reference.
 
@@ -179,11 +179,11 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 ---
 
-## autonomous cortex (optional)
+## autonomous hoot (optional)
 
 | variable | description |
 |----------|-------------|
-| `CORTEX_INTERNAL_SECRET` | Shared secret for internal auth between alert route and autonomous Cortex endpoint |
+| `CORTEX_INTERNAL_SECRET` | Shared secret for internal auth between alert route and autonomous hoot endpoint |
 
 Generate:
 
@@ -191,7 +191,7 @@ Generate:
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Required only if you want autonomous Cortex (AI auto-investigates process crashes). Also requires a site-level LLM API key configured in Firestore (`sites/{siteId}/settings/llm`) and autonomous mode enabled (`sites/{siteId}/settings/cortex` → `autonomousEnabled: true`).
+Required only if you want autonomous hoot (AI auto-investigates process crashes). Also requires the site owner to have saved an LLM API key in their account settings — autonomous runs spend the owner's key — and autonomous mode enabled (`sites/{siteId}/settings/cortex` → `autonomousEnabled: true`).
 
 ---
 
@@ -315,7 +315,7 @@ INSTATUS_COMPONENT_CORTEX_CHAT_ID=...
 # LLM Encryption
 LLM_ENCRYPTION_KEY=your-64-char-hex
 
-# Autonomous Cortex (optional)
+# Autonomous hoot (optional)
 CORTEX_INTERNAL_SECRET=your-64-char-hex
 
 # Observability (optional)

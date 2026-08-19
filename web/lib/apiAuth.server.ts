@@ -347,8 +347,12 @@ export function requireScope(
 }
 
 /**
- * Attach the legacy-key deprecation header + version-missing advisory
- * header to a response based on the scope-check result.
+ * Attach the advisory headers a scope-check result asks for: the legacy-key
+ * deprecation notice and the version-missing notice.
+ *
+ * This is the single sink for every advisory header on the public API —
+ * routes call it on the responses they return, so a new advisory is wired
+ * once here rather than at each route.
  */
 export function applyAuthDeprecations(
   response: NextResponse,

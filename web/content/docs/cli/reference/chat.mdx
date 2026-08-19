@@ -1,6 +1,6 @@
 ---
 title: "chat"
-description: "owlette chat drives cortex ai conversations from the terminal. site-scoped (every verb requires --site), with optional machine narrowing on new. tier: ready — all five verbs are wired to canonical /api/cortex/conversations/* routes. Older /api/chat/* routes are compatibility aliases only."
+description: "owlette chat drives hoot ai conversations from the terminal. site-scoped (every verb requires --site), with optional machine narrowing on new. tier: ready — all five verbs currently call the /api/cortex/conversations/* compatibility aliases; /api/hoot/conversations/* is the canonical family and /api/chat/* is an older alias set."
 ---
 
 mutations carry an auto-generated `Idempotency-Key` so a network retry never double-creates, double-deletes, or double-renames. `send` streams the assistant reply to stdout as deltas arrive (ai-sdk v3 line-prefixed protocol).
@@ -21,7 +21,7 @@ owlette chat new --site <siteId> [--machine <machineId>] [--title <title>] [--id
 |---|---|---|
 | `--site <siteId>` | yes | site to scope the conversation to |
 | `--machine <machineId>` | no | narrow to a single machine (omit for site-wide) |
-| `--title <title>` | no | human-readable title (cortex auto-titles otherwise) |
+| `--title <title>` | no | human-readable title (hoot auto-titles otherwise) |
 | `--idempotency-key <key>` | no | override the auto-generated `cli-chat-new-<uuid>` |
 
 backing endpoint: `POST /api/cortex/conversations`. emits `{ conversationId, siteId, machineId, title }` on success.
@@ -81,16 +81,16 @@ backing endpoint: `PATCH /api/cortex/conversations/{conversationId}` with body `
 ## exit codes
 
 - `0` — success
-- `1` — generic error (network, 5xx, malformed stream, upstream cortex error, bad `--limit`, missing required flag, non-tty without `--yes`)
+- `1` — generic error (network, 5xx, malformed stream, upstream hoot error, bad `--limit`, missing required flag, non-tty without `--yes`)
 - `2` — usage error (no token)
 
 ---
 
 ## notes
 
-- **scope**: site-scoped on every verb; `new` accepts an optional `--machine` for single-machine cortex sessions.
+- **scope**: site-scoped on every verb; `new` accepts an optional `--machine` for single-machine hoot sessions.
 - **tier**: ready (public-api Wave 2.9).
 - **streaming**: only `send` streams. `new`/`list`/`delete`/`rename` are simple json round-trips.
 - **idempotency**: every mutation auto-generates a unique key; pass `--idempotency-key` to deduplicate across script-level retries.
 - **soft-delete**: `delete` is reversible for 30 days via the dashboard. there is no hard-delete verb on the cli.
-- **see also**: cortex API docs at [docs/api/cortex.md](/docs/api/cortex); per-machine context is fetched server-side from the machine's last heartbeat and process snapshot.
+- **see also**: hoot API docs at [docs/api/hoot.md](/docs/api/hoot); per-machine context is fetched server-side from the machine's last heartbeat and process snapshot.

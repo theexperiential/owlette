@@ -188,7 +188,11 @@ export function useDeployments(siteId: string) {
       },
       (err) => {
         console.error('Error fetching deployments:', err);
-        setState((prev) => ({ ...prev, error: err.message }));
+        // Pin loadedSiteId on the error path too. onSnapshot's error callback
+        // ends the subscription, so leaving it unset held `loading` true
+        // forever — the page then rendered a permanent spinner and never
+        // reached its error branch, because `loading` is checked first.
+        setState({ deployments: [], loadedSiteId: siteId, error: err.message });
       }
     );
 

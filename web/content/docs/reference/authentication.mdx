@@ -79,7 +79,7 @@ Agents authenticate using a device code flow with a two-token system. No Firebas
 
 Operators can pair machines without using the installer's browser handoff by clicking the **"+"** button on the dashboard header. The `AddMachineButton` modal (see `web/app/dashboard/components/AddMachineButton.tsx`) exposes two tabs:
 
-**Enter Code** — for operators who already have a pairing phrase (e.g. the installer's GUI is showing `silver-compass-drift` on the target machine):
+**Enter Code** — for operators who already have a pairing phrase (e.g. the installer, or the desktop app's **join a site** dialog, is showing `silver-compass-drift` on the target machine):
 
 1. Type the three-word phrase into the input
 2. Click **Authorize**
@@ -92,7 +92,7 @@ Operators can pair machines without using the installer's browser handoff by cli
 
    `Owlette-Installer-v{version}.exe /ADD={phrase} /SILENT`
 
-3. The phrase expires **10 minutes** after generation. Run the command on each target machine within that window and the agent will pair on first launch — no GUI, no browser.
+3. The phrase expires **10 minutes** after generation. Run the command on each target machine within that window and the agent will pair on first launch — nothing to click on the machine, no browser.
 
 Both tabs work only while the viewer has write access to the currently-selected site.
 

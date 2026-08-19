@@ -105,21 +105,18 @@ describe('GET /api/sites/{siteId}/quota', () => {
     });
   });
 
-  it('marks enterprise quota as unlimited when no explicit limit exists', async () => {
-    mocks.get.mockResolvedValueOnce(
-      docSnapshot('quota', { tier: 'enterprise', usedBytes: 500 }),
-    );
+  it('falls back to the standard per-site cap when the doc has no planLimitBytes', async () => {
+    mocks.get.mockResolvedValueOnce(docSnapshot('quota', { usedBytes: 500 }));
     mocks.collectionGet
       .mockResolvedValueOnce(querySnapshot([]))
       .mockResolvedValueOnce(querySnapshot([]));
 
     const req = createMockRequest(`http://localhost/api/sites/${SITE}/quota`);
     const res = await quotaGET(req, { params: Promise.resolve({ siteId: SITE }) });
-    const body = (await res.json()) as { limitBytes: number | null; unlimited: boolean };
+    const body = (await res.json()) as { limitBytes: number };
 
     expect(res.status).toBe(200);
-    expect(body.limitBytes).toBeNull();
-    expect(body.unlimited).toBe(true);
+    expect(body.limitBytes).toBe(1024 ** 4); // 1 TiB
   });
 });
 

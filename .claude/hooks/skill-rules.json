@@ -157,7 +157,7 @@
       "type": "domain",
       "enforcement": "suggest",
       "priority": "high",
-      "description": "Installer build pipeline, Inno Setup, NSSM service management, self-update",
+      "description": "Installer build pipeline, Inno Setup, owlette-host service management, self-update",
       "promptTriggers": {
         "keywords": [
           "installer",
@@ -165,6 +165,8 @@
           "inno setup",
           "ISCC",
           "nssm",
+          "owlette-host",
+          "service host",
           "package",
           "deploy agent",
           "update agent",
@@ -177,8 +179,8 @@
           "(build|compile|create|package).*?(installer|agent|release)",
           "(install|deploy|update|upgrade).*?(agent|service|owlette)",
           "(how to|best practice).*?(build|installer|deploy|release)",
-          "(fix|debug).*?(build|installer|install|update|nssm)",
-          "(configure|setup).*?(nssm|service|windows service)"
+          "(fix|debug).*?(build|installer|install|update|nssm|owlette-host)",
+          "(configure|setup).*?(nssm|owlette-host|service|windows service)"
         ]
       },
       "fileTriggers": {

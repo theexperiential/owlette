@@ -34,6 +34,7 @@ function installFetchStub(payload: unknown, status = 200): FetchCall[] {
       return {
         ok: status >= 200 && status < 300,
         status,
+        headers: new Headers(),
         json: async () => payload,
         text: async () => JSON.stringify(payload),
       } as Response;
@@ -297,6 +298,7 @@ describe('owlette roost versions', () => {
       return {
         ok: true,
         status: 200,
+        headers: new Headers(),
         json: async () => body,
         text: async () => JSON.stringify(body),
       } as Response;

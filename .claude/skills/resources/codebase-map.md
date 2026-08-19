@@ -209,7 +209,7 @@ interface UserPreferences { temperatureUnit: 'C' | 'F'; healthAlerts: boolean; p
 | Module | Purpose |
 |--------|---------|
 | `owlette_service.py` | Main Windows service — process monitoring, command handling, metrics |
-| `owlette_runner.py` | NSSM-compatible runner — bridges NSSM → service main loop |
+| `owlette_runner.py` | The process owlette-host supervises — bridges the host → service main loop |
 | `shared_utils.py` | Config management, system metrics, logging, file paths, version |
 
 ### Firebase / Cloud
@@ -231,18 +231,17 @@ interface UserPreferences { temperatureUnit: 'C' | 'F'; healthAlerts: boolean; p
 | `project_utils.py` | Project directory management |
 
 ### GUI / UX
+The local UI is the Tauri desktop app in `desktop/`, not python. It ships as
+`{app}\app\owlette-desktop.exe` and the service launches it (`--tray`,
+`--restart-prompt`). See `desktop/README.md`.
+
 | Module | Purpose |
 |--------|---------|
 | `session_exec.py` | User-session executor — runs Python/cmd/PowerShell in the desktop session (launched via CreateProcessAsUser) |
-| `owlette_gui.py` | CustomTkinter configuration GUI |
-| `owlette_tray.py` | System tray icon (reads IPC status file) |
 | `owlette_scout.py` | Process responsiveness checker (WM_NULL) |
-| `prompt_restart.py` | UI prompt when process exceeds relaunch limits |
-| `CTkMessagebox.py` | Custom message box widget |
-| `custom_messagebox.py` | Additional dialog helpers |
+| `configure_site.py` | Also the desktop app's CLI back end — pairing, join/leave, report-issue, reboot-now/dismiss (`--json-progress`) |
 
 ### Utilities
 | Module | Purpose |
 |--------|---------|
-| `cleanup_commands.py` | Firestore command queue cleanup |
 | `start_service.py` | Simple service start script |

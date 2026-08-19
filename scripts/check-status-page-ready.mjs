@@ -13,6 +13,7 @@ const STATUS_COMPONENTS = [
   'agent_registry',
   'webhook_delivery',
   'alert_delivery',
+  'talon_dispatch',
   'r2_uploads',
   'firestore',
   'cortex_chat',
@@ -24,15 +25,17 @@ const COMPONENT_ENV = {
   agent_registry: 'INSTATUS_COMPONENT_AGENT_REGISTRY_ID',
   webhook_delivery: 'INSTATUS_COMPONENT_WEBHOOK_DELIVERY_ID',
   alert_delivery: 'INSTATUS_COMPONENT_ALERT_DELIVERY_ID',
+  talon_dispatch: 'INSTATUS_COMPONENT_TALON_DISPATCH_ID',
   r2_uploads: 'INSTATUS_COMPONENT_R2_UPLOADS_ID',
   firestore: 'INSTATUS_COMPONENT_FIRESTORE_ID',
   cortex_chat: 'INSTATUS_COMPONENT_CORTEX_CHAT_ID',
 };
 
-// alert_delivery's status-page component is optional — its primary alert channel is
-// Sentry, so a missing Instatus id must not block readiness. It's still listed in
-// STATUS_COMPONENTS so a live probe recognizes it instead of flagging it unexpected.
-const OPTIONAL_COMPONENTS = ['alert_delivery'];
+// alert_delivery's and talon_dispatch's status-page components are optional — their
+// primary alert channel is Sentry, so a missing Instatus id must not block readiness.
+// They're still listed in STATUS_COMPONENTS so a live probe recognizes them instead
+// of flagging them unexpected.
+const OPTIONAL_COMPONENTS = ['alert_delivery', 'talon_dispatch'];
 
 const REQUIRED_ENV = [
   'CRON_SECRET',

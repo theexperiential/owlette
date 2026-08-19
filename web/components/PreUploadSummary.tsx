@@ -57,7 +57,7 @@ interface PreUploadSummaryProps {
    */
   sizeSummary?: SizeSummary;
   targets: PreUploadTarget[];
-  /** Optional — omit for unlimited plans. */
+  /** Optional — omit to skip the quota + tier checks entirely. */
   quota?: QuotaSnapshot;
   /** Set of chunk hashes already present on the server (from /api/chunks/check). */
   alreadyPresent?: Set<string>;

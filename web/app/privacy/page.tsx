@@ -84,8 +84,8 @@ export default function PrivacyPage() {
                 team, never by us.
               </p>
 
-              <h3 className="text-lg font-medium text-foreground mt-6 mb-3">cortex (AI assistant) data</h3>
-              <p>if you use cortex, our AI assistant, we collect and store:</p>
+              <h3 className="text-lg font-medium text-foreground mt-6 mb-3">hoot (AI assistant) data</h3>
+              <p>if you use hoot, our AI assistant, we collect and store:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li>your chat messages and the assistant&apos;s responses</li>
                 <li>the machine and site context attached to a conversation</li>
@@ -151,7 +151,7 @@ export default function PrivacyPage() {
                 </li>
                 <li>
                   <strong>consent</strong> (Art. 6(1)(a)) &mdash; for optional features you switch on, such as
-                  cortex and screenshot capture. you can withdraw consent at any time by disabling the
+                  hoot and screenshot capture. you can withdraw consent at any time by disabling the
                   feature.
                 </li>
                 <li>
@@ -205,7 +205,7 @@ export default function PrivacyPage() {
                 <li><strong>machine metrics:</strong> automatically deleted 400 days after collection.</li>
                 <li><strong>event logs:</strong> automatically deleted 400 days after the logged event.</li>
                 <li><strong>process and configuration data:</strong> until the machine is removed from your account.</li>
-                <li><strong>cortex conversations:</strong> until you delete them. deleting a conversation removes it from every listing and hides it from the interface; the underlying record is retained in a deleted state. ask us if you need it erased.</li>
+                <li><strong>hoot conversations:</strong> until you delete them. deleting a conversation removes it from every listing and hides it from the interface; the underlying record is retained in a deleted state. ask us if you need it erased.</li>
                 <li><strong>deployment content:</strong> until you delete the associated release or roost.</li>
                 <li><strong>audit and security logs:</strong> retained for as long as needed to investigate incidents and meet legal obligations.</li>
               </ul>
@@ -272,7 +272,7 @@ export default function PrivacyPage() {
                     </tr>
                     <tr>
                       <td className="py-2 pr-4">Anthropic, OpenAI</td>
-                      <td className="py-2 pr-4">cortex AI assistant &mdash; only if you enable it (see section 8)</td>
+                      <td className="py-2 pr-4">hoot AI assistant &mdash; only if you enable it (see section 8)</td>
                       <td className="py-2">USA</td>
                     </tr>
                   </tbody>
@@ -287,20 +287,20 @@ export default function PrivacyPage() {
             <section>
               <h2 className="text-xl font-semibold text-foreground mb-4">8. AI features and your LLM provider</h2>
               <p>
-                cortex is optional and off unless enabled for your site. cortex uses{' '}
+                hoot is optional and off unless enabled for your site. hoot uses{' '}
                 <strong>your own API key</strong> for an AI provider (currently Anthropic or OpenAI) &mdash;
                 we do not provide a shared key and we do not send your data to any AI provider unless
                 you have supplied a key and enabled the feature.
               </p>
-              <p className="mt-4">when cortex is enabled and you send a message:</p>
+              <p className="mt-4">when hoot is enabled and you send a message:</p>
               <ul className="list-disc pl-6 mt-2 space-y-1">
                 <li>your key is stored encrypted at rest and decrypted server-side only to make the request</li>
                 <li>your message, the conversation history, and relevant machine context (such as system metrics, process lists, and command output) are transmitted from our servers to your chosen AI provider</li>
                 <li>the provider processes that data under <strong>your</strong> account and its own terms &mdash; your agreement with that provider governs how they retain and use it</li>
-                <li>you may optionally provision your key down to a machine so cortex can run locally on that machine; in that case the key is re-encrypted with a machine-bound key on your hardware</li>
+                <li>you may optionally provision your key down to a machine so hoot can run locally on that machine; in that case the key is re-encrypted with a machine-bound key on your hardware</li>
               </ul>
               <p className="mt-4">
-                you can remove your stored key or disable cortex at any time from settings. doing so
+                you can remove your stored key or disable hoot at any time from settings. doing so
                 stops all further transmission to the AI provider; data already sent is subject to that
                 provider&apos;s retention policy, not ours.
               </p>

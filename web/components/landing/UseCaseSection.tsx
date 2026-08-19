@@ -1,10 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, Brain, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Monitor, Power, Rocket, X, type LucideIcon } from 'lucide-react';
+import { Activity, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, Monitor, Power, Rocket, X } from 'lucide-react';
 import Image from 'next/image';
+import { HootIcon } from '@/components/icons/HootIcon';
 
-const capabilities: { label: string; detail: string; expanded: string; preview: string; icon: LucideIcon }[] = [
+// React.ElementType rather than lucide's LucideIcon: the hoot card uses the
+// custom HootIcon (a plain SVG component, not a lucide forwardRef export).
+const capabilities: { label: string; detail: string; expanded: string; preview: string; icon: React.ElementType }[] = [
   {
     label: 'monitor',
     detail: 'real-time metrics and email/webhook notifications',
@@ -28,10 +31,10 @@ const capabilities: { label: string; detail: string; expanded: string; preview: 
   },
   {
     label: 'diagnose',
-    detail: 'ask cortex why a process crashed, what driver is installed, or which machine just dropped offline.',
-    expanded: 'cortex turns plain-english questions into real diagnostic actions across your fleet. bring your own openai or anthropic key.',
+    detail: 'ask hoot why a process crashed, what driver is installed, or which machine just dropped offline.',
+    expanded: 'hoot turns plain-english questions into real diagnostic actions across your fleet. bring your own openai or anthropic key.',
     preview: '/landing-screens/preview-diagnose.png',
-    icon: Brain,
+    icon: HootIcon,
   },
   {
     label: 'display',

@@ -75,7 +75,7 @@ describe('owlette.account', () => {
             isLegacy: false,
           },
           rateLimit: { tier: 'api', limitPerMinute: 600 },
-          quota: { siteId: 'site-1', tier: 'pro', usedBytes: 10, limitBytes: 100 },
+          quota: { siteId: 'site-1', usedBytes: 10, limitBytes: 100 },
           primarySiteId: 'site-1',
         },
       },
@@ -440,6 +440,36 @@ describe('owlette.keys', () => {
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ ttlDays: 180 });
   });
 
+  it('update → PATCH /api/keys/{id} with a full scope replacement', async () => {
+    const { owlette, calls } = makeOwlette([
+      {
+        status: 200,
+        body: {
+          success: true,
+          key: {
+            id: 'k',
+            name: 'ci',
+            keyPrefix: 'owk_live_ab',
+            environment: 'live',
+            scopes: [{ resource: 'installer', id: '*', permissions: ['read', 'write'] }],
+            expiresAt: 0,
+            lastUsedAt: null,
+          },
+        },
+      },
+    ]);
+    const updated = await owlette.keys.update('k', {
+      scopes: [{ resource: 'installer', id: '*', permissions: ['read', 'write'] }],
+    });
+    expect(calls[0]!.init.method).toBe('PATCH');
+    expect(calls[0]!.url).toBe('https://dev.test/api/keys/k');
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      scopes: [{ resource: 'installer', id: '*', permissions: ['read', 'write'] }],
+    });
+    // The route returns the refreshed summary, not a raw key — nothing to reveal.
+    expect(updated.scopes?.[0]?.resource).toBe('installer');
+  });
+
   it('revoke → DELETE /api/keys/{id}', async () => {
     const { owlette, calls } = makeOwlette([{ status: 200, body: { success: true } }]);
     await owlette.keys.revoke('doomed');
@@ -455,13 +485,11 @@ describe('owlette.quotas', () => {
         status: 200,
         body: {
           siteId: 'site-1',
-          tier: 'pro',
           usedBytes: 100,
           pendingBytes: 25,
           committedBytes: 125,
           limitBytes: 1000,
           fractionUsed: 0.125,
-          unlimited: false,
           lastAlarmLevel: 0,
           lastAlarmAt: null,
           lastReconciledAt: null,
@@ -472,6 +500,8 @@ describe('owlette.quotas', () => {
     const result = await owlette.quotas.current('site-1');
     expect(calls[0]!.url).toBe('https://dev.test/api/sites/site-1/quota');
     expect(result.committedBytes).toBe(125);
+    expect(result.limitBytes).toBe(1000);
+    expect(result.fractionUsed).toBe(0.125);
   });
 
   it('history -> GET /api/sites/{siteId}/quota/history?period=...', async () => {
@@ -865,7 +895,7 @@ describe('owlette.processes (factory)', () => {
 });
 
 describe('owlette.chat', () => {
-  it('new -> POST /api/cortex/conversations with siteId', async () => {
+  it('new -> POST /api/hoot/conversations with siteId', async () => {
     const { owlette, calls } = makeOwlette([
       {
         status: 201,
@@ -876,7 +906,7 @@ describe('owlette.chat', () => {
       },
     ]);
     const result = await owlette.chat.new({ siteId: 'site-1', title: 'help me' });
-    expect(calls[0]!.url).toBe('https://dev.test/api/cortex/conversations');
+    expect(calls[0]!.url).toBe('https://dev.test/api/hoot/conversations');
     expect(calls[0]!.init.method).toBe('POST');
     const body = JSON.parse(String(calls[0]!.init.body));
     expect(body.siteId).toBe('site-1');
@@ -886,18 +916,18 @@ describe('owlette.chat', () => {
     expect(headers['Idempotency-Key']).toMatch(/^sdk-chat-new-/);
   });
 
-  it('list -> GET /api/cortex/conversations?page_size=...', async () => {
+  it('list -> GET /api/hoot/conversations?page_size=...', async () => {
     const { owlette, calls } = makeOwlette([
       { status: 200, body: { ok: true, data: { conversations: [], nextPageToken: '' } } },
     ]);
     await owlette.chat.list({ siteId: 'site-1', pageSize: 25, ownerOnly: true });
-    expect(calls[0]!.url).toContain('/api/cortex/conversations?');
+    expect(calls[0]!.url).toContain('/api/hoot/conversations?');
     expect(calls[0]!.url).toContain('siteId=site-1');
     expect(calls[0]!.url).toContain('page_size=25');
     expect(calls[0]!.url).toContain('owner=me');
   });
 
-  it('rename -> PATCH /api/cortex/conversations/{id}', async () => {
+  it('rename -> PATCH /api/hoot/conversations/{id}', async () => {
     const { owlette, calls } = makeOwlette([
       {
         status: 200,
@@ -906,11 +936,11 @@ describe('owlette.chat', () => {
     ]);
     await owlette.chat.rename('conv-1', 'renamed');
     expect(calls[0]!.init.method).toBe('PATCH');
-    expect(calls[0]!.url).toBe('https://dev.test/api/cortex/conversations/conv-1');
+    expect(calls[0]!.url).toBe('https://dev.test/api/hoot/conversations/conv-1');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ title: 'renamed' });
   });
 
-  it('delete -> DELETE /api/cortex/conversations/{id} returns alreadyDeleted', async () => {
+  it('delete -> DELETE /api/hoot/conversations/{id} returns alreadyDeleted', async () => {
     const { owlette } = makeOwlette([
       {
         status: 200,

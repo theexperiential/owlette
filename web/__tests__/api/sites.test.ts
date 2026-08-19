@@ -57,6 +57,7 @@ jest.mock('firebase-admin/firestore', () => {
   return {
     FieldValue: {
       serverTimestamp: () => ({ __op: 'serverTimestamp' }),
+      arrayUnion: (...items: unknown[]) => ({ __op: 'arrayUnion', items }),
     },
     Timestamp: MockTimestamp,
   };
@@ -90,6 +91,15 @@ function applyFieldOps(
       const op = (value as { __op: string }).__op;
       if (op === 'serverTimestamp') {
         next[key] = Date.now();
+        continue;
+      }
+      if (op === 'arrayUnion') {
+        const items = (value as { items: unknown[] }).items;
+        const current = Array.isArray(next[key]) ? [...(next[key] as unknown[])] : [];
+        for (const item of items) {
+          if (!current.includes(item)) current.push(item);
+        }
+        next[key] = current;
         continue;
       }
     }
@@ -171,6 +181,7 @@ function makeCollectionRef(parts: string[]): unknown {
         });
       }
       return {
+        empty: docs.length === 0,
         docs: docs.map((d) => ({
           id: d.id,
           exists: true,
@@ -186,6 +197,30 @@ function makeCollectionRef(parts: string[]): unknown {
 jest.mock('@/lib/firebase-admin', () => ({
   getAdminDb: () => ({
     collection: (name: string) => makeCollectionRef([name]),
+    // Mirrors a real WriteBatch: buffer the writes, then replay them on
+    // commit through the same doc refs, so batched writes land in docStore
+    // exactly as direct ones do. createSite writes the site doc and the
+    // owner's membership as one batch.
+    batch: () => {
+      const ops: Array<() => Promise<void>> = [];
+      return {
+        set: (ref: { set: (data: unknown) => Promise<void> }, data: unknown) => {
+          ops.push(() => ref.set(data));
+        },
+        update: (
+          ref: { update: (patch: Record<string, unknown>) => Promise<void> },
+          patch: Record<string, unknown>,
+        ) => {
+          ops.push(() => ref.update(patch));
+        },
+        delete: (ref: { delete: () => Promise<void> }) => {
+          ops.push(() => ref.delete());
+        },
+        commit: async () => {
+          for (const op of ops) await op();
+        },
+      };
+    },
   }),
   getAdminAuth: () => ({
     verifyIdToken: jest.fn().mockRejectedValue(new Error('n/a')),
@@ -359,6 +394,11 @@ describe('/api/sites/{siteId}', () => {
     expect(second.headers.get('Idempotent-Replayed')).toBe('true');
     expect(body.siteId).toBe('site-new');
     expect(docStore['sites/site-new']?.data?.name).toBe('New Site');
+    // The creator must end up a member, not merely the owner: the client
+    // site list resolves `users/{uid}.sites[]`, so an owner-only write leaves
+    // the site invisible to the person who just created it. Asserted at the
+    // route boundary because that is the path a real signup takes.
+    expect(docStore['users/admin-uid']?.data?.sites).toContain('site-new');
     expect(mockEmitMutation).toHaveBeenCalledTimes(1);
   });
 

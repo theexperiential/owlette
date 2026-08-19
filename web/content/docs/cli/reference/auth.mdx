@@ -74,7 +74,7 @@ backing: `GET /api/whoami`.
 
 ## auth logout
 
-clears the stored credential for the active profile. local-only — does not revoke the key server-side. to actually revoke a key, use `owlette key revoke <keyId>`.
+clears the stored credential for the active profile. local-only — does not revoke the key server-side. to actually revoke a key, use the dashboard — revoking is session-authenticated and has no cli equivalent (see [key](/docs/cli/reference/key)).
 
 ```bash
 owlette auth logout

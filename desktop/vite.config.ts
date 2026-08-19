@@ -1,0 +1,49 @@
+import { fileURLToPath } from 'node:url'
+import { defineConfig } from 'vitest/config'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+// Tauri sets this when developing against a physical mobile device; on desktop
+// it is undefined and the dev server stays bound to localhost.
+const host = process.env.TAURI_DEV_HOST
+
+// https://vite.dev/config/ | https://v2.tauri.app/start/frontend/vite/
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+
+  resolve: {
+    alias: {
+      // Same alias the web app uses, so every file copied out of web/ —
+      // components/ui/*, lib/utils — compiles here UNCHANGED.
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
+
+  // Tauri expects a fixed port and treats a moved one as a failure to launch;
+  // it also owns the terminal, so vite must not wipe its output.
+  clearScreen: false,
+  server: {
+    port: 1420,
+    strictPort: true,
+    host: host || false,
+    hmr: host ? { protocol: 'ws', host, port: 1421 } : undefined,
+    // src-tauri is Rust's; watching it would restart vite on every cargo write.
+    watch: { ignored: ['**/src-tauri/**'] },
+  },
+
+  // Tauri injects TAURI_ENV_* during builds (platform, arch, target triple).
+  envPrefix: ['VITE_', 'TAURI_ENV_'],
+
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    setupFiles: ['./src/test/setup.ts'],
+    // Vitest stubs every CSS request to `export default ""` unless the id is
+    // opted in here — which would silently empty the `globals.css?raw` import
+    // the port-integrity assertions read. Opting globals.css in lets Vite's
+    // `?raw` loader hand back the authored stylesheet; nothing else imports
+    // CSS in tests, so no Tailwind compilation happens.
+    css: { include: [/globals\.css/] },
+  },
+})

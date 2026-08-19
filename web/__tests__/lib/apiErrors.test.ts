@@ -257,6 +257,7 @@ describe('apiErrors (rfc 7807 problem+json)', () => {
       expect(status).toBe(402);
       expect(body.upgradeUrl).toBeUndefined();
     });
+
   });
 
   describe('requestId generation', () => {

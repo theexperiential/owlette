@@ -543,6 +543,20 @@ async def main():
     from cortex_firestore import CortexFirestore
     firestore = CortexFirestore(db=db, site_id=site_id, machine_id=machine_id)
 
+    # Resolve the Claude Code CLI. The installer ships the Agent SDK without
+    # its 241.5 MB bundled binary, so this downloads (and sha256-verifies) one
+    # on first enable. Returns None only when there is no usable CLI at all —
+    # exit cleanly rather than crash-looping under the service's relaunch.
+    import cortex_cli_fetch
+    cli_path = cortex_cli_fetch.ensure_cli(db)
+    if not cli_path:
+        logger.error("Claude Code CLI unavailable — exiting")
+        firestore.write_cortex_error(
+            'claude code cli could not be downloaded — check network access and retry'
+        )
+        remove_pid_file()
+        return
+
     # Create MCP server with tools
     import cortex_tools
     max_tier = config.get('cortex', {}).get('maxTier', 2)
@@ -558,6 +572,9 @@ async def main():
         allowed_tools=["mcp__owlette__*"],
         setting_sources=["project"],
         cwd=agent_cwd,
+        # Explicit path short-circuits the SDK's bundled/PATH discovery entirely
+        # (subprocess_cli.py: _find_cli is only called when cli_path is None).
+        cli_path=cli_path,
         permission_mode="acceptEdits",
         max_turns=MAX_TURNS,
         max_budget_usd=MAX_BUDGET_USD,

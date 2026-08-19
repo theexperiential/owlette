@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState, useEffect } from 'react';
+import { Suspense, useRef, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -10,13 +10,25 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Fingerprint } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { sanitizeError } from '@/lib/errorHandler';
+import { isPopupUnavailableError } from '@/lib/inAppBrowser';
+import { resolvePostSignInPath } from '@/lib/postSignIn';
 import { signInWithCustomToken } from 'firebase/auth';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { auth as firebaseAuth } from '@/lib/firebase';
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
 import { LoadingWord } from '@/components/LoadingWord';
 import { FormError } from '@/components/ui/form-error';
+import { InAppBrowserNotice } from '@/components/InAppBrowserNotice';
 import { useFieldError } from '@/hooks/useFieldError';
+import { useInAppBrowser } from '@/hooks/useInAppBrowser';
+import { useRedirectIfAuthenticated } from '@/hooks/useRedirectIfAuthenticated';
+
+/**
+ * A `redirect` param is only usable if it is a same-origin relative path —
+ * `//evil.example` is protocol-relative and would leave the site.
+ */
+const safeRedirect = (value: string | null): string | null =>
+  value && value.startsWith('/') && !value.startsWith('//') ? value : null;
 
 function LoginForm() {
   const [email, setEmail] = useState('');
@@ -41,9 +53,46 @@ function LoginForm() {
   // first client render matches the server (no button), then reveal it after
   // hydration.
   const [canUsePasskey, setCanUsePasskey] = useState(false);
+  /**
+   * Set when Google sign-in fails because the browser refused the popup. Covers
+   * the webviews the user-agent doesn't identify, plus ordinary browsers with a
+   * popup blocker — so the remediation appears even when detection said no.
+   */
+  const [popupBlocked, setPopupBlocked] = useState(false);
+  /**
+   * Latched once a sign-in starts here, so the guard below cannot pre-empt the
+   * navigation these handlers are already resolving. A ref, not `loading`:
+   * `loading` is cleared in their `finally`, which runs while the push is still
+   * in flight — and that push may be to /verify-2fa, not the guard's target.
+   */
+  const authInFlight = useRef(false);
   const { signIn, signInWithGoogle } = useAuth();
+  const inApp = useInAppBrowser();
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  /**
+   * Google is unavailable — either we recognised the host app before the user
+   * spent a tap on it, or the popup was refused when they did.
+   */
+  const googleUnavailable = inApp.isInApp || popupBlocked;
+  /**
+   * Passkeys are gated on the host app, NOT on `googleUnavailable`. A blocked
+   * popup in ordinary Safari says nothing about WebAuthn — but inside an
+   * embedded webview the ceremony can only use passkeys for the HOST app's
+   * associated domain, and LinkedIn will never declare owlette.app as one. So
+   * `browserSupportsWebAuthn()` returns true there while the ceremony is
+   * guaranteed to fail. https://passkeys.dev/docs/reference/ios/
+   */
+  const showPasskey = canUsePasskey && !inApp.isInApp;
+  /** "or" only earns its place while a non-email option is still on screen. */
+  const showDivider = !googleUnavailable || showPasskey;
+  /**
+   * Force the email path open once Google is out, rather than leaving the
+   * fallback we're pointing at collapsed behind a focus gesture. Applies even
+   * when passkey survives — it may simply not be enrolled on this account.
+   */
+  const emailExpanded = emailFormOpen || googleUnavailable;
 
   useEffect(() => {
     setCanUsePasskey(browserSupportsWebAuthn());
@@ -51,49 +100,31 @@ function LoginForm() {
 
   // Read redirect parameter from URL (validated: must be a safe relative path)
   useEffect(() => {
-    const redirect = searchParams.get('redirect');
-    if (redirect && redirect.startsWith('/') && !redirect.startsWith('//')) {
+    const redirect = safeRedirect(searchParams.get('redirect'));
+    if (redirect) {
       setRedirectUrl(redirect);
     }
   }, [searchParams]);
 
-  // Decide where to send the user after a successful Firebase sign-in.
+  // Where to land after sign-in now lives in lib/postSignIn, shared with
+  // /register. It used to be a local helper here, which is precisely why
+  // /register never got it and raced the session cookie on every Google
+  // signup — see the module comment.
+  const checkMfaAndRedirect = (settleMs?: number) =>
+    resolvePostSignInPath(redirectUrl, settleMs);
+
+  // Already signed in? Then this form can only waste their time. Mirrors the
+  // proxy rule, which a client-side history pop never reaches.
   //
-  // The authoritative MFA gate is server-side (the proxy enforces it), so
-  // this function is purely a UX hint — it queries the freshly-minted
-  // session via GET /api/auth/session and, if the server reports MFA is
-  // required and not yet satisfied, pushes to /verify-2fa with the
-  // original destination preserved in the `redirect` param.
-  //
-  // We poll briefly: the createSessionCookie call in AuthContext fires
-  // off the POST as soon as onAuthStateChanged sees the user, but it is
-  // not awaited here. A short retry loop avoids the race without making
-  // the user wait the full retry budget in the common case.
-  const checkMfaAndRedirect = async (): Promise<string> => {
-    const maxAttempts = 5;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      try {
-        const res = await fetch('/api/auth/session', { credentials: 'include' });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.authenticated === true) {
-            if (data.mfaRequired === true && data.mfaVerified !== true) {
-              return `/verify-2fa?redirect=${encodeURIComponent(redirectUrl)}`;
-            }
-            return redirectUrl;
-          }
-        }
-      } catch (err) {
-        // Network blip — fall through to the retry.
-        console.warn('[Login] session probe failed (will retry):', err);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    }
-    // If we never saw an authenticated session after all retries, just
-    // attempt the original target. The proxy will redirect to /login or
-    // /verify-2fa as appropriate — it is the authoritative gate.
-    return redirectUrl;
-  };
+  // Reads the param directly rather than using the `redirectUrl` state above:
+  // effects flush in declaration order within a commit, so the guard would fire
+  // once against the '/dashboard' default before setRedirectUrl had landed, and
+  // a signed-in visitor to /login?redirect=%2Froost would end up on the
+  // dashboard instead of where they asked to go.
+  useRedirectIfAuthenticated({
+    target: safeRedirect(searchParams.get('redirect')) ?? '/dashboard',
+    skip: authInFlight.current,
+  });
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,15 +139,13 @@ function LoginForm() {
       return fail('password', 'enter your password');
     }
 
+    authInFlight.current = true;
     setLoading(true);
 
     try {
       await signIn(email, password);
 
-      // Wait a moment for Firebase Auth state to update
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Check MFA status and get redirect path
+      // Settles for the session cookie, then polls — see lib/postSignIn.
       const redirectPath = await checkMfaAndRedirect();
 
       if (redirectPath.includes('/verify-2fa')) {
@@ -127,6 +156,9 @@ function LoginForm() {
 
       router.push(redirectPath);
     } catch (error) {
+      // Nobody was signed in, so re-arm the guard: this page stays mounted, and
+      // the session could still change under it (signing in from another tab).
+      authInFlight.current = false;
       toast.error(sanitizeError(error));
     } finally {
       setLoading(false);
@@ -134,15 +166,14 @@ function LoginForm() {
   };
 
   const handleGoogleLogin = async () => {
+    const alreadyBlocked = googleUnavailable;
+    authInFlight.current = true;
     setLoading(true);
 
     try {
       await signInWithGoogle();
 
-      // Wait a moment for Firebase Auth state to update
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Check MFA status and get redirect path
+      // Settles for the session cookie, then polls — see lib/postSignIn.
       const redirectPath = await checkMfaAndRedirect();
 
       if (redirectPath.includes('/verify-2fa')) {
@@ -153,13 +184,28 @@ function LoginForm() {
 
       router.push(redirectPath);
     } catch (error) {
-      toast.error(sanitizeError(error));
+      // Nobody was signed in — re-arm the guard. See the email path above.
+      authInFlight.current = false;
+      // A refused popup is not a transient failure to be re-tried — it is an
+      // environment that cannot do federated sign-in at all. Swap in the
+      // inline remediation instead of a toast that expires with no next step.
+      if (isPopupUnavailableError(error)) {
+        setPopupBlocked(true);
+        // If the notice was already on screen, the user got here via "try
+        // google anyway" — nothing visible would change, so say so explicitly.
+        if (alreadyBlocked) {
+          toast.error('google sign-in is still blocked in this browser');
+        }
+      } else {
+        toast.error(sanitizeError(error));
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const handlePasskeyLogin = async () => {
+    authInFlight.current = true;
     setLoading(true);
 
     try {
@@ -205,9 +251,13 @@ function LoginForm() {
       // /verify-2fa. This is fail-safe behaviour pending a Wave 3 change
       // that marks passkey sign-in as MFA-satisfying server-side.
       toast.success('signed in with passkey!');
-      const redirectPath = await checkMfaAndRedirect();
+      // No settle: the verify route above already minted the session cookie
+      // before returning, so waiting would be dead latency.
+      const redirectPath = await checkMfaAndRedirect(0);
       router.push(redirectPath);
     } catch (error) {
+      // Nobody was signed in — re-arm the guard. See the email path above.
+      authInFlight.current = false;
       if (error instanceof Error && error.name === 'NotAllowedError') {
         toast.error('passkey authentication was cancelled');
       } else {
@@ -240,7 +290,7 @@ function LoginForm() {
             <div className="space-y-1">
               <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
               <CardDescription className="text-muted-foreground">
-                attention is all you need
+                keep your installation running
               </CardDescription>
             </div>
           </CardHeader>
@@ -249,6 +299,18 @@ function LoginForm() {
                 alternatives, so they sit tight together while space-y-6
                 separates them from the email form. */}
             <div className="space-y-2">
+              {googleUnavailable ? (
+                /* Google swapped out where the browser can't run it. The notice
+                   carries its own "try google anyway", so nothing is removed —
+                   detection only reorders and explains. */
+                <InAppBrowserNotice
+                  isInApp={inApp.isInApp}
+                  appName={inApp.appName}
+                  escapeAttempted={inApp.escapeAttempted}
+                  onTryAnyway={handleGoogleLogin}
+                  tryAnywayDisabled={loading}
+                />
+              ) : (
               <Button
                 type="button"
                 variant="outline"
@@ -276,8 +338,9 @@ function LoginForm() {
                 </svg>
                 continue with Google
               </Button>
+              )}
 
-              {canUsePasskey && (
+              {showPasskey && (
                 <Button
                   type="button"
                   variant="outline"
@@ -291,19 +354,24 @@ function LoginForm() {
               )}
             </div>
 
-            {/* -mx-8 cancels CardContent's p-8 so the rule runs edge to edge of
-                the column instead of floating inset. Card is overflow-hidden,
-                so the bleed can't create a horizontal scrollbar. */}
-            <div className="relative -mx-8">
-              <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-border" />
+            {/* "or" only earns its place while a non-email option is still on
+                screen — with Google and passkey both out, the email form is
+                the path, not an alternative to one. */}
+            {showDivider && (
+              /* -mx-8 cancels CardContent's p-8 so the rule runs edge to edge of
+                  the column instead of floating inset. Card is overflow-hidden,
+                  so the bleed can't create a horizontal scrollbar. */
+              <div className="relative -mx-8">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-border" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card px-2 text-muted-foreground">
+                    or
+                  </span>
+                </div>
               </div>
-              <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">
-                  or
-                </span>
-              </div>
-            </div>
+            )}
 
             <form onSubmit={handleEmailLogin} className="space-y-5" noValidate>
               <div className="space-y-2">
@@ -325,7 +393,7 @@ function LoginForm() {
                 />
               </div>
 
-              {emailFormOpen && (
+              {emailExpanded && (
                 <div className="form-reveal">
                   <div className="space-y-5">
                   <div className="space-y-2">
@@ -393,7 +461,7 @@ export default function LoginPage() {
               <div className="space-y-1">
                 <CardTitle className="text-2xl font-bold text-foreground">owlette</CardTitle>
                 <CardDescription className="text-muted-foreground">
-                  attention is all you need
+                  keep your installation running
                 </CardDescription>
               </div>
             </CardHeader>
