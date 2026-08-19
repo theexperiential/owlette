@@ -45,6 +45,7 @@ import { nextDuplicateName } from '@/lib/processNaming';
 import { AddMachineButton } from './components/AddMachineButton';
 import { useDeviceCodeAuthorize } from '@/hooks/useDeviceCodeAuthorize';
 import { LoadingWord } from '@/components/LoadingWord';
+import { FallingFeather } from '@/components/FallingFeather';
 import type { Process } from '@/hooks/useFirestore';
 
 // Code-split the two heavy detail panels out of the dashboard bundle. Both
@@ -841,7 +842,8 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-screen flex-col items-center justify-center">
+        <FallingFeather />
         <p className="text-muted-foreground"><LoadingWord /></p>
       </div>
     );
