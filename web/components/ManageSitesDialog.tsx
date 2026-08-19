@@ -1,14 +1,15 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Pencil, Trash2, Check, X, Plus, User, Search } from 'lucide-react';
+import { Pencil, Trash2, Check, X, Plus, User, Search, ChevronDown } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
+import { SiteMachinesList } from '@/components/SiteMachinesList';
 import { useUserManagement } from '@/hooks/useUserManagement';
 
 interface Site {
@@ -92,6 +93,14 @@ export function ManageSitesDialog({
   const [isSaving, setIsSaving] = useState(false);
   const [filter, setFilter] = useState('');
   const filterInputRef = useRef<HTMLInputElement>(null);
+  // One expanded machines panel at a time, accordion-style like editing.
+  const [expandedSiteId, setExpandedSiteId] = useState<string | null>(null);
+  // Counts reported back by expanded panels, so non-current sites show a
+  // machine count once their list has been fetched.
+  const [machineCounts, setMachineCounts] = useState<Record<string, number>>({});
+  const handleMachineCountLoaded = useCallback((siteId: string, count: number) => {
+    setMachineCounts((prev) => (prev[siteId] === count ? prev : { ...prev, [siteId]: count }));
+  }, []);
 
   // Reset editing + filter state when dialog closes
   useEffect(() => {
@@ -100,6 +109,8 @@ export function ManageSitesDialog({
       setEditingName('');
       setEditingTimezone('UTC');
       setFilter('');
+      setExpandedSiteId(null);
+      setMachineCounts({});
     }
   }, [open]);
 
@@ -201,8 +212,9 @@ export function ManageSitesDialog({
   };
 
   // Shared column template so the header and every row align into the same
-  // columns. Superadmins get an extra "owner" column. Actions is a fixed 64px
-  // so the fr columns resolve identically across the header and the rows.
+  // columns. Superadmins get an extra "owner" column. Actions is a fixed 96px
+  // (machines chevron + edit + delete) so the fr columns resolve identically
+  // across the header and the rows.
   // Build the column template dynamically: the "machines" column only appears
   // when the caller supplies a count (the dashboard), and the "owner" column
   // only for superadmins. Order: name | id | timezone | machines | owner | actions.
@@ -210,8 +222,17 @@ export function ManageSitesDialog({
   const columns = ['minmax(0,2.2fr)', 'minmax(0,1.6fr)', 'minmax(0,1.2fr)']; // name, id, timezone
   if (showMachines) columns.push('minmax(0,0.9fr)'); // machines
   if (isSuperadmin) columns.push('minmax(0,1.6fr)'); // owner
-  columns.push('64px'); // actions
+  columns.push('96px'); // actions
   const gridTemplate = columns.join(' ');
+
+  // Machine count label per row: the current site's count comes from the
+  // dashboard prop; other sites' counts appear once their row has been
+  // expanded (SiteMachinesList reports what it fetched).
+  const machineCountLabel = (siteId: string): string => {
+    const count = siteId === currentSiteId ? machineCount ?? 0 : machineCounts[siteId];
+    if (count === undefined) return '';
+    return `${count} machine${count === 1 ? '' : 's'}`;
+  };
 
   return (
     <>
@@ -243,24 +264,10 @@ export function ManageSitesDialog({
                 inflating the dialog's min-content — which used to push every
                 row's actions column off-screen on phones. */}
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <DialogTitle className="text-white">manage sites</DialogTitle>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    onOpenChange(false);
-                    onCreateSite();
-                  }}
-                  className="bg-card border border-border text-accent-cyan hover:bg-accent-cyan/15 hover:text-accent-cyan cursor-pointer"
-                >
-                  <Plus className="h-4 w-4 mr-1" />
-                  new site
-                </Button>
-              </div>
-              {/* Search + close share one centered flex row with the title and
-"new site" so all four header controls sit on one axis. gap-6
-                  keeps the close ✕ equidistant from the search field and the
+              <DialogTitle className="text-white">manage sites</DialogTitle>
+              {/* Search, "new site", and close share one centered flex row with
+                  the title so all four header controls sit on one axis. gap-6
+                  keeps the close ✕ equidistant from its neighbor and the
                   panel edge (the p-6 gutter is also 24px). */}
               <div className="flex min-w-0 grow items-center justify-end gap-6">
                 {sites.length > 1 && (
@@ -290,6 +297,17 @@ export function ManageSitesDialog({
                     )}
                   </div>
                 )}
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    onOpenChange(false);
+                    onCreateSite();
+                  }}
+                  className="shrink-0 cursor-pointer text-gray-900"
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  new site
+                </Button>
                 <button
                   type="button"
                   onClick={() => onOpenChange(false)}
@@ -342,59 +360,9 @@ export function ManageSitesDialog({
                         : 'border-border bg-card hover:bg-muted'
                     }`}
                   >
-                    {editingSiteId === site.id ? (
-                      /* Edit Mode */
-                      <div className="p-4 space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor={`name-${site.id}`} className="text-muted-foreground text-sm">
-                            site name
-                          </Label>
-                          <Input
-                            id={`name-${site.id}`}
-                            value={editingName}
-                            onChange={(e) => setEditingName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleSaveSite(site.id);
-                            }}
-                            className="border-border bg-accent text-white"
-                            autoFocus
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor={`timezone-${site.id}`} className="text-muted-foreground text-sm">
-                            timezone
-                          </Label>
-                          <TimezoneSelect
-                            id={`timezone-${site.id}`}
-                            value={editingTimezone}
-                            onValueChange={setEditingTimezone}
-                            className="border-border bg-accent text-white"
-                          />
-                        </div>
-                        <div className="flex items-center justify-end gap-2 pt-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={cancelEditingSite}
-                            disabled={isSaving}
-                            className="bg-secondary border border-border cursor-pointer"
-                          >
-                            <X className="h-4 w-4 mr-1" />
-                            cancel
-                          </Button>
-                          <Button
-                            size="sm"
-                            onClick={() => handleSaveSite(site.id)}
-                            disabled={isSaving}
-                            className="text-gray-900 cursor-pointer"
-                          >
-                            <Check className="h-4 w-4 mr-1" />
-                            {isSaving ? 'saving...' : 'save'}
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      /* View Mode — aligned column grid */
+                    {/* View row — aligned column grid. Stays visible while
+                        editing so the panel below is unambiguously attached
+                        to the site being edited. */}
                       <div className="grid items-center gap-3 px-3 py-2" style={{ gridTemplateColumns: gridTemplate }}>
                         {/* name */}
                         <div className="flex min-w-0 items-center gap-2">
@@ -439,9 +407,7 @@ export function ManageSitesDialog({
                             one whose machines are loaded); blank for the rest */}
                         {showMachines && (
                           <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-                            {site.id === currentSiteId
-                              ? `${machineCount ?? 0} machine${(machineCount ?? 0) === 1 ? '' : 's'}`
-                              : ''}
+                            {machineCountLabel(site.id)}
                           </span>
                         )}
 
@@ -455,8 +421,12 @@ export function ManageSitesDialog({
                               <User className="h-3 w-3 shrink-0" />
                               <span className="truncate">{highlightMatch(ownerEmailByUid.get(site.owner) || site.owner, filter)}</span>
                             </span>
+                          ) : site.owner && currentUserId && site.owner === currentUserId ? (
+                            <span className="text-[11px] text-muted-foreground">you</span>
                           ) : (
-                            <span className="text-[11px] text-muted-foreground/40">—</span>
+                            <span className="text-[11px] text-muted-foreground/40" title="no owner recorded">
+                              —
+                            </span>
                           )
                         )}
 
@@ -467,15 +437,43 @@ export function ManageSitesDialog({
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                onClick={() => startEditingSite(site)}
+                                onClick={() => setExpandedSiteId(expandedSiteId === site.id ? null : site.id)}
+                                aria-label={`machines on ${site.name}`}
+                                aria-expanded={expandedSiteId === site.id}
+                                className={`h-7 w-7 p-0 hover:bg-muted hover:text-accent-cyan cursor-pointer ${
+                                  expandedSiteId === site.id ? 'text-accent-cyan' : 'text-muted-foreground'
+                                }`}
+                              >
+                                <ChevronDown
+                                  className={`h-4 w-4 transition-transform duration-150 ease-out motion-reduce:transition-none ${
+                                    expandedSiteId === site.id ? '-rotate-180' : 'rotate-0'
+                                  }`}
+                                />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>{expandedSiteId === site.id ? 'hide machines' : 'view machines'}</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() =>
+                                  editingSiteId === site.id ? cancelEditingSite() : startEditingSite(site)
+                                }
                                 aria-label={`edit ${site.name}`}
-                                className="h-7 w-7 p-0 text-muted-foreground hover:bg-muted hover:text-accent-cyan cursor-pointer"
+                                aria-expanded={editingSiteId === site.id}
+                                className={`h-7 w-7 p-0 hover:bg-muted hover:text-accent-cyan cursor-pointer ${
+                                  editingSiteId === site.id ? 'text-accent-cyan' : 'text-muted-foreground'
+                                }`}
                               >
                                 <Pencil className="h-4 w-4" />
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>edit site</p>
+                              <p>{editingSiteId === site.id ? 'close editor' : 'edit site'}</p>
                             </TooltipContent>
                           </Tooltip>
                           <Tooltip>
@@ -496,6 +494,72 @@ export function ManageSitesDialog({
                             </TooltipContent>
                           </Tooltip>
                         </div>
+                      </div>
+
+                    {/* Edit panel — attached beneath the row inside the same
+                        card so the site being edited stays visible above its
+                        own form. Name + timezone share one line (wrapping on
+                        narrow screens) to keep the panel short. */}
+                    {editingSiteId === site.id && (
+                      <div className="animate-in slide-in-from-top-2 fade-in duration-200 border-t border-border/60 p-3">
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div className="min-w-40 grow space-y-1.5">
+                            <Label htmlFor={`name-${site.id}`} className="text-muted-foreground text-sm">
+                              site name
+                            </Label>
+                            <Input
+                              id={`name-${site.id}`}
+                              value={editingName}
+                              onChange={(e) => setEditingName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveSite(site.id);
+                              }}
+                              className="border-border bg-accent text-white"
+                              autoFocus
+                            />
+                          </div>
+                          <div className="min-w-40 grow space-y-1.5">
+                            <Label htmlFor={`timezone-${site.id}`} className="text-muted-foreground text-sm">
+                              timezone
+                            </Label>
+                            <TimezoneSelect
+                              id={`timezone-${site.id}`}
+                              value={editingTimezone}
+                              onValueChange={setEditingTimezone}
+                              className="border-border bg-accent text-white"
+                            />
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={cancelEditingSite}
+                              disabled={isSaving}
+                              className="bg-secondary border border-border cursor-pointer"
+                            >
+                              <X className="h-4 w-4 mr-1" />
+                              cancel
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => handleSaveSite(site.id)}
+                              disabled={isSaving}
+                              className="text-gray-900 cursor-pointer"
+                            >
+                              <Check className="h-4 w-4 mr-1" />
+                              {isSaving ? 'saving...' : 'save'}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Machines panel — expanded via the row chevron; lists
+                        this site's machines with support actions so an admin
+                        can act when things go wrong for a customer. */}
+                    {expandedSiteId === site.id && (
+                      <div className="animate-in slide-in-from-top-2 fade-in duration-200 border-t border-border/60">
+                        <SiteMachinesList siteId={site.id} onCountLoaded={handleMachineCountLoaded} />
                       </div>
                     )}
                   </div>
