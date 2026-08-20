@@ -194,7 +194,20 @@ export async function readStatusProcess(
   return snap.data()?.metrics?.processes?.[processId];
 }
 
-/** The agent's poll nudge, set by every `withProcessLock` write. */
+/**
+ * `sites/{siteId}/machines/{machineId}.configChangeFlag`, set by every
+ * `withProcessLock` write (`web/lib/processConfig.server.ts`).
+ *
+ * NOT a nudge to the agent, despite the name and the comments around its
+ * writers. Nothing in `agent/` or `desktop/` reads it: the agent learns about a
+ * config change only from its own adaptive poll of the config doc
+ * (`firebase_client._config_listener_loop`), and while
+ * `firestore_rest_client.listen_to_document` does return a `wake_event` that
+ * would shorten that poll, both call sites discard it (`_thread, _wake, stop =`).
+ *
+ * It is a write-only API contract field — assert that a mutation set it, never
+ * that setting it made the agent do anything.
+ */
 export async function readConfigChangeFlag(
   siteId: string,
   machineId: string,

@@ -23,14 +23,34 @@
 
 import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
-
-const DESKTOP_IMAGE = 'owlette-desktop.exe'
 
 /** The installed agent's data root — real, read-only. */
 const OWLETTE_ROOT = process.env.OWLETTE_DATA_ROOT || 'C:\\ProgramData\\Owlette'
 
-const DESKTOP_EXE = path.join(OWLETTE_ROOT, 'app', DESKTOP_IMAGE)
+/**
+ * The binary to drive. Defaults to the INSTALLED app, which is the whole point
+ * for docs captures: they have to show what ships.
+ *
+ * `OWLETTE_DESKTOP_EXE` overrides it with a repo build
+ * (`desktop/src-tauri/target/release/owlette-desktop.exe`), so a suite can drive
+ * a change before it is installed anywhere. `e2e/desktop-sync` requires the
+ * override and skips without it.
+ */
+export function resolveDesktopExe(): string {
+  return process.env.OWLETTE_DESKTOP_EXE || path.join(OWLETTE_ROOT, 'app', 'owlette-desktop.exe')
+}
+
+/**
+ * Image name for pid matching. Derived from the exe under test, not hardcoded:
+ * an override pointing at a differently-named build would otherwise be launched
+ * and then never recognised in the process table — so it would never be waited
+ * for and never killed.
+ */
+function desktopImageName(): string {
+  return path.basename(resolveDesktopExe()).toLowerCase()
+}
 
 /** The desktop app's liveness marker; the service reads it too. */
 const TRAY_PID_FILE = path.join(OWLETTE_ROOT, 'tmp', 'tray.pid')
@@ -71,6 +91,8 @@ export interface DesktopSession {
   pid: number
   port: number
   root: string
+  /** Per-run WebView2 profile, removed by {@link stopDesktop}. See below. */
+  webviewUserData?: string
 }
 
 // Process control — always by verified pid.
@@ -89,15 +111,15 @@ function imageNameOf(pid: number): string | null {
   }
 }
 
-function isDesktopPid(pid: number): boolean {
-  return imageNameOf(pid)?.toLowerCase() === DESKTOP_IMAGE
+export function isDesktopPid(pid: number): boolean {
+  return imageNameOf(pid)?.toLowerCase() === desktopImageName()
 }
 
 /**
  * Kill one desktop instance by pid. Verify the image name first: pids recycle,
  * and a name-wide `taskkill /IM` would take out the operator's other windows.
  */
-function killDesktopPid(pid: number): boolean {
+export function killDesktopPid(pid: number): boolean {
   if (!isDesktopPid(pid)) return false
   try {
     execFileSync('taskkill', ['/PID', String(pid), '/F'], { stdio: 'ignore', windowsHide: true })
@@ -113,11 +135,11 @@ function killDesktopPid(pid: number): boolean {
  * boot — and *any* live instance holds the single-instance lock, so the process
  * table is the only sure answer. Enumeration only; kills stay per-pid.
  */
-function listDesktopPids(): number[] {
+export function listDesktopPids(): number[] {
   try {
     const output = execFileSync(
       'tasklist',
-      ['/FI', `IMAGENAME eq ${DESKTOP_IMAGE}`, '/FO', 'CSV', '/NH'],
+      ['/FI', `IMAGENAME eq ${desktopImageName()}`, '/FO', 'CSV', '/NH'],
       { encoding: 'utf8', windowsHide: true },
     )
     return [...output.matchAll(/^"[^"]+","(\d+)"/gm)]
@@ -163,7 +185,7 @@ export function releaseTrayPid(): void {
   fs.rmSync(TRAY_PID_BACKUP, { force: true })
 }
 
-async function waitForExit(pid: number, timeoutMs = 10_000): Promise<void> {
+export async function waitForExit(pid: number, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     if (!isDesktopPid(pid)) return
@@ -271,7 +293,7 @@ export function writeTextFile(root: string, relative: string, body: string): voi
 }
 
 /** Is a CDP endpoint serving a page target yet? */
-async function cdpPageReady(port: number): Promise<boolean> {
+export async function cdpPageReady(port: number): Promise<boolean> {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/json/list`)
     if (!response.ok) return false
@@ -290,6 +312,16 @@ async function cdpPageReady(port: number): Promise<boolean> {
  * having forwarded argv. Hence the retry: each attempt re-kills the holder.
  */
 export async function startDesktop(root: string, port: number): Promise<DesktopSession> {
+  const exe = resolveDesktopExe()
+  // One profile per run, in the OS temp dir.
+  //
+  // Without it WebView2 puts the user data folder beside the exe (or in the
+  // per-user default for the installed app), which the OPERATOR's own running
+  // instance owns. Two processes sharing one profile is how a run inherits
+  // localStorage/session state it never seeded — and, worse, how the operator's
+  // window loses its own state when we tear ours down. `stopDesktop` removes it.
+  const webviewUserData = fs.mkdtempSync(path.join(os.tmpdir(), 'owlette-webview2-'))
+
   const attempts = 3
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     for (const holder of listDesktopPids()) {
@@ -297,7 +329,7 @@ export async function startDesktop(root: string, port: number): Promise<DesktopS
       await waitForExit(holder)
     }
 
-    const child = spawn(DESKTOP_EXE, [], {
+    const child = spawn(exe, [], {
       detached: true,
       stdio: 'ignore',
       windowsHide: false,
@@ -306,18 +338,19 @@ export async function startDesktop(root: string, port: number): Promise<DesktopS
         PROGRAMDATA: SCRATCH_PROGRAMDATA,
         COMPUTERNAME: CAPTURE_HOSTNAME,
         WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+        WEBVIEW2_USER_DATA_FOLDER: webviewUserData,
       },
     })
     child.unref()
 
     const pid = child.pid
-    if (pid === undefined) throw new Error('could not start owlette-desktop.exe')
+    if (pid === undefined) throw new Error(`could not start ${exe}`)
     claimTrayPid(pid)
 
     const deadline = Date.now() + 30_000
     while (Date.now() < deadline) {
       if (!isDesktopPid(pid)) break // lost the single-instance race
-      if (await cdpPageReady(port)) return { pid, port, root }
+      if (await cdpPageReady(port)) return { pid, port, root, webviewUserData }
       await delay(250)
     }
 
@@ -325,14 +358,25 @@ export async function startDesktop(root: string, port: number): Promise<DesktopS
     await waitForExit(pid)
   }
 
+  fs.rmSync(webviewUserData, { recursive: true, force: true })
   throw new Error(
-    `owlette-desktop.exe did not expose a debug page on port ${port} after ${attempts} attempts`,
+    `${exe} did not expose a debug page on port ${port} after ${attempts} attempts`,
   )
 }
 
 export async function stopDesktop(session: DesktopSession): Promise<void> {
   killDesktopPid(session.pid)
   await waitForExit(session.pid)
+  if (session.webviewUserData) {
+    // After the wait, never before: WebView2 holds locks on this tree for as
+    // long as the browser process lives. Best-effort — a leftover in the OS
+    // temp dir is not worth failing a teardown over.
+    try {
+      fs.rmSync(session.webviewUserData, { recursive: true, force: true })
+    } catch {
+      // Locked by a lingering msedgewebview2.exe child; the OS reclaims it.
+    }
+  }
 }
 
 /**
