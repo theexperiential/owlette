@@ -9,6 +9,7 @@ https://firebase.google.com/docs/firestore/reference/rest
 """
 
 import hashlib
+import os
 import requests
 import json
 import re
@@ -23,6 +24,28 @@ logger = logging.getLogger(__name__)
 
 # Firestore REST API base URL
 FIRESTORE_API_BASE = "https://firestore.googleapis.com/v1"
+
+
+def resolve_api_base() -> str:
+    """The Firestore REST root this process talks to.
+
+    Production is always {@link FIRESTORE_API_BASE}. When FIRESTORE_EMULATOR_HOST
+    is set — the variable the Firebase CLI exports for every other SDK, and which
+    no installed agent ever has — the same /v1 surface is served over plain HTTP
+    by the local emulator, so point at that instead. Document paths, request
+    bodies and ID-token auth are identical; only the origin changes.
+
+    Read per call rather than captured at import so a test can set the variable
+    without reloading the module.
+    """
+    host = (os.environ.get('FIRESTORE_EMULATOR_HOST') or '').strip()
+    if not host:
+        return FIRESTORE_API_BASE
+    # The emulator advertises itself bare ("127.0.0.1:8080"); tolerate a scheme
+    # having been included anyway rather than emitting "http://http://…".
+    if host.startswith('http://') or host.startswith('https://'):
+        return f"{host.rstrip('/')}/v1"
+    return f"http://{host}/v1"
 
 # Special value for server timestamp
 SERVER_TIMESTAMP = "SERVER_TIMESTAMP"
@@ -74,7 +97,11 @@ class FirestoreRestClient:
         """Initialize the client for `project_id` (e.g. "owlette-dev-3838a")."""
         self.project_id = project_id
         self.auth_manager = auth_manager
-        self.base_url = f"{FIRESTORE_API_BASE}/projects/{project_id}/databases/(default)/documents"
+        # Resolved once, here, and used by EVERY request path — the ":commit" and
+        # ":batchWrite" endpoints append to base_url rather than re-deriving from
+        # the module constant, so there is exactly one seam to redirect.
+        self.api_base = resolve_api_base()
+        self.base_url = f"{self.api_base}/projects/{project_id}/databases/(default)/documents"
         self.request_timeout = DEFAULT_REQUEST_TIMEOUT
 
         # HTTP session for connection pooling
@@ -227,7 +254,7 @@ class FirestoreRestClient:
         Used instead of PATCH when SERVER_TIMESTAMP fields are present,
         since PATCH does not support updateTransforms.
         """
-        url = f"{FIRESTORE_API_BASE}/projects/{self.project_id}/databases/(default)/documents:commit"
+        url = f"{self.base_url}:commit"
         doc_name = f"projects/{self.project_id}/databases/(default)/documents/{path}"
 
         write_entry = {
@@ -425,7 +452,7 @@ class FirestoreRestClient:
             if timestamp_paths:
                 # Use :commit endpoint (supports fieldTransforms for server timestamps)
                 field_transforms = self._build_field_transforms(timestamp_paths)
-                url = f"{FIRESTORE_API_BASE}/projects/{self.project_id}/databases/(default)/documents:commit"
+                url = f"{self.base_url}:commit"
                 doc_name = f"projects/{self.project_id}/databases/(default)/documents/{path}"
 
                 write_entry = {
@@ -612,7 +639,7 @@ class FirestoreRestClient:
             ])
         """
         try:
-            url = f"{FIRESTORE_API_BASE}/projects/{self.project_id}/databases/(default)/documents:batchWrite"
+            url = f"{self.base_url}:batchWrite"
 
             batch_writes = []
 
