@@ -32,6 +32,7 @@ import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import { PageHeader } from '@/components/PageHeader';
 import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import DownloadButton from '@/components/DownloadButton';
+import { FallingFeather } from '@/components/FallingFeather';
 import { LoadingWord } from '@/components/LoadingWord';
 import { formatSiteScopedTimestamp } from '@/lib/timeUtils';
 import { RoostDetailPanel } from '@/components/roost/RoostDetailPanel';
@@ -270,7 +271,8 @@ export default function RoostsPageClient() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-screen flex-col items-center justify-center">
+        <FallingFeather />
         <p className="text-muted-foreground"><LoadingWord /></p>
       </div>
     );

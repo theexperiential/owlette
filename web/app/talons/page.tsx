@@ -20,6 +20,7 @@ import { AccountSettingsDialog } from '@/components/AccountSettingsDialog';
 import ConfirmDialog from '@/components/ConfirmDialog';
 import { CreateSiteDialog } from '@/components/CreateSiteDialog';
 import DownloadButton from '@/components/DownloadButton';
+import { FallingFeather } from '@/components/FallingFeather';
 import { LoadingWord } from '@/components/LoadingWord';
 import { ManageSitesDialog } from '@/components/ManageSitesDialog';
 import { PageHeader } from '@/components/PageHeader';
@@ -146,7 +147,8 @@ export default function TalonsPage() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-screen flex-col items-center justify-center">
+        <FallingFeather />
         <p className="text-muted-foreground">
           <LoadingWord />
         </p>

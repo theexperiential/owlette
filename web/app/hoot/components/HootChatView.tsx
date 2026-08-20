@@ -20,6 +20,7 @@ import { ChatInput } from './ChatInput';
 import { MachineSelector, SITE_TARGET_ID } from './MachineSelector';
 import { HootPowerToggle } from './HootPowerToggle';
 import { HootApprovalToggle } from './HootApprovalToggle';
+import { FallingFeather } from '@/components/FallingFeather';
 import { LoadingWord } from '@/components/LoadingWord';
 import { isUntitledChat } from '@/lib/hoot/untitledChat';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -426,7 +427,8 @@ export function HootChatView({ initialChatId }: HootChatViewProps) {
 
   if (authLoading || sitesLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center">
+        <FallingFeather />
         <div className="text-muted-foreground"><LoadingWord /></div>
       </div>
     );
