@@ -12,9 +12,8 @@ import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { EyeIcon, EyeOffIcon, AlertTriangle, Shield, Check, Loader2, User, Bell, BellOff, Trash2, Key, Plus, X, Code } from 'lucide-react';
-import Link from 'next/link';
 import { toast } from '@/lib/toast';
-import { PasskeyManager } from '@/components/PasskeyManager';
+import { MfaFactorsSection } from '@/components/MfaFactorsSection';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -939,22 +938,16 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                     <p className="text-xs text-muted-foreground mt-1">authentication and access control</p>
                   </div>
 
-                  <div className="flex items-center justify-between rounded-md border border-border bg-card/50 p-4">
-                    <div>
-                      <p className="text-sm text-white">two-factor authentication</p>
-                      <p className="text-xs text-muted-foreground">add an extra layer of security to your account</p>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      asChild
-                      className="h-8 cursor-pointer border-border text-accent-cyan hover:bg-muted hover:text-accent-cyan"
-                    >
-                      <Link href="/setup-2fa" onClick={() => onOpenChange(false)}>
-                        manage
-                      </Link>
-                    </Button>
-                  </div>
+                  {/* Every second factor — TOTP and passkeys — in one list.
+                      The passkey card used to sit further down this section as
+                      an unrelated sibling; it is nested inside the section now
+                      because any one factor satisfies the same gate. */}
+                  {user && (
+                    <MfaFactorsSection
+                      userId={user.uid}
+                      onNavigateAway={() => onOpenChange(false)}
+                    />
+                  )}
 
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -1080,11 +1073,6 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
                       </div>
                     )}
                   </div>
-
-                  {/* Passkey management */}
-                  {user && (
-                    <PasskeyManager userId={user.uid} compact />
-                  )}
                 </div>
               )}
 

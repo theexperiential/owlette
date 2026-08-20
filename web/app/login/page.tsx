@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useRef, useState, useEffect } from 'react';
+import { Suspense, useCallback, useRef, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,12 @@ import { resolvePostSignInPath } from '@/lib/postSignIn';
 import { signInWithCustomToken } from 'firebase/auth';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
 import { auth as firebaseAuth } from '@/lib/firebase';
-import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
+import {
+  WebAuthnAbortService,
+  browserSupportsWebAuthn,
+  browserSupportsWebAuthnAutofill,
+  startAuthentication,
+} from '@simplewebauthn/browser';
 import { LoadingWord } from '@/components/LoadingWord';
 import { FormError } from '@/components/ui/form-error';
 import { InAppBrowserNotice } from '@/components/InAppBrowserNotice';
@@ -29,6 +34,87 @@ import { useRedirectIfAuthenticated } from '@/hooks/useRedirectIfAuthenticated';
  */
 const safeRedirect = (value: string | null): string | null =>
   value && value.startsWith('/') && !value.startsWith('//') ? value : null;
+
+/**
+ * The wire half of a passkey sign-in — options, ceremony, verify, Firebase
+ * session — shared by the explicit "continue with passkey" button and the
+ * conditional-UI (autofill) ceremony below. The two differ only in HOW the
+ * credential is chosen, so sharing this keeps them from drifting apart.
+ *
+ * Deliberately at module scope rather than a closure over component state: the
+ * conditional ceremony is started once and can stay pending for the whole life
+ * of the page, and an effect depending on a per-render closure would tear that
+ * pending ceremony down and restart it on every commit.
+ *
+ * Resolves true once a Firebase session exists, false when `isCurrent` retired
+ * the run before the authenticator was ever touched. Everything else throws for
+ * the caller to classify — the two callers grade failures very differently.
+ */
+async function runPasskeyCeremony({
+  useBrowserAutofill = false,
+  onCredential,
+  isCurrent,
+}: {
+  useBrowserAutofill?: boolean;
+  /**
+   * Fires in the gap between the user committing a credential and the server
+   * round-trip — the moment a passive autofill prompt becomes a sign-in in
+   * progress.
+   */
+  onCredential?: () => void;
+  /** Polled before the ceremony starts; false retires the run silently. */
+  isCurrent?: () => boolean;
+} = {}): Promise<boolean> {
+  // Step 1: Get authentication options
+  const optionsRes = await fetch('/api/passkeys/authenticate/options', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+
+  if (!optionsRes.ok) {
+    throw new Error('Failed to get authentication options');
+  }
+
+  const { options, challengeId } = await optionsRes.json();
+
+  // That was a real network hop, and a conditional run can be retired during
+  // it (unmount, or strict mode's second pass). Bail before touching the
+  // authenticator rather than leaving a ceremony pending — under client-side
+  // routing the document survives the navigation, so a stray conditional
+  // ceremony would follow the user onto the next page.
+  if (isCurrent && !isCurrent()) {
+    return false;
+  }
+
+  // Step 2: Start WebAuthn authentication. Without `useBrowserAutofill` this is
+  // the browser's modal prompt; with it the credential is offered inside the
+  // browser's own autofill dropdown and the promise sits pending — possibly for
+  // the whole visit — until the user picks one or something aborts it.
+  const credential = await startAuthentication({ optionsJSON: options, useBrowserAutofill });
+  onCredential?.();
+
+  // Step 3: Verify with server
+  const verifyRes = await fetch('/api/passkeys/authenticate/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ credential, challengeId }),
+  });
+
+  if (!verifyRes.ok) {
+    const data = await verifyRes.json();
+    throw new Error(data.error || 'Passkey authentication failed');
+  }
+
+  const { customToken } = await verifyRes.json();
+
+  // Step 4: Sign in with Firebase custom token
+  if (firebaseAuth) {
+    await signInWithCustomToken(firebaseAuth, customToken);
+  }
+
+  return true;
+}
 
 function LoginForm() {
   const [email, setEmail] = useState('');
@@ -54,6 +140,14 @@ function LoginForm() {
   // hydration.
   const [canUsePasskey, setCanUsePasskey] = useState(false);
   /**
+   * Whether this browser can offer passkeys inside its own autofill dropdown
+   * (conditional UI). A separate — and asynchronous — question from WebAuthn
+   * support, since `isConditionalMediationAvailable()` returns a promise, but
+   * resolved the same hydration-safe way as `canUsePasskey`: never during
+   * render, so the server and the first client render agree.
+   */
+  const [canAutofillPasskey, setCanAutofillPasskey] = useState(false);
+  /**
    * Set when Google sign-in fails because the browser refused the popup. Covers
    * the webviews the user-agent doesn't identify, plus ordinary browsers with a
    * popup blocker — so the remediation appears even when detection said no.
@@ -66,6 +160,13 @@ function LoginForm() {
    * in flight — and that push may be to /verify-2fa, not the guard's target.
    */
   const authInFlight = useRef(false);
+  /**
+   * Identity of the conditional-UI ceremony currently pending, or null when
+   * there is none. Doubles as the concurrency guard — a second simultaneous
+   * conditional `navigator.credentials.get()` is an error — and is cleared by
+   * whichever of cleanup, cancel, or the run settling happens first.
+   */
+  const conditionalRun = useRef<symbol | null>(null);
   const { signIn, signInWithGoogle } = useAuth();
   const inApp = useInAppBrowser();
   const router = useRouter();
@@ -96,6 +197,21 @@ function LoginForm() {
 
   useEffect(() => {
     setCanUsePasskey(browserSupportsWebAuthn());
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    browserSupportsWebAuthnAutofill()
+      .then((supported) => {
+        if (active) setCanAutofillPasskey(supported);
+      })
+      .catch(() => {
+        // A probe that fails is a browser that cannot do conditional UI. Stay
+        // quiet: the explicit passkey button still covers this user.
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Read redirect parameter from URL (validated: must be a safe relative path)
@@ -204,60 +320,51 @@ function LoginForm() {
     }
   };
 
+  /**
+   * Where both passkey paths land once a session exists.
+   *
+   * The passkey verify route already minted a server-side session, and it
+   * minted that session MFA-satisfied: the verify runs with
+   * `requireUserVerification: true`, so it passes `mfaSatisfiedBy: 'passkey-uv'`
+   * to `createSession`. A user who also has TOTP enrolled therefore keeps
+   * `mfaRequired: true` but is born `mfaVerified: true` — one user-verified
+   * ceremony covers both factors, so the proxy does not send them to
+   * /verify-2fa. The redirect below still asks the SERVER where to go; nothing
+   * here decides the gate client-side.
+   */
+  const finishPasskeySignIn = async () => {
+    toast.success('signed in with passkey!');
+    // No settle: the verify route above already minted the session cookie
+    // before returning, so waiting would be dead latency.
+    const redirectPath = await checkMfaAndRedirect(0);
+    router.push(redirectPath);
+  };
+
+  /**
+   * Retire the pending conditional-UI ceremony, if this page still owns one.
+   *
+   * Silent by construction — the abort surfaces to the run below as an
+   * `AbortError`, which it does not report. Guarded on our own run still being
+   * the live one because `WebAuthnAbortService` is a global singleton: without
+   * that check this could cancel a ceremony the explicit button had started.
+   *
+   * Reads only refs and the singleton, so the empty dependency list is honest
+   * and the identity stays stable — which is what lets the effect below use it
+   * as a cleanup without being torn down and restarted on every render.
+   */
+  const cancelConditionalPasskey = useCallback(() => {
+    if (!conditionalRun.current) return;
+    conditionalRun.current = null;
+    WebAuthnAbortService.cancelCeremony();
+  }, []);
+
   const handlePasskeyLogin = async () => {
     authInFlight.current = true;
     setLoading(true);
 
     try {
-      // Step 1: Get authentication options
-      const optionsRes = await fetch('/api/passkeys/authenticate/options', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-
-      if (!optionsRes.ok) {
-        throw new Error('Failed to get authentication options');
-      }
-
-      const { options, challengeId } = await optionsRes.json();
-
-      // Step 2: Start WebAuthn authentication (browser prompt)
-      const credential = await startAuthentication({ optionsJSON: options });
-
-      // Step 3: Verify with server
-      const verifyRes = await fetch('/api/passkeys/authenticate/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential, challengeId }),
-      });
-
-      if (!verifyRes.ok) {
-        const data = await verifyRes.json();
-        throw new Error(data.error || 'Passkey authentication failed');
-      }
-
-      const { customToken } = await verifyRes.json();
-
-      // Step 4: Sign in with Firebase custom token
-      if (firebaseAuth) {
-        await signInWithCustomToken(firebaseAuth, customToken);
-      }
-
-      // The passkey verify route already minted a server-side session, and it
-      // minted that session MFA-satisfied: the verify runs with
-      // `requireUserVerification: true`, so it passes
-      // `mfaSatisfiedBy: 'passkey-uv'` to `createSession`. A user who also has
-      // TOTP enrolled therefore keeps `mfaRequired: true` but is born
-      // `mfaVerified: true` — one user-verified ceremony covers both factors,
-      // so the proxy does not send them to /verify-2fa. The redirect below
-      // still asks the SERVER where to go; nothing here decides the gate
-      // client-side.
-      toast.success('signed in with passkey!');
-      // No settle: the verify route above already minted the session cookie
-      // before returning, so waiting would be dead latency.
-      const redirectPath = await checkMfaAndRedirect(0);
-      router.push(redirectPath);
+      await runPasskeyCeremony();
+      await finishPasskeySignIn();
     } catch (error) {
       // Nobody was signed in — re-arm the guard. See the email path above.
       authInFlight.current = false;
@@ -270,6 +377,94 @@ function LoginForm() {
       setLoading(false);
     }
   };
+
+  /**
+   * The conditional ceremony below is started once and can stay pending for the
+   * whole life of the page, so it must not resolve through the closure it was
+   * started with: `redirectUrl` can still move under it (a client-side
+   * navigation to /login?redirect=…). Park the current tail in a ref that every
+   * commit refreshes. Having the effect depend on the closure instead is not an
+   * option — that would cancel and restart the ceremony on every render.
+   */
+  const finishPasskeySignInRef = useRef(finishPasskeySignIn);
+  useEffect(() => {
+    finishPasskeySignInRef.current = finishPasskeySignIn;
+  });
+
+  /**
+   * WebAuthn conditional UI: offer this user's passkey inside the browser's own
+   * autofill dropdown when they focus the email field, no button press needed.
+   * The ceremony has to be pending BEFORE the field is focused for the browser
+   * to have anything to offer, so it starts on mount.
+   *
+   * Three things make it unlike the button path above:
+   *
+   *  1. It must not latch `authInFlight` or `loading`. This ceremony is
+   *     long-lived — it sits pending until the user picks a credential or the
+   *     page goes away — so latching either up front would disable the email
+   *     and password fields for the entire visit and permanently suppress the
+   *     already-signed-in guard. Both are latched from `onCredential` instead:
+   *     the instant the user commits a credential, which is the first moment
+   *     this stops being passive and becomes a sign-in in progress.
+   *  2. Nothing here toasts a ceremony failure. A prompt the user ignored,
+   *     dismissed, or navigated away from is not an error — they never asked
+   *     for it. Only a failure AFTER a credential is committed is reported,
+   *     because by then the user did choose a passkey and is owed an answer.
+   *  3. It is gated on `showPasskey`, so the in-app-webview exclusion applies
+   *     exactly as it does to the button: an embedded webview can only speak
+   *     for the host app's relying party, so the ceremony cannot succeed there.
+   *
+   * One ceremony per visit: if it ends without signing anyone in, it is not
+   * restarted. The explicit button is the retry.
+   */
+  useEffect(() => {
+    if (!showPasskey || !canAutofillPasskey) return;
+    // Two concurrent conditional ceremonies throw, and React strict mode runs
+    // this effect twice in development. The guard is the run token rather than
+    // a "has ever started" flag on purpose: the cleanup clears the token, so
+    // strict mode's second pass starts a fresh ceremony instead of being
+    // blocked into a state where none is pending at all.
+    if (conditionalRun.current) return;
+
+    const run = Symbol('conditional-passkey');
+    conditionalRun.current = run;
+    /** Set once the user picks a credential — see note 1 above. */
+    let committed = false;
+
+    void (async () => {
+      try {
+        const signedIn = await runPasskeyCeremony({
+          useBrowserAutofill: true,
+          isCurrent: () => conditionalRun.current === run,
+          onCredential: () => {
+            committed = true;
+            authInFlight.current = true;
+            setLoading(true);
+          },
+        });
+        if (signedIn) {
+          await finishPasskeySignInRef.current();
+        }
+      } catch (error) {
+        if (!committed) {
+          // Cancelled, aborted, superseded by the explicit button, or the
+          // options request failed while nobody was watching. All silent by
+          // design — the user did not ask for this ceremony, and the button
+          // is still on screen either way.
+          return;
+        }
+        // Past the point of no return: undo exactly what `onCredential`
+        // latched, then say what went wrong.
+        authInFlight.current = false;
+        setLoading(false);
+        toast.error(sanitizeError(error));
+      } finally {
+        if (conditionalRun.current === run) conditionalRun.current = null;
+      }
+    })();
+
+    return cancelConditionalPasskey;
+  }, [showPasskey, canAutofillPasskey, cancelConditionalPasskey]);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center p-4 pb-32">
@@ -383,6 +578,11 @@ function LoginForm() {
                   id="email"
                   {...fieldProps('email')}
                   type="email"
+                  // "webauthn" as the last token is what lets the browser list
+                  // passkeys in this field's own autofill dropdown; it rides
+                  // alongside a normal token so ordinary email autofill and
+                  // password managers still behave.
+                  autoComplete="username webauthn"
                   placeholder="you@example.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -407,7 +607,13 @@ function LoginForm() {
                       type="password"
                       placeholder="••••••••"
                       value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        // They have chosen the password path, so the pending
+                        // autofill ceremony is retired rather than left
+                        // dangling behind the form they are typing into.
+                        cancelConditionalPasskey();
+                      }}
                       required
                       disabled={loading}
                       className="bg-input border-border text-foreground placeholder:text-muted-foreground"

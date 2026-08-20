@@ -82,6 +82,10 @@ test('setup-2fa generates a manual secret, verifies TOTP, and shows backup codes
 
   await page.goto('/setup-2fa');
   await expect(page.getByText(/set up two-factor authentication/i).first()).toBeVisible();
+  // The page lands on the method chooser now — passkey or authenticator app.
+  // The TOTP secret is only minted once this branch is picked, so the QR code
+  // does not exist before the click.
+  await page.getByRole('button', { name: /authenticator app/i }).click();
   await expect(page.getByAltText(/2FA QR Code/i)).toBeVisible();
   const secret = await page.locator('input[readonly]').inputValue();
   expect(secret.length).toBeGreaterThan(10);

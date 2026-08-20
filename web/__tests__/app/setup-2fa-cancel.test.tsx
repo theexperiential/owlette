@@ -46,9 +46,13 @@ jest.mock('@/lib/toast', () => ({
   toast: { success: jest.fn(), error: jest.fn(), info: jest.fn() },
 }));
 
-// The passkey enrolment panel is a separate concern with its own network calls.
-jest.mock('@/components/PasskeyManager', () => ({
-  PasskeyManager: () => null,
+// jsdom has no WebAuthn, so `browserSupportsWebAuthn` would hide the passkey
+// option and the chooser would render half of itself. Stub the module: the
+// ceremonies themselves are never started in these tests.
+jest.mock('@simplewebauthn/browser', () => ({
+  browserSupportsWebAuthn: () => true,
+  startRegistration: jest.fn(),
+  startAuthentication: jest.fn(),
 }));
 
 import Setup2FAPage from '@/app/setup-2fa/page';
@@ -56,9 +60,9 @@ import Setup2FAPage from '@/app/setup-2fa/page';
 const renderPage = async () => {
   const user = userEvent.setup();
   render(<Setup2FAPage />);
-  // The page POSTs /api/mfa/setup on mount; let that settle so the click below
-  // isn't racing a state update.
-  await screen.findByText(/step 1: scan QR code/i);
+  // The method chooser is the landing step; wait for it so the click below
+  // isn't racing the post-hydration WebAuthn-support check.
+  await screen.findByText(/choose your second factor/i);
   return user;
 };
 
@@ -124,5 +128,47 @@ describe('/setup-2fa cancel when enrolling voluntarily', () => {
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/dashboard'));
     expect(signOut).not.toHaveBeenCalled();
     expect(back).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The chooser itself. A beta tester with no phone could not finish signup at
+ * all while this page was a QR code and nothing else, so the two things worth
+ * pinning are that the phone-free option is offered FIRST, and that the
+ * authenticator option says out loud that a desktop app will do — not knowing
+ * that was the cheaper half of the same complaint.
+ */
+describe('/setup-2fa method chooser', () => {
+  it('offers the passkey first and marks it recommended', async () => {
+    await renderPage();
+
+    const passkey = screen.getByRole('button', { name: /passkey/i });
+    const authenticator = screen.getByRole('button', { name: /authenticator app/i });
+
+    expect(passkey).toHaveTextContent(/recommended/i);
+    expect(passkey).toHaveTextContent(/windows hello/i);
+    expect(passkey).toHaveTextContent(/security key/i);
+    // DOCUMENT_POSITION_FOLLOWING — the passkey card precedes the TOTP one.
+    expect(passkey.compareDocumentPosition(authenticator) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy();
+  });
+
+  it('tells people an authenticator app can live on their desktop', async () => {
+    await renderPage();
+
+    expect(screen.getByRole('button', { name: /authenticator app/i }))
+      .toHaveTextContent(/phone or desktop/i);
+  });
+
+  it('does not mint a TOTP secret until the authenticator branch is chosen', async () => {
+    const user = await renderPage();
+
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: /authenticator app/i }));
+
+    await waitFor(() =>
+      expect(global.fetch).toHaveBeenCalledWith('/api/mfa/setup', expect.anything())
+    );
   });
 });

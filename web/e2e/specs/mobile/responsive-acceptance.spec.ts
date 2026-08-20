@@ -151,6 +151,10 @@ test.describe('mobile responsive acceptance — fresh-user routes', () => {
     await signInFreshUser(page);
     await page.goto('/setup-2fa');
     await expect(page.getByText(/set up two-factor authentication/i).first()).toBeVisible();
+    // Both screens of the TOTP branch: the method chooser the page now lands
+    // on, then the QR step behind it.
+    await assertNoHorizontalOverflow(page);
+    await page.getByRole('button', { name: /authenticator app/i }).click();
     await expect(page.getByAltText(/2FA QR Code/i)).toBeVisible();
     await assertNoHorizontalOverflow(page);
   });

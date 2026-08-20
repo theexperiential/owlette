@@ -6,6 +6,51 @@ import type { PasskeyInfo } from '@/lib/webauthn.server';
 
 export { browserSupportsWebAuthn };
 
+/**
+ * The slug `checkMfaEnrollmentGate` returns with its 403 when the account
+ * already holds a second factor and this session has not proved one.
+ *
+ * Duplicated as a literal rather than imported from
+ * `lib/mfaEnrollmentGate.server.ts`: that module pulls in `firebase-admin` and
+ * `next/server`, neither of which belongs in a client bundle. Keep the two in
+ * sync — the server constant is `MFA_CHALLENGE_REQUIRED` in the same file.
+ */
+export const MFA_CHALLENGE_REQUIRED = 'mfa_challenge_required';
+
+/**
+ * An error carrying the server's machine-readable `code` alongside its message.
+ *
+ * The gate's 403 body is `{ error: '<friendly sentence>', code: '<slug>' }`. A
+ * bare `new Error(data.error)` renders fine but strands the caller: it cannot
+ * tell "you must verify your existing factor first" (recoverable, offer a
+ * step-up) from "that passkey is already registered" (not recoverable), so
+ * every gated attempt dead-ends in a toast. The sentence is still the message —
+ * we never surface the slug to a human.
+ */
+export class PasskeyApiError extends Error {
+  code?: string;
+
+  constructor(message: string, code?: string) {
+    super(message);
+    this.name = 'PasskeyApiError';
+    this.code = code;
+  }
+}
+
+/** True when `err` is the enrollment gate asking for a challenge to be cleared. */
+export function isMfaChallengeRequired(err: unknown): boolean {
+  return err instanceof PasskeyApiError && err.code === MFA_CHALLENGE_REQUIRED;
+}
+
+/**
+ * Turn a failed response into a `PasskeyApiError` carrying both legs of the
+ * body. `fallback` covers a response with no JSON at all (a proxy 502, say).
+ */
+async function passkeyApiError(res: Response, fallback: string): Promise<PasskeyApiError> {
+  const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+  return new PasskeyApiError(body.error || fallback, body.code);
+}
+
 export function usePasskeys(userId: string | undefined) {
   const [passkeys, setPasskeys] = useState<PasskeyInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -49,8 +94,9 @@ export function usePasskeys(userId: string | undefined) {
     });
 
     if (!optionsRes.ok) {
-      const data = await optionsRes.json();
-      throw new Error(data.error || 'Failed to get registration options');
+      // Gated: an account with an existing factor must clear a challenge before
+      // it can add another. The caller keys off `code` to offer a step-up.
+      throw await passkeyApiError(optionsRes, 'Failed to get registration options');
     }
 
     const options = await optionsRes.json();
@@ -70,8 +116,7 @@ export function usePasskeys(userId: string | undefined) {
     });
 
     if (!verifyRes.ok) {
-      const data = await verifyRes.json();
-      throw new Error(data.error || 'Failed to verify registration');
+      throw await passkeyApiError(verifyRes, 'Failed to verify registration');
     }
 
     // Refresh list
@@ -87,8 +132,7 @@ export function usePasskeys(userId: string | undefined) {
     );
 
     if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Failed to delete passkey');
+      throw await passkeyApiError(res, 'Failed to delete passkey');
     }
 
     // Refresh list
@@ -105,8 +149,7 @@ export function usePasskeys(userId: string | undefined) {
     });
 
     if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || 'Failed to rename passkey');
+      throw await passkeyApiError(res, 'Failed to rename passkey');
     }
 
     // Optimistic update
