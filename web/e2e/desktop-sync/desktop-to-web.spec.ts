@@ -119,6 +119,10 @@ test('a coerced text field lands coerced on the wire and in the status doc', asy
   sync,
   desktopPage,
 }) => {
+  // The metrics-cadence warm-up alone can legitimately take a full 120s idle
+  // interval (BUDGET.metricsCadenceWarmupMs = 150s) — the default 120s test
+  // timeout is arithmetically unable to contain it.
+  test.setTimeout(240_000)
   await desktopPage.getByTestId('process-row').filter({ hasText: PROCESS_NAME }).click()
   await playwrightExpect(desktopPage.locator('#name')).toHaveValue(PROCESS_NAME)
 
@@ -145,7 +149,7 @@ test('a coerced text field lands coerced on the wire and in the status doc', asy
 
   // The dashboard renders this field from the STATUS doc, which only the agent
   // writes and only on its metrics cadence — a different path, a different clock.
-  await waitForFastMetricsCadence(sync.siteId, sync.machineId)
+  await waitForFastMetricsCadence(sync.siteId, sync.machineId, sync.dataRoot)
 
   const statusStartedAt = Date.now()
   await expect

@@ -120,15 +120,21 @@ export async function connectDesktopPage(
   port: number,
 ): Promise<{ browser: Browser; page: Page }> {
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`)
-  const pages = browser.contexts()[0]?.pages() ?? []
-  const page = pages.find((candidate) => candidate.url().includes('tauri.localhost'))
-  if (!page) {
-    await browser.close()
-    throw new Error(
-      `no owlette webview on the debug port (saw: ${pages.map((p) => p.url()).join(', ') || 'nothing'})`,
-    )
+
+  // The devtools target exists before WebView2 finishes navigating, so a fresh
+  // launch can legitimately show only about:blank for a while. Poll instead of
+  // failing on the first look.
+  const deadline = Date.now() + 15_000
+  let seen: string[] = []
+  while (Date.now() < deadline) {
+    const pages = browser.contexts().flatMap((context) => context.pages())
+    const page = pages.find((candidate) => candidate.url().includes('tauri.localhost'))
+    if (page) return { browser, page }
+    seen = pages.map((p) => p.url())
+    await new Promise((resolve) => setTimeout(resolve, 250))
   }
-  return { browser, page }
+  await browser.close()
+  throw new Error(`no owlette webview on the debug port (saw: ${seen.join(', ') || 'nothing'})`)
 }
 
 /** Stop whatever `startDesktopOnSandbox` left running. Safe when nothing did. */

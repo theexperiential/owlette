@@ -218,7 +218,16 @@ export async function readMetricsTimestampMs(
     .collection('machines')
     .doc(machineId)
     .get()
-  const stamp = snap.data()?.metrics?.timestamp as { toMillis?: () => number } | undefined
+  // The agent's REST client backtick-escapes any transform key containing a dot
+  // (`firestore_rest_client._extract_server_timestamps`), so the heartbeat
+  // lands as a LITERAL top-level field named "metrics.timestamp" — in
+  // production too, not just the emulator. Read both spellings so this keeps
+  // working when the client-side quirk is fixed.
+  const data = snap.data() as Record<string, unknown> | undefined
+  const stamp = (data?.['metrics.timestamp'] ??
+    (data?.metrics as Record<string, unknown> | undefined)?.timestamp) as
+    | { toMillis?: () => number }
+    | undefined
   return typeof stamp?.toMillis === 'function' ? stamp.toMillis() : 0
 }
 
@@ -232,6 +241,7 @@ export async function readMetricsTimestampMs(
 export async function waitForFastMetricsCadence(
   siteId: string,
   machineId: string,
+  dataRoot?: string,
   withinMs = 15_000,
 ): Promise<void> {
   const first = await readMetricsTimestampMs(siteId, machineId)
@@ -245,7 +255,8 @@ export async function waitForFastMetricsCadence(
     }
     throw new Error(
       `metrics.timestamp did not advance within ${timeout}ms — the agent is not uploading. ` +
-        'Check that the desktop window is on screen (tmp/gui.pid) and the agent is connected.',
+        'Check that the desktop window is on screen (tmp/gui.pid) and the agent is connected.' +
+        (dataRoot ? `\n--- agent log tail ---\n${agentLogTail(dataRoot)}` : ''),
     )
   }
 
