@@ -88,6 +88,12 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       expectedChallenge: challengeData.challenge,
       expectedOrigin: getExpectedOrigins(),
       expectedRPID: getRpId(),
+      // Pinned explicitly even though @simplewebauthn/server already defaults it
+      // to true. Treating a passkey as a second factor rests entirely on the
+      // authenticator having verified the user (PIN/biometric) — without the
+      // `uv` flag this is possession only, and a future upstream default flip
+      // would silently downgrade every passkey login to single-factor.
+      requireUserVerification: true,
       credential: {
         id: matchingPasskey.credentialId,
         publicKey: isoBase64URL.toBuffer(matchingPasskey.credentialPublicKey),

@@ -161,6 +161,15 @@ export default defineConfig({
       // unset. Required for any spec that lets POST /versions go through
       // the real finalize handler.
       OWLETTE_E2E: '1',
+      // WebAuthn relying-party override, honored by web/lib/webauthn.server.ts
+      // only when OWLETTE_E2E === '1'. The e2e server runs a production Next
+      // build, so without these the RP ID would be 'owlette.app' and the
+      // expected origins the https pair — nothing served from loopback could
+      // ever complete a ceremony. 'localhost' rather than the 127.0.0.1 of
+      // BASE_URL because an IP literal is not a valid RP ID; see the header of
+      // web/e2e/helpers/webauthn.ts for what that costs a consuming spec.
+      WEBAUTHN_RP_ID: 'localhost',
+      WEBAUTHN_ORIGINS: `http://localhost:${PORT}`,
       // Cloudflare's documented always-pass Turnstile test keys. Using these
       // rather than a bypass flag means the specs exercise the REAL
       // verifyTurnstileToken() path — script load, explicit render, token

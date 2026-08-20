@@ -14,7 +14,34 @@ import type { AuthenticatorTransportFuture } from '@simplewebauthn/server';
 
 const RP_NAME = 'Owlette';
 
+/**
+ * E2E override for the relying-party identity.
+ *
+ * This is checked BEFORE the production branch on purpose — do not "simplify"
+ * it down to the dev fall-through. The Playwright harness serves a PRODUCTION
+ * Next build (`web/scripts/e2e-next-server.mjs` calls `next({ dev: false })`,
+ * and Next inlines NODE_ENV at build time), so without this override
+ * `getRpId()` resolves to 'owlette.app' and the origins to the https pair, and
+ * no ceremony run against the loopback e2e server could ever verify.
+ *
+ * Gated on OWLETTE_E2E === '1', which only `web/playwright.config.ts` sets, and
+ * only honored when a value is actually supplied — an e2e run that forgets to
+ * thread the vars falls through to the normal branches rather than silently
+ * running with an empty origin allowlist.
+ */
+function e2eRpOverride(name: 'WEBAUTHN_RP_ID' | 'WEBAUTHN_ORIGINS'): string | null {
+  if (process.env.OWLETTE_E2E !== '1') {
+    return null;
+  }
+  const value = process.env[name]?.trim();
+  return value ? value : null;
+}
+
 export function getRpId(): string {
+  const e2eRpId = e2eRpOverride('WEBAUTHN_RP_ID');
+  if (e2eRpId) {
+    return e2eRpId;
+  }
   if (process.env.NODE_ENV === 'production') {
     return 'owlette.app';
   }
@@ -22,6 +49,14 @@ export function getRpId(): string {
 }
 
 export function getExpectedOrigins(): string[] {
+  // Comma-separated so a spec can allow more than one loopback origin.
+  const e2eOrigins = e2eRpOverride('WEBAUTHN_ORIGINS')
+    ?.split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  if (e2eOrigins && e2eOrigins.length > 0) {
+    return e2eOrigins;
+  }
   if (process.env.NODE_ENV === 'production') {
     return ['https://owlette.app', 'https://dev.owlette.app'];
   }
