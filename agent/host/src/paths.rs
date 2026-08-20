@@ -86,6 +86,16 @@ pub fn log_dir() -> PathBuf {
   data_dir().join("logs")
 }
 
+/// The stop sentinel the agent polls for, `%ProgramData%\Owlette\tmp\stop_signal.json` — beside
+/// the rest of the agent's runtime state, `shared_utils.get_data_path('tmp/...')` on its side.
+pub fn stop_signal_path() -> PathBuf {
+  stop_signal_path_in(&data_dir())
+}
+
+fn stop_signal_path_in(data_dir: &Path) -> PathBuf {
+  data_dir.join("tmp").join("stop_signal.json")
+}
+
 /// Takes the raw `ImagePath` including arguments (what `QueryServiceConfig` returns), so this is a
 /// substring test rather than a file-name comparison.
 pub fn image_is_nssm(image_path: &str) -> bool {
@@ -136,6 +146,15 @@ mod tests {
     assert_eq!(
       install_root_from_exe(Path::new(r"C:\owlette-host.exe")),
       PathBuf::from(r"C:\")
+    );
+  }
+
+  #[test]
+  fn the_stop_sentinel_sits_in_the_data_directory_s_tmp() {
+    // The agent reads this exact path via shared_utils.get_data_path('tmp/stop_signal.json').
+    assert_eq!(
+      stop_signal_path_in(Path::new(r"C:\ProgramData\Owlette")),
+      PathBuf::from(r"C:\ProgramData\Owlette\tmp\stop_signal.json")
     );
   }
 

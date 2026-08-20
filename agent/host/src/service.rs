@@ -13,11 +13,25 @@
 //! it. After [`CHILD_STOP_GRACE`] the host terminates the ONE process it
 //! launched, never the tree, so everything the agent manages (TouchDesigner,
 //! players, kiosk shells) and the desktop app survive a service stop.
+//!
+//! ## Surviving an OS shutdown
+//!
+//! Two things make that protocol hold when the machine is going down rather
+//! than an operator stopping the service:
+//!
+//! * Once the registration is known to carry a 45 s preshutdown timeout (see
+//!   `registration`), the service accepts PRESHUTDOWN in place of SHUTDOWN and
+//!   the SCM gives it that budget instead of the machine-wide
+//!   `WaitToKillServiceTimeout` — 5 s by default, which [`CHILD_STOP_GRACE`]
+//!   alone would overrun four times over.
+//! * The stop is PUSHED at the agent as [`crate::stopsignal`] as well as pulled
+//!   from the SCM, because the RPC the agent polls over is exactly what a
+//!   shutdown can take away.
 
 use std::ffi::OsString;
 use std::panic::{self, AssertUnwindSafe};
 use std::process::{Child, ExitCode};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -32,6 +46,8 @@ use windows_service::{define_windows_service, service_dispatcher};
 
 use crate::hostlog::{self, RotatingLog, MAX_CHILD_LOG_BYTES};
 use crate::paths::{self, SERVICE_NAME};
+use crate::registration;
+use crate::stopsignal::{self, StopControl};
 use crate::supervisor::{
   self, classify, crash_backoff, restart_delay, ChildOutcome, RestartWindow, CHILD_KILL_WAIT,
   CHILD_STOP_GRACE, POLL_INTERVAL, RESTART_LOOP_THRESHOLD, RESTART_WINDOW,
@@ -74,32 +90,36 @@ fn service_main(_arguments: Vec<OsString>) {
 }
 
 fn run() -> windows_service::Result<()> {
-  let stop_requested = Arc::new(AtomicBool::new(false));
+  let stop = Arc::new(StopSignal::new());
   let handle_slot: Arc<OnceLock<ServiceStatusHandle>> = Arc::new(OnceLock::new());
 
-  let handler_stop = Arc::clone(&stop_requested);
+  let handler_stop = Arc::clone(&stop);
   let handler_slot = Arc::clone(&handle_slot);
-  let event_handler = move |control| match control {
-    ServiceControl::Stop | ServiceControl::Shutdown => {
-      handler_stop.store(true, Ordering::SeqCst);
-      // Report STOP_PENDING from the handler so the agent's stop watcher sees
-      // it at the earliest instant; the loop reports it again, idempotently. If
-      // the control beats `register`, the slot is empty and the loop's report
-      // (within one poll interval) is the first.
-      if let Some(handle) = handler_slot.get() {
-        report(
-          handle,
-          ServiceState::StopPending,
-          ServiceControlAccept::empty(),
-          1,
-          STOP_WAIT_HINT,
-          ServiceExitCode::NO_ERROR,
-        );
-      }
-      ServiceControlHandlerResult::NoError
+  let event_handler = move |control| {
+    let Some(kind) = stop_control(control) else {
+      return match control {
+        ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+        _ => ServiceControlHandlerResult::NotImplemented,
+      };
+    };
+    handler_stop.record(kind);
+    // Report STOP_PENDING from the handler so the agent's stop watcher sees it
+    // at the earliest instant; `stop_child` reports it again, idempotently.
+    // Nothing slower belongs here — the sentinel is written from the
+    // supervision thread, which picks the flag up within one poll interval.
+    // If the control beat `register` the slot is empty, but then no child has
+    // been launched either and the service goes straight to STOPPED.
+    if let Some(handle) = handler_slot.get() {
+      report(
+        handle,
+        ServiceState::StopPending,
+        ServiceControlAccept::empty(),
+        1,
+        STOP_WAIT_HINT,
+        ServiceExitCode::NO_ERROR,
+      );
     }
-    ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-    _ => ServiceControlHandlerResult::NotImplemented,
+    ServiceControlHandlerResult::NoError
   };
 
   let status_handle = service_control_handler::register(SERVICE_NAME, event_handler)?;
@@ -116,13 +136,11 @@ fn run() -> windows_service::Result<()> {
 
   // An escaping panic would unwind out of the SCM's service thread and wedge
   // the service in StartPending until the process died.
-  let exit_code = panic::catch_unwind(AssertUnwindSafe(|| {
-    supervise(&status_handle, &stop_requested)
-  }))
-  .unwrap_or_else(|_| {
-    hostlog::error("the supervision loop panicked - reporting the service as failed");
-    ServiceExitCode::ServiceSpecific(EXIT_PANIC)
-  });
+  let exit_code = panic::catch_unwind(AssertUnwindSafe(|| supervise(&status_handle, &stop)))
+    .unwrap_or_else(|_| {
+      hostlog::error("the supervision loop panicked - reporting the service as failed");
+      ServiceExitCode::ServiceSpecific(EXIT_PANIC)
+    });
 
   report(
     &status_handle,
@@ -135,8 +153,52 @@ fn run() -> windows_service::Result<()> {
   Ok(())
 }
 
+/// The three controls that mean "wind down". Everything else is either handled
+/// inline or not ours.
+fn stop_control(control: ServiceControl) -> Option<StopControl> {
+  match control {
+    ServiceControl::Stop => Some(StopControl::Stop),
+    ServiceControl::Shutdown => Some(StopControl::Shutdown),
+    ServiceControl::Preshutdown => Some(StopControl::Preshutdown),
+    _ => None,
+  }
+}
+
+/// What the control handler tells the supervision loop: that a stop-class
+/// control arrived, and which one it was.
+struct StopSignal {
+  requested: AtomicBool,
+  control: AtomicU8,
+}
+
+impl StopSignal {
+  fn new() -> Self {
+    Self {
+      requested: AtomicBool::new(false),
+      control: AtomicU8::new(0),
+    }
+  }
+
+  /// The control is stored before the flag, so anything that sees the flag
+  /// reads the control that came with it.
+  fn record(&self, control: StopControl) {
+    self.control.store(control.code(), Ordering::SeqCst);
+    self.requested.store(true, Ordering::SeqCst);
+  }
+
+  fn requested(&self) -> bool {
+    self.requested.load(Ordering::SeqCst)
+  }
+
+  /// Only meaningful once [`Self::requested`] is true; an unrecognised code
+  /// falls back to `Stop`, which is what winding down means either way.
+  fn control(&self) -> StopControl {
+    StopControl::from_code(self.control.load(Ordering::SeqCst)).unwrap_or(StopControl::Stop)
+  }
+}
+
 /// Launch the agent, keep it alive, and stop it when told to.
-fn supervise(status_handle: &ServiceStatusHandle, stop_requested: &AtomicBool) -> ServiceExitCode {
+fn supervise(status_handle: &ServiceStatusHandle, stop: &StopSignal) -> ServiceExitCode {
   let install_root = match paths::install_root() {
     Ok(root) => root,
     Err(error) => {
@@ -167,13 +229,17 @@ fn supervise(status_handle: &ServiceStatusHandle, stop_requested: &AtomicBool) -
       hostlog::error(&format!("missing: {}", path.display()));
     }
   }
+  // Once, ahead of the loop: a sentinel written during this run means a stop is
+  // in flight and nothing will be relaunched, so this can only ever remove one
+  // left behind by a previous run.
+  stopsignal::clear();
 
   let mut crash_window = RestartWindow::new(RESTART_WINDOW);
   let mut self_restart_window = RestartWindow::new(RESTART_WINDOW);
   let mut running_reported = false;
 
   loop {
-    if stop_requested.load(Ordering::SeqCst) {
+    if stop.requested() {
       hostlog::info("stop requested before the agent was launched - nothing to wind down");
       return ServiceExitCode::NO_ERROR;
     }
@@ -197,7 +263,7 @@ fn supervise(status_handle: &ServiceStatusHandle, stop_requested: &AtomicBool) -
           delay.as_secs(),
           RESTART_WINDOW.as_secs() / 60
         ));
-        if !sleep_unless_stop(delay, stop_requested) {
+        if !sleep_unless_stop(delay, stop) {
           return ServiceExitCode::NO_ERROR;
         }
         continue;
@@ -220,10 +286,35 @@ fn supervise(status_handle: &ServiceStatusHandle, stop_requested: &AtomicBool) -
         ServiceExitCode::NO_ERROR,
       );
       running_reported = true;
+      // Only now: the SCM has been told the service is up, so touching its own
+      // registration cannot race the start it is still being waited on for.
+      //
+      // Accepting PRESHUTDOWN makes the registered preshutdown timeout the
+      // WHOLE stop budget: the shutdown phase that follows only notifies
+      // services still advertising SHUTDOWN, and the first stop-class control
+      // drops these accepts to empty. So advertise it only once that budget is
+      // known to be written — the OS default of 10 s is shorter than the stop
+      // sequence needs, and shorter than an admin who raised
+      // WaitToKillServiceTimeout is expecting. Losing SHUTDOWN with it costs
+      // nothing (preshutdown reaches every Windows this fleet runs) and means
+      // only one control can ever be delivered into the handler's context,
+      // which the SCM wrapper frees after the first. The stop check keeps this
+      // second report from putting a service that was just told to stop back
+      // into RUNNING.
+      if registration::ensure_preshutdown_timeout() && !stop.requested() {
+        report(
+          status_handle,
+          ServiceState::Running,
+          ServiceControlAccept::STOP | ServiceControlAccept::PRESHUTDOWN,
+          0,
+          Duration::default(),
+          ServiceExitCode::NO_ERROR,
+        );
+      }
     }
 
-    let code = match wait_for_exit_or_stop(child, stop_requested) {
-      Waited::StopRequested(child) => return stop_child(status_handle, child),
+    let code = match wait_for_exit_or_stop(child, stop) {
+      Waited::StopRequested(child) => return stop_child(status_handle, child, stop.control()),
       Waited::Exited(code) => code,
     };
 
@@ -243,7 +334,7 @@ fn supervise(status_handle: &ServiceStatusHandle, stop_requested: &AtomicBool) -
           RESTART_WINDOW.as_secs() / 60,
           delay.as_secs()
         ));
-        if !sleep_unless_stop(delay, stop_requested) {
+        if !sleep_unless_stop(delay, stop) {
           return ServiceExitCode::NO_ERROR;
         }
       }
@@ -261,7 +352,7 @@ fn supervise(status_handle: &ServiceStatusHandle, stop_requested: &AtomicBool) -
         } else {
           hostlog::warn(&message);
         }
-        if !sleep_unless_stop(delay, stop_requested) {
+        if !sleep_unless_stop(delay, stop) {
           return ServiceExitCode::NO_ERROR;
         }
       }
@@ -277,11 +368,11 @@ enum Waited {
   StopRequested(Child),
 }
 
-fn wait_for_exit_or_stop(mut child: Child, stop_requested: &AtomicBool) -> Waited {
+fn wait_for_exit_or_stop(mut child: Child, stop: &StopSignal) -> Waited {
   loop {
     // Stop is checked first: on a simultaneous exit + stop, the operator wins
     // and nothing is relaunched.
-    if stop_requested.load(Ordering::SeqCst) {
+    if stop.requested() {
       return Waited::StopRequested(child);
     }
     match child.try_wait() {
@@ -301,10 +392,15 @@ fn wait_for_exit_or_stop(mut child: Child, stop_requested: &AtomicBool) -> Waite
 
 /// Wind the agent down: report STOP_PENDING, let it exit on its own, and only
 /// terminate it — never its descendants — if it overruns the grace window.
-fn stop_child(status_handle: &ServiceStatusHandle, mut child: Child) -> ServiceExitCode {
+fn stop_child(
+  status_handle: &ServiceStatusHandle,
+  mut child: Child,
+  control: StopControl,
+) -> ServiceExitCode {
   let pid = child.id();
   hostlog::info(&format!(
-    "stop requested - reporting STOP_PENDING and giving pid {pid} up to {}s to exit",
+    "{} requested - reporting STOP_PENDING and giving pid {pid} up to {}s to exit",
+    control.as_str(),
     CHILD_STOP_GRACE.as_secs()
   ));
 
@@ -319,6 +415,9 @@ fn stop_child(status_handle: &ServiceStatusHandle, mut child: Child) -> ServiceE
     STOP_WAIT_HINT,
     ServiceExitCode::NO_ERROR,
   );
+  // Only ever written here, where a child exists to read it: the paths that
+  // wind down without one return before this.
+  stopsignal::write(control);
   let mut last_report = Instant::now();
 
   loop {
@@ -385,15 +484,15 @@ fn stop_child(status_handle: &ServiceStatusHandle, mut child: Child) -> ServiceE
 
 /// Sleep in poll-sized slices. Returns false the moment a stop is requested,
 /// so a crash-loop backoff can never delay an operator's stop.
-fn sleep_unless_stop(delay: Duration, stop_requested: &AtomicBool) -> bool {
+fn sleep_unless_stop(delay: Duration, stop: &StopSignal) -> bool {
   let deadline = Instant::now() + delay;
   while Instant::now() < deadline {
-    if stop_requested.load(Ordering::SeqCst) {
+    if stop.requested() {
       return false;
     }
     thread::sleep(POLL_INTERVAL.min(delay));
   }
-  !stop_requested.load(Ordering::SeqCst)
+  !stop.requested()
 }
 
 fn exit_code_of(status: std::process::ExitStatus) -> i32 {
@@ -444,7 +543,7 @@ mod tests {
 
   #[test]
   fn a_zero_delay_sleep_does_not_block() {
-    let stop = AtomicBool::new(false);
+    let stop = StopSignal::new();
     let started = Instant::now();
     assert!(sleep_unless_stop(Duration::ZERO, &stop));
     assert!(started.elapsed() < Duration::from_millis(100));
@@ -452,7 +551,8 @@ mod tests {
 
   #[test]
   fn a_pending_stop_short_circuits_the_backoff() {
-    let stop = AtomicBool::new(true);
+    let stop = StopSignal::new();
+    stop.record(StopControl::Stop);
     let started = Instant::now();
     assert!(!sleep_unless_stop(Duration::from_secs(60), &stop));
     assert!(started.elapsed() < Duration::from_millis(500));
@@ -462,5 +562,32 @@ mod tests {
   fn every_service_state_has_a_name() {
     assert_eq!(state_name(ServiceState::StopPending), "STOP_PENDING");
     assert_eq!(state_name(ServiceState::Running), "RUNNING");
+  }
+
+  #[test]
+  fn an_os_shutdown_is_a_stop_and_so_is_a_preshutdown() {
+    assert_eq!(stop_control(ServiceControl::Stop), Some(StopControl::Stop));
+    assert_eq!(
+      stop_control(ServiceControl::Shutdown),
+      Some(StopControl::Shutdown)
+    );
+    assert_eq!(
+      stop_control(ServiceControl::Preshutdown),
+      Some(StopControl::Preshutdown)
+    );
+    assert_eq!(stop_control(ServiceControl::Interrogate), None);
+    assert_eq!(stop_control(ServiceControl::ParamChange), None);
+  }
+
+  #[test]
+  fn the_control_that_arrived_is_readable_once_the_flag_is_set() {
+    let stop = StopSignal::new();
+    assert!(!stop.requested());
+    // Nothing has arrived, so the fallback stands in.
+    assert_eq!(stop.control(), StopControl::Stop);
+
+    stop.record(StopControl::Preshutdown);
+    assert!(stop.requested());
+    assert_eq!(stop.control(), StopControl::Preshutdown);
   }
 }

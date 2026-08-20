@@ -9,6 +9,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::process::ExitCode;
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -32,6 +33,12 @@ const ERROR_SERVICE_EXISTS: i32 = 1073;
 /// Long enough to cover the host's own stop sequence (a 20 s grace window, then
 /// a terminate with 5 s to take effect) with room to spare.
 const STOP_WAIT: Duration = Duration::from_secs(45);
+
+/// How long the SCM lets the service run after a PRESHUTDOWN before it gives up
+/// and carries on shutting the machine down. Covers the same stop sequence as
+/// [`STOP_WAIT`]; without it the default is 10 s on current Windows, which the
+/// 20 s grace window alone overruns.
+const PRESHUTDOWN_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// How long a deleted service is given to disappear from the SCM, and a new one to become
 /// creatable. Both bounded by other processes' open handles — usually an open Services.msc.
@@ -100,6 +107,10 @@ pub fn install() -> Result<(), String> {
     .set_delayed_auto_start(false)
     .map_err(|error| format!("could not clear delayed auto-start: {error}"))?;
 
+  service
+    .set_preshutdown_timeout(PRESHUTDOWN_TIMEOUT)
+    .map_err(|error| format!("could not set the preshutdown timeout: {error}"))?;
+
   // New capability as well as defense in depth: NSSM's registration had no SCM failure
   // actions, so a host that died outright stayed dead. These fire only if THIS process
   // exits without reporting a clean stop.
@@ -116,6 +127,51 @@ pub fn install() -> Result<(), String> {
     DEPENDENCIES.join(" ")
   ));
   Ok(())
+}
+
+/// Write the preshutdown timeout onto whatever registration is already there,
+/// reporting whether it is now in place.
+///
+/// `install` sets it, but an update swaps the binary without re-registering, so
+/// every machine paired before this existed would keep the OS default and lose
+/// the agent's graceful shutdown to a 10 s guillotine. Called from the service
+/// itself, and never fatal — but the caller must not advertise PRESHUTDOWN on a
+/// `false`, because then the budget it would be running on is that same 10 s.
+///
+/// The default service DACL grants CHANGE_CONFIG to Administrators rather than
+/// to SYSTEM directly, so this rides on the Administrators group in
+/// LocalSystem's token — which hardened images can trim away.
+pub fn ensure_preshutdown_timeout() -> bool {
+  static APPLIED: OnceLock<bool> = OnceLock::new();
+  *APPLIED.get_or_init(|| match apply_preshutdown_timeout() {
+    Ok(()) => {
+      hostlog::info(&format!(
+        "preshutdown timeout is {}s",
+        PRESHUTDOWN_TIMEOUT.as_secs()
+      ));
+      true
+    }
+    Err(error) => {
+      hostlog::warn(&format!(
+        "could not set the preshutdown timeout: {error} - not accepting PRESHUTDOWN, so an OS \
+         shutdown falls back to the machine's WaitToKillServiceTimeout"
+      ));
+      false
+    }
+  })
+}
+
+/// Plain messages rather than [`connect_error`]/[`open_error`]: this runs under
+/// the SCM, where "run this from an elevated prompt" is advice to nobody.
+fn apply_preshutdown_timeout() -> Result<(), String> {
+  let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+    .map_err(|error| format!("could not connect to the service control manager: {error}"))?;
+  let service = manager
+    .open_service(SERVICE_NAME, ServiceAccess::CHANGE_CONFIG)
+    .map_err(|error| format!("could not open {SERVICE_NAME} for CHANGE_CONFIG: {error}"))?;
+  service
+    .set_preshutdown_timeout(PRESHUTDOWN_TIMEOUT)
+    .map_err(|error| error.to_string())
 }
 
 /// Stop and deregister the service. Succeeds when it was not there to begin

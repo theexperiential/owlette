@@ -20,6 +20,7 @@ mod hostlog;
 mod paths;
 mod registration;
 mod service;
+mod stopsignal;
 mod supervisor;
 
 use std::process::ExitCode;
