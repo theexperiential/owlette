@@ -12,7 +12,7 @@ import { CopyButton } from './CopyButton';
 import { SynapticIndicator } from './SynapticIndicator';
 import { getRandomSuggestions } from '../data/suggestedQuestions';
 import { YOU_TRANSLATIONS } from '@/lib/dashboardConstants';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { HootIcon } from '@/components/icons/HootIcon';
 import { useScrollFade } from '@/hooks/useScrollFade';
 
@@ -203,6 +203,18 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
             {/* Content */}
             <div className={`min-w-0 ${isUser ? 'max-w-[75%]' : 'flex-1'}`}>
               <div className={`flex items-center gap-2 h-7 text-sm font-semibold text-foreground mb-1 ${isUser ? 'justify-end' : ''}`}>
+                {/*
+                  Three tooltip triggers stand shoulder to shoulder in this row.
+                  Hoverable content keeps a tooltip open while the pointer is
+                  judged to be travelling towards it, and a trigger refuses to
+                  open while that flag is set — with the neighbour an inch away
+                  it falls inside the grace area, so moving along the row left
+                  the first tooltip up and never opened the second. None of
+                  these are worth hovering into, so the row turns it off. The
+                  delay matches the app-wide provider in `app/layout.tsx`;
+                  nesting one resets it to Radix's slower default otherwise.
+                */}
+                <TooltipProvider disableHoverableContent delayDuration={300}>
                 {(() => {
                   const fullText = message.parts
                     .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
@@ -249,6 +261,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
                   })() : <span>hoot</span>;
                   return isUser ? <>{editBtn}{copyBtn}{label}</> : <>{label}{copyBtn}</>;
                 })()}
+                </TooltipProvider>
               </div>
 
               {isEditing ? (
