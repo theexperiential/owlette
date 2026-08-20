@@ -17,8 +17,8 @@
  *
  * Deliberately NOT a Firestore TTL policy: TTL needs an `expireAt` field on
  * every document, which would mean changing the agent/function write paths and
- * backfilling existing data. This runs on the same cron-job.org schedule as the
- * other four jobs and needs no console-side configuration.
+ * backfilling existing data. This runs on cron-job.org alongside the other
+ * scheduled jobs and needs no console-side configuration.
  *
  * Bounded by design. Each collection is drained page by page until it is empty
  * or the whole-run MAX_DELETES_PER_RUN budget is spent; hitting the budget is

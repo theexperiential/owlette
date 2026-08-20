@@ -12,7 +12,7 @@ import { apiError } from '@/lib/apiErrorResponse';
 /**
  * GET /api/cron/health-check
  *
- * Railway HTTP cron endpoint that scans all machines for stale heartbeats
+ * HTTP cron endpoint (cron-job.org) that scans all machines for stale heartbeats
  * and sends email alerts to site admins when machines appear offline.
  *
  * Authentication: X-Cron-Secret header must match CRON_SECRET env var.
@@ -20,10 +20,10 @@ import { apiError } from '@/lib/apiErrorResponse';
  * Deduplication: Writes health.lastCronAlertAt to Firestore after sending,
  * preventing repeat emails within ALERT_COOLDOWN_MS (default: 1 hour).
  *
- * Railway cron config (set in Railway dashboard):
+ * cron-job.org config (NOT Railway — register once per environment):
  *   Schedule:  * /5 * * * *   (every 5 minutes)
  *   URL:       GET https://<your-app>/api/cron/health-check
- *   Header:    X-Cron-Secret: <CRON_SECRET value>
+ *   Header:    X-Cron-Secret: <that environment's CRON_SECRET>
  */
 
 // A machine is considered offline if its heartbeat is older than this. Sized well

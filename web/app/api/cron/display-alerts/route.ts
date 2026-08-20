@@ -13,7 +13,7 @@ import { apiError } from '@/lib/apiErrorResponse';
 /**
  * GET /api/cron/display-alerts
  *
- * Railway HTTP cron endpoint that drains the `pending_display_alerts` queue
+ * HTTP cron endpoint (cron-job.org) that drains the `pending_display_alerts` queue
  * and sends batched digest emails grouped by site.
  *
  * Alerts are held for ACCUMULATION_WINDOW_MS before being sent, allowing a
@@ -23,10 +23,10 @@ import { apiError } from '@/lib/apiErrorResponse';
  *
  * Authentication: X-Cron-Secret header must match CRON_SECRET env var.
  *
- * Railway cron config (set in Railway dashboard):
+ * cron-job.org config (NOT Railway — register once per environment):
  *   Schedule:  * /3 * * * *   (every 3 minutes — matches process-alerts)
  *   URL:       GET https://<your-app>/api/cron/display-alerts
- *   Header:    X-Cron-Secret: <CRON_SECRET value>
+ *   Header:    X-Cron-Secret: <that environment's CRON_SECRET>
  *
  * Critical-path bypass: `display_monitor_removed` and
  * `display_auto_revert_fired` skip this digest entirely and email

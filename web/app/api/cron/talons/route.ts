@@ -2,7 +2,7 @@
  * GET /api/cron/talons — the schedule sweep (talons wave 2, task 2.2).
  *
  * Runs once a minute on cron-job.org (NOT Railway — see
- * `docs/internal/runbooks/talons.md`) and is the only thing that fires a
+ * `docs/runbooks/talons.md`) and is the only thing that fires a
  * schedule-triggered talon. Threshold talons are driven by incoming data and
  * never appear here; nor do event talons, EXCEPT the delayed ones — see below.
  *

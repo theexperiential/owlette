@@ -145,7 +145,7 @@ Add the Vercel deployment domain and any custom domain to Firebase Authenticatio
 
 ### step 5: cron
 
-The current cron routes require `X-Cron-Secret: <CRON_SECRET>`. Use a scheduler that can send that header. If the hosting plan cannot send custom headers or cannot call all required schedules, use an external scheduler.
+Most cron routes require `X-Cron-Secret: <CRON_SECRET>`. `/api/hoot/escalation` is the exception: it reads `Authorization: Bearer <CRON_SECRET>`. See [scheduled endpoints](#scheduled-endpoints) below for the full list and the header each route expects. owlette's own schedules run on cron-job.org rather than on the web host, registered once per environment. Use a scheduler that can send those headers; if the hosting plan cannot send custom headers or cannot call all required schedules, use an external scheduler.
 
 ---
 
@@ -243,7 +243,7 @@ GET https://<your-app>/api/hoot/escalation
 Authorization: Bearer <CRON_SECRET value>
 ```
 
-Note the header: this route reads `Authorization: Bearer`, unlike the five
+Note the header: this route reads `Authorization: Bearer`, unlike the six
 `X-Cron-Secret` routes. Sending the wrong header shape returns 401 with no other
 symptom, so verify a run returns 200 after scheduling it.
 
@@ -350,7 +350,8 @@ Requirements:
 - [ ] Build command is `npm run build`
 - [ ] Start command is `npm start` where the host requires one
 - [ ] `CRON_SECRET` configured
-- [ ] Cron calls configured for **every route in the scheduled-endpoints table above**, in **each** environment — health-check (every 5 min), process-alerts + display-alerts (every 3 min), status-ping (every 60 s), retention (daily)
+- [ ] Cron calls configured for **every route in the scheduled-endpoints table above**, in **each** environment — health-check (every 5 min), process-alerts + display-alerts (every 3 min), status-ping (every 60 s), talons (every 60 s), retention (daily), and hoot/escalation (every 5 min)
+- [ ] The `/api/hoot/escalation` job sends `Authorization: Bearer <CRON_SECRET>` — the other six routes take `X-Cron-Secret`, and the wrong header shape returns 401 with no other symptom
 
 ### post-deployment
 

@@ -43,7 +43,7 @@ The placeholder components are explicit so the page can launch with the intended
 
 ## operator setup
 
-Synthetic checks run from internal cron infrastructure and publish component state to the hosted status-page vendor after repeated failures or recovery. That operator wiring is documented in [web deployment](../setup/web-deployment.md) and [environment variables](../setup/environment-variables.md).
+Synthetic checks run from internal cron infrastructure and publish component state to the hosted status-page vendor after repeated failures or recovery. That operator wiring is documented in `web/content/docs/setup/web-deployment.mdx` (published at `/docs/setup/web-deployment`) and `web/content/docs/setup/environment-variables.mdx`.
 
 Do not put cron URLs, vendor API keys, component ids, or Firestore collection names in customer handoff material.
 

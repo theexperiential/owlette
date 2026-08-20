@@ -204,18 +204,19 @@ env (§1.3). Re-verify:
 node scripts/provision-r2.mjs --verify-only
 ```
 
-### 1.6 Verify Railway prod cron jobs
+### 1.6 Verify prod cron jobs
 
-These must be configured in Railway's cron UI (no repo config):
+The scheduled endpoints run on **cron-job.org**, not Railway. Registration is per
+environment: a job pointed at prod carrying the dev `CRON_SECRET` answers 401 and
+fires nothing.
 
-| Endpoint | Schedule | Notes |
-|---|---|---|
-| `/api/cron/health-check` | every 5 min | existing |
-| `/api/cron/process-alerts` | every 3 min | existing |
-| `/api/cron/display-alerts` | every 3 min | **NEW — add if missing** |
-| `/api/cron/status-ping` | every 1-5 min | only if Instatus configured |
+Do not maintain a second list here. The canonical table of every scheduled
+endpoint — schedule, auth header, purpose — is the scheduled-endpoints section of
+`web/content/docs/setup/web-deployment.mdx`, and the operator-side wiring is in
+[manual-infrastructure.md](manual-infrastructure.md).
 
-All require header `X-Cron-Secret: <CRON_SECRET>`.
+For this upgrade specifically, the only new job is `/api/cron/display-alerts`
+(every 3 min, `X-Cron-Secret`) — add it if missing, in each environment.
 
 ### 1.7 Maintenance window pre-announcement
 
