@@ -568,6 +568,9 @@ describe('bootstrapUser', () => {
       sites: [],
       mfaEnrolled: false,
       requiresMfaSetup: true,
+      // Seeded at creation so a brand-new account is never "legacy" — i.e.
+      // never depends on normalizeMfaFactors backfilling the inventory.
+      mfaFactors: { totp: false, passkeys: 0 },
       preferences: {
         temperatureUnit: 'C',
         timezone: 'America/Los_Angeles',

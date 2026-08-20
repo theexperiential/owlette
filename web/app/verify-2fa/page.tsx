@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useSyncExternalStore, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { doc, getDoc } from 'firebase/firestore';
@@ -11,7 +11,29 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { OwletteEyeIcon } from '@/components/landing/OwletteEye';
+import { Fingerprint } from 'lucide-react';
+import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser';
+import { useInAppBrowser } from '@/hooks/useInAppBrowser';
 import { toast } from '@/lib/toast';
+
+/**
+ * `browserSupportsWebAuthn()` reads `window.PublicKeyCredential`, so it can only
+ * be answered on the client. Reading it during render would make the passkey
+ * button server-absent / client-present — a hydration mismatch React recovers
+ * from by discarding the SSR tree and re-rendering, which has swallowed clicks
+ * on these auth pages before (see the `canUsePasskey` comment in
+ * app/login/page.tsx).
+ *
+ * Resolved through `useSyncExternalStore` rather than a mounted flag set in an
+ * effect, matching `useInAppBrowser`: the server snapshot is a first-class value
+ * instead of an initial state to be corrected, so ordinary visitors pay no
+ * cascading render. The environment cannot change within a document, so there
+ * is nothing to subscribe to; the snapshot is a primitive and therefore already
+ * referentially stable between renders.
+ */
+const subscribeWebAuthnSupport = () => () => {};
+const getWebAuthnSupport = () => browserSupportsWebAuthn();
+const getWebAuthnSupportOnServer = () => false;
 
 function Verify2FAContent() {
   const { user, loading, signOut } = useAuth();
@@ -29,6 +51,21 @@ function Verify2FAContent() {
   const [useBackupCode, setUseBackupCode] = useState(false);
   const [trustThisDevice, setTrustThisDevice] = useState(false);
   const [, setMfaReady] = useState(false);
+  const canUsePasskey = useSyncExternalStore(
+    subscribeWebAuthnSupport,
+    getWebAuthnSupport,
+    getWebAuthnSupportOnServer
+  );
+  const [isPasskeyPending, setIsPasskeyPending] = useState(false);
+  const inApp = useInAppBrowser();
+  /**
+   * Passkeys are additionally gated on the host app: inside an embedded webview
+   * the ceremony can only use passkeys for the HOST app's associated domain, so
+   * `browserSupportsWebAuthn()` returns true while the prompt is guaranteed to
+   * fail. Hiding it here is safe because the TOTP and backup-code paths below
+   * are always rendered — this option is never the only way off this page.
+   */
+  const showPasskey = canUsePasskey && !inApp.isInApp;
 
   useEffect(() => {
     if (!loading && !user) {
@@ -148,6 +185,88 @@ function Verify2FAContent() {
     }
   };
 
+  /**
+   * Third challenge option: satisfy the gate with a passkey the user already
+   * owns, instead of a TOTP code or a backup code.
+   *
+   * This runs against `/api/passkeys/step-up/*`, NOT the `/authenticate/*`
+   * routes /login uses. The caller here is already signed in, so the step-up
+   * routes require a session, scope the ceremony to that session's own uid, and
+   * flip the session's MFA gate — they never mint a session or a Firebase
+   * custom token. Nothing needs signing in again afterwards, so unlike the
+   * login flow there is no `signInWithCustomToken` step.
+   *
+   * The "trust this device" checkbox belongs to the code form below and is not
+   * read here: only `/api/mfa/verify-login` mints the device-trust cookie.
+   */
+  const handlePasskeyStepUp = async () => {
+    if (!user) {
+      toast.error('user not authenticated');
+      return;
+    }
+
+    setIsPasskeyPending(true);
+
+    try {
+      // Step 1: options, scoped server-side to this session's own credentials.
+      const optionsRes = await fetch('/api/passkeys/step-up/options', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      const optionsData = await optionsRes.json();
+
+      if (!optionsRes.ok) {
+        toast.error(
+          optionsData.code === 'no_passkeys'
+            ? 'no passkeys are registered on this account'
+            : 'could not start the passkey prompt',
+          {
+            description: 'use your authenticator app or a backup code instead.',
+          }
+        );
+        setIsPasskeyPending(false);
+        return;
+      }
+
+      // Step 2: browser prompt (PIN/biometric — the server demands `uv`).
+      const credential = await startAuthentication({ optionsJSON: optionsData.options });
+
+      // Step 3: verify. On success the session cookie is already
+      // mfaVerified=true by the time this resolves, so the proxy will let the
+      // next navigation through.
+      const verifyRes = await fetch('/api/passkeys/step-up/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential, challengeId: optionsData.challengeId }),
+      });
+
+      if (!verifyRes.ok) {
+        toast.error('passkey verification failed', {
+          description: 'please try again, or use your authenticator app.',
+        });
+        setIsPasskeyPending(false);
+        return;
+      }
+
+      toast.success('verification successful', {
+        description: 'redirecting...',
+      });
+      router.push(returnUrl);
+    } catch (error) {
+      // A cancelled or timed-out prompt is a user action, not a fault — say so
+      // plainly rather than surfacing the raw DOMException.
+      if (error instanceof Error && error.name === 'NotAllowedError') {
+        toast.error('passkey prompt was cancelled');
+      } else {
+        console.error('Error verifying passkey step-up:', error);
+        toast.error('passkey verification failed');
+      }
+      setIsPasskeyPending(false);
+    }
+  };
+
   const handleCancel = async () => {
     await signOut();
     router.push('/login');
@@ -179,6 +298,35 @@ function Verify2FAContent() {
           </div>
         </CardHeader>
         <CardContent>
+          {/* Passkey sits ABOVE the code form, mirroring /login's ordering, so
+              the "trust this device" checkbox reads as belonging to the code
+              path it actually applies to. Hidden entirely in an embedded
+              webview or a browser without WebAuthn — the form below is always
+              rendered, so hiding this never strands the user. */}
+          {showPasskey && (
+            <div className="mb-6 space-y-6">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={handlePasskeyStepUp}
+                disabled={isSubmitting || isPasskeyPending}
+              >
+                <Fingerprint className="mr-2 h-4 w-4" />
+                {isPasskeyPending ? 'waiting for passkey...' : 'use a passkey'}
+              </Button>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-border" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-card px-2 text-muted-foreground">or</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleVerify} className="space-y-6">
             <div className="space-y-2">
               <Input
@@ -220,6 +368,7 @@ function Verify2FAContent() {
               type="submit"
               disabled={
                 isSubmitting ||
+                isPasskeyPending ||
                 (!useBackupCode && verificationCode.length !== 6) ||
                 (useBackupCode && !verificationCode)
               }

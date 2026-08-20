@@ -89,6 +89,12 @@ export const EXEMPT_ROUTES: readonly string[] = [
   'passkeys/authenticate/verify',
   // WebAuthn registration ceremony: ephemeral challenge issuance; the credential is persisted by register/verify.
   'passkeys/register/options',
+  // WebAuthn step-up ceremony on /verify-2fa: ephemeral challenge issuance, no credential state.
+  'passkeys/step-up/options',
+  // WebAuthn step-up ceremony on /verify-2fa: verifies an assertion against an existing session and
+  // satisfies the MFA gate; the 2FA challenge itself, same class as `mfa/verify-login`. Mints no
+  // session and no custom token, and persists only the credential's clone-detection counter.
+  'passkeys/step-up/verify',
   // read-only: re-mints a short-lived signed GET url for an already-published version body.
   'roosts/[roostId]/version-url',
   // read-only: lists the provider's available models for a supplied/stored key, writes nothing.
@@ -134,14 +140,9 @@ export const KNOWN_GAPS: readonly string[] = [
   'hoot/provision-key',
   // cancels an in-flight turn (writes the stream doc terminal state).
   'hoot/stop',
-  // stores a pending TOTP secret against the account; `mfa/disable` is audited, enrollment is not.
+  // stores a pending TOTP secret against the account; the completion of that
+  // enrollment (`mfa/verify-setup`) and its removal (`mfa/disable`) are audited.
   'mfa/setup',
-  // enables MFA on the account and persists the encrypted secret + backup codes.
-  'mfa/verify-setup',
-  // renames (PATCH) or deletes (DELETE) an account passkey credential.
-  'passkeys/[credentialId]',
-  // persists a new WebAuthn credential on the account.
-  'passkeys/register/verify',
   // stores or removes the caller's encrypted user-level LLM api key.
   'settings/llm-key',
   // operator (session) mints an agent registration code for a site.

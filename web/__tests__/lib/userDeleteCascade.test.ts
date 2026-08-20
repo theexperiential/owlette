@@ -156,13 +156,26 @@ describe('performUserDeleteCascade — Firebase Auth revoke side-effect', () => 
       sites: [],
       passkeyEnrolled: false,
       mfaEnrolled: false,
+      // The denormalized factor inventory must be zeroed with the rest.
+      // A stale `{ totp: true, passkeys: n }` survives as a well-formed
+      // inventory that `normalizeMfaFactors` trusts, so the next recompute
+      // would resurrect `mfaEnrolled: true` on a deleted account.
+      mfaFactors: { totp: false, passkeys: 0 },
       mfaSecret: '__FIELD_DELETE__',
       backupCodes: [],
       mfaEnrolledAt: '__FIELD_DELETE__',
+      // Deliberately false, NOT re-armed. The cascade writes this directly
+      // rather than via `applyMfaFactorChange` precisely because that module
+      // derives `requiresMfaSetup = true` on zero factors — a soft-deleted
+      // account must never be pushed back into mandatory 2FA setup.
       requiresMfaSetup: false,
       deletedBy: 'superadmin',
     });
     expect(softDelete?.payload.deletedAt).toEqual(expect.any(Number));
+    // toMatchObject is subset-matching and would pass on a missing key if the
+    // expectation itself regressed; assert the zeroed inventory exactly.
+    expect(softDelete?.payload.mfaFactors).toEqual({ totp: false, passkeys: 0 });
+    expect(softDelete?.payload.requiresMfaSetup).toBe(false);
   });
 
   it('treats auth/user-not-found from updateUser as already-disabled (no rollback)', async () => {

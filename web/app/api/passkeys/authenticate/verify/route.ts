@@ -1,12 +1,17 @@
 /**
  * Passkey Authentication Verification API
  *
- * Verifies the WebAuthn authentication response, then creates the session
- * via `createSession` and mints a Firebase custom token. Passkey login does
- * NOT bypass 2FA: `createSession` re-derives MFA state from Firestore, so a
- * TOTP-enrolled user is still redirected to `/verify-2fa` by the proxy unless
- * the session was already verified (same-user preserve) or the device carries
- * a valid `owlette_device_trust` cookie.
+ * Verifies the WebAuthn authentication response, then creates the session via
+ * `createSession` and mints a Firebase custom token. Passkey login SATISFIES 2FA
+ * in a single ceremony: the verification below pins `requireUserVerification:
+ * true`, so a successful verify proves possession of the credential and
+ * verification of the user (PIN/biometric) together. The session is therefore
+ * created with `mfaSatisfiedBy: 'passkey-uv'` and is born `mfaVerified` even for
+ * a TOTP-enrolled user, instead of bouncing them to `/verify-2fa`.
+ *
+ * `mfaRequired` is still re-derived from Firestore by `createSession` — this
+ * route asserts only that the challenge has been SATISFIED, never that it does
+ * not apply.
  *
  * POST /api/passkeys/authenticate/verify
  * Request: { credential: AuthenticationResponseJSON, challengeId: string }
@@ -117,8 +122,13 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       authenticationInfo.newCounter
     );
 
-    // Create iron-session
-    await createSession(userId);
+    // Create iron-session. Reaching this line means `verifyAuthenticationResponse`
+    // returned verified WITH `requireUserVerification: true` (pinned above), so the
+    // authenticator checked the human and not just the credential — the whole basis
+    // for treating one passkey ceremony as two factors. The `'passkey-uv'` literal
+    // is hardcoded here on purpose: the argument is server-side only and must never
+    // be derived from the request (see the parameter docs on `createSession`).
+    await createSession(userId, 7, 'passkey-uv');
 
     // Create Firebase custom token for client-side Firebase Auth
     const adminAuth = getAdminAuth();

@@ -244,12 +244,15 @@ function LoginForm() {
         await signInWithCustomToken(firebaseAuth, customToken);
       }
 
-      // The passkey verify route already minted a server-side session.
-      // Passkey is intended to count as a second factor — if the user
-      // also has TOTP MFA enrolled, the server-side session will still
-      // mark `mfaRequired: true` and the proxy will redirect to
-      // /verify-2fa. This is fail-safe behaviour pending a Wave 3 change
-      // that marks passkey sign-in as MFA-satisfying server-side.
+      // The passkey verify route already minted a server-side session, and it
+      // minted that session MFA-satisfied: the verify runs with
+      // `requireUserVerification: true`, so it passes
+      // `mfaSatisfiedBy: 'passkey-uv'` to `createSession`. A user who also has
+      // TOTP enrolled therefore keeps `mfaRequired: true` but is born
+      // `mfaVerified: true` — one user-verified ceremony covers both factors,
+      // so the proxy does not send them to /verify-2fa. The redirect below
+      // still asks the SERVER where to go; nothing here decides the gate
+      // client-side.
       toast.success('signed in with passkey!');
       // No settle: the verify route above already minted the session cookie
       // before returning, so waiting would be dead latency.

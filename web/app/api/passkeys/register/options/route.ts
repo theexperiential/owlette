@@ -7,6 +7,16 @@
  * POST /api/passkeys/register/options
  * Request: { userId: string }
  * Response: PublicKeyCredentialCreationOptionsJSON
+ *
+ * SECURITY — the enrollment gate:
+ *   `/api/*` is deliberately NOT MFA-gated (`proxy.ts` returns early for every
+ *   `/api` path, and `requireSessionUser` only checks uid equality). Now that a
+ *   UV-verified passkey satisfies MFA in a single ceremony, a session that has
+ *   not cleared a challenge but CAN enroll a new factor can step straight up
+ *   into a verified session — a full MFA bypass from a stolen `__session`
+ *   cookie, plus a permanent attacker-controlled credential on the account.
+ *   So: enrolling the FIRST factor stays open (that is the mandatory-setup
+ *   path), and every enrollment after that requires `mfaVerified`.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -15,6 +25,8 @@ import { isoUint8Array } from '@simplewebauthn/server/helpers';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { ApiAuthError, assertActiveUser, requireSessionUser } from '@/lib/apiAuth.server';
 import { apiError } from '@/lib/apiErrorResponse';
+import { normalizeMfaFactors } from '@/lib/mfaFactors.server';
+import { checkMfaEnrollmentGate } from '@/lib/mfaEnrollmentGate.server';
 import {
   getRpId,
   getRpName,
@@ -57,6 +69,21 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       id: p.credentialId,
       transports: p.transports,
     }));
+
+    // THE ENROLLMENT GATE — one shared implementation for every factor-enrollment
+    // route (TOTP and WebAuthn alike); see `lib/mfaEnrollmentGate.server.ts` for
+    // the bypass it closes. The inventory is derived from the two reads already
+    // performed above — `normalizeMfaFactors` heals a legacy or half-written
+    // `mfaFactors` leg from the real subcollection size, which is exactly what
+    // `existingPasskeys` gives us — and passed in, so the gate costs no extra
+    // Firestore round-trip. Refuse BEFORE minting a challenge: an unusable
+    // ceremony is wasted work, and register/verify re-checks the same gate
+    // before it stores anything.
+    const gate = await checkMfaEnrollmentGate(
+      userId,
+      normalizeMfaFactors(userData, existingPasskeys.length),
+    );
+    if (gate.denied) return gate.denied;
 
     const options = await generateRegistrationOptions({
       rpName: getRpName(),

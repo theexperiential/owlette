@@ -31,8 +31,12 @@
  *
  * On success, this route:
  *   1. Verifies the supplied factor (TOTP or backup code).
- *   2. In a single Firestore update, clears `mfaEnrolled`, `mfaSecret`,
- *      and `backupCodes` and stamps `mfaDisabledAt`.
+ *   2. Drops the TOTP leg of the factor inventory via
+ *      `applyMfaFactorChange`, which clears `mfaSecret` / `backupCodes` and
+ *      stamps `mfaDisabledAt` in the SAME write. It also owns `mfaEnrolled`
+ *      and `requiresMfaSetup`: an account that still holds passkeys stays
+ *      enrolled, and one dropping to zero factors is re-armed straight back
+ *      into mandatory setup (`requiresMfaSetup` re-armed to true).
  *   3. Re-mints the session cookie via `markSessionMfaDisabled` so the
  *      user is not immediately bounced to /verify-2fa (the just-completed
  *      proof of possession satisfies the gate).
@@ -67,6 +71,7 @@ import {
   deviceTrustCookieOptions,
 } from '@/lib/deviceTrust.server';
 import { emitMutation } from '@/lib/auditLogClient';
+import { applyMfaFactorChange } from '@/lib/mfaFactors.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -173,19 +178,26 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       }
     }
 
-    // Verified. Tear down MFA in a single update so partial failure can't
-    // leave the user with `mfaEnrolled: true, mfaSecret: null` (which
-    // would make verify-login error out and lock the user out of their
-    // own account).
-    await userRef.update({
-      mfaEnrolled: false,
-      mfaSecret: FieldValue.delete(),
-      backupCodes: [],
-      mfaDisabledAt: FieldValue.serverTimestamp(),
-      // Clear the setup-nag flag too — the user has demonstrated they
-      // can use MFA, so we don't want to immediately nag them to re-enroll.
-      requiresMfaSetup: false,
-    });
+    // Verified. Tear down the TOTP factor in a single write so partial
+    // failure can't leave the user still flagged as enrolled with a deleted
+    // `mfaSecret` (which would make verify-login error out and lock the user
+    // out of their own account). The inventory module owns `mfaEnrolled` and
+    // `requiresMfaSetup` and derives both from what's left: an account that
+    // still holds passkeys stays enrolled, and one that just lost its only
+    // factor is re-armed into mandatory setup. That re-arm is deliberate —
+    // removing the last factor is always allowed, and the account goes
+    // straight back to the /setup-2fa nag rather than silently losing 2FA.
+    const factorResult = await applyMfaFactorChange(
+      userId,
+      { totp: false },
+      {
+        extraUpdate: {
+          mfaSecret: FieldValue.delete(),
+          backupCodes: [],
+          mfaDisabledAt: FieldValue.serverTimestamp(),
+        },
+      },
+    );
 
     // Re-mint the session. The user just proved possession of a factor,
     // so we keep them signed in without forcing a re-challenge against
@@ -214,8 +226,14 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         endpoint: '/api/mfa/disable',
         method: 'POST',
         verb: 'mfa_disabled',
+        factor: 'totp',
         factorUsed: useBackup ? 'backup_code' : 'totp',
         trustedDevicesRevoked,
+        // What the account is left with — a passkey-only account is still
+        // MFA-enrolled after this, and only a drop to zero re-arms the nag.
+        passkeysEnrolled: factorResult.factors.passkeys,
+        stillEnrolled: factorResult.mfaEnrolled,
+        setupReArmed: factorResult.requiresMfaSetup,
       },
     });
 

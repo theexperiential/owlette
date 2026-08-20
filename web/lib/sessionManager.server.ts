@@ -23,7 +23,9 @@
  *       challenge) so AuthContext's every-load `POST /api/auth/session`
  *       stops clobbering `mfaVerified` on page loads. It can also be born
  *       verified via a valid device-trust cookie ("remember this device for
- *       30 days"). See `resolveMfaOnSessionCreate()` for the exact rule.
+ *       30 days"), or via a user-verified passkey ceremony the calling route
+ *       just completed (`mfaSatisfiedBy: 'passkey-uv'`). See
+ *       `resolveMfaOnSessionCreate()` for the exact rule.
  *   The proxy refuses access to protected paths whenever
  *   `mfaRequired && !mfaVerified`, redirecting to `/verify-2fa`.
  *
@@ -212,13 +214,44 @@ function canPreserveVerifiedMfa(
  *      Verified, carrying `prev.mfaCompletedAt` forward so the original
  *      completion time survives AuthContext's every-load re-POST.
  *
- *   3. DEVICE TRUST (`deviceTrusted`) → required, preserve did not apply, but a
- *      valid `owlette_device_trust` cookie was found for this uid. The grant IS
- *      a fresh verification event, so `mfaCompletedAt = now`.
+ *   3. PASSKEY-UV (`mfaSatisfiedBy === 'passkey-uv'`) → required, preserve did
+ *      not apply, but the CALLING ROUTE just completed a WebAuthn ceremony
+ *      under `requireUserVerification: true`. That single ceremony proved
+ *      possession of the credential AND verification of the user
+ *      (PIN/biometric), which is exactly what makes one passkey login
+ *      multi-factor. Verified, with `mfaCompletedAt = now` — the ceremony is
+ *      itself a fresh verification event.
  *
- * Otherwise (required, no preserve, untrusted device) → NOT verified, forcing
- * the `/verify-2fa` challenge; no `mfaCompletedAt`. Preserve outranks device
- * trust, so when both apply the completion time comes from `prev`, not `now`.
+ *   4. DEVICE TRUST (`deviceTrusted`) → required, neither of the above applied,
+ *      but a valid `owlette_device_trust` cookie was found for this uid. The
+ *      grant IS a fresh verification event, so `mfaCompletedAt = now`.
+ *
+ * Otherwise (required, no preserve, no passkey ceremony, untrusted device) →
+ * NOT verified, forcing the `/verify-2fa` challenge; no `mfaCompletedAt`.
+ * Preserve outranks both birth paths, so when it applies the completion time
+ * comes from `prev`, not `now`.
+ *
+ * How `mfaSatisfiedBy` interacts with the two pre-existing rules — worked out
+ * deliberately, not incidental to where the branch happens to sit:
+ *   - vs PRESERVE: preserve is still checked FIRST and is untouched. When both
+ *     apply (an already-verified, still-live session re-authenticating with a
+ *     passkey) the verification outcome is identical either way; only the
+ *     timestamp would differ, and the established rule — the ORIGINAL
+ *     completion time survives AuthContext's every-load re-POST — keeps
+ *     precedence. Ordering passkey-uv above preserve would silently rewrite
+ *     `mfaCompletedAt` on that path for no security gain.
+ *   - vs DEVICE TRUST: both sit below preserve and return byte-identical
+ *     output, so their relative order is unobservable. Passkey-uv reads first
+ *     because it is a verification the server just witnessed, rather than one
+ *     it is remembering from an earlier session.
+ *   - NEITHER IS WEAKENED: `mfaSatisfiedBy` is consulted only inside the
+ *     `resolved.mfaRequired === true` arm, so it can never flip `mfaRequired`
+ *     (still the fresh Firestore truth), and a not-required account resolves
+ *     exactly as it did before.
+ *   - It needs no stickiness: a passkey-born session satisfies
+ *     `canPreserveVerifiedMfa`, so AuthContext's subsequent
+ *     `POST /api/auth/session` — which passes no `mfaSatisfiedBy` — preserves
+ *     the verified state instead of re-challenging the user.
  */
 export function resolveMfaOnSessionCreate(input: {
   prev: {
@@ -232,8 +265,13 @@ export function resolveMfaOnSessionCreate(input: {
   userId: string;
   now: number;
   deviceTrusted: boolean;
+  /**
+   * SERVER-SIDE ONLY — see the security note on `createSession`'s parameter of
+   * the same name. Set only by a route that itself performed the ceremony.
+   */
+  mfaSatisfiedBy?: 'passkey-uv';
 }): { mfaRequired: boolean; mfaVerified: boolean; mfaCompletedAt?: number } {
-  const { prev, resolved, userId, now, deviceTrusted } = input;
+  const { prev, resolved, userId, now, deviceTrusted, mfaSatisfiedBy } = input;
 
   // mfaRequired is always the fresh Firestore truth.
   if (!resolved.mfaRequired) {
@@ -250,13 +288,22 @@ export function resolveMfaOnSessionCreate(input: {
     };
   }
 
-  // Required, no preserve. A valid device-trust cookie births a verified
-  // session; the grant is itself a fresh verification event.
+  // Required, no preserve. A user-verified WebAuthn ceremony completed during
+  // THIS request satisfies the challenge outright (outcome #3): the verifying
+  // route pins `requireUserVerification: true`, so reaching here means the
+  // authenticator checked the human as well as the credential. Fresh event →
+  // `now`.
+  if (mfaSatisfiedBy === 'passkey-uv') {
+    return { mfaRequired: true, mfaVerified: true, mfaCompletedAt: now };
+  }
+
+  // Required, no preserve, no ceremony. A valid device-trust cookie births a
+  // verified session; the grant is itself a fresh verification event.
   if (deviceTrusted) {
     return { mfaRequired: true, mfaVerified: true, mfaCompletedAt: now };
   }
 
-  // Required, no preserve, untrusted → challenge.
+  // Required, and nothing satisfied it → challenge.
   return { mfaRequired: true, mfaVerified: false };
 }
 
@@ -264,6 +311,16 @@ export function resolveMfaOnSessionCreate(input: {
  * Create a new session
  * @param userId - Firebase user ID
  * @param durationDays - Session duration in days (default: 7)
+ * @param mfaSatisfiedBy - SERVER-SIDE ONLY. Pass `'passkey-uv'` when the
+ *   CALLING ROUTE has itself just completed a WebAuthn ceremony verified with
+ *   `requireUserVerification: true`. This value must NEVER be derived from
+ *   anything the client controls — not a request body field, query param,
+ *   header, or cookie — because it is the one input that can birth a session
+ *   `mfaVerified` without a challenge; sourcing it from the request would be an
+ *   MFA bypass with a one-word payload. A reviewer confirms that by grepping
+ *   the two (and only two) call sites: `app/api/auth/session/route.ts`, which
+ *   never passes it, and `app/api/passkeys/authenticate/verify/route.ts`, which
+ *   passes the string literal unconditionally after `verification.verified`.
  *
  * Reads `users/{uid}.mfaEnrolled` synchronously so the session is born with the
  * correct `mfaRequired`. `mfaRequired` is ALWAYS re-derived fresh from
@@ -274,14 +331,20 @@ export function resolveMfaOnSessionCreate(input: {
  *     (`canPreserveVerifiedMfa`), the verified state — and its original
  *     `mfaCompletedAt` — carry forward. This stops AuthContext's every-load
  *     `POST /api/auth/session` from clobbering `mfaVerified` on page loads.
+ *   - PASSKEY-UV: otherwise, when MFA is required and the caller passes
+ *     `mfaSatisfiedBy: 'passkey-uv'`, the session is born `mfaVerified: true`
+ *     with `mfaCompletedAt = now`. One user-verified passkey ceremony is both
+ *     factors, so such a login must not also be sent to `/verify-2fa`.
  *   - DEVICE TRUST: otherwise, when MFA is required, the `owlette_device_trust`
- *     cookie is consulted (only then — never when preserve already applies or
- *     MFA isn't required). A valid, unexpired record under this uid births the
+ *     cookie is consulted (only then — never when preserve or passkey-uv has
+ *     already settled it, and never when MFA isn't required, so neither path
+ *     pays for the lookup). A valid, unexpired record under this uid births the
  *     session `mfaVerified: true` with `mfaCompletedAt = now`.
  *
- * See `resolveMfaOnSessionCreate` for the exact rule. The signature is fixed at
- * `(userId, durationDays)`; the device-trust cookie is read internally so both
- * the session POST and the passkey verify route pick this up unchanged.
+ * See `resolveMfaOnSessionCreate` for the exact rule. The device-trust cookie is
+ * read internally rather than passed in, so every caller picks that path up
+ * unchanged; `mfaSatisfiedBy` is the one explicit caller assertion, because only
+ * the calling route can know that a ceremony just succeeded.
  *
  * Fail-closed: any error reading/looking up the device-trust cookie is caught
  * and treated as untrusted (a challenge). `resolveMfaStateForUser`'s own throw
@@ -290,7 +353,8 @@ export function resolveMfaOnSessionCreate(input: {
  */
 export async function createSession(
   userId: string,
-  durationDays: number = 7
+  durationDays: number = 7,
+  mfaSatisfiedBy?: 'passkey-uv'
 ): Promise<void> {
   const session = await getSession();
 
@@ -312,10 +376,18 @@ export async function createSession(
   // let its throw propagate exactly as before (never swallow it here).
   const resolved = await resolveMfaStateForUser(userId);
 
-  // Preserve is I/O-free, so decide it first: only read the device-trust cookie
-  // when MFA is required AND we cannot already preserve a verified state.
+  // Preserve and passkey-uv are both I/O-free, so decide them first: only read
+  // the device-trust cookie when MFA is required AND neither of the two
+  // higher-precedence paths has already settled the verified state. Skipping
+  // the lookup here is behaviour-neutral — `resolveMfaOnSessionCreate` returns
+  // from those branches before it ever reads `deviceTrusted` — and it saves a
+  // Firestore round-trip on every passkey login.
   let deviceTrusted = false;
-  if (resolved.mfaRequired && !canPreserveVerifiedMfa(prev, userId, now)) {
+  if (
+    resolved.mfaRequired &&
+    !canPreserveVerifiedMfa(prev, userId, now) &&
+    mfaSatisfiedBy !== 'passkey-uv'
+  ) {
     // Fail-CLOSED: ANY error reading the cookie or looking up the record means
     // untrusted → challenge. Logged so on-call sees it, but the error must
     // never escape createSession through this path, and must never flip an
@@ -343,6 +415,7 @@ export async function createSession(
     userId,
     now,
     deviceTrusted,
+    mfaSatisfiedBy,
   });
 
   session.userId = userId;
@@ -364,7 +437,8 @@ export async function createSession(
     'expires:', new Date(expiresAt).toISOString(),
     'mfaRequired:', mfa.mfaRequired,
     'mfaVerified:', mfa.mfaVerified,
-    'deviceTrusted:', deviceTrusted
+    'deviceTrusted:', deviceTrusted,
+    'mfaSatisfiedBy:', mfaSatisfiedBy ?? 'none'
   );
 }
 

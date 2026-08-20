@@ -18,6 +18,9 @@
  *   - `sites: []`
  *   - `mfaEnrolled: false`, `requiresMfaSetup: true`
  *   - `preferences: { temperatureUnit: 'C', timezone: <input or 'UTC'> }`
+ * Plus one field AuthContext never wrote — `mfaFactors: { totp: false,
+ * passkeys: 0 }` — so a new account starts with the denormalized factor
+ * inventory already present rather than needing a read-time backfill.
  */
 
 import type { Firestore } from 'firebase-admin/firestore';
@@ -115,6 +118,14 @@ export async function bootstrapUser(
     displayName,
     mfaEnrolled: false,
     requiresMfaSetup: true,
+    // Seed the factor inventory inline rather than via
+    // `applyMfaFactorChange` from `lib/mfaFactors.server.ts`: that module is
+    // the single writer of `mfaEnrolled`/`requiresMfaSetup` everywhere ELSE,
+    // but it reads the user doc first and throws when it is missing — and
+    // bootstrap is precisely the moment before that doc exists. Without this
+    // seed every new account would be born "legacy" and rely on
+    // `normalizeMfaFactors` repairing the inventory on every read.
+    mfaFactors: { totp: false, passkeys: 0 },
     preferences: {
       temperatureUnit: 'C',
       timezone,

@@ -283,9 +283,24 @@ export async function performUserDeleteCascade(
     sites: [],
     passkeyEnrolled: false,
     mfaEnrolled: false,
+    // Zero the denormalized factor inventory alongside `mfaEnrolled`. Leaving
+    // a well-formed `{ totp: true, passkeys: 2 }` behind isn't cosmetic:
+    // `normalizeMfaFactors` TRUSTS a well-formed stored inventory, so the next
+    // recompute would read those stale legs and resurrect `mfaEnrolled: true`
+    // on a deleted account. Shape mirrors `EMPTY_MFA_FACTORS` in
+    // `lib/mfaFactors.server.ts`.
+    mfaFactors: { totp: false, passkeys: 0 },
     mfaSecret: FieldValue.delete(),
     backupCodes: [],
     mfaEnrolledAt: FieldValue.delete(),
+    // DELIBERATE EXCEPTION to the single-writer rule in
+    // `lib/mfaFactors.server.ts`: the cascade writes `mfaEnrolled`,
+    // `mfaFactors` and `requiresMfaSetup` directly instead of calling
+    // `applyMfaFactorChange`. That module derives `requiresMfaSetup` in both
+    // directions and would therefore write `true` here — re-arming mandatory
+    // 2FA setup on an account that has just been soft-deleted. A deleted user
+    // must never be nagged to enroll, so this one call site owns the write.
+    // Don't "fix" this by routing it through the module.
     requiresMfaSetup: false,
     deletedAt,
     deletedBy: 'superadmin', // route handler doesn't pass actor here; auditLog has it
