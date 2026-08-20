@@ -156,7 +156,7 @@ Passkeys use the Web Authentication API (FIDO2) for passwordless login. A passke
    └── POST /api/passkeys/register/verify
        ├── Verify attestation response
        ├── Store credential in users/{userId}/passkeys/{credentialId}
-       ├── Set passkeyEnrolled: true on user document
+       ├── Recount users/{userId}.mfaFactors.passkeys (transactional)
        └── Delete challenge
 ```
 

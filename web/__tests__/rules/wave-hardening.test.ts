@@ -177,22 +177,6 @@ describe('users/{uid} create — sensitive field defaults pinned', () => {
     );
   });
 
-  test('rejects passkeyEnrolled:true on create', async () => {
-    const db = await asUser(SELF_UID, 'member', []);
-    await seedAsAdmin(async (adminDb) => {
-      await deleteDoc(doc(adminDb, 'users', SELF_UID));
-    });
-
-    await assertFails(
-      setDoc(doc(db, 'users', SELF_UID), {
-        uid: SELF_UID,
-        role: 'member',
-        sites: [],
-        passkeyEnrolled: true, // <-- the attack
-      }),
-    );
-  });
-
   test('rejects mismatched email on create (impersonation)', async () => {
     const db = await asUser(SELF_UID, 'member', []);
     await seedAsAdmin(async (adminDb) => {
@@ -227,7 +211,6 @@ describe('users/{uid} create — sensitive field defaults pinned', () => {
         sites: [],
         mfaEnrolled: false,
         requiresMfaSetup: true,
-        passkeyEnrolled: false,
       }),
     );
   });
@@ -318,10 +301,15 @@ describe('users/{uid} update — diff allowlist', () => {
     );
   });
 
-  test('rejects update to passkeyEnrolled', async () => {
+  // Successor to the retired `passkeyEnrolled` assertion: `mfaFactors` is the
+  // authoritative second-factor tally, so self-writing it is the escalation
+  // the allowlist has to refuse.
+  test('rejects update to mfaFactors', async () => {
     const db = await asUser(SELF_UID, 'member', []);
     await assertFails(
-      updateDoc(doc(db, 'users', SELF_UID), { passkeyEnrolled: true }),
+      updateDoc(doc(db, 'users', SELF_UID), {
+        mfaFactors: { totp: true, passkeys: 3 },
+      }),
     );
   });
 

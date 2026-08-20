@@ -66,7 +66,7 @@ jest.mock('@/contexts/AuthContext', () => ({
     lastSiteId: 'site-a',
     lastMachineIds: {},
     requiresMfaSetup: false,
-    passkeyEnrolled: false,
+    mfaFactors: { totp: false, passkeys: 0 },
     userPreferences: {
       temperatureUnit: 'C',
       timezone: 'UTC',

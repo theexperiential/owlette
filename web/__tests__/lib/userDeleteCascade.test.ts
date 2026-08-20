@@ -154,7 +154,6 @@ describe('performUserDeleteCascade — Firebase Auth revoke side-effect', () => 
     const softDelete = updateCalls.find((call) => call.path === 'users/uid-victim');
     expect(softDelete?.payload).toMatchObject({
       sites: [],
-      passkeyEnrolled: false,
       mfaEnrolled: false,
       // The denormalized factor inventory must be zeroed with the rest.
       // A stale `{ totp: true, passkeys: n }` survives as a well-formed

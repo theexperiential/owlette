@@ -193,7 +193,7 @@ Quick reference of everything that exists. Check here before creating new files 
 
 **Exports**:
 ```typescript
-{ user, loading, role, isAdmin, userSites, requiresMfaSetup, passkeyEnrolled,
+{ user, loading, role, isAdmin, userSites, requiresMfaSetup, mfaFactors,
   userPreferences, signIn, signUp, signInWithGoogle, signOut,
   updateUserProfile, updatePassword, updateUserPreferences, deleteAccount }
 

@@ -94,9 +94,14 @@ export async function seedUser(user: TestUser): Promise<void> {
     displayName: user.displayName ?? '',
     createdAt: new Date(),
     // MFA bypass — avoids the /setup-2fa and /verify-2fa redirect gates.
+    // `mfaFactors` is the tally the app actually reads (AuthContext mirrors it,
+    // and `lib/mfaFactors.server.ts` derives `mfaEnrolled` from it); an empty
+    // one has to be seeded explicitly or a fixture looks like an account whose
+    // inventory was never computed. The legacy `passkeyEnrolled` boolean it
+    // replaced is deliberately NOT seeded — nothing reads it any more.
     mfaEnrolled: false,
     requiresMfaSetup: false,
-    passkeyEnrolled: false,
+    mfaFactors: { totp: false, passkeys: 0 },
     preferences: {
       temperatureUnit: 'C',
       timezone: 'UTC',

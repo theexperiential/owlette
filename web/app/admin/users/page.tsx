@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { Users, Shield, ShieldAlert, Crown, Loader2, Settings, MoreVertical, UserCog, Trash2 } from 'lucide-react';
+import { Users, Shield, ShieldAlert, ShieldOff, Crown, Loader2, Settings, MoreVertical, UserCog, Trash2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from '@/lib/toast';
 import { useAuth } from '@/contexts/AuthContext';
@@ -130,6 +130,9 @@ export default function UserManagementPage() {
   const [manageSitesDialogOpen, setManageSitesDialogOpen] = useState(false);
   const [deleteConfirmDialogOpen, setDeleteConfirmDialogOpen] = useState(false);
   const [roleChangeDialogOpen, setRoleChangeDialogOpen] = useState(false);
+  const [mfaResetDialogOpen, setMfaResetDialogOpen] = useState(false);
+  const [resettingMfaUser, setResettingMfaUser] = useState<string | null>(null);
+  const [userToResetMfa, setUserToResetMfa] = useState<{ uid: string; email: string } | null>(null);
   const [selectedUser, setSelectedUser] = useState<{ uid: string; email: string; role: UserRole; sites: string[] } | null>(null);
   const [userToDelete, setUserToDelete] = useState<{ uid: string; email: string } | null>(null);
   const [authoredTalons, setAuthoredTalons] = useState<UserAuthoredTalons | null>(null);
@@ -279,6 +282,60 @@ export default function UserManagementPage() {
     } finally {
       setUpdatingUser(null);
       setUserToChangeRole(null);
+    }
+  };
+
+  const handleOpenMfaResetDialog = (userId: string, email: string) => {
+    // Self-reset is refused by the API too (a live session is exactly the case
+    // where the proof-of-possession path still works); catching it here saves
+    // the operator a round-trip to a 403.
+    if (userId === currentUser?.uid) {
+      toast.error('cannot reset your own 2FA', {
+        description: 'remove your own factors from account settings, or ask another superadmin.',
+      });
+      return;
+    }
+
+    setUserToResetMfa({ uid: userId, email });
+    setMfaResetDialogOpen(true);
+  };
+
+  const handleConfirmMfaReset = async () => {
+    if (!userToResetMfa) return;
+
+    setResettingMfaUser(userToResetMfa.uid);
+    setMfaResetDialogOpen(false);
+
+    try {
+      const response = await fetch(
+        `/api/users/${encodeURIComponent(userToResetMfa.uid)}/mfa-reset`,
+        { method: 'POST' },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail ?? body.title ?? `reset failed (${response.status})`);
+      }
+      const result = await response.json();
+      const factorsCleared =
+        (result.clearedTotp ? 1 : 0) + (result.deletedPasskeys ?? 0);
+      toast.success('2FA reset', {
+        // A reset on an account that already held nothing is a legitimate
+        // outcome (it's what a retry after a partial failure looks like), so
+        // don't report it as "lost 0 factors".
+        description: factorsCleared === 0
+          ? `${userToResetMfa.email} had no factors to remove, and will be asked to set up 2FA at next sign-in.`
+          : `${userToResetMfa.email} lost ${factorsCleared} factor${
+              factorsCleared === 1 ? '' : 's'
+            }, and will be asked to set up 2FA at next sign-in.`,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error('reset failed', {
+        description: message || 'failed to reset 2FA for this user.',
+      });
+    } finally {
+      setResettingMfaUser(null);
+      setUserToResetMfa(null);
     }
   };
 
@@ -604,6 +661,23 @@ export default function UserManagementPage() {
                             </DropdownMenuItem>
                             <DropdownMenuSeparator className="bg-border" />
                             <DropdownMenuItem
+                              onClick={() => handleOpenMfaResetDialog(user.uid, user.email)}
+                              disabled={resettingMfaUser === user.uid || user.uid === currentUser?.uid}
+                              className="text-red-400 hover:bg-red-950/30! hover:text-red-300! cursor-pointer focus:bg-red-950/30 focus:text-red-300"
+                            >
+                              {resettingMfaUser === user.uid ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  resetting...
+                                </>
+                              ) : (
+                                <>
+                                  <ShieldOff className="h-4 w-4 mr-2" />
+                                  reset 2FA...
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
                               onClick={() => handleOpenDeleteDialog(user.uid, user.email)}
                               disabled={deletingUser === user.uid || user.uid === currentUser?.uid}
                               className="text-red-400 hover:bg-red-950/30! hover:text-red-300! cursor-pointer focus:bg-red-950/30 focus:text-red-300"
@@ -878,6 +952,53 @@ export default function UserManagementPage() {
             >
               <Trash2 className="h-4 w-4 mr-2" />
               delete user
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 2FA Reset Confirmation Dialog — the supported recovery path for a user
+          who has lost their last factor AND their backup codes. Destructive:
+          it strips every factor, so the consequences are spelled out rather
+          than left to be discovered at the target's next sign-in. */}
+      <Dialog open={mfaResetDialogOpen} onOpenChange={setMfaResetDialogOpen}>
+        <DialogContent className="border-border bg-card text-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-foreground flex items-center gap-2">
+              <ShieldOff className="h-5 w-5 text-red-400" />
+              reset 2FA
+            </DialogTitle>
+            <DialogDescription className="text-foreground">
+              remove every second factor from <strong className="text-foreground">{userToResetMfa?.email}</strong>?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="my-4 space-y-3">
+            <div className="bg-red-950/30 border border-red-900/50 rounded-lg p-4">
+              <p className="text-red-300 text-sm">
+                their authenticator app, passkeys and backup codes all stop working. they will be
+                signed out of every trusted device, and asked to set up 2FA again the next time they
+                sign in.
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              only do this once you have confirmed who you are talking to — a reset hands the
+              account to whoever signs in next.
+            </p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => setMfaResetDialogOpen(false)}
+              className="bg-secondary border border-border cursor-pointer"
+            >
+              cancel
+            </Button>
+            <Button
+              onClick={handleConfirmMfaReset}
+              className="bg-red-600 hover:bg-red-700 text-foreground cursor-pointer"
+            >
+              <ShieldOff className="h-4 w-4 mr-2" />
+              reset 2FA
             </Button>
           </DialogFooter>
         </DialogContent>

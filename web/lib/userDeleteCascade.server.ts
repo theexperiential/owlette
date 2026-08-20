@@ -198,8 +198,9 @@ export async function performUserDeleteCascade(
   }
 
   // 6. Revoke passkeys: delete discoverable credentials stored under the
-  //    user's passkey subcollection. The final user update below clears the
-  //    passkeyEnrolled flag even if some credential deletes fail.
+  //    user's passkey subcollection. The final user update below zeroes
+  //    `mfaFactors` even if some credential deletes fail, so the account
+  //    cannot be left claiming factors it no longer has.
   try {
     const passkeysSnap = await userRef.collection('passkeys').get();
     for (const passkeyDoc of passkeysSnap.docs) {
@@ -281,7 +282,6 @@ export async function performUserDeleteCascade(
   const deletedAt = Date.now();
   await userRef.update({
     sites: [],
-    passkeyEnrolled: false,
     mfaEnrolled: false,
     // Zero the denormalized factor inventory alongside `mfaEnrolled`. Leaving
     // a well-formed `{ totp: true, passkeys: 2 }` behind isn't cosmetic:

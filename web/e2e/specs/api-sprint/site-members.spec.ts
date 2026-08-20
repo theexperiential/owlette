@@ -37,7 +37,7 @@ async function seedUser(uid: string, role: string): Promise<void> {
     createdAt: new Date(),
     mfaEnrolled: false,
     requiresMfaSetup: false,
-    passkeyEnrolled: false,
+    mfaFactors: { totp: false, passkeys: 0 },
   });
 }
 

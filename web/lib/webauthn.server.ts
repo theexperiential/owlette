@@ -5,6 +5,17 @@
  * Handles challenge storage, credential persistence, and RP configuration.
  *
  * IMPORTANT: This file should only be imported in server components/API routes.
+ *
+ * RETIRED FIELD — `users/{uid}.passkeyEnrolled`:
+ * `storePasskey` / `deletePasskey` used to set a boolean on the user document
+ * alongside the credential write. That was a second source of truth for "this
+ * account has passkeys", maintained non-transactionally, and it could disagree
+ * with the subcollection it claimed to summarize. The authoritative answer is
+ * now `users/{uid}.mfaFactors.passkeys`, recounted from this subcollection
+ * inside a transaction by `applyMfaFactorChange` in `lib/mfaFactors.server.ts`.
+ * Nothing reads `passkeyEnrolled` any more, but user documents written before
+ * this change still CARRY it until a cleanup pass drops it — a stale value
+ * there is inert, not a bug. Do not reintroduce a writer for it.
  */
 
 import { getAdminDb } from '@/lib/firebase-admin';
@@ -185,16 +196,19 @@ export async function storePasskey(
   friendlyName: string
 ): Promise<void> {
   const db = getAdminDb();
-  const batch = db.batch();
 
-  // Store credential in passkeys subcollection
+  // Store credential in passkeys subcollection. The credential document is the
+  // only thing written here: the account's factor tally is owned by
+  // `applyMfaFactorChange({ recountPasskeys: true })`, which the caller runs
+  // immediately after and which counts this subcollection inside a transaction.
+  // A summary flag written from here could not be transactional with that count.
   const passkeyRef = db
     .collection('users')
     .doc(userId)
     .collection('passkeys')
     .doc(credential.credentialId);
 
-  batch.set(passkeyRef, {
+  await passkeyRef.set({
     credentialPublicKey: credential.credentialPublicKey,
     counter: credential.counter,
     transports: credential.transports ?? [],
@@ -204,12 +218,6 @@ export async function storePasskey(
     createdAt: new Date(),
     lastUsedAt: new Date(),
   });
-
-  // Set passkeyEnrolled flag on user document
-  const userRef = db.collection('users').doc(userId);
-  batch.update(userRef, { passkeyEnrolled: true });
-
-  await batch.commit();
 }
 
 export async function deletePasskey(
@@ -218,25 +226,16 @@ export async function deletePasskey(
 ): Promise<void> {
   const db = getAdminDb();
 
-  // Delete the passkey document
+  // Delete the passkey document. Whether this was the account's last passkey is
+  // not decided here — the caller's `applyMfaFactorChange({ recountPasskeys })`
+  // recounts the subcollection transactionally and owns every consequence of
+  // reaching zero (re-arming `requiresMfaSetup`, revoking trusted devices).
   await db
     .collection('users')
     .doc(userId)
     .collection('passkeys')
     .doc(credentialId)
     .delete();
-
-  // Check if any passkeys remain
-  const remaining = await db
-    .collection('users')
-    .doc(userId)
-    .collection('passkeys')
-    .limit(1)
-    .get();
-
-  if (remaining.empty) {
-    await db.collection('users').doc(userId).update({ passkeyEnrolled: false });
-  }
 }
 
 export async function updatePasskeyCounter(

@@ -1,8 +1,8 @@
 rules_version = '2';
 
 // Owlette Firestore Security Rules
-// Version: 2.8.0 - talon presets: config/{siteId}/talon_presets (client read, server-managed writes)
-// Last Updated: 2026-08-15
+// Version: 2.8.1 - users create: dropped the retired passkeyEnrolled clause (superseded by mfaFactors)
+// Last Updated: 2026-08-19
 //
 // Security Model:
 // - Role-based access control (RBAC): user | admin | agent
@@ -636,9 +636,7 @@ service cloud.firestore {
                        (!('mfaEnrolled' in request.resource.data) ||
                         request.resource.data.mfaEnrolled == false) &&
                        (!('requiresMfaSetup' in request.resource.data) ||
-                        request.resource.data.requiresMfaSetup == true) &&
-                       (!('passkeyEnrolled' in request.resource.data) ||
-                        request.resource.data.passkeyEnrolled == false);
+                        request.resource.data.requiresMfaSetup == true);
 
       // Self-update is restricted to an explicit allowlist of safe profile
       // fields. Sensitive fields (role, email, sites, MFA state, passkey

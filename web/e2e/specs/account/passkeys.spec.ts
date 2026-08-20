@@ -11,8 +11,9 @@
  *
  * What this spec DOES cover (the UX surface that can break regardless
  * of WebAuthn plumbing):
- *   - seeded member (passkeyEnrolled=false, per `seed.ts`) sees the
- *     empty-state copy "no passkeys registered yet."
+ *   - seeded member (no passkeys — `seed.ts` seeds an empty `mfaFactors`
+ *     inventory and no credential documents) sees the empty-state copy
+ *     "no passkeys registered yet."
  *   - the "add passkey" button renders
  *   - clicking it reveals the name input AND the button flips to
  *     "register passkey" — proves the two-step toggle contract

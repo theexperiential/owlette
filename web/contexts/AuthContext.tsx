@@ -23,6 +23,11 @@ import { inAppDiagnostics, isPopupUnavailableError } from '@/lib/inAppBrowser';
 import { getBrowserTimezone } from '@/lib/timeUtils';
 import { toast } from '@/lib/toast';
 import * as Sentry from '@sentry/nextjs';
+// Type-only import: `lib/mfaFactors.server.ts` is Admin-SDK code and must never
+// reach the client bundle. `import type` is erased at compile time, so this
+// borrows the shape without the module — the same trick `hooks/useMfaFactors.ts`
+// uses for `PasskeyInfo`.
+import type { MfaFactorInventory } from '@/lib/mfaFactors.server';
 
 // Shallow-compare two arrays by value (for string arrays like userSites)
 function arraysEqual(a: string[], b: string[]): boolean {
@@ -84,6 +89,40 @@ function isDeepEqual(a: unknown, b: unknown): boolean {
     if (!isDeepEqual(aObj[key], bObj[key])) return false;
   }
   return true;
+}
+
+// The inventory of an account with no second factor. Deliberately a local
+// literal rather than an import of `EMPTY_MFA_FACTORS`: that constant lives in
+// a `.server` module, and importing its VALUE would drag the Admin SDK into the
+// client bundle. Frozen for the same reason its server twin is — it is shared
+// by the default context value and the initial state, so a consumer mutating
+// it would corrupt every subsequent reader.
+const NO_MFA_FACTORS: MfaFactorInventory = Object.freeze({ totp: false, passkeys: 0 });
+
+/**
+ * Read the second-factor tally off a user document.
+ *
+ * `users/{uid}.mfaFactors` is written only by `lib/mfaFactors.server.ts`, which
+ * keeps it in step with the `passkeys` subcollection transactionally. It
+ * replaced the legacy `passkeyEnrolled` boolean this context used to read;
+ * documents written before the switch still carry that field, but nothing reads
+ * it, so a stale value there is inert.
+ *
+ * Parsed defensively because the field is genuinely absent on accounts that
+ * predate it, and a malformed value must read as "no factors" rather than
+ * accidentally satisfying a "has a passkey" check.
+ */
+function readMfaFactorsFromDoc(userData: Record<string, unknown>): MfaFactorInventory {
+  const raw = userData.mfaFactors;
+  if (typeof raw !== 'object' || raw === null) return NO_MFA_FACTORS;
+  const { totp, passkeys } = raw as { totp?: unknown; passkeys?: unknown };
+  return {
+    totp: totp === true,
+    passkeys:
+      typeof passkeys === 'number' && Number.isInteger(passkeys) && passkeys > 0
+        ? passkeys
+        : 0,
+  };
 }
 
 // Helper functions for server-side session management
@@ -248,7 +287,8 @@ interface AuthContextType {
   lastSiteId: string | null; // Last active site (synced to Firestore)
   lastMachineIds: Record<string, string>; // Last active machine per site (synced to Firestore)
   requiresMfaSetup: boolean; // Whether user needs to complete 2FA setup
-  passkeyEnrolled: boolean; // Whether user has registered passkeys
+  /** Second factors this account holds, mirrored live from the user document. `passkeys > 0` answers "does this account have a passkey"; `totp || passkeys > 0` is the same fact as `mfaEnrolled`. */
+  mfaFactors: MfaFactorInventory;
   userPreferences: UserPreferences; // User preferences (temperature unit, etc.)
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, firstName?: string, lastName?: string, turnstileToken?: string) => Promise<void>;
@@ -275,7 +315,7 @@ const AuthContext = createContext<AuthContextType>({
   lastSiteId: null,
   lastMachineIds: {},
   requiresMfaSetup: false,
-  passkeyEnrolled: false,
+  mfaFactors: NO_MFA_FACTORS,
   userPreferences: { temperatureUnit: 'C', timezone: 'UTC', timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true },
   signIn: async () => {},
   signUp: async () => {},
@@ -305,7 +345,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [role, setRole] = useState<UserRole | null>(null);
   const [userSites, setUserSites] = useState<string[]>([]);
   const [requiresMfaSetup, setRequiresMfaSetup] = useState(false);
-  const [passkeyEnrolled, setPasskeyEnrolled] = useState(false);
+  const [mfaFactors, setMfaFactors] = useState<MfaFactorInventory>(NO_MFA_FACTORS);
   const [userPreferences, setUserPreferences] = useState<UserPreferences>({ temperatureUnit: 'C', timezone: getBrowserTimezone(), timeFormat: '12h', timeDisplayMode: 'machine', healthAlerts: true, processAlerts: true, thresholdAlerts: true, cortexAlerts: true, displayAlerts: true, talonAlerts: true, displayAlertsBannerDismissed: false, mutedMachines: [], alertCcEmails: [], statsExpanded: true, processesExpanded: true });
   // Mirror userPreferences in a ref so updateUserPreferences can read the
   // current value without putting userPreferences in its useCallback deps —
@@ -420,7 +460,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     : null;
                 const newSites: string[] = userData.sites || [];
                 const newRequiresMfa = userData.requiresMfaSetup || false;
-                const newPasskeyEnrolled = userData.passkeyEnrolled || false;
+                const newMfaFactors = readMfaFactorsFromDoc(userData);
                 const newLastSiteId = userData.lastSiteId || null;
                 const newLastMachineIds: Record<string, string> = userData.lastMachineIds || {};
 
@@ -428,7 +468,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 setRole(prev => prev === newRole ? prev : newRole);
                 setUserSites(prev => arraysEqual(prev, newSites) ? prev : newSites);
                 setRequiresMfaSetup(prev => prev === newRequiresMfa ? prev : newRequiresMfa);
-                setPasskeyEnrolled(prev => prev === newPasskeyEnrolled ? prev : newPasskeyEnrolled);
+                setMfaFactors(prev =>
+                  prev.totp === newMfaFactors.totp && prev.passkeys === newMfaFactors.passkeys
+                    ? prev
+                    : newMfaFactors
+                );
                 setLastSiteId(prev => prev === newLastSiteId ? prev : newLastSiteId);
                 setLastMachineIds(prev => shallowEqual(prev, newLastMachineIds) ? prev : newLastMachineIds);
 
@@ -1074,7 +1118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     lastSiteId,
     lastMachineIds,
     requiresMfaSetup,
-    passkeyEnrolled,
+    mfaFactors,
     userPreferences,
     signIn,
     signUp,
@@ -1088,7 +1132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     updateLastSite,
     updateLastMachine,
     deleteAccount,
-  }), [user, loading, role, isSuperadmin, isSiteAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, passkeyEnrolled, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, sendPasswordReset, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
+  }), [user, loading, role, isSuperadmin, isSiteAdmin, userSites, lastSiteId, lastMachineIds, requiresMfaSetup, mfaFactors, userPreferences, signIn, signUp, signInWithGoogle, signOut, updateUserProfile, updateUserPhoto, updatePassword, sendPasswordReset, updateUserPreferences, updateLastSite, updateLastMachine, deleteAccount]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -43,7 +43,7 @@ async function seedUser(uid: string, role: string, sites: string[] = []): Promis
     createdAt: new Date(),
     mfaEnrolled: false,
     requiresMfaSetup: false,
-    passkeyEnrolled: false,
+    mfaFactors: { totp: false, passkeys: 0 },
   });
 }
 
