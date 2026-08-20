@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useScrollFade } from '@/hooks/useScrollFade'
 import { pickDirectory, pickExecutable, pickFile } from '@/lib/pickers'
 import {
   coerceForm,
@@ -162,6 +163,8 @@ export function ProcessDetail({
   const [draft, setDraft] = useState<ProcessForm>(() => formFromProcess(process))
   const [pendingRefresh, setPendingRefresh] = useState(false)
   const [editingSchedule, setEditingSchedule] = useState(false)
+
+  const scroller = useScrollFade<HTMLDivElement>()
 
   // The values last known to be on disk, so an incoming document can be told
   // apart from the echo of our own write.
@@ -440,7 +443,9 @@ export function ProcessDetail({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+      {/* The form dissolves under the header rather than being cut by it; the
+          fields are tall enough that a half-row of one reads as a fault. */}
+      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
         <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-x-3 gap-y-3">
           {/* The name lives in the header row above; this is the rest of it. */}
           <SectionLabel first>what to run</SectionLabel>

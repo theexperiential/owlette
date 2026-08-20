@@ -9,9 +9,10 @@ import {
   Square,
   Trash2,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ProcessIcon } from '@/components/ProcessIcon'
 import { ProcessListEmpty } from '@/components/ProcessListEmpty'
+import { useScrollFade } from '@/hooks/useScrollFade'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -32,6 +33,18 @@ export type ProcessAction = 'restart' | 'kill' | 'duplicate' | 'delete'
 
 /** How far the pointer travels before a click becomes a drag. */
 const DRAG_THRESHOLD_PX = 4
+
+/**
+ * How much room the rows must leave before the drop hint is offered at all.
+ *
+ * The sentence and its glyph stack ~70px (a 16px icon, an 8px gap, two 22.75px
+ * lines of text-sm/leading-relaxed); the other 90px is air, 45px a side. Sitting
+ * where it does — see the `mt-14` below — that reads as ~73px of clear space
+ * above the sentence and the same below it down to the sidebar's floor. Under
+ * this it stops being a hint and becomes a line squeezed above the toggle, so
+ * nothing is drawn at all: an empty corner is the tidier of the two answers.
+ */
+const HINT_MIN_ROOM_PX = 160
 
 interface ProcessListProps {
   processes: ProcessEntry[]
@@ -105,7 +118,14 @@ export function ProcessList({
   // as a native context menu without pulling in another primitive.
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null)
 
+  const isEmpty = processes.length === 0
+
   const listRef = useRef<HTMLUListElement>(null)
+  // Rows disappear under the header rather than being guillotined by it.
+  const scrollerRef = useScrollFade<HTMLDivElement>()
+  // The box the drop hint would sit in, and how tall it turned out to be.
+  const hintRoomRef = useRef<HTMLDivElement>(null)
+  const [hintRoom, setHintRoom] = useState<number | null>(null)
   const dragRef = useRef<DragState | null>(null)
   // Mirrors the ref so the indicator re-renders; the ref is what the pointer
   // handlers read, because they run between renders.
@@ -203,6 +223,26 @@ export function ProcessList({
   // drop overlay, which would then ignore real drops.
   useEffect(() => endDrag, [endDrag])
 
+  // The room the rows leave is the height of the box they leave it in. That box
+  // is `flex-1 min-h-0`, so its height is the leftover and does not change when
+  // the sentence moves in or out of it — which is what keeps the rule from
+  // oscillating. Measured in a layout effect so the answer is in before the
+  // first paint, and the hint never flashes in and back out.
+  useLayoutEffect(() => {
+    const room = hintRoomRef.current
+    // Guarded for the test environment, which has no layout to observe anyway.
+    if (!room || typeof ResizeObserver === 'undefined') return
+    const measure = () => setHintRoom(room.clientHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(room)
+    return () => observer.disconnect()
+  }, [collapsed, isEmpty])
+
+  // `null` until something measures: with no layout to read, the sentence is
+  // the honest default.
+  const showHint = hintRoom === null || hintRoom >= HINT_MIN_ROOM_PX
+
   return (
     <div
       className="flex h-full min-h-0 flex-col"
@@ -232,19 +272,28 @@ export function ProcessList({
 
       {/* pt-1: the focus ring sits 3px outside a row (1px outline + 2px
           offset); without top padding the first row's ring clips against the
-          scroll boundary on keyboard selection. */}
-      <div className={cn('min-h-0 flex-1 overflow-y-auto pt-1 pb-2', collapsed ? 'px-1.5' : 'px-2')}>
-        {processes.length === 0 ? (
-          // Nothing to say in 48 px that the expanded list does not say better;
-          // the add button above is the whole instruction the rail can carry.
-          collapsed ? null : (
-            <ProcessListEmpty dragOver={dragOver} />
-          )
-        ) : (
-          // At least the height of the scroller, so the hint below can take the
-          // space the rows leave; past that the column grows and the hint tucks
-          // in under the last row.
-          <div className="flex min-h-full flex-col">
+          scroll boundary on keyboard selection.
+
+          Nothing beneath it and no padding under it: the scroller reaches the
+          floor of the sidebar, so its track does too. A track that stopped 56px
+          short — the height of the toggle row that used to sit below it —
+          read as a rendering fault. */}
+      <div
+        ref={scrollerRef}
+        className={cn('min-h-0 flex-1 overflow-y-auto pt-1', collapsed ? 'px-1.5' : 'px-2')}
+      >
+        {/* At least the height of the scroller, so the toggle rests on the floor
+            when the rows fall short of it and the hint can take the room they
+            leave; past that the column grows with the list. */}
+        <div className="flex min-h-full flex-col">
+          {isEmpty ? (
+            // Nothing to say in 48 px that the expanded list does not say
+            // better; the add button above is the whole instruction the rail
+            // can carry.
+            collapsed ? null : (
+              <ProcessListEmpty dragOver={dragOver} />
+            )
+          ) : (
             <ul ref={listRef} className="flex flex-col gap-0.5">
               {processes.map((process, position) => {
                 const status = statusForProcess(states, process.id)
@@ -361,70 +410,115 @@ export function ProcessList({
                 )
               })}
             </ul>
+          )}
 
-            {/*
-              Once there are rows, the empty state's lesson — that a file dropped
-              on this window becomes a process — has nowhere left to be said.
-              This is that sentence, at a whisper, floating in whatever room the
-              list leaves. The rail has no room for it and no line breaks that
-              would help, so it is not offered there.
+          {/*
+            Once there are rows, the empty state's lesson — that a file dropped on
+            this window becomes a process — has nowhere left to be said. This is
+            that sentence, at a whisper, floating in whatever room the list
+            leaves, and withheld once the rows leave too little of it: pressed up
+            against the toggle it read as a stray line rather than an invitation.
+            The rail has no room for it and no line breaks that would help, so it
+            is not offered there either.
 
-              It is inert (`pointer-events-none`) and outside the `ul`, so it
-              cannot take a drag away from a row, an OS drop from the window, or
-              a right-click from the context menu.
-            */}
-            {!collapsed && (
-              <div className="flex flex-1 items-center justify-center px-3 py-6">
+            The box is measured whether or not the sentence is in it — `flex-1`
+            with `min-h-0`, so its height is the room the rows leave and nothing
+            it holds can change that. That is also what keeps the hint out of the
+            scrollable extent: once the rows overflow this collapses to nothing,
+            and the scrollbar answers for the list alone.
+
+            It is inert (`pointer-events-none`) and outside the `ul`, so it
+            cannot take a drag away from a row, an OS drop from the window, or
+            a right-click from the context menu.
+          */}
+          {!collapsed && !isEmpty && (
+            <div
+              ref={hintRoomRef}
+              data-testid="process-list-drop-room"
+              className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-3"
+            >
+              {showHint && (
+                // mt-14 is the toggle strip's own height, and on a centred flex
+                // item a top margin moves the box down by half of it. The
+                // sentence is therefore centred against the floor of the
+                // sidebar rather than against the toggle sitting on it, which
+                // is where the eye reads the empty space as ending. It is a
+                // margin and not padding so the box above still measures the
+                // room and nothing else.
                 <p
                   data-testid="process-list-drop-hint"
-                  className="pointer-events-none flex flex-col items-center gap-2 text-center text-sm leading-relaxed text-muted-foreground"
+                  className="pointer-events-none mt-14 flex flex-col items-center gap-2 text-center text-sm leading-relaxed text-muted-foreground"
                 >
                   <FilePlus2 aria-hidden className="size-4 shrink-0" />
                   {/* max-w forces the copy onto two lines so the hint reads as a
                       compact stack instead of one wide strip. */}
                   <span className="min-w-0 max-w-36">drop an app or script here to add it</span>
                 </p>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/*
-        The toggle, pinned where an activity bar keeps its own controls: the
-        bottom of the column, below everything the list has to say. Right-aligned
-        while expanded and centred in the rail — which at 48 px is the same
-        corner. The divider collapses and expands too; this is the affordance for
-        operators who never discover that a border can be dragged.
-      */}
-      {onCollapsedChange && (
-        <div
-          className={cn(
-            'flex shrink-0 pt-1 pb-3',
-            collapsed ? 'justify-center px-2' : 'justify-end px-3',
+              )}
+            </div>
           )}
-        >
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                // Quiet chrome, not content: the muted blue-tinted foreground
-                // the other passive icons wear, brightening on hover.
-                className="text-muted-foreground hover:text-foreground"
-                onClick={() => onCollapsedChange(!collapsed)}
-                aria-label={collapsed ? 'expand the process list' : 'collapse the process list'}
-                data-testid={collapsed ? 'expand-sidebar' : 'collapse-sidebar'}
-              >
-                {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side={collapsed ? 'right' : 'top'}>
-              {collapsed ? 'expand sidebar' : 'collapse sidebar'}
-            </TooltipContent>
-          </Tooltip>
+
+          {/*
+            The toggle, pinned where an activity bar keeps its own controls: the
+            bottom of the column, below everything the list has to say. Right-
+            aligned while expanded and centred in the rail — which at 48 px is the
+            same corner. The divider collapses and expands too; this is the
+            affordance for operators who never discover that a border can be
+            dragged.
+
+            It rides inside the scroller, stuck to its floor, rather than in a
+            row beneath it: a row beneath cut the scrollbar's track short of the
+            sidebar's bottom edge, and an overlay would have painted over the
+            track instead. `mt-auto` puts it on the floor in the two layouts with
+            no hint box to push it there: the rail, and the empty state.
+
+            The row veils rather than cuts. Its ground fades in from nothing
+            over the first 60% of its height, so a row travelling into it
+            dissolves the way the top of the list dissolves under the header —
+            a flat band of the same colour chopped rows clean in half 56px clear
+            of the floor, which reads as a clipping fault rather than as
+            scrolling. It also means nothing is left showing beneath the button:
+            the veil is solid from there to the floor, which at 48px, where an
+            icon is the same size as the toggle, is the difference between a
+            control and a thirteenth list item.
+          */}
+          {onCollapsedChange && (
+            <div
+              className={cn(
+                'sticky bottom-0 mt-auto flex shrink-0 bg-[linear-gradient(to_bottom,transparent,var(--background)_60%)] py-2',
+                collapsed ? 'justify-center' : 'justify-end',
+              )}
+            >
+              {/* p-1: the ground reaches a little past the glyph on every side,
+                  so a row behind it never touches the icon. With the row's own
+                  py-2 that is the same 12px the button has always stood off the
+                  floor and the edge by. */}
+              <div className="rounded-lg bg-background p-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      // Quiet chrome, not content: the muted blue-tinted
+                      // foreground the other passive icons wear, brightening on
+                      // hover.
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => onCollapsedChange(!collapsed)}
+                      aria-label={collapsed ? 'expand the process list' : 'collapse the process list'}
+                      data-testid={collapsed ? 'expand-sidebar' : 'collapse-sidebar'}
+                    >
+                      {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side={collapsed ? 'right' : 'top'}>
+                    {collapsed ? 'expand sidebar' : 'collapse sidebar'}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {anchor && index >= 0 && (
         <DropdownMenu open onOpenChange={(open) => !open && setAnchor(null)}>
