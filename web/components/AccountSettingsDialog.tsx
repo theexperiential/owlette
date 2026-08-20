@@ -19,6 +19,7 @@ import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HootIcon } from '@/components/icons/HootIcon';
 import { ApiKeysManager } from '@/components/ApiKeysManager';
+import { useScrollFade } from '@/hooks/useScrollFade';
 
 type SettingsSection = 'profile' | 'preferences' | 'alerts' | 'hoot' | 'security' | 'api' | 'danger';
 
@@ -60,6 +61,9 @@ interface AccountSettingsDialogProps {
 }
 
 export function AccountSettingsDialog({ open, onOpenChange, initialSection }: AccountSettingsDialogProps) {
+  // The section dissolves under the dialog header rather than being cut by it.
+  const bodyRef = useScrollFade<HTMLDivElement>();
+
   const { user, userPreferences, updateUserProfile, updateUserPhoto, updatePassword, updateUserPreferences, deleteAccount } = useAuth();
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection || 'profile');
   const [firstName, setFirstName] = useState('');
@@ -391,7 +395,7 @@ export function AccountSettingsDialog({ open, onOpenChange, initialSection }: Ac
 
           {/* Content */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0">
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+            <div ref={bodyRef} className="flex-1 overflow-y-auto p-4 sm:p-6">
               {/* ─── Profile ─── */}
               {activeSection === 'profile' && (
                 <div className="space-y-5">

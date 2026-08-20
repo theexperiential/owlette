@@ -11,6 +11,7 @@ import { toast } from '@/lib/toast';
 import { TimezoneSelect } from '@/components/TimezoneSelect';
 import { SiteMachinesList } from '@/components/SiteMachinesList';
 import { useUserManagement } from '@/hooks/useUserManagement';
+import { useScrollFade } from '@/hooks/useScrollFade';
 
 interface Site {
   id: string;
@@ -74,6 +75,9 @@ export function ManageSitesDialog({
   onDeleteSite,
   onCreateSite,
 }: ManageSitesDialogProps) {
+  // The list dissolves under the dialog header rather than being cut by it.
+  const listRef = useScrollFade<HTMLDivElement>();
+
   // When superadmin, fetch all users so we can display the owner of foreign sites.
   // Lazily resolve owner UIDs to emails for sites not owned by the current admin.
   const { users: allUsers } = useUserManagement(Boolean(isSuperadmin));
@@ -330,7 +334,7 @@ export function ManageSitesDialog({
             </div>
           </DialogHeader>
 
-          <div className="mt-3 max-h-[60vh] space-y-1.5 overflow-y-auto">
+          <div ref={listRef} className="mt-3 max-h-[60vh] space-y-1.5 overflow-y-auto">
             {filteredSites.length === 0 ? (
               <p className="rounded-lg border border-border bg-card px-3 py-10 text-center text-sm text-muted-foreground">
                 no sites match “{filter.trim()}”

@@ -14,6 +14,7 @@ import { getRandomSuggestions } from '../data/suggestedQuestions';
 import { YOU_TRANSLATIONS } from '@/lib/dashboardConstants';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { HootIcon } from '@/components/icons/HootIcon';
+import { useScrollFade } from '@/hooks/useScrollFade';
 
 function pickYouTranslation(messageId: string) {
   let hash = 0;
@@ -51,6 +52,9 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
   const bottomRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Messages dissolve under the header rather than being cut mid-line by it.
+  // The hook keeps `containerRef` pointed at the same node for the autoscroll.
+  const scrollerRef = useScrollFade(containerRef);
   const isUserScrolledUp = useRef(false);
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
@@ -154,7 +158,7 @@ export function ChatWindow({ messages, isLoading, onToolApproval, onEditMessage,
         </span>
       </button>
 
-      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
+      <div ref={scrollerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-6">
       <div ref={topRef} />
 
       {/* Lightbox overlay */}

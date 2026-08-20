@@ -9,6 +9,7 @@ import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDevicePrefFlag, useDevicePrefNumber } from '@/hooks/useDevicePrefFlag';
+import { useScrollFade } from '@/hooks/useScrollFade';
 
 /** Resizable sidebar bounds (lg+ expanded state only; the icon rail is fixed). */
 const SIDEBAR_MIN_W = 200;
@@ -50,6 +51,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   );
   const [resizing, setResizing] = useState(false);
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  // On mobile the pane runs under the fixed top bar (pt-16); it fades there
+  // rather than being cut by a bar that draws no edge of its own.
+  const mainRef = useScrollFade<HTMLElement>();
 
   const onResizeStart = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -370,7 +374,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto pt-16 lg:pt-0">
+        <main ref={mainRef} className="flex-1 overflow-auto pt-16 lg:pt-0">
           {children}
         </main>
       </div>

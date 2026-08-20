@@ -100,6 +100,7 @@ import {
 import { OutputsCard, newOutputDraft, outputDraftFromTalon, outputDraftToInput, type OutputDraft } from './OutputsCard';
 import { PipelineConnectors, PipelineStackConnector } from './PipelineConnectors';
 import { TriggerCard, newTriggerDraft, triggerDraftFromTalon, triggerDraftToInput, type TriggerDraft } from './TriggerCard';
+import { useScrollFade } from '@/hooks/useScrollFade';
 
 /* -------------------------------------------------------------------------- */
 /*  field path → DOM id                                                       */
@@ -406,6 +407,9 @@ interface TemplateFormState {
 }
 
 function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: TalonEditorFormProps) {
+  // The form dissolves under the dialog header rather than being cut by it.
+  const bodyRef = useScrollFade<HTMLDivElement>();
+
   const [name, setName] = useState(talon?.name ?? '');
   const [description, setDescription] = useState(talon?.description ?? '');
   const [trigger, setTrigger] = useState<TriggerDraft>(() =>
@@ -962,7 +966,7 @@ function TalonEditorForm({ siteId, machines, talon, isSiteAdmin, onClose }: Talo
         </div>
       </DialogHeader>
 
-      <div className="max-h-[65vh] overflow-y-auto space-y-5 pr-1">
+      <div ref={bodyRef} className="max-h-[65vh] overflow-y-auto space-y-5 pr-1">
         {isCreate && (
           <div className="space-y-2">
 

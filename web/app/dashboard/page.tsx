@@ -47,6 +47,7 @@ import { useDeviceCodeAuthorize } from '@/hooks/useDeviceCodeAuthorize';
 import { LoadingWord } from '@/components/LoadingWord';
 import { FallingFeather } from '@/components/FallingFeather';
 import type { Process } from '@/hooks/useFirestore';
+import { useScrollFade } from '@/hooks/useScrollFade';
 
 // Code-split the two heavy detail panels out of the dashboard bundle. Both
 // subtrees are only needed after the user clicks a metric/display cell, so
@@ -73,6 +74,10 @@ interface DetailPanelState {
 }
 
 export default function DashboardPage() {
+  // The process form dissolves under the dialog header rather than being cut
+  // by it; with the schedule section open it easily outgrows a laptop viewport.
+  const processFormRef = useScrollFade<HTMLDivElement>();
+
   const router = useRouter();
   const { user, loading, isSuperadmin, isSiteAdmin, userSites, lastSiteId, updateLastSite, requiresMfaSetup, userPreferences, updateUserPreferences } = useAuth();
   const { sites, loading: sitesLoading, createSite, updateSite, deleteSite } = useSites(user?.uid, userSites, isSuperadmin);
@@ -1372,7 +1377,7 @@ export default function DashboardPage() {
           {/* The form scrolls inside the dialog: with the schedule section open
               the fields alone can outgrow a laptop viewport, and a Dialog that
               overflows puts its footer (save/cancel) out of reach. */}
-          <div className="space-y-4 py-4 max-h-[70vh] overflow-y-auto pr-1">
+          <div ref={processFormRef} className="space-y-4 py-4 max-h-[70vh] overflow-y-auto pr-1">
             {/* Name */}
             <div className="space-y-2">
               <Label htmlFor="edit-name" className="text-foreground">name</Label>
