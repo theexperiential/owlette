@@ -282,6 +282,61 @@ describe('POST /api/mfa/verify-setup — enrollment gate', () => {
   });
 });
 
+describe('POST /api/mfa/verify-setup — backup codes', () => {
+  // First enrollment is the ONE issuance that needs no separate proof of
+  // possession: the TOTP code verified moments earlier IS the proof, and the
+  // gate above already refused any account that holds a factor on an
+  // unverified session. Every other issuance goes through
+  // /api/mfa/backup-codes, which demands live proof.
+  it('mints the sheet server-side when the client sends none', async () => {
+    const req = createMockRequest('http://localhost/api/mfa/verify-setup', {
+      method: 'POST',
+      body: { userId: USER_ID, code: '123456' },
+    });
+
+    const res = await VERIFY_SETUP(req);
+    expect(res.status).toBe(200);
+
+    const body = await res.json();
+    expect(body.backupCodes).toHaveLength(10);
+    expect(new Set(body.backupCodes).size).toBe(10);
+
+    // Only the hashes are stored, and they line up with the returned sheet.
+    const [, , ctx] = mockApplyMfaFactorChange.mock.calls[0];
+    expect(ctx.extraUpdate.backupCodes).toEqual(
+      (body.backupCodes as string[]).map((c) => `hash(${c})`),
+    );
+  });
+
+  it('stamps backupCodesGeneratedAt alongside the sheet', async () => {
+    const res = await VERIFY_SETUP(verifySetupReq());
+    expect(res.status).toBe(200);
+
+    const [, , ctx] = mockApplyMfaFactorChange.mock.calls[0];
+    expect(ctx.extraUpdate.backupCodesGeneratedAt).toBe('__SERVER_TIMESTAMP__');
+  });
+
+  it('still honours a client-supplied sheet and echoes it back', async () => {
+    // Transitional: `app/setup-2fa/page.tsx` generates in the browser and is
+    // already displaying those codes, so storing a different set would leave
+    // the user holding ten strings that unlock nothing.
+    const res = await VERIFY_SETUP(verifySetupReq());
+    expect(res.status).toBe(200);
+    expect((await res.json()).backupCodes).toEqual(['AAAA-BBBB']);
+  });
+
+  it('rejects a malformed sheet', async () => {
+    const req = createMockRequest('http://localhost/api/mfa/verify-setup', {
+      method: 'POST',
+      body: { userId: USER_ID, code: '123456', backupCodes: [123] },
+    });
+
+    const res = await VERIFY_SETUP(req);
+    expect(res.status).toBe(400);
+    expect(mockApplyMfaFactorChange).not.toHaveBeenCalled();
+  });
+});
+
 describe('POST /api/mfa/verify-setup — audit', () => {
   it('emits a user_mutated row recording the added factor', async () => {
     const res = await VERIFY_SETUP(verifySetupReq());

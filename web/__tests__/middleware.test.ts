@@ -245,6 +245,120 @@ describe('proxy — MFA gate', () => {
 });
 
 /* -------------------------------------------------------------------- */
+/*  Wave 3: mandatory-enrollment gate (`requiresMfaSetup`)              */
+/* -------------------------------------------------------------------- */
+
+describe('proxy — mandatory 2FA setup gate', () => {
+  beforeEach(() => {
+    mockValidateSession.mockResolvedValue(null);
+    mockEvaluateSessionMfa.mockReset();
+  });
+
+  /**
+   * A zero-factor account resolves to `pass` (nothing to challenge) with
+   * `requiresSetup: true` — that pairing is the normal shape of this state,
+   * not an edge case.
+   */
+  function setupRequiredSession(outcome: 'pass' | 'challenge' = 'pass') {
+    mockEvaluateSessionMfa.mockResolvedValue({
+      outcome,
+      userId: 'user-1',
+      requiresSetup: true,
+    });
+  }
+
+  it('redirects a requires-setup session off a protected path to /setup-2fa', async () => {
+    setupRequiredSession();
+    const response = await proxy(makeRequest('/dashboard'));
+    expect(response.status).toBe(307);
+    const loc = response.headers.get('location') ?? '';
+    expect(loc).toContain('/setup-2fa');
+    expect(loc).toContain('redirect=%2Fdashboard');
+  });
+
+  it('gates the protected routes the dashboard-only nag never covered', async () => {
+    // The whole point of moving this into the proxy: /roosts, /talons and
+    // /settings were reachable by a zero-factor account that simply never
+    // opened /dashboard.
+    setupRequiredSession();
+    for (const path of ['/roosts', '/talons', '/settings/api-keys', '/admin']) {
+      const response = await proxy(makeRequest(path));
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toContain('/setup-2fa');
+    }
+  });
+
+  it('does NOT redirect a requires-setup session that is already on /setup-2fa', async () => {
+    // `/setup-2fa`.startsWith('/setup') is true, so this page is inside
+    // PROTECTED_PATHS. Without the explicit exemption this is an infinite loop.
+    setupRequiredSession();
+    const response = await proxy(makeRequest('/setup-2fa'));
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('sends a requires-setup session to /setup-2fa rather than /verify-2fa when both apply', async () => {
+    // Inconsistent/transient state (stale cached `mfaRequired`, or the
+    // fail-closed challenge forced by a Firestore blip). The account has no
+    // factor to present, so the challenge page is a dead end — setup wins.
+    setupRequiredSession('challenge');
+    const response = await proxy(makeRequest('/dashboard'));
+    expect(response.status).toBe(307);
+    const loc = response.headers.get('location') ?? '';
+    expect(loc).toContain('/setup-2fa');
+    expect(loc).not.toContain('/verify-2fa');
+  });
+
+  it('renders /setup-2fa (not the challenge) for a requires-setup session with a pending challenge', async () => {
+    setupRequiredSession('challenge');
+    const response = await proxy(makeRequest('/setup-2fa'));
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('leaves /api/* untouched — the enrollment gate lives in the routes', async () => {
+    // `lib/mfaEnrollmentGate.server.ts` is the API-side protection by design;
+    // the proxy must not gate /api or non-browser clients break.
+    setupRequiredSession();
+    const response = await proxy(makeRequest('/api/sites'));
+    expect(response.headers.get('location')).toBeNull();
+    expect(response.headers.get(SECURITY_VERSION_HEADER)).toBe(
+      String(CURRENT_SECURITY_VERSION),
+    );
+  });
+
+  it('leaves an enrolled, verified session untouched', async () => {
+    mockEvaluateSessionMfa.mockResolvedValue({
+      outcome: 'pass',
+      userId: 'user-1',
+      requiresSetup: false,
+    });
+    const response = await proxy(makeRequest('/dashboard'));
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('still challenges an enrolled-but-unverified session (setup gate does not swallow it)', async () => {
+    mockEvaluateSessionMfa.mockResolvedValue({
+      outcome: 'challenge',
+      userId: 'user-1',
+      requiresSetup: false,
+    });
+    const response = await proxy(makeRequest('/dashboard'));
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toContain('/verify-2fa');
+  });
+
+  it('sends an unauthenticated request to /login, never to /setup-2fa', async () => {
+    mockEvaluateSessionMfa.mockResolvedValue({
+      outcome: 'unauthenticated',
+      userId: null,
+      requiresSetup: false,
+    });
+    const response = await proxy(makeRequest('/dashboard'));
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toContain('/login');
+  });
+});
+
+/* -------------------------------------------------------------------- */
 /*  Item 22: CSP header includes a per-request nonce                    */
 /* -------------------------------------------------------------------- */
 

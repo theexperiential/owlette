@@ -29,6 +29,23 @@
  *   The proxy refuses access to protected paths whenever
  *   `mfaRequired && !mfaVerified`, redirecting to `/verify-2fa`.
  *
+ * Mandatory-enrollment enforcement (Wave 3):
+ *   A third field, `requiresMfaSetup`, is cached the same way, off the SAME
+ *   `users/{uid}` read. It mirrors the flag `lib/mfaFactors.server.ts` re-arms
+ *   whenever an account drops to zero factors, and the flag bootstrap sets on
+ *   every new signup. The proxy diverts such a session from any protected path
+ *   to `/setup-2fa`, which is what makes "removing your last factor is allowed"
+ *   safe: the account cannot then wander the app un-enrolled. It used to be a
+ *   client-side effect on /dashboard alone, so /roosts, /logs, /talons and
+ *   /settings — and anyone who simply never opened the dashboard — skipped it.
+ *
+ *   Freshness: the flag is re-stamped by every `createSession`, and
+ *   AuthContext's `onAuthStateChanged` handler POSTs `/api/auth/session` on
+ *   every full page load, so an enrollment or removal is reflected within one
+ *   load. `markSessionMfaVerified` / `markSessionMfaDisabled` additionally
+ *   correct (respectively invalidate) it the moment the server itself changes
+ *   the inventory.
+ *
  *   Existing sessions issued before Wave 2 do NOT carry these fields. They
  *   are upgraded fail-safe on first proxy hit: see `evaluateSessionMfa()`.
  */
@@ -65,6 +82,22 @@ export interface SessionData {
   mfaVerified?: boolean;
   /** Unix ms timestamp of the last successful MFA verification. */
   mfaCompletedAt?: number;
+  /**
+   * Cached at session create time from `users/{uid}.requiresMfaSetup` — the
+   * flag `lib/mfaFactors.server.ts` re-arms whenever an account drops to zero
+   * MFA factors, and that bootstrap sets on every new signup.
+   *
+   * Cached for the same reason `mfaRequired` is: the proxy consults it on
+   * EVERY request, and a Firestore read per request on that path is not
+   * acceptable. It rides along on the single `users/{uid}` read that
+   * `resolveMfaStateForUser` already performs, so caching it costs nothing.
+   *
+   * Optional on the type for the same two reasons as `mfaRequired`: sessions
+   * issued before this shipped do not carry it (they are upgraded in place by
+   * `evaluateSessionMfa()`), and iron-session deserialises missing keys as
+   * `undefined`.
+   */
+  requiresMfaSetup?: boolean;
 }
 
 // Session configuration
@@ -115,16 +148,16 @@ export async function getSessionFromRequest(
 }
 
 /**
- * Look up `users/{uid}.mfaEnrolled` and derive the (mfaRequired, mfaVerified)
- * pair to bake into a session at create time.
+ * Look up `users/{uid}` and derive the (mfaRequired, mfaVerified,
+ * requiresMfaSetup) triple to bake into a session at create time.
  *
  * - If the user has `mfaEnrolled === true`, require MFA but leave it unverified
  *   (the user must complete the TOTP/backup challenge before any protected
  *   path opens).
  * - If `mfaEnrolled` is falsy OR the user doc does not yet exist (first-login
  *   bootstrap not complete), do not require MFA. Bootstrap will set
- *   `requiresMfaSetup` and the dashboard will nag, but there is nothing to
- *   challenge against until the user actually enrolls.
+ *   `requiresMfaSetup` and the proxy will divert them to `/setup-2fa`, but
+ *   there is nothing to challenge against until the user actually enrolls.
  *
  * Soft-fail on Firestore errors: if we can't read the user doc, default to
  * `mfaRequired=false, mfaVerified=true`. This is the same posture the system
@@ -135,6 +168,7 @@ export async function getSessionFromRequest(
 async function resolveMfaStateForUser(userId: string): Promise<{
   mfaRequired: boolean;
   mfaVerified: boolean;
+  requiresMfaSetup: boolean;
 }> {
   // Note: the previous version of this function fail-opened on Firestore
   // errors (returned mfaRequired:false). An attacker who could induce
@@ -150,14 +184,25 @@ async function resolveMfaStateForUser(userId: string): Promise<{
   const db = getAdminDb();
   const snap = await db.collection('users').doc(userId).get();
   if (!snap.exists) {
-    return { mfaRequired: false, mfaVerified: true };
+    // No doc yet → nothing to enforce in EITHER direction. Diverting a
+    // pre-bootstrap user to `/setup-2fa` would fight `/api/users/bootstrap`
+    // for the same first page load; bootstrap writes `requiresMfaSetup: true`
+    // itself, and the next `createSession` re-stamps the session from it.
+    return { mfaRequired: false, mfaVerified: true, requiresMfaSetup: false };
   }
   const data = snap.data();
   const enrolled = data?.mfaEnrolled === true;
+  // `lib/mfaFactors.server.ts` — the single writer of both fields — always
+  // writes `requiresMfaSetup = !mfaEnrolled`, so the pair cannot legitimately
+  // be true at once. Deriving the `&& !enrolled` here anyway is a safety belt
+  // on the proxy's ordering rule (setup outranks challenge): a hand-edited or
+  // half-migrated doc must never divert an actually-enrolled user into
+  // mandatory setup.
+  const requiresMfaSetup = data?.requiresMfaSetup === true && !enrolled;
   if (enrolled) {
-    return { mfaRequired: true, mfaVerified: false };
+    return { mfaRequired: true, mfaVerified: false, requiresMfaSetup };
   }
-  return { mfaRequired: false, mfaVerified: true };
+  return { mfaRequired: false, mfaVerified: true, requiresMfaSetup };
 }
 
 /**
@@ -322,9 +367,11 @@ export function resolveMfaOnSessionCreate(input: {
  *   never passes it, and `app/api/passkeys/authenticate/verify/route.ts`, which
  *   passes the string literal unconditionally after `verification.verified`.
  *
- * Reads `users/{uid}.mfaEnrolled` synchronously so the session is born with the
- * correct `mfaRequired`. `mfaRequired` is ALWAYS re-derived fresh from
- * Firestore, but `mfaVerified` is NOT blindly reset:
+ * Reads `users/{uid}` synchronously so the session is born with the correct
+ * `mfaRequired` and `requiresMfaSetup` (both ALWAYS re-derived fresh from
+ * Firestore off that one read — this create path is what refreshes the proxy's
+ * `requiresMfaSetup` cache after a factor is enrolled or removed).
+ * `mfaVerified` is NOT blindly reset:
  *
  *   - PRESERVE: when MFA is required and the prior cookie proves a challenge was
  *     already cleared for this uid in a still-live session
@@ -422,6 +469,12 @@ export async function createSession(
   session.expiresAt = expiresAt;
   session.mfaRequired = mfa.mfaRequired;
   session.mfaVerified = mfa.mfaVerified;
+  // Verbatim fresh Firestore truth, exactly like `mfaRequired` — it is a
+  // property of the ACCOUNT, not of this login ceremony, so it is deliberately
+  // not routed through `resolveMfaOnSessionCreate` (which decides only the
+  // verification state). Re-stamped on every session create, which is what
+  // keeps the cache honest after a factor is added or removed.
+  session.requiresMfaSetup = resolved.requiresMfaSetup;
   if (typeof mfa.mfaCompletedAt === 'number') {
     session.mfaCompletedAt = mfa.mfaCompletedAt;
   } else {
@@ -437,6 +490,7 @@ export async function createSession(
     'expires:', new Date(expiresAt).toISOString(),
     'mfaRequired:', mfa.mfaRequired,
     'mfaVerified:', mfa.mfaVerified,
+    'requiresMfaSetup:', resolved.requiresMfaSetup,
     'deviceTrusted:', deviceTrusted,
     'mfaSatisfiedBy:', mfaSatisfiedBy ?? 'none'
   );
@@ -495,14 +549,25 @@ export async function validateSessionFromRequest(
  *     verified. The proxy should redirect to `/verify-2fa?redirect=...`.
  *   - `unauthenticated`: no valid session. The proxy treats this as before.
  *
- * Backward-compat for pre-Wave-2 sessions: a session that has a valid
- * `userId`/`expiresAt` but no `mfaRequired` field is upgraded fail-safe.
- * We look up `users/{uid}.mfaEnrolled` once, write the result back into the
- * session, and save. After that one upgrade, the session carries the field
- * and no further Firestore reads happen on the hot path.
+ * Also returns `requiresSetup`, read from the session's cached
+ * `requiresMfaSetup` — never from a fresh Firestore read, because this runs on
+ * every request. The proxy diverts such a session to `/setup-2fa`; see the
+ * ordering note there for why setup outranks the challenge.
  *
- * Trade-off: pre-Wave-2 sessions pay a one-time Firestore round-trip on
- * first protected-page hit after deploy. If Firestore is unavailable at
+ * Backward-compat for older sessions: a session that has a valid
+ * `userId`/`expiresAt` but is missing `mfaRequired` (pre-Wave-2) or
+ * `requiresMfaSetup` (pre-Wave-3) is upgraded fail-safe. We look up
+ * `users/{uid}` once and write the missing field(s) back into the session. The
+ * two are upgraded independently:
+ * a Wave-2 session already holds a `mfaVerified` earned by a real challenge,
+ * and re-stamping it from Firestore would silently re-challenge a user who has
+ * already passed — so only the genuinely-missing fields are written.
+ *
+ * Trade-off: sessions predating a field pay a Firestore round-trip on their
+ * protected-page hits until the next `createSession` re-stamps the cookie —
+ * one full page load, since AuthContext POSTs `/api/auth/session` on mount.
+ * `needsSetupUpgrade` narrows that to the only sessions whose answer is not
+ * already derivable. If Firestore is unavailable at
  * that exact moment we fall back to "MFA not required" (matching the
  * pre-Wave-2 behaviour) rather than locking the user out. This is the
  * same posture `resolveMfaStateForUser` uses for ordinary session creation.
@@ -515,34 +580,64 @@ export async function evaluateSessionMfa(
 ): Promise<{
   outcome: 'pass' | 'challenge' | 'unauthenticated';
   userId: string | null;
+  requiresSetup: boolean;
 }> {
   const session = await getSessionFromRequest(req);
 
   if (!session.userId || !session.expiresAt) {
-    return { outcome: 'unauthenticated', userId: null };
+    return { outcome: 'unauthenticated', userId: null, requiresSetup: false };
   }
 
   if (Date.now() > session.expiresAt) {
     await session.destroy();
-    return { outcome: 'unauthenticated', userId: null };
+    return { outcome: 'unauthenticated', userId: null, requiresSetup: false };
   }
 
-  // Migrate pre-Wave-2 sessions: no `mfaRequired` field means the session
-  // was issued before this feature shipped. Upgrade in place.
+  // Migrate older sessions: a missing `mfaRequired` (pre-Wave-2) or
+  // `requiresMfaSetup` (pre-Wave-3) means the session predates that field.
+  // Upgrade in place.
   //
   // If the Firestore lookup throws (transient outage), we DO NOT cache a
   // result — we force `challenge` for this request and leave the session
   // unmodified so a retry can complete the upgrade later. This is the
   // fail-CLOSED path (previously fail-open, which let an attacker bypass
   // MFA by exploiting a transient Firestore failure).
-  if (typeof session.mfaRequired !== 'boolean') {
+  const needsChallengeUpgrade = typeof session.mfaRequired !== 'boolean';
+  // A session missing ONLY `requiresMfaSetup` does not always need a lookup.
+  // When `mfaRequired === true` the account is enrolled, and the single writer
+  // of both flags (`lib/mfaFactors.server.ts`) always writes
+  // `requiresMfaSetup = !mfaEnrolled` — so the answer is provably `false`
+  // without touching Firestore. `resolveMfaStateForUser` would return exactly
+  // that anyway (it ANDs in `!enrolled`), which is what makes skipping the read
+  // an equivalence rather than a guess.
+  //
+  // This is not micro-optimisation. Every session issued before this field
+  // existed lacks it, and the upgrade write below does not actually reach the
+  // browser (see the caveat on the save), so an unconditional lookup here would
+  // be a Firestore read on EVERY request of every such session until its next
+  // `createSession` — precisely the cost the cache exists to avoid. Deriving it
+  // keeps enrolled users, the overwhelming majority, at zero reads.
+  const needsSetupUpgrade =
+    typeof session.requiresMfaSetup !== 'boolean' && session.mfaRequired !== true;
+  if (needsChallengeUpgrade || needsSetupUpgrade) {
     try {
-      const { mfaRequired, mfaVerified } = await resolveMfaStateForUser(
-        session.userId,
-      );
-      session.mfaRequired = mfaRequired;
-      session.mfaVerified = mfaVerified;
+      const resolved = await resolveMfaStateForUser(session.userId);
+      if (needsChallengeUpgrade) {
+        // Only when genuinely absent — see the note above on not clobbering a
+        // `mfaVerified` that a completed challenge already earned.
+        session.mfaRequired = resolved.mfaRequired;
+        session.mfaVerified = resolved.mfaVerified;
+      }
+      session.requiresMfaSetup = resolved.requiresMfaSetup;
       try {
+        // CAVEAT (pre-existing, not introduced here): `getSessionFromRequest`
+        // hands iron-session a throwaway `NextResponse.next()`, so this save
+        // writes its Set-Cookie onto a response the proxy discards. The
+        // upgraded values are therefore authoritative for THIS request only;
+        // the durable re-cache is the next `createSession` (AuthContext POSTs
+        // `/api/auth/session` on every full page load). Keep the save: it is
+        // correct the day that response is threaded back out, and it is the
+        // only thing making the values consistent within this request.
         await session.save();
       } catch (err) {
         // If we can't persist the upgrade, still honor the freshly-evaluated
@@ -557,20 +652,37 @@ export async function evaluateSessionMfa(
       console.error(
         '[Session] MFA upgrade lookup failed for',
         session.userId,
-        '— forcing challenge (fail-closed)',
+        '— falling back to the cached session state (fail-closed)',
         err,
       );
-      // Force the challenge path so we don't fail-OPEN. The session is
-      // unmodified; the next request will retry the upgrade.
-      return { outcome: 'challenge', userId: session.userId };
+      if (needsChallengeUpgrade) {
+        // Pre-Wave-2 session, no cached challenge state to fall back on:
+        // force the challenge so we don't fail-OPEN. The session is
+        // unmodified; the next request will retry the upgrade. Unchanged
+        // behaviour.
+        return {
+          outcome: 'challenge',
+          userId: session.userId,
+          requiresSetup: session.requiresMfaSetup === true,
+        };
+      }
+      // Only the setup flag was missing. The cached challenge state is intact
+      // and still authoritative, so fall through and evaluate it normally —
+      // `session.requiresMfaSetup` stays undefined and reads as false below.
+      // Diverting to `/setup-2fa` on an unknown flag would push every enrolled
+      // user with an older cookie into mandatory setup for the duration of a
+      // Firestore blip, and the flag is a policy gate whose worst case if
+      // missed for one request is the pre-existing behaviour (no divert).
     }
   }
 
+  const requiresSetup = session.requiresMfaSetup === true;
+
   if (session.mfaRequired && !session.mfaVerified) {
-    return { outcome: 'challenge', userId: session.userId };
+    return { outcome: 'challenge', userId: session.userId, requiresSetup };
   }
 
-  return { outcome: 'pass', userId: session.userId };
+  return { outcome: 'pass', userId: session.userId, requiresSetup };
 }
 
 /**
@@ -623,13 +735,21 @@ export async function markSessionMfaVerified(): Promise<void> {
   session.mfaRequired = true;
   session.mfaVerified = true;
   session.mfaCompletedAt = Date.now();
+  // Every caller reaches here off a completed TOTP / backup-code / enrollment
+  // / passkey ceremony, which is only possible on an account that holds at
+  // least one factor — so mandatory setup is definitively satisfied. Stamping
+  // it here (rather than waiting for the next `createSession`) means the proxy
+  // stops diverting to `/setup-2fa` on the very next request.
+  session.requiresMfaSetup = false;
   await session.save();
 }
 
 /**
  * Re-mint the current session's MFA state after a server-mediated MFA
  * disable. The just-completed disable is treated as a verification event
- * so the user stays signed in without an immediate re-challenge.
+ * so the user stays signed in without an immediate re-challenge, and the
+ * cached `requiresMfaSetup` is invalidated because the disable may have just
+ * re-armed it.
  */
 export async function markSessionMfaDisabled(): Promise<void> {
   const session = await getSession();
@@ -639,6 +759,16 @@ export async function markSessionMfaDisabled(): Promise<void> {
   session.mfaRequired = false;
   session.mfaVerified = true;
   session.mfaCompletedAt = Date.now();
+  // A disable can leave the account with zero factors (allowed — it re-arms
+  // `users/{uid}.requiresMfaSetup`) or with passkeys still enrolled. This
+  // helper has no view of the resulting inventory, and a stale cached `false`
+  // would let the account walk straight past the proxy's `/setup-2fa` gate.
+  // Drop the cached value instead. `evaluateSessionMfa` resolves a missing flag
+  // from Firestore, and because this helper also sets `mfaRequired = false` the
+  // derivation there cannot short-circuit it — so the gate is enforced from the
+  // very next request, and the cookie is re-stamped on the page load that
+  // follows.
+  delete session.requiresMfaSetup;
   await session.save();
 }
 
@@ -670,6 +800,9 @@ export async function getSessionData(): Promise<SessionData | null> {
   }
   if (typeof session.mfaCompletedAt === 'number') {
     data.mfaCompletedAt = session.mfaCompletedAt;
+  }
+  if (typeof session.requiresMfaSetup === 'boolean') {
+    data.requiresMfaSetup = session.requiresMfaSetup;
   }
   return data;
 }

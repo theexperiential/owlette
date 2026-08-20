@@ -9,11 +9,17 @@
  * both of those things for an unauthenticated caller — reusing it here would
  * hand a fresh credential to anyone who reached this route.
  *
- * The uid is taken from the session and from nowhere else. In particular
- * `credential.response.userHandle` is IGNORED: it is attacker-controlled, and
- * the sign-in route only trusts it because it has no session to trust instead.
+ * The ceremony itself lives in `lib/mfaProof.server.ts`
+ * (`verifyPasskeyStepUpAssertion`) because a passkey assertion is one of the
+ * three interchangeable proofs of possession — `/api/mfa/backup-codes` accepts
+ * the same one. This route contributes the session promotion on top of it, and
+ * nothing else. The uid handed to the ceremony comes from the session and from
+ * nowhere else; in particular `credential.response.userHandle` is IGNORED,
+ * because it is attacker-controlled and the sign-in route only trusts it
+ * because it has no session to trust instead.
  *
- * Three independent checks bind the ceremony to the session's own account:
+ * Three independent checks inside that ceremony bind the assertion to the
+ * session's own account:
  *   1. the stored challenge must have been minted for this uid,
  *   2. the asserted credential id must be one of this uid's registered
  *      passkeys (a credential belonging to another user simply will not be
@@ -33,19 +39,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAuthenticationResponse } from '@simplewebauthn/server';
-import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { withRateLimit } from '@/lib/withRateLimit';
 import { apiError } from '@/lib/apiErrorResponse';
 import { ApiAuthError, assertActiveUser, requireSession } from '@/lib/apiAuth.server';
 import { markSessionMfaVerified } from '@/lib/sessionManager.server';
 import {
-  getRpId,
-  getExpectedOrigins,
-  getAndDeleteChallenge,
-  getUserPasskeys,
-  updatePasskeyCounter,
-} from '@/lib/webauthn.server';
+  mfaProofErrorResponse,
+  verifyPasskeyStepUpAssertion,
+} from '@/lib/mfaProof.server';
 
 export const POST = withRateLimit(async (request: NextRequest) => {
   try {
@@ -62,74 +63,14 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    // Single-use: getAndDeleteChallenge removes the record before returning, so
-    // a replayed assertion cannot re-clear the gate.
-    const challengeData = await getAndDeleteChallenge(challengeId);
-    if (!challengeData) {
-      return NextResponse.json(
-        { error: 'Challenge expired or not found. Please try again.' },
-        { status: 400 }
-      );
-    }
-
-    if (challengeData.type !== 'authentication') {
-      return NextResponse.json({ error: 'Invalid challenge type' }, { status: 400 });
-    }
-
-    // Bind the challenge to the session. Step-up challenges are always stored
-    // with a uid; a null userId means this id came from the pre-login
-    // discoverable-credential flow, which must not be redeemable here.
-    if (challengeData.userId !== userId) {
-      return NextResponse.json({ error: 'Challenge does not belong to this user' }, {
-        status: 403,
-      });
-    }
-
-    // Only this user's own credentials are ever considered — this is what makes
-    // another user's passkey unusable here, not a comparison we could forget.
-    const userPasskeys = await getUserPasskeys(userId);
-    const matchingPasskey = userPasskeys.find((p) => p.credentialId === credential.id);
-
-    if (!matchingPasskey) {
-      return NextResponse.json(
-        { error: 'Passkey not found for this user' },
-        { status: 400 }
-      );
-    }
-
-    const verification = await verifyAuthenticationResponse({
-      response: credential,
-      expectedChallenge: challengeData.challenge,
-      expectedOrigin: getExpectedOrigins(),
-      expectedRPID: getRpId(),
-      // Pinned explicitly even though @simplewebauthn/server already defaults it
-      // to true — same reasoning as the sign-in route. Satisfying the MFA gate
-      // with a passkey rests entirely on the authenticator having verified the
-      // user (PIN/biometric); without the `uv` flag this is possession only,
-      // and an upstream default flip would silently turn step-up into a
-      // one-touch bypass.
-      requireUserVerification: true,
-      credential: {
-        id: matchingPasskey.credentialId,
-        publicKey: isoBase64URL.toBuffer(matchingPasskey.credentialPublicKey),
-        counter: matchingPasskey.counter,
-        transports: matchingPasskey.transports,
-      },
-    });
-
-    if (!verification.verified) {
-      return NextResponse.json(
-        { error: 'Authentication verification failed' },
-        { status: 400 }
-      );
-    }
-
-    // Update counter (clone detection)
-    await updatePasskeyCounter(
+    const proof = await verifyPasskeyStepUpAssertion({
       userId,
-      matchingPasskey.credentialId,
-      verification.authenticationInfo.newCounter
-    );
+      credential,
+      challengeId,
+    });
+    if (!proof.ok) {
+      return mfaProofErrorResponse(proof);
+    }
 
     // Flip the existing session's MFA gate. This is the ONLY state this route
     // writes to the session — it never calls createSession (which would re-mint

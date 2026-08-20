@@ -22,6 +22,12 @@ import { CURRENT_SECURITY_VERSION, SECURITY_VERSION_HEADER } from '@/lib/securit
  *   `mfaRequired && !mfaVerified` is redirected to `/verify-2fa` and
  *   cannot reach `/dashboard`, `/admin`, etc. until the challenge is
  *   completed via `/api/mfa/verify-login` (which marks the cookie verified).
+ * - Enforces MFA ENROLLMENT on protected paths: an authenticated session whose
+ *   account still owes mandatory setup (`requiresMfaSetup`, re-armed by
+ *   `lib/mfaFactors.server.ts` whenever an account drops to zero factors) is
+ *   redirected to `/setup-2fa`. This was previously a single client-side
+ *   effect in `app/dashboard/page.tsx`, which every other protected route —
+ *   and every user who never opened the dashboard — walked straight past.
  */
 
 // Protected page routes. These all require an authenticated session AND
@@ -46,6 +52,13 @@ const PROTECTED_PATHS = [
 // The MFA challenge page itself. Reachable for authenticated users whose
 // MFA is still pending — otherwise they could never complete it.
 const MFA_CHALLENGE_PATH = '/verify-2fa';
+
+// The mandatory-enrollment page. NOTE the prefix collision: `/setup` is in
+// PROTECTED_PATHS and `'/setup-2fa'.startsWith('/setup')` is true, so this page
+// is ALREADY matched as a protected path. Without the explicit exemption below,
+// sending a `requiresMfaSetup` user here would redirect them to the page they
+// are already on, forever.
+const MFA_SETUP_PATH = '/setup-2fa';
 const isDev = process.env.NODE_ENV === 'development';
 const isEmulatorBuild = process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATOR === 'true';
 
@@ -146,6 +159,14 @@ export async function proxy(request: NextRequest) {
   // stale tabs can detect when they are out of sync with the deployed
   // client and prompt the user to reload. UX nudge only — never a
   // security boundary; see `lib/securityVersion.ts` for rationale.
+  //
+  // `/api/*` is deliberately NOT session-gated here — not for auth, not for the
+  // MFA challenge, and not for mandatory enrollment. API routes authenticate
+  // themselves (session cookie, API key, or agent token) and the enrollment
+  // gate they need is `lib/mfaEnrollmentGate.server.ts`, applied inside the
+  // routes that add or change a factor. That is by design: the proxy cannot
+  // tell an agent/API-key caller from a browser one, and blanket-gating here
+  // would break every non-browser client. Do not "fix" this by adding a gate.
   if (pathname.startsWith('/api/')) {
     const response = nextWithCsp(request, csp, nonce);
     response.headers.set(SECURITY_VERSION_HEADER, String(CURRENT_SECURITY_VERSION));
@@ -154,10 +175,14 @@ export async function proxy(request: NextRequest) {
 
   const isProtectedPath = PROTECTED_PATHS.some(path => pathname.startsWith(path));
   const isMfaChallengePath = pathname === MFA_CHALLENGE_PATH || pathname.startsWith(`${MFA_CHALLENGE_PATH}/`);
+  const isMfaSetupPath = pathname === MFA_SETUP_PATH || pathname.startsWith(`${MFA_SETUP_PATH}/`);
 
-  // Evaluate session + MFA state in one pass. This may persist a one-time
-  // migration write for pre-Wave-2 sessions (see `evaluateSessionMfa`).
-  const { outcome, userId } = await evaluateSessionMfa(request);
+  // Evaluate session + MFA state in one pass. `requiresSetup` is read from the
+  // session cookie's cached `requiresMfaSetup`, NOT from a live Firestore read:
+  // this runs on every request. This call may persist a one-time migration
+  // write for sessions issued before either flag existed (see
+  // `evaluateSessionMfa`).
+  const { outcome, userId, requiresSetup } = await evaluateSessionMfa(request);
   const isAuthenticated = outcome !== 'unauthenticated';
 
   // Protected pages: require auth AND a satisfied MFA gate.
@@ -173,7 +198,50 @@ export async function proxy(request: NextRequest) {
       return redirectWithCsp(loginUrl, csp);
     }
 
-    if (outcome === 'challenge') {
+    // ORDER MATTERS: mandatory setup is checked BEFORE the challenge.
+    //
+    // Verified against `evaluateSessionMfa`: `mfaRequired` is cached from
+    // `users/{uid}.mfaEnrolled` and `requiresMfaSetup` is the re-armed
+    // zero-factor flag, so on a freshly-stamped session the two are mutually
+    // exclusive (zero factors → `mfaEnrolled: false` → outcome `pass`) and the
+    // ordering is unobservable. It becomes observable in exactly the states
+    // where getting it wrong bricks the user:
+    //   - a cookie whose `mfaRequired` was cached while a factor still existed,
+    //     re-resolved after that factor was removed, and
+    //   - the fail-closed `challenge` that `evaluateSessionMfa` forces when its
+    //     upgrade lookup throws.
+    // In both, the account has nothing to present at `/verify-2fa` — sending
+    // them there is an unsatisfiable dead end, while `/setup-2fa` is actionable
+    // (the Wave-2 enrollment gate opens for a zero-factor account by design).
+    // Setup therefore wins.
+    //
+    // The `!isMfaSetupPath` guard is load-bearing, not defensive: `/setup-2fa`
+    // starts with `/setup`, so it is already inside PROTECTED_PATHS and would
+    // otherwise redirect to itself forever.
+    if (requiresSetup) {
+      if (!isMfaSetupPath) {
+        const setupUrl = new URL(MFA_SETUP_PATH, request.url);
+        // Same `redirect` param contract as the challenge and login redirects.
+        // The page finishes to /dashboard today rather than reading it back;
+        // it is set so the contract is uniform across all three gates and a
+        // bounce-back becomes a page change, not a proxy change.
+        setupUrl.searchParams.set('redirect', pathname);
+
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[Proxy] MFA setup required — redirecting to setup-2fa from:', pathname);
+        }
+
+        return redirectWithCsp(setupUrl, csp);
+      }
+      // Already on /setup-2fa: render it, and skip the challenge branch below
+      // (hence `else if`, not a second `if`). "setup wins" has to be total, or
+      // the one state where both flags are set would bounce the user off the
+      // page that fixes their account and onto a challenge they cannot answer.
+      // Nothing is exposed by this: /setup-2fa is only the enrollment page, and
+      // the routes behind it enforce `lib/mfaEnrollmentGate.server.ts` (open
+      // for a zero-factor account — which `requiresSetup` asserts — and still
+      // demanding a verified session for anyone who holds a factor).
+    } else if (outcome === 'challenge') {
       const verifyUrl = new URL(MFA_CHALLENGE_PATH, request.url);
       // Preserve the originally-requested destination so the verify page
       // can bounce the user back after a successful challenge. We use

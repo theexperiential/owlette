@@ -4,8 +4,12 @@
  * Verifies TOTP code during setup, then encrypts and stores the secret
  *
  * POST /api/mfa/verify-setup
- * Request: { userId: string, code: string, backupCodes: string[] }
- * Response: { success: boolean }
+ * Request: { userId: string, code: string, backupCodes?: string[] }
+ *   - `backupCodes` is optional and deprecated: omit it and the server mints
+ *     the sheet itself. The parameter survives only for today's browser-side
+ *     generation in `app/setup-2fa/page.tsx` (wave 4 removes both).
+ * Response: { success: boolean, backupCodes: string[] }
+ *   - the plaintext sheet, returned exactly once; only hashes are stored.
  *
  * SECURITY:
  * - Verifies the TOTP code is correct before enabling MFA
@@ -18,6 +22,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyTOTP, hashBackupCode } from '@/lib/totp';
+import { issueBackupCodes, type IssuedBackupCodes } from '@/lib/backupCodes.server';
 import { encrypt, isEncryptionConfigured } from '@/lib/encryption.server';
 import { getAdminDb } from '@/lib/firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
@@ -49,7 +54,19 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       );
     }
 
-    if (!Array.isArray(backupCodes) || backupCodes.length === 0) {
+    // `backupCodes` is optional as of the universal-2FA wave. When the client
+    // omits it we mint the sheet here (see below); when it sends one we still
+    // honour it, because `app/setup-2fa/page.tsx` generates the codes in the
+    // browser and is already showing them to the user by the time this request
+    // lands — silently storing a different set would leave them holding ten
+    // strings that unlock nothing. A malformed value is still a 400: an empty
+    // array is a client bug, not a request to generate.
+    if (
+      backupCodes !== undefined &&
+      (!Array.isArray(backupCodes) ||
+        backupCodes.length === 0 ||
+        !backupCodes.every((c) => typeof c === 'string' && c.length > 0))
+    ) {
       return NextResponse.json(
         { error: 'Backup codes are required' },
         { status: 400 }
@@ -147,8 +164,23 @@ export const POST = withRateLimit(async (request: NextRequest) => {
     // Encrypt the secret for storage
     const encryptedSecret = encrypt(secret);
 
-    // Hash backup codes for storage
-    const hashedBackupCodes = backupCodes.map(hashBackupCode);
+    // The sheet. THIS IS THE ONE PLACE recovery codes are issued without a
+    // separate proof of possession, and the exception is bounded by the two
+    // facts that make it safe: the caller has just verified a TOTP code for the
+    // factor being enrolled a few lines above, and the enrollment gate has
+    // already refused any account that holds a factor on an unverified session.
+    // Every OTHER issuance goes through `POST /api/mfa/backup-codes`, which
+    // demands live proof and has no bypass. Do not generalise this branch.
+    //
+    // Server-side generation (`issueBackupCodes`) is the destination; the
+    // client-supplied array is the transitional path for today's
+    // `app/setup-2fa/page.tsx`, which mints the codes in the browser and is
+    // already displaying them. Wave 4 moves that page onto `BackupCodesPanel`
+    // fed by the `backupCodes` field in this response, and the parameter goes.
+    const issued: IssuedBackupCodes = Array.isArray(backupCodes)
+      ? { plaintext: backupCodes, hashed: backupCodes.map(hashBackupCode) }
+      : issueBackupCodes();
+    const hashedBackupCodes = issued.hashed;
 
     // Save the encrypted MFA configuration. The factor inventory module is
     // the ONLY writer of `mfaEnrolled` / `requiresMfaSetup` — it derives both
@@ -162,6 +194,10 @@ export const POST = withRateLimit(async (request: NextRequest) => {
         extraUpdate: {
           mfaSecret: encryptedSecret, // Now encrypted!
           backupCodes: hashedBackupCodes,
+          // Stamped alongside the sheet so account settings can show its age
+          // and `/api/mfa/backup-codes` has a single field to advance on every
+          // regeneration, whichever route issued the generation.
+          backupCodesGeneratedAt: FieldValue.serverTimestamp(),
           mfaEnrolledAt: FieldValue.serverTimestamp(),
         },
       },
@@ -196,8 +232,13 @@ export const POST = withRateLimit(async (request: NextRequest) => {
       },
     });
 
+    // The plaintext sheet, returned exactly once — only hashes were stored.
+    // Echoing back a client-supplied set is harmless (the caller sent it in
+    // this request), and it gives both paths one contract for wave 4's
+    // `BackupCodesPanel` to render.
     return NextResponse.json({
       success: true,
+      backupCodes: issued.plaintext,
     });
   } catch (error) {
     if (error instanceof ApiAuthError) {
