@@ -149,16 +149,42 @@ describe('withProcessLock', () => {
     ).rejects.toMatchObject({ status: 409, code: 'duplicate_process_name' });
   });
 
-  it('rejects duplicate name even if both rows are pre-existing (race-safe)', async () => {
+  it('tolerates pre-existing duplicates a mutation does not touch', async () => {
+    // Agent-synced configs can arrive with duplicates already in them; a save
+    // that leaves the collision exactly as it found it must not 409, or every
+    // edit on that machine is bricked — including the cleanup rename.
     setStored({
       processes: [
         makeProc({ processId: 'a', name: 'Dup' }),
         makeProc({ processId: 'b', name: 'Dup' }),
+        makeProc({ processId: 'c', name: 'Other' }),
+      ],
+    });
+
+    const result = await withProcessLock<string>('s1', 'm1', (procs) => {
+      const next = procs.map((p) => (p.processId === 'c' ? { ...p, name: 'Renamed' } : p));
+      return { processes: next, result: 'saved' };
+    });
+
+    expect(result).toBe('saved');
+  });
+
+  it('still rejects joining a pre-existing collision (race-safe)', async () => {
+    // The check runs on the txn-fresh read, so a rename that lands on a name
+    // another writer just created is caught even though the caller never saw it.
+    setStored({
+      processes: [
+        makeProc({ processId: 'a', name: 'Dup' }),
+        makeProc({ processId: 'b', name: 'Dup' }),
+        makeProc({ processId: 'c', name: 'Other' }),
       ],
     });
 
     await expect(
-      withProcessLock('s1', 'm1', (procs) => ({ processes: procs, result: undefined }))
+      withProcessLock('s1', 'm1', (procs) => {
+        const next = procs.map((p) => (p.processId === 'c' ? { ...p, name: 'Dup' } : p));
+        return { processes: next, result: undefined };
+      })
     ).rejects.toMatchObject({ status: 409, code: 'duplicate_process_name' });
   });
 

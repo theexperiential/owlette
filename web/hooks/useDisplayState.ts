@@ -83,11 +83,17 @@ const DEFAULT_AUTO_RESTORE: DisplayAutoRestoreState = {
 
 /**
  * `capturedAt` → epoch ms. Accepts Firestore Timestamps, the serialized
- * `{ seconds, nanoseconds }` shape (SSR/hydration/fixtures), and plain numbers.
+ * `{ seconds, nanoseconds }` shape (SSR/hydration/fixtures), plain numbers,
+ * and ISO-8601 strings — 3.0.x agents' full-config pushes flipped
+ * serverTimestamp fields to strings in fleet docs, and those values persist.
  * Unrecognized input collapses to 0, which formatters render as "never".
  */
 function normalizeTimestamp(value: unknown): number {
   if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
   if (value && typeof value === 'object') {
     const asObj = value as { toMillis?: () => number; seconds?: unknown };
     if (typeof asObj.toMillis === 'function') {

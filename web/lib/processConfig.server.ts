@@ -132,8 +132,10 @@ export interface PublicProcessConfig extends ProcessConfig {
 
 /**
  * Transactional read-modify-write of `processes[]`: lazily backfills `processId`,
- * runs the mutator, then rejects duplicate names — the check is inside the txn,
- * which is what makes it race-safe. Sets `configChangeFlag` to nudge the agent.
+ * runs the mutator, then rejects newly-introduced duplicate names — the check is
+ * inside the txn, which is what makes it race-safe. Pre-existing duplicates
+ * (agent-synced configs never validated names) do not block unrelated saves.
+ * Sets `configChangeFlag` to nudge the agent.
  *
  * @throws ProcessConfigError 409 'duplicate_process_name', or 404 if no config doc.
  */
@@ -160,10 +162,16 @@ export async function withProcessLock<T>(
     // Lazy backfill of `processId`.
     const normalized = (config.processes as ProcessConfig[]).map((p) => normalizeProcess(p));
 
+    // Snapshot before the mutator runs — it may rename entries in place.
+    const namesBefore = normalized.map((p) => p.name);
+
     const mutationResult = fn(normalized);
 
     // Inside the txn, so the duplicate check is race-safe.
-    assertUniqueNames(mutationResult.processes);
+    assertNoNewDuplicateNames(
+      namesBefore,
+      mutationResult.processes.map((p) => p.name)
+    );
 
     const cleaned = mutationResult.processes.map(cleanProcessForFirestore);
 
@@ -230,21 +238,36 @@ function normalizeProcess(p: ProcessConfig): PublicProcessConfig {
 }
 
 /**
- * Throws 409 'duplicate_process_name' on a repeated `name`. Case-sensitive, to
- * match agent behaviour.
+ * Throws 409 'duplicate_process_name' when a mutation introduces — or worsens —
+ * a repeated `name`. Case-sensitive, to match agent behaviour.
+ *
+ * Collisions that already existed before the mutation are tolerated: the agent
+ * side never validated names, so synced configs can arrive with duplicates
+ * already in them, and rejecting the whole array would brick every subsequent
+ * save on the machine — including the rename that would clean them up.
  */
-function assertUniqueNames(processes: PublicProcessConfig[]): void {
-  const seen = new Set<string>();
-  for (const p of processes) {
-    if (!p.name) continue;
-    if (seen.has(p.name)) {
+export function assertNoNewDuplicateNames(
+  namesBefore: Array<string | undefined>,
+  namesAfter: Array<string | undefined>
+): void {
+  const before = new Map<string, number>();
+  for (const name of namesBefore) {
+    if (!name) continue;
+    before.set(name, (before.get(name) ?? 0) + 1);
+  }
+  const after = new Map<string, number>();
+  for (const name of namesAfter) {
+    if (!name) continue;
+    after.set(name, (after.get(name) ?? 0) + 1);
+  }
+  for (const [name, count] of after) {
+    if (count > 1 && count > (before.get(name) ?? 0)) {
       throw new ProcessConfigError(
         409,
-        `Duplicate process name: ${p.name}`,
+        `Duplicate process name: ${name}`,
         'duplicate_process_name'
       );
     }
-    seen.add(p.name);
   }
 }
 
