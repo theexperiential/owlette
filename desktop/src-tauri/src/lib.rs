@@ -61,6 +61,9 @@ pub fn run() {
       // service topping up an existing tray, which must not pop a window.
       if argv.iter().any(|argument| argument == ARG_TRAY) {
         log::debug!("second instance asked for the tray only; staying hidden");
+        // The service relaunches us only when it thinks the tray is missing, so
+        // treat it as a report that what is on screen may be stale.
+        tray::request_repaint(app);
       } else {
         tray::show_main_window(app);
       }

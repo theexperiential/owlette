@@ -254,7 +254,7 @@ export function launchModeBlockedReason(process: ProcessEntry): string | null {
 }
 
 /** A fresh entry with the legacy GUI's defaults. `id` comes from `crypto.randomUUID()`. */
-export function createProcessEntry(id: string, name = NEW_PROCESS_DEFAULTS.name): ProcessEntry {
+export function createProcessEntry(id: string, name: string = NEW_PROCESS_DEFAULTS.name): ProcessEntry {
   return {
     id,
     name,
@@ -281,6 +281,21 @@ export function removeProcess(config: OwletteConfig, id: string): OwletteConfig 
     config,
     processesOf(config).filter((process) => process.id !== id),
   )
+}
+
+/**
+ * `untitled process`, `untitled process 2`, … — same 409 rationale as
+ * {@link uniqueCopyName}: repeated `+` clicks must not mint colliding names.
+ */
+export function uniqueDefaultName(
+  processes: readonly ProcessEntry[],
+  baseName: string = NEW_PROCESS_DEFAULTS.name,
+): string {
+  const taken = new Set(processes.map((process) => text(process.name).trim()))
+  if (!taken.has(baseName)) return baseName
+  let n = 2
+  while (taken.has(`${baseName} ${n}`)) n += 1
+  return `${baseName} ${n}`
 }
 
 /**

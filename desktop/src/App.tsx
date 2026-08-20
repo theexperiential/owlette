@@ -50,6 +50,7 @@ import {
   setPriority,
   setSchedules,
   setVisibility,
+  uniqueDefaultName,
   updateProcess,
   type LaunchMode,
   type OwletteConfig,
@@ -171,11 +172,11 @@ function App() {
   )
 
   const handleAdd = useCallback(async () => {
-    const entry = createProcessEntry(crypto.randomUUID())
+    const id = crypto.randomUUID()
     const written = await edit('could not add the process', (document) =>
-      addProcess(document, entry),
+      addProcess(document, createProcessEntry(id, uniqueDefaultName(processesOf(document)))),
     )
-    if (written) setSelectedId(entry.id)
+    if (written) setSelectedId(id)
   }, [edit])
 
   const handleDuplicate = useCallback(

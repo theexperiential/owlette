@@ -28,7 +28,7 @@
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -73,6 +73,15 @@ const NOTIFY_DELAY: Duration = Duration::from_secs(5);
 const NOTIFY_GRACE: Duration = Duration::from_secs(10);
 /// How long a cached status document stays usable after a failed read.
 const STATUS_CACHE_TTL: Duration = Duration::from_secs(60);
+/// How often the icon and tooltip are re-asserted even when nothing changed.
+/// Nothing tells us that the shell re-registered the icon behind our back, so
+/// this is the ceiling on how long a stale registration can stay on screen.
+const REASSERT_INTERVAL: Duration = Duration::from_secs(60);
+/// Consecutive refused writes before the retry drops to [`POLL_INTERVAL`].
+const REFUSAL_BACKOFF_AFTER: u32 = 10;
+/// How long the build-time status read may take before the tray is built from a
+/// placeholder instead.
+const SEED_TIMEOUT: Duration = Duration::from_millis(500);
 /// Pause between the elevated stop and quitting, so the operator sees a clean
 /// transition rather than the icon vanishing first.
 const EXIT_SETTLE: Duration = Duration::from_secs(2);
@@ -122,21 +131,202 @@ struct TrayMenu {
   start_on_login: CheckMenuItem<Wry>,
 }
 
-/// Managed state: the menu handles plus the monitor thread's stop flag.
+/// Managed state: the menu handles plus the monitor thread's flags.
 pub struct TrayState {
   menu: Mutex<TrayMenu>,
   stop: Arc<AtomicBool>,
+  repaint: Arc<AtomicBool>,
+}
+
+/// What one tick's painting did. `Idle` and `Wrote` must stay distinct: reading
+/// "nothing needed writing" as "the write landed" made a flashing error state
+/// declare the shell recovered on every other half-period, and log a recovery
+/// plus a fresh warning 2.5 times a second for as long as the shell stayed down.
+#[derive(Debug)]
+enum PaintOutcome {
+  /// Already on screen.
+  Idle,
+  /// At least one write landed, and none were refused.
+  Wrote,
+  /// At least one write was refused; a partial tick counts as refused, so the
+  /// half that did not land is retried.
+  Refused(String),
+}
+
+/// Which icon a tick shows: the error state alternates with the normal icon to
+/// flash, the other two are solid.
+fn frame_for(code: StatusCode, flash_dim: bool) -> StatusCode {
+  if code == StatusCode::Error && flash_dim {
+    StatusCode::Normal
+  } else {
+    code
+  }
+}
+
+/// What the notification area is actually showing, as opposed to what the
+/// monitor last computed, and how hard we are still trying to change it.
+///
+/// Windows refuses every icon and tooltip write while the icon is not
+/// registered, and the service launches this app about a second into boot —
+/// before explorer.exe exists. `tray-icon` tolerates the failed add and
+/// re-registers on `TaskbarCreated` from its own cache, i.e. from the
+/// build-time bitmap, without replaying the writes it refused in between. So a
+/// write only counts once it has succeeded: recording the attempt is what
+/// latched the icon dim for the rest of the session after a boot.
+struct PaintState {
+  painted_icon: Option<StatusCode>,
+  painted_tooltip: Option<String>,
+  last_reassert: Instant,
+  /// Consecutive refusals, reset by any write that lands.
+  refusals: u32,
+  last_attempt: Option<Instant>,
+}
+
+impl PaintState {
+  fn new(now: Instant) -> Self {
+    Self {
+      painted_icon: None,
+      painted_tooltip: None,
+      last_reassert: now,
+      refusals: 0,
+      last_attempt: None,
+    }
+  }
+
+  /// One tick: paint the frame this state and flash phase call for, and log one
+  /// line per refusal streak — the retry runs five times a second.
+  fn tick<W: TrayWriter>(
+    &mut self,
+    writer: &mut W,
+    code: StatusCode,
+    flash_dim: bool,
+    tooltip: Option<&str>,
+    now: Instant,
+  ) -> PaintOutcome {
+    if !self.retry_due(now) {
+      return PaintOutcome::Idle;
+    }
+    self.last_attempt = Some(now);
+
+    let outcome = self.paint(writer, frame_for(code, flash_dim), tooltip);
+    match &outcome {
+      PaintOutcome::Refused(error) => {
+        if self.refusals == 0 {
+          log::warn!("the notification area refused a tray update: {error}");
+        }
+        self.refusals = self.refusals.saturating_add(1);
+      }
+      PaintOutcome::Wrote => {
+        if self.refusals > 0 {
+          log::info!("the notification area is taking tray updates again");
+        }
+        self.refusals = 0;
+      }
+      PaintOutcome::Idle => {}
+    }
+    outcome
+  }
+
+  /// Write whatever is not already on screen, remembering only what the shell
+  /// took.
+  fn paint<W: TrayWriter>(
+    &mut self,
+    writer: &mut W,
+    code: StatusCode,
+    tooltip: Option<&str>,
+  ) -> PaintOutcome {
+    let mut wrote = false;
+    let mut refusal = None;
+
+    if self.needs_icon(code) {
+      let result = writer.write_icon(code);
+      self.record_icon(code, result.is_ok());
+      match result {
+        Ok(()) => wrote = true,
+        Err(error) => refusal = refusal.or(Some(error)),
+      }
+    }
+
+    if let Some(text) = tooltip {
+      if self.needs_tooltip(text) {
+        let result = writer.write_tooltip(text);
+        self.record_tooltip(text, result.is_ok());
+        match result {
+          Ok(()) => wrote = true,
+          Err(error) => refusal = refusal.or(Some(error)),
+        }
+      }
+    }
+
+    match (refusal, wrote) {
+      (Some(error), _) => PaintOutcome::Refused(error),
+      (None, true) => PaintOutcome::Wrote,
+      (None, false) => PaintOutcome::Idle,
+    }
+  }
+
+  /// A `NIM_MODIFY` can never land if the `NIM_ADD` never did — a kiosk that
+  /// replaced explorer.exe never gets a notification area — so a streak that
+  /// long stops costing a PNG decode and a main-thread round trip five times a
+  /// second. The first refusals keep the tick cadence, so nothing is slower to
+  /// recover from an ordinary boot.
+  fn retry_due(&self, now: Instant) -> bool {
+    if self.refusals < REFUSAL_BACKOFF_AFTER {
+      return true;
+    }
+    self
+      .last_attempt
+      .map_or(true, |at| now.duration_since(at) >= POLL_INTERVAL)
+  }
+
+  fn needs_icon(&self, code: StatusCode) -> bool {
+    self.painted_icon != Some(code)
+  }
+
+  fn needs_tooltip(&self, tooltip: &str) -> bool {
+    self.painted_tooltip.as_deref() != Some(tooltip)
+  }
+
+  /// Only a write the shell took is remembered; a refusal leaves the last known
+  /// value alone, so the next tick asks again.
+  fn record_icon(&mut self, code: StatusCode, accepted: bool) {
+    if accepted {
+      self.painted_icon = Some(code);
+    }
+  }
+
+  fn record_tooltip(&mut self, tooltip: &str, accepted: bool) {
+    if accepted {
+      self.painted_tooltip = Some(tooltip.to_string());
+    }
+  }
+
+  /// Forget the screen, so the next tick paints both again.
+  fn invalidate(&mut self) {
+    self.painted_icon = None;
+    self.painted_tooltip = None;
+  }
+
+  /// True once per [`REASSERT_INTERVAL`].
+  fn reassert_due(&mut self, now: Instant) -> bool {
+    if now.duration_since(self.last_reassert) < REASSERT_INTERVAL {
+      return false;
+    }
+    self.last_reassert = now;
+    true
+  }
 }
 
 /// Build the tray icon and start the status monitor. Failure is fatal to the
 /// caller: a tray app with no tray icon has no way back to its window.
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
   let root = paths::data_root();
+  let seed = seed_status(&root);
   let view = TrayView {
-    code: StatusCode::Warning,
-    service: "service: checking...".to_string(),
-    status: "status: checking...".to_string(),
-    health: None,
+    code: seed.code,
+    service: seed.service,
+    status: seed.status,
+    health: seed.health,
     start_on_login: startup_link::is_enabled(),
   };
 
@@ -171,17 +361,76 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
   });
 
   let stop = Arc::new(AtomicBool::new(false));
+  let repaint = Arc::new(AtomicBool::new(false));
   app.manage(TrayState {
     menu: Mutex::new(menu),
     stop: Arc::clone(&stop),
+    repaint: Arc::clone(&repaint),
   });
 
   let handle = app.clone();
   thread::Builder::new()
     .name("owlette-tray".into())
-    .spawn(move || monitor(handle, stop))?;
+    .spawn(move || monitor(handle, stop, repaint))?;
 
   Ok(())
+}
+
+/// Status to build the tray from: a real read where the machine answers in
+/// time, because this is the icon `tray-icon` re-registers from if the
+/// notification area is not up yet, and a hardcoded "checking..." could outlive
+/// the check by a whole session.
+///
+/// Read on a thread of its own: the SCM call is unbounded, and on the setup
+/// path a wedged SCM would keep the whole app — tray, watchers, event loop —
+/// from ever coming up, where before it could only stall the monitor thread.
+/// Nothing joins the thread, so a wedged call leaks one thread rather than
+/// holding up the launch.
+fn seed_status(root: &Path) -> Status {
+  let (sender, receiver) = mpsc::channel();
+  let path = root.to_path_buf();
+  let spawned = thread::Builder::new()
+    .name("owlette-tray-seed".into())
+    .spawn(move || {
+      let running = service_ctl::status(&path.join(SERVICE_STATUS_REL))
+        .map(|status| status.running)
+        .unwrap_or(false);
+      let _ = sender.send(determine_status(&read_status_doc(&path), running));
+    });
+
+  if let Err(error) = spawned {
+    log::warn!("could not spawn the tray seed read: {error}");
+    return checking_status();
+  }
+
+  receiver.recv_timeout(SEED_TIMEOUT).unwrap_or_else(|_| {
+    log::warn!(
+      "the tray seed read did not answer in {} ms; building the tray from a placeholder",
+      SEED_TIMEOUT.as_millis()
+    );
+    checking_status()
+  })
+}
+
+/// The placeholder seed, for when the machine will not say. The monitor's first
+/// tick replaces it a second later.
+fn checking_status() -> Status {
+  Status {
+    code: StatusCode::Warning,
+    service: "service: checking...".to_string(),
+    status: "status: checking...".to_string(),
+    health: None,
+  }
+}
+
+/// Ask the monitor to repaint on its next tick. Belt and braces: the service
+/// relaunches us with `--tray` only when `tmp/tray.pid` is absent, which a live
+/// app always wrote, so this rarely fires in the field. Recovery rests on the
+/// monitor's retry and re-assert, not on this.
+pub fn request_repaint(app: &AppHandle) {
+  if let Some(state) = app.try_state::<TrayState>() {
+    state.repaint.store(true, Ordering::Relaxed);
+  }
 }
 
 /// Stop the monitor thread. Called from `RunEvent::Exit`, before the app handle
@@ -217,7 +466,7 @@ pub fn hide_main_window(app: &AppHandle) {
   pid_file::remove(&paths::data_root(), GUI_PID_REL);
 }
 
-fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
+fn monitor(app: AppHandle, stop: Arc<AtomicBool>, repaint: Arc<AtomicBool>) {
   let root = paths::data_root();
   let started = Instant::now();
 
@@ -228,9 +477,17 @@ fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
   let mut flash_dim = false;
   let mut degraded_since: Option<Instant> = None;
   let mut degraded_notified = false;
+  let mut paint = PaintState::new(started);
+  let mut wanted_tooltip: Option<String> = None;
 
   while !stop.load(Ordering::Relaxed) {
     let now = Instant::now();
+
+    let asked = repaint.swap(false, Ordering::Relaxed);
+    let reassert = paint.reassert_due(now);
+    if asked || reassert {
+      paint.invalidate();
+    }
 
     if last_poll.map_or(true, |at| now.duration_since(at) >= POLL_INTERVAL) {
       last_poll = Some(now);
@@ -263,9 +520,9 @@ fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
           // error shows the alert frame immediately.
           flash_dim = false;
           last_flash = now;
-          set_icon(&app, view.code);
         }
-        apply(&app, &root, &view);
+        apply_menu(&app, &view);
+        wanted_tooltip = Some(tooltip(&root, &view));
       }
 
       // Only the Error tier toasts (narrowed 2026-08-14): a Warning is what
@@ -308,17 +565,22 @@ fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
       if now.duration_since(last_flash) >= FLASH_PERIOD {
         last_flash = now;
         flash_dim = !flash_dim;
-        set_icon(
-          &app,
-          if flash_dim {
-            StatusCode::Normal
-          } else {
-            StatusCode::Error
-          },
-        );
       }
     } else if flash_dim {
       flash_dim = false;
+    }
+
+    // One paint decision per tick, flash frames included, so a frame the shell
+    // refuses is retried on the next tick instead of skipped to the next
+    // half-period.
+    if let Some(view) = &current {
+      paint.tick(
+        &mut ShellWriter(&app),
+        view.code,
+        flash_dim,
+        wanted_tooltip.as_deref(),
+        now,
+      );
     }
 
     thread::sleep(TICK);
@@ -327,8 +589,10 @@ fn monitor(app: AppHandle, stop: Arc<AtomicBool>) {
   log::debug!("tray monitor stopped");
 }
 
-/// Push a view onto the tray: menu text (or a rebuild), then the tooltip.
-fn apply(app: &AppHandle, root: &Path, view: &TrayView) {
+/// Push a view onto the tray menu: item text, or a rebuild when the health row
+/// appears or disappears. The icon and tooltip go through [`PaintState::tick`] —
+/// they are the two writes the shell can refuse.
+fn apply_menu(app: &AppHandle, view: &TrayView) {
   let Some(tray) = app.tray_by_id(TRAY_ID) else {
     return;
   };
@@ -358,20 +622,45 @@ fn apply(app: &AppHandle, root: &Path, view: &TrayView) {
       }
     }
     Err(error) => log::error!("tray menu lock poisoned: {error}"),
+  };
+}
+
+/// The two writes the notification area can refuse, behind a trait so the tests
+/// drive the real paint logic rather than a copy of it.
+trait TrayWriter {
+  fn write_icon(&mut self, code: StatusCode) -> Result<(), String>;
+  fn write_tooltip(&mut self, text: &str) -> Result<(), String>;
+}
+
+/// The real thing: tauri's tray setters, which marshal to the main thread.
+struct ShellWriter<'a>(&'a AppHandle);
+
+impl TrayWriter for ShellWriter<'_> {
+  fn write_icon(&mut self, code: StatusCode) -> Result<(), String> {
+    set_icon(self.0, code)
   }
 
-  if let Err(error) = tray.set_tooltip(Some(tooltip(root, view))) {
-    log::warn!("could not set the tray tooltip: {error}");
+  fn write_tooltip(&mut self, text: &str) -> Result<(), String> {
+    set_tooltip(self.0, text)
   }
 }
 
-fn set_icon(app: &AppHandle, code: StatusCode) {
+fn set_icon(app: &AppHandle, code: StatusCode) -> Result<(), String> {
   let Some(tray) = app.tray_by_id(TRAY_ID) else {
-    return;
+    return Err("no tray icon to paint".to_string());
   };
-  if let Err(error) = tray.set_icon(Some(icon_for(code))) {
-    log::warn!("could not set the tray icon: {error}");
-  }
+  tray
+    .set_icon(Some(icon_for(code)))
+    .map_err(|error| format!("could not set the tray icon: {error}"))
+}
+
+fn set_tooltip(app: &AppHandle, text: &str) -> Result<(), String> {
+  let Some(tray) = app.tray_by_id(TRAY_ID) else {
+    return Err("no tray icon to paint".to_string());
+  };
+  tray
+    .set_tooltip(Some(text))
+    .map_err(|error| format!("could not set the tray tooltip: {error}"))
 }
 
 fn icon_for(code: StatusCode) -> Image<'static> {
@@ -741,10 +1030,10 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
   }
 }
 
-/// Restart the service without a UAC prompt: a running service is asked to exit
-/// 42 via `tmp/restart.flag`, which NSSM turns into a restart. A stopped service
-/// has no loop to read the flag, so it is started directly — the one path here
-/// that can raise an elevation prompt.
+/// Restart the service without a UAC prompt: a running agent is asked to exit
+/// 42 via `tmp/restart.flag`, which owlette-host turns into a relaunch. A
+/// stopped service has no loop to read the flag, so it is started directly —
+/// the one path here that can raise an elevation prompt.
 fn restart_service(app: &AppHandle) {
   let root = paths::data_root();
   let running = service_ctl::status(&root.join(SERVICE_STATUS_REL))
@@ -779,7 +1068,7 @@ fn restart_service(app: &AppHandle) {
 
   match written {
     Ok(()) => {
-      log::info!("restart flag written — the service will restart via NSSM");
+      log::info!("restart flag written — owlette-host will relaunch the agent");
       notify(
         app,
         "owlette — restarting",
@@ -815,10 +1104,11 @@ fn toggle_start_on_login(app: &AppHandle) {
   }
 }
 
-/// Quit owlette: stop supervising the machine, then quit the app. NSSM restarts
-/// the service on any process exit, so the only real stop is a controlled SCM
-/// stop, which needs rights this process usually lacks. We quit either way — if
-/// the operator declines the prompt, the service relaunches the tray.
+/// Quit owlette: stop supervising the machine, then quit the app. owlette-host
+/// relaunches the agent on any unexpected exit, so the only real stop is a
+/// controlled SCM stop, which needs rights this process usually lacks. We quit
+/// either way — if the operator declines the prompt, the service relaunches the
+/// tray.
 fn exit_owlette(app: &AppHandle) {
   hide_main_window(app);
 
@@ -850,6 +1140,351 @@ mod tests {
 
   fn fresh(value: Value) -> StatusDoc {
     StatusDoc::Fresh(value)
+  }
+
+  /// Stand-in for the notification area, which refuses writes until the icon is
+  /// registered — the whole boot window, on a machine where the service starts
+  /// this app before explorer.exe.
+  struct FakeShell {
+    refusals: usize,
+    /// Refuse tooltips whatever `refusals` says: a tick where one write lands
+    /// and the other does not is what makes the outcome's precedence matter.
+    tooltips_refused: bool,
+    icons: Vec<StatusCode>,
+    tooltips: Vec<String>,
+    icon_on_screen: Option<StatusCode>,
+    tooltip_on_screen: Option<String>,
+  }
+
+  impl FakeShell {
+    fn new(refusals: usize) -> Self {
+      Self {
+        refusals,
+        tooltips_refused: false,
+        icons: Vec::new(),
+        tooltips: Vec::new(),
+        icon_on_screen: None,
+        tooltip_on_screen: None,
+      }
+    }
+
+    /// The `TaskbarCreated` moment.
+    fn accept(&mut self) {
+      self.refusals = 0;
+      self.tooltips_refused = false;
+    }
+
+    /// explorer.exe dying under a running tray.
+    fn refuse_everything(&mut self) {
+      self.refusals = usize::MAX;
+    }
+
+    fn refuses(&mut self) -> bool {
+      if self.refusals == 0 {
+        return false;
+      }
+      self.refusals -= 1;
+      true
+    }
+  }
+
+  impl TrayWriter for FakeShell {
+    fn write_icon(&mut self, code: StatusCode) -> Result<(), String> {
+      self.icons.push(code);
+      if self.refuses() {
+        return Err("the notification area is not registered".to_string());
+      }
+      self.icon_on_screen = Some(code);
+      Ok(())
+    }
+
+    fn write_tooltip(&mut self, text: &str) -> Result<(), String> {
+      self.tooltips.push(text.to_string());
+      if self.tooltips_refused || self.refuses() {
+        return Err("the notification area is not registered".to_string());
+      }
+      self.tooltip_on_screen = Some(text.to_string());
+      Ok(())
+    }
+  }
+
+  /// One monitor tick, through the real paint path: a solid frame, no tooltip.
+  fn tick(paint: &mut PaintState, shell: &mut FakeShell, code: StatusCode) -> PaintOutcome {
+    paint.tick(shell, code, false, None, Instant::now())
+  }
+
+  #[test]
+  fn only_the_error_state_flashes() {
+    assert_eq!(frame_for(StatusCode::Error, false), StatusCode::Error);
+    assert_eq!(frame_for(StatusCode::Error, true), StatusCode::Normal);
+    assert_eq!(frame_for(StatusCode::Normal, true), StatusCode::Normal);
+    assert_eq!(
+      frame_for(StatusCode::Warning, true),
+      StatusCode::Warning,
+      "a dim phase must never turn a disconnected tray green"
+    );
+  }
+
+  #[test]
+  fn a_refused_icon_is_retried_until_the_shell_takes_it() {
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(5);
+
+    for _ in 0..8 {
+      tick(&mut paint, &mut shell, StatusCode::Normal);
+    }
+
+    assert_eq!(shell.icon_on_screen, Some(StatusCode::Normal));
+    assert_eq!(
+      shell.icons.len(),
+      6,
+      "five refusals then the write that landed — and nothing after it"
+    );
+  }
+
+  #[test]
+  fn a_status_that_settles_while_the_shell_is_gone_still_reaches_the_screen() {
+    // The field incident: at boot the service starts this app about a second
+    // in, before explorer.exe, so every write is refused. The agent connects
+    // ~13 s later and the code never changes again. Painting only on a code
+    // change left the build-time dim icon on screen for the whole session.
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(usize::MAX);
+
+    for code in [StatusCode::Warning, StatusCode::Error, StatusCode::Normal] {
+      tick(&mut paint, &mut shell, code);
+    }
+    assert_eq!(
+      shell.icon_on_screen, None,
+      "nothing lands while the shell refuses"
+    );
+
+    shell.accept();
+    tick(&mut paint, &mut shell, StatusCode::Normal);
+
+    assert_eq!(
+      shell.icon_on_screen,
+      Some(StatusCode::Normal),
+      "the next tick must repaint without a status change to prompt it"
+    );
+  }
+
+  #[test]
+  fn a_tick_with_nothing_to_write_is_not_a_recovery() {
+    // Steady error under a dead shell: the flash half already on screen needs
+    // no write, and reading that as "the shell is back" logged a recovery and a
+    // fresh warning every 800 ms for as long as the machine stayed that way.
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(0);
+
+    assert!(matches!(
+      tick(&mut paint, &mut shell, StatusCode::Error),
+      PaintOutcome::Wrote
+    ));
+
+    shell.refuse_everything();
+    let dim = paint.tick(&mut shell, StatusCode::Error, true, None, Instant::now());
+    assert!(matches!(dim, PaintOutcome::Refused(_)));
+
+    let alert = paint.tick(&mut shell, StatusCode::Error, false, None, Instant::now());
+    assert!(
+      matches!(alert, PaintOutcome::Idle),
+      "a frame already on screen is not a write that landed"
+    );
+  }
+
+  #[test]
+  fn a_tick_that_only_half_landed_is_still_a_refusal() {
+    // Reading the icon's success as recovery would reset the streak and leave
+    // the tooltip stale.
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(0);
+    shell.tooltips_refused = true;
+
+    let outcome = paint.tick(
+      &mut shell,
+      StatusCode::Normal,
+      false,
+      Some("owlette"),
+      Instant::now(),
+    );
+
+    assert!(matches!(outcome, PaintOutcome::Refused(_)));
+    assert_eq!(
+      shell.icon_on_screen,
+      Some(StatusCode::Normal),
+      "the write that landed is kept"
+    );
+    assert_eq!(shell.tooltip_on_screen, None);
+
+    paint.tick(
+      &mut shell,
+      StatusCode::Normal,
+      false,
+      Some("owlette"),
+      Instant::now(),
+    );
+    assert_eq!(shell.icons.len(), 1, "only the refused half is retried");
+    assert_eq!(shell.tooltips.len(), 2);
+  }
+
+  #[test]
+  fn the_error_flash_paints_through_the_same_bookkeeping() {
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(1);
+    let frame = |paint: &mut PaintState, shell: &mut FakeShell, dim: bool| {
+      paint.tick(shell, StatusCode::Error, dim, None, Instant::now());
+    };
+
+    // A refused alert frame is retried on the next tick, not skipped to the
+    // next half-period.
+    frame(&mut paint, &mut shell, false);
+    frame(&mut paint, &mut shell, false);
+    assert_eq!(shell.icon_on_screen, Some(StatusCode::Error));
+
+    frame(&mut paint, &mut shell, true);
+    frame(&mut paint, &mut shell, true);
+    frame(&mut paint, &mut shell, false);
+
+    assert_eq!(
+      shell.icons,
+      vec![
+        StatusCode::Error,
+        StatusCode::Error,
+        StatusCode::Normal,
+        StatusCode::Error
+      ],
+      "one write per frame, and none for a frame already on screen"
+    );
+  }
+
+  #[test]
+  fn a_stale_registration_is_repainted_within_a_minute() {
+    // An explorer restart re-registers the icon from tray-icon's cache without
+    // telling us, so the only cure is to re-assert on a timer.
+    let start = Instant::now();
+    let mut paint = PaintState::new(start);
+    let mut shell = FakeShell::new(0);
+
+    tick(&mut paint, &mut shell, StatusCode::Normal);
+    assert_eq!(shell.icons.len(), 1);
+
+    assert!(!paint.reassert_due(start + REASSERT_INTERVAL - Duration::from_secs(1)));
+    assert!(matches!(
+      tick(&mut paint, &mut shell, StatusCode::Normal),
+      PaintOutcome::Idle
+    ));
+    assert_eq!(
+      shell.icons.len(),
+      1,
+      "a painted icon is not rewritten every tick"
+    );
+
+    assert!(paint.reassert_due(start + REASSERT_INTERVAL));
+    paint.invalidate();
+    tick(&mut paint, &mut shell, StatusCode::Normal);
+    assert_eq!(shell.icons.len(), 2, "one forced write a minute");
+    assert!(!paint.reassert_due(start + REASSERT_INTERVAL + Duration::from_secs(1)));
+  }
+
+  #[test]
+  fn a_hopeless_retry_backs_off_to_the_poll_cadence() {
+    // A kiosk that replaced explorer.exe never gets a notification area, and
+    // full-speed retries there are a PNG decode and a main-thread round trip
+    // five times a second for the life of the process.
+    let start = Instant::now();
+    let mut paint = PaintState::new(start);
+    let mut shell = FakeShell::new(usize::MAX);
+    let mut now = start;
+
+    for _ in 0..REFUSAL_BACKOFF_AFTER {
+      now += TICK;
+      assert!(matches!(
+        paint.tick(&mut shell, StatusCode::Normal, false, None, now),
+        PaintOutcome::Refused(_)
+      ));
+    }
+    let full_speed = REFUSAL_BACKOFF_AFTER as usize;
+    assert_eq!(
+      shell.icons.len(),
+      full_speed,
+      "the first refusals keep the tick cadence"
+    );
+
+    now += TICK;
+    paint.tick(&mut shell, StatusCode::Normal, false, None, now);
+    assert_eq!(shell.icons.len(), full_speed, "then the retry slows down");
+
+    now += POLL_INTERVAL;
+    paint.tick(&mut shell, StatusCode::Normal, false, None, now);
+    assert_eq!(shell.icons.len(), full_speed + 1, "once a second, not five");
+
+    // A write that lands resets the streak, so the next outage is caught at
+    // full speed again.
+    shell.accept();
+    now += POLL_INTERVAL;
+    assert!(matches!(
+      paint.tick(&mut shell, StatusCode::Normal, false, None, now),
+      PaintOutcome::Wrote
+    ));
+
+    shell.refuse_everything();
+    paint.invalidate();
+    now += TICK;
+    paint.tick(&mut shell, StatusCode::Normal, false, None, now);
+    assert_eq!(shell.icons.len(), full_speed + 3);
+  }
+
+  #[test]
+  fn a_refused_tooltip_is_not_remembered_as_painted() {
+    let mut paint = PaintState::new(Instant::now());
+    let mut shell = FakeShell::new(2);
+    let starting = "owlette v3.0.1\nstatus: starting";
+
+    let refused = paint.tick(
+      &mut shell,
+      StatusCode::Warning,
+      false,
+      Some(starting),
+      Instant::now(),
+    );
+    assert!(matches!(refused, PaintOutcome::Refused(_)));
+    assert_eq!(shell.tooltip_on_screen, None);
+
+    shell.accept();
+    paint.tick(
+      &mut shell,
+      StatusCode::Warning,
+      false,
+      Some(starting),
+      Instant::now(),
+    );
+    assert_eq!(shell.tooltip_on_screen.as_deref(), Some(starting));
+    assert_eq!(
+      shell.tooltips.len(),
+      2,
+      "the refused tooltip was asked again"
+    );
+
+    let idle = paint.tick(
+      &mut shell,
+      StatusCode::Warning,
+      false,
+      Some(starting),
+      Instant::now(),
+    );
+    assert!(matches!(idle, PaintOutcome::Idle));
+    assert_eq!(shell.tooltips.len(), 2);
+  }
+
+  #[test]
+  fn the_placeholder_seed_says_it_is_still_looking() {
+    // What a machine whose SCM did not answer in time builds its tray from.
+    let seed = checking_status();
+    assert_eq!(seed.code, StatusCode::Warning);
+    assert_eq!(seed.service, "service: checking...");
+    assert_eq!(seed.status, "status: checking...");
+    assert!(seed.health.is_none());
   }
 
   #[test]
