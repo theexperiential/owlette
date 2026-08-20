@@ -79,6 +79,10 @@ def firebase_client(mock_auth_manager, mock_rest_client):
         mock_su.get_data_path.return_value = "/tmp/owlette"
         mock_su.get_system_metrics.return_value = {"cpu": 10, "memory": 50}
         mock_su.APP_VERSION = "2.2.1"
+        # machine_id is read straight off shared_utils in __init__; without a
+        # stub it becomes a MagicMock and every id-shaped assertion depends on
+        # whether this module was still in sys.modules when patch() resolved it.
+        mock_su.get_hostname.return_value = "TEST-MACHINE"
 
         try:
             client = FirebaseClient(

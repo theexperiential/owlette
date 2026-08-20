@@ -78,6 +78,66 @@ class TestConfigManagement:
                 pass  # Expected when file operations fail
 
 
+class TestWriteConfig:
+    """write_config used to walk missing intermediates with item.get(key, {}),
+    landing the write in a detached dict and reporting success — a silent no-op
+    on any path the config had not grown yet."""
+
+    @pytest.fixture
+    def config_file(self, tmp_path, monkeypatch):
+        path = tmp_path / 'config.json'
+        path.write_text(json.dumps({
+            'firebase': {'enabled': True, 'site_id': 'test-site'},
+            'displays': {'autoRestore': {'enabled': True}},
+        }))
+        monkeypatch.setattr(shared_utils, 'CONFIG_PATH', str(path))
+        shared_utils._invalidate_config_cache()
+        return path
+
+    def _read(self, path):
+        return json.loads(path.read_text())
+
+    def test_a_write_into_a_missing_intermediate_lands(self, config_file):
+        shared_utils.write_config(['cortex', 'apiKeyEncrypted'], 'blob')
+
+        assert self._read(config_file)['cortex'] == {'apiKeyEncrypted': 'blob'}
+
+    def test_every_missing_level_of_a_deep_path_is_created(self, config_file):
+        shared_utils.write_config(
+            ['displays', 'autoRestore', 'circuitBreaker', 'failures'], 2)
+
+        autorestore = self._read(config_file)['displays']['autoRestore']
+        assert autorestore['circuitBreaker'] == {'failures': 2}
+        assert autorestore['enabled'] is True  # sibling untouched
+
+    def test_an_existing_path_is_updated_without_touching_siblings(self, config_file):
+        shared_utils.write_config(['firebase', 'site_id'], 'other-site')
+
+        firebase = self._read(config_file)['firebase']
+        assert firebase['site_id'] == 'other-site'
+        assert firebase['enabled'] is True
+
+    def test_a_top_level_key_is_written(self, config_file):
+        shared_utils.write_config(['environment'], 'dev')
+
+        assert self._read(config_file)['environment'] == 'dev'
+
+    def test_a_scalar_intermediate_raises_rather_than_clobbering_it(self, config_file):
+        # Making room for the write would mean replacing the string with a dict
+        # and destroying whatever it held; failing loudly is the safe answer.
+        with pytest.raises(ValueError) as excinfo:
+            shared_utils.write_config(['firebase', 'site_id', 'nested'], 'x')
+
+        assert 'firebase.site_id' in str(excinfo.value)
+        assert self._read(config_file)['firebase']['site_id'] == 'test-site'
+
+    def test_the_new_value_is_published_to_the_read_cache(self, config_file):
+        shared_utils.write_config(['cortex', 'enabled'], True)
+
+        # No mtime wait: in-process readers must see it immediately.
+        assert shared_utils.read_config(['cortex', 'enabled']) is True
+
+
 class TestSystemMetrics:
     """Tests for system metrics collection"""
 

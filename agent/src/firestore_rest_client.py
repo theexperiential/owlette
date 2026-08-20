@@ -27,6 +27,11 @@ FIRESTORE_API_BASE = "https://firestore.googleapis.com/v1"
 # Special value for server timestamp
 SERVER_TIMESTAMP = "SERVER_TIMESTAMP"
 
+# Per-request HTTP timeout. Generous by default because the agent runs on links
+# that stall; see set_request_timeout() for the shutdown path, which cannot
+# afford it.
+DEFAULT_REQUEST_TIMEOUT = 30
+
 def timestamp_to_ms(value) -> int:
     """Convert a Firestore timestamp value to epoch milliseconds.
 
@@ -70,6 +75,7 @@ class FirestoreRestClient:
         self.project_id = project_id
         self.auth_manager = auth_manager
         self.base_url = f"{FIRESTORE_API_BASE}/projects/{project_id}/databases/(default)/documents"
+        self.request_timeout = DEFAULT_REQUEST_TIMEOUT
 
         # HTTP session for connection pooling
         self.session = requests.Session()
@@ -78,6 +84,15 @@ class FirestoreRestClient:
         })
 
         logger.debug(f"FirestoreRestClient initialized: project={project_id}")
+
+    def set_request_timeout(self, seconds: float):
+        """Change the per-request HTTP timeout for every subsequent call.
+
+        Used by the shutdown path, where the OS window is shorter than the
+        default timeout and a stalled request costs more than a skipped write.
+        """
+        self.request_timeout = seconds
+        logger.debug(f"Firestore request timeout set to {seconds}s")
 
     def close(self):
         """Release the Session's pooled sockets. Idempotent; drop the reference
@@ -230,7 +245,7 @@ class FirestoreRestClient:
             url,
             json={'writes': [write_entry]},
             headers=self._get_auth_headers(),
-            timeout=30
+            timeout=self.request_timeout
         )
         response.raise_for_status()
 
@@ -262,7 +277,7 @@ class FirestoreRestClient:
         """
         try:
             url = f"{self.base_url}/{path}"
-            response = self.session.get(url, headers=self._get_auth_headers(), timeout=30)
+            response = self.session.get(url, headers=self._get_auth_headers(), timeout=self.request_timeout)
 
             if response.status_code == 404:
                 logger.debug(f"Document not found: {path}")
@@ -343,7 +358,7 @@ class FirestoreRestClient:
                     json=firestore_doc,
                     params=params,
                     headers=self._get_auth_headers(),
-                    timeout=30
+                    timeout=self.request_timeout
                 )
 
                 response.raise_for_status()
@@ -426,7 +441,7 @@ class FirestoreRestClient:
                     url,
                     json={'writes': [write_entry]},
                     headers=self._get_auth_headers(),
-                    timeout=30
+                    timeout=self.request_timeout
                 )
             else:
                 # No server timestamps — use existing PATCH logic
@@ -440,7 +455,7 @@ class FirestoreRestClient:
                     json={'fields': firestore_fields},
                     params=params,
                     headers=self._get_auth_headers(),
-                    timeout=30
+                    timeout=self.request_timeout
                 )
 
             response.raise_for_status()
@@ -459,7 +474,7 @@ class FirestoreRestClient:
         """
         try:
             url = f"{self.base_url}/{path}"
-            response = self.session.delete(url, headers=self._get_auth_headers(), timeout=30)
+            response = self.session.delete(url, headers=self._get_auth_headers(), timeout=self.request_timeout)
 
             # 404 is OK for delete (already doesn't exist)
             if response.status_code not in [200, 204, 404]:
@@ -642,7 +657,7 @@ class FirestoreRestClient:
                 url,
                 json={'writes': batch_writes},
                 headers=self._get_auth_headers(),
-                timeout=30
+                timeout=self.request_timeout
             )
 
             response.raise_for_status()
@@ -724,7 +739,7 @@ class CollectionReference:
             response = self.client.session.get(
                 url,
                 headers=self.client._get_auth_headers(),
-                timeout=30
+                timeout=self.client.request_timeout
             )
 
             response.raise_for_status()

@@ -188,6 +188,18 @@ if __name__ == '__main__':
             self._shutdown_trigger = None
             # ConnectionManager the status-file listener is bound to; re-wired on Firebase re-init
             self._connection_status_manager = None
+            # local-config push detection, read by _check_local_config_changes every tick
+            self._local_config_mtime = None
+            self._applying_remote_config = False
+            self._config_push_thread = None
+            # guards the two writers of _local_config_mtime (push thread + apply)
+            self._config_baseline_lock = threading.Lock()
+            # push retry pacing, read by _check_local_config_changes every tick
+            import config_sync as _config_sync
+            self._push_backoff = _config_sync.PushBackoff()
+            self._push_attempt_mtime = None
+            # one-WARNING-per-episode flag for a blind SCM stop watcher
+            self._scm_query_failure_logged = False
 
             self.firebase_client = None
             logging.info(f"Firebase check - Available: {FIREBASE_AVAILABLE}")

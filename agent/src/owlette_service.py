@@ -18,6 +18,7 @@ import session_state
 import watchdog_state
 import display_manager
 import nvapi_display
+import config_sync
 from command_router import CommandRouter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import win32serviceutil
@@ -114,10 +115,31 @@ MIN_STATUS_WRITE_INTERVAL = 30
 # `online: false` (incident 2026-08-13 14:17, the reason the host exists).
 SCM_STOP_POLL_INTERVAL = 0.25
 
+# config.json mtime poll. A no-change tick is a single stat, so this can run far
+# faster than the 5s main loop it used to ride — detection was costing up to a
+# full tick before an operator's edit even began uploading.
+LOCAL_CONFIG_POLL_INTERVAL = 0.5
+
 # Shutdown budget once STOP_PENDING appears; overruns log a warning. MUST stay in
 # step with supervisor::CHILD_STOP_GRACE in agent/host, which terminates us after
 # exactly this long.
 SCM_STOP_GRACE_SECONDS = 20.0
+
+# owlette-host writes this the instant an SCM stop/shutdown/preshutdown control
+# arrives, so the stop is visible even when the SCM itself cannot be queried.
+# EXISTENCE is the signal; the body ({"control": ..., "written_at_ms": ...}) is
+# best-effort context for the log and may be partial or unreadable.
+STOP_SENTINEL_PATH = shared_utils.get_data_path('tmp/stop_signal.json')
+
+# Corroborating-shutdown search window, both sides anchored on the agent's LAST
+# HEARTBEAT — never on boot time. Anchoring the far edge on boot would let an
+# unrelated clean reboot hours later vouch for a crash and hide the outage
+# between them. The lead covers the agent dying early in a shutdown; the trail is
+# generous because 6006 can follow shutdown initiation by minutes on an
+# update-heavy stop, and the cost of it being too tight is only a missed
+# corroboration (fail-closed to unexpected_reboot).
+SHUTDOWN_EVIDENCE_LEAD_SECONDS = 180
+SHUTDOWN_EVIDENCE_TRAIL_SECONDS = 600
 
 
 def _init_status_writer_logger():
@@ -253,6 +275,25 @@ class OwletteService(win32serviceutil.ServiceFramework):
         # ConnectionManager the status-file listener is registered against, so
         # re-initialising the Firebase client re-wires it against the new one.
         self._connection_status_manager = None
+        # Local-config push detection. The mtime is the cheap gate the config
+        # watcher checks twice a second; None means "no baseline yet, compare
+        # properly".
+        # _applying_remote_config suppresses detection while a pull is writing
+        # config.json, so a pull is never mistaken for a local edit.
+        self._local_config_mtime = None
+        self._applying_remote_config = False
+        self._config_push_thread = None
+        # Serialises the two writers of _local_config_mtime — the push thread and
+        # handle_config_update's finally, which a foreign-edit delivery can run
+        # concurrently.
+        self._config_baseline_lock = threading.Lock()
+        # Paces retries of a failing push; _push_attempt_mtime identifies which
+        # edit has been failing, so a newer one resets the backoff.
+        self._push_backoff = config_sync.PushBackoff()
+        self._push_attempt_mtime = None
+        # One WARNING per episode when the SCM cannot be queried; DEBUG is off by
+        # default, so a blind watcher used to leave no trace at all.
+        self._scm_query_failure_logged = False
 
         # Write early status so tray can show health alerts before Firebase init
         self._write_service_status_early()
@@ -767,6 +808,24 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 return False
             self._shutdown_trigger = trigger
 
+        # FIRST, before anything that can touch the network and regardless of
+        # whether Firebase exists: at OS shutdown Windows allows roughly 5s, and
+        # this local write is the only record that the stop was clean. Behind the
+        # old Firestore log_event it routinely never happened, and the next boot
+        # reported unexpected_reboot. Compare-and-set so an owlette_reboot /
+        # owlette_shutdown intent set moments earlier still wins.
+        try:
+            session_state.set_intent_if_none("external_clean")
+        except Exception as e:
+            logging.debug(f"[SHUTDOWN] set_intent_if_none failed: {e}")
+
+        # Every Firestore call below now has 3s to land instead of 30.
+        if self.firebase_client:
+            try:
+                self.firebase_client.enter_shutdown_mode()
+            except Exception as e:
+                logging.debug(f"[SHUTDOWN] enter_shutdown_mode failed: {e}")
+
         started = time.monotonic()
         logging.warning(f"=== SERVICE STOP ({trigger}) === flushing presence")
         self.is_alive = False
@@ -782,14 +841,6 @@ class OwletteService(win32serviceutil.ServiceFramework):
                 logging.info("[SHUTDOWN] agent_stopped event logged")
             except Exception as e:
                 logging.error(f"[SHUTDOWN] Failed to log agent_stopped: {e}")
-
-            # Compare-and-set: an owlette_reboot/owlette_shutdown intent set
-            # moments earlier by _handle_reboot_machine must win over this.
-            try:
-                import session_state
-                session_state.set_intent_if_none("external_clean")
-            except Exception as e:
-                logging.debug(f"[SHUTDOWN] set_intent_if_none failed: {e}")
 
             # This is the write that marks the machine offline.
             try:
@@ -816,6 +867,24 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.info(f"=== SERVICE STOP COMPLETE ({trigger}) === in {elapsed:.1f}s")
         return True
 
+    def _log_scm_query_failure(self, message):
+        """First failure of an episode at WARNING, repeats at DEBUG.
+
+        Every SCM read error is swallowed as "not stopping", and DEBUG is off by
+        default, so a watcher that had gone blind left no trace anywhere.
+
+        getattr backstop: _query_scm_stop_requested is deliberately callable on a
+        bare instance so the decision can be exercised without a service.
+        """
+        if getattr(self, '_scm_query_failure_logged', False):
+            logging.debug(f"[SCM WATCH] {message}")
+            return
+        self._scm_query_failure_logged = True
+        logging.warning(
+            f"[SCM WATCH] SCM stop watcher cannot query the SCM: {message}; "
+            f"relying on the stop sentinel"
+        )
+
     def _query_scm_stop_requested(self):
         """True once the SCM reports this service is stopping.
 
@@ -827,14 +896,15 @@ class OwletteService(win32serviceutil.ServiceFramework):
             manager = win32service.OpenSCManager(
                 None, None, win32service.SC_MANAGER_CONNECT)
         except Exception as e:
-            logging.debug(f"[SCM WATCH] Could not open the SCM: {e}")
+            self._log_scm_query_failure(f"could not open the SCM: {e}")
             return False
 
         try:
             service = win32service.OpenService(
                 manager, shared_utils.SERVICE_NAME, win32service.SERVICE_QUERY_STATUS)
         except Exception as e:
-            logging.debug(f"[SCM WATCH] Could not open {shared_utils.SERVICE_NAME}: {e}")
+            self._log_scm_query_failure(
+                f"could not open {shared_utils.SERVICE_NAME}: {e}")
             return False
         finally:
             try:
@@ -845,7 +915,7 @@ class OwletteService(win32serviceutil.ServiceFramework):
         try:
             state = win32service.QueryServiceStatus(service)[1]
         except Exception as e:
-            logging.debug(f"[SCM WATCH] Could not query service status: {e}")
+            self._log_scm_query_failure(f"could not query service status: {e}")
             return False
         finally:
             try:
@@ -853,8 +923,80 @@ class OwletteService(win32serviceutil.ServiceFramework):
             except Exception:
                 pass
 
+        self._scm_query_failure_logged = False
         return state in (win32service.SERVICE_STOP_PENDING,
                          win32service.SERVICE_STOPPED)
+
+    def _stop_sentinel_written_at(self):
+        """Best-effort wall-clock time the sentinel was written, or None.
+
+        File mtime first; written_at_ms only as a fallback, for the case where
+        the file is readable but not stat-able.
+        """
+        try:
+            return os.path.getmtime(STOP_SENTINEL_PATH)
+        except OSError:
+            pass
+        try:
+            with open(STOP_SENTINEL_PATH, 'r') as f:
+                written_ms = json.load(f).get('written_at_ms')
+            if isinstance(written_ms, (int, float)) and written_ms > 0:
+                return written_ms / 1000.0
+        except Exception:
+            pass
+        return None
+
+    def _read_stop_sentinel(self, reference):
+        """Return the control name from owlette-host's stop sentinel, else None.
+
+        Existence is the signal and the body is best-effort context — an
+        unreadable or half-written file still reports a stop ('unknown') — but
+        only for a sentinel written since `reference` (this process's start).
+
+        Freshness rather than deletion is what makes this safe: a survivor that
+        could not be deleted (AV lock, bad ACL) would otherwise be obeyed on the
+        watcher's first tick, stopping the service 250ms after every start and
+        turning host relaunches into a restart storm.
+        """
+        try:
+            if not os.path.exists(STOP_SENTINEL_PATH):
+                return None
+        except OSError:
+            return None
+
+        written_at = self._stop_sentinel_written_at()
+        if written_at is None or written_at < reference:
+            return None
+
+        try:
+            with open(STOP_SENTINEL_PATH, 'r') as f:
+                return str(json.load(f).get('control') or 'unknown')
+        except Exception:
+            return 'unknown'
+
+    def _clear_stop_sentinel(self, reference):
+        """Best-effort removal of a sentinel left by a previous session.
+
+        Only files written before `reference` are removed: python's startup takes
+        seconds, and a stop arriving inside that window writes a REAL sentinel
+        that must survive to be acted on. Failure is not fatal — the freshness
+        check in _read_stop_sentinel is what actually decides.
+        """
+        try:
+            if not os.path.exists(STOP_SENTINEL_PATH):
+                return
+            written_at = self._stop_sentinel_written_at()
+            if written_at is not None and written_at >= reference:
+                logging.info(
+                    "Stop sentinel was written after this process started — keeping it")
+                return
+            os.remove(STOP_SENTINEL_PATH)
+            logging.info("Cleared stale stop sentinel from the previous session")
+        except OSError as e:
+            logging.warning(
+                f"Could not clear the stale stop sentinel ({e}) — it will be "
+                f"ignored as stale rather than obeyed"
+            )
 
     def start_scm_stop_watcher(self):
         """Watch the SCM for a stop this process was never told about.
@@ -867,13 +1009,34 @@ class OwletteService(win32serviceutil.ServiceFramework):
         be missed — owlette-host reports it and then waits for this shutdown to
         finish — so it is polled here as the trigger that always fires.
 
+        The SCM is not always reachable, so owlette-host also drops a sentinel
+        file the moment it accepts the control; that is checked first each tick
+        because it costs one stat and cannot fail the way an SCM handle can.
+
         Runs on its own daemon thread — never on the main loop, which must not
         block — and exits as soon as it has handed off to graceful_shutdown().
         """
+        # Process start, not watcher start: a stop control arriving during
+        # python's multi-second startup writes a real sentinel, and anything from
+        # before this instant belongs to the previous session.
+        reference = getattr(self, '_service_start_time', None) or time.time()
+
+        # Before the thread starts, not in main(): the runner starts this watcher
+        # first, so clearing it there would race a survivor into a self-stop.
+        self._clear_stop_sentinel(reference)
+
         def _watch():
             failures = 0
             while self.is_alive:
                 try:
+                    control = self._read_stop_sentinel(reference)
+                    if control is not None:
+                        logging.warning(
+                            f"[SCM WATCH] Stop sentinel from owlette-host detected "
+                            f"(control={control}) — flushing presence now"
+                        )
+                        self.graceful_shutdown('scm_stop')
+                        return
                     if self._query_scm_stop_requested():
                         logging.warning(
                             "[SCM WATCH] Service is stopping and no shutdown "
@@ -3024,6 +3187,132 @@ class OwletteService(win32serviceutil.ServiceFramework):
             self._last_seen_launch_modes.pop(process_id, None)
             self._last_seen_launch_schedules.pop(process_id, None)
 
+    def start_local_config_watcher(self):
+        """Poll config.json for locally-originated edits on a dedicated thread.
+
+        Detection used to ride the 5s main loop, which put up to a full tick in
+        front of every desktop-app edit before the upload even started — ~6s to
+        the dashboard against an operator-facing target of 1-2s. A no-change tick
+        here is one stat, so it can poll at LOCAL_CONFIG_POLL_INTERVAL and bring
+        detection under half a second; the push itself is still single-flight and
+        paced by PushBackoff.
+
+        This is the ONLY caller of _check_local_config_changes. That method
+        assumes a single invoker — single-flight dispatch, the mtime baseline
+        CAS — so the main loop must not call it as well.
+
+        Runs on its own daemon thread, like the SCM stop watcher, and stops with
+        self.is_alive.
+        """
+        def _watch():
+            consecutive_errors = 0
+            while self.is_alive:
+                try:
+                    self._check_local_config_changes()
+                    consecutive_errors = 0
+                except Exception as e:
+                    consecutive_errors += 1
+                    # One bad tick must never kill the watcher, and at 2Hz a
+                    # persistent fault would flood the log: first of an episode,
+                    # then every 100th (~50s).
+                    if consecutive_errors == 1 or consecutive_errors % 100 == 0:
+                        logging.warning(
+                            f"Local config watcher tick failed "
+                            f"({consecutive_errors}): {e}"
+                        )
+                time.sleep(LOCAL_CONFIG_POLL_INTERVAL)
+
+        thread = threading.Thread(
+            target=_watch, name='owlette-local-config-watch', daemon=True)
+        thread.start()
+        logging.info(
+            f"Local config watcher started (polling every {LOCAL_CONFIG_POLL_INTERVAL}s)")
+        return thread
+
+    def _check_local_config_changes(self):
+        """Upload config.json edits that originated on this machine.
+
+        Nothing has done this since the Tkinter GUI was removed in 3.0.0: the
+        desktop app writes config.json, the main loop applies it, and the next
+        pull silently reverted it. Called once per watcher tick, from
+        start_local_config_watcher and nowhere else.
+
+        Ordered cheapest-first — an unchanged mtime costs one stat and is the
+        steady state, which is what lets the watcher poll twice a second. The
+        upload runs on a short-lived daemon thread because detection must never
+        block on the network, and only one is allowed in flight. The mtime
+        baseline advances only once local and remote are known to agree, so a
+        failed push is retried on a later tick that still sees the divergence —
+        paced by PushBackoff, since a permanently failing push would otherwise
+        retry twice a second forever.
+        """
+        try:
+            mtime = os.path.getmtime(shared_utils.CONFIG_PATH)
+        except OSError:
+            return
+
+        if self._local_config_mtime is not None and mtime == self._local_config_mtime:
+            return
+
+        if self._applying_remote_config:
+            return
+
+        if self._config_push_thread is not None and self._config_push_thread.is_alive():
+            return
+
+        # A different edit than the one that has been failing: try it at once,
+        # however far the previous edit's backoff had grown.
+        if mtime != self._push_attempt_mtime:
+            self._push_backoff.reset()
+
+        if not self._push_backoff.ready(time.monotonic()):
+            return
+
+        client = self.firebase_client
+        if not client or not client.is_connected():
+            return
+
+        local_config = shared_utils.read_config()
+        if not local_config:
+            return
+
+        # cached_config is the last-known REMOTE doc, refreshed by every pull and
+        # by our own pushes.
+        if config_sync.configs_equal(local_config, client.cached_config):
+            with self._config_baseline_lock:
+                self._local_config_mtime = mtime
+            self._push_backoff.reset()
+            return
+
+        baseline_at_dispatch = self._local_config_mtime
+        self._push_attempt_mtime = mtime
+
+        def _push():
+            try:
+                if client.push_local_config(local_config, reason='local edit'):
+                    with self._config_baseline_lock:
+                        # Compare-and-set on the pre-push mtime. An edit landing
+                        # mid-push leaves the baseline behind and is picked up on
+                        # the next tick; a concurrent apply that already published
+                        # a newer baseline (a foreign edit delivered while we were
+                        # pushing) must not be walked back.
+                        if self._local_config_mtime == baseline_at_dispatch:
+                            self._local_config_mtime = mtime
+                    self._push_backoff.reset()
+                else:
+                    delay = self._push_backoff.record_failure(time.monotonic())
+                    logging.warning(
+                        f"Local config push failed — next attempt in {delay:.0f}s")
+            except Exception as e:
+                delay = self._push_backoff.record_failure(time.monotonic())
+                logging.warning(
+                    f"Local config push thread failed ({e}) — "
+                    f"next attempt in {delay:.0f}s")
+
+        self._config_push_thread = threading.Thread(
+            target=_push, name='owlette-config-push', daemon=True)
+        self._config_push_thread.start()
+
     def handle_config_update(self, new_config):
         """
         Handle configuration updates from Firebase.
@@ -3032,10 +3321,22 @@ class OwletteService(win32serviceutil.ServiceFramework):
         Args:
             new_config: New configuration dict from Firestore
         """
+        # Suppresses the config watcher's local-change detector for the duration: the
+        # write below moves config.json's mtime, and a pull must never be read
+        # back as a local edit and pushed.
+        self._applying_remote_config = True
         try:
-            logging.info("Applying config update from Firestore")
-
             old_config = shared_utils.read_config()
+
+            # A doc that already matches disk carries nothing to apply, and
+            # applying it anyway rewrites config.json — which is how an edit made
+            # in the gap gets lost to an echo of our own write.
+            if old_config and config_sync.configs_equal(new_config, old_config):
+                logging.debug(
+                    "Config update from Firestore matches the local config — nothing to apply")
+                return
+
+            logging.info("Applying config update from Firestore")
 
             # NEVER let a Firestore sync overwrite these. `environment` is the
             # local dev/prod routing choice: a stale remote doc seeded on dev can
@@ -3096,11 +3397,13 @@ class OwletteService(win32serviceutil.ServiceFramework):
             logging.info("Local config.json updated from Firestore")
 
             # Push the merged launch_mode back, or the sync cycle never settles.
+            # push_local_config, not upload_config: it re-anchors the echo guard
+            # on the post-write document, so this write doesn't come straight
+            # back through the listener as a foreign change.
             if merged_launch_mode and self.firebase_client and self.firebase_client.is_connected():
                 try:
-                    upload_config = {k: v for k, v in new_config.items() if k != 'firebase'}
-                    self.firebase_client.upload_config(upload_config)
-                    logging.info("Pushed launch_mode back to Firestore config (one-time sync)")
+                    self.firebase_client.push_local_config(
+                        new_config, reason='launch_mode merge-back')
                 except Exception as e:
                     logging.error(f"Failed to push launch_mode to Firestore: {e}")
 
@@ -3203,18 +3506,30 @@ class OwletteService(win32serviceutil.ServiceFramework):
             except Exception as e:
                 logging.debug(f"Displays config diff failed (non-critical): {e}")
 
-            # Immediate upload so the dashboard sees config changes without waiting.
+            # Metrics, not config: the config doc is already what we just applied.
+            # Pushed now so process states on the dashboard match the new config
+            # without waiting out the metrics interval.
             if self.firebase_client and self.firebase_client.is_connected():
                 try:
                     metrics = shared_utils.get_system_metrics()
                     self.firebase_client._upload_metrics(metrics)
-                    logging.info("Config change synced to Firestore immediately (for web dashboard responsiveness)")
+                    logging.info("Metrics pushed after config apply (for web dashboard responsiveness)")
                 except Exception as e:
-                    logging.error(f"Failed to immediately sync config change: {e}")
-                    logging.info("Config will sync on next metrics interval")
+                    logging.error(f"Failed to push metrics after config apply: {e}")
+                    logging.info("Metrics will sync on next metrics interval")
 
         except Exception as e:
             logging.error(f"Error handling config update: {e}")
+        finally:
+            self._applying_remote_config = False
+            # Adopt the mtime this apply produced, so the detector's next tick
+            # compares against the config the pull just wrote.
+            try:
+                applied_mtime = os.path.getmtime(shared_utils.CONFIG_PATH)
+            except OSError:
+                applied_mtime = None
+            with self._config_baseline_lock:
+                self._local_config_mtime = applied_mtime
 
     def _terminate_processes_for_install(self, close_processes, suppress_projects, deployment_id, cmd_id):
         """Gracefully terminate processes and set install locks before a deployment.
@@ -5382,6 +5697,53 @@ class OwletteService(win32serviceutil.ServiceFramework):
         """Return today's date in the machine's local timezone as 'YYYY-MM-DD'."""
         return self._now_in_local_tz().date().isoformat()
 
+    def _clean_shutdown_in_event_log(self, window_start, window_end):
+        """True if Windows recorded an orderly shutdown in the given epoch window.
+
+        EventID 1074 (User32 — a shutdown was initiated, by whom and why) and
+        6006 (the event log service stopped) are the OS's own record of a clean
+        stop. The agent can miss its own signal — it is killed inside the ~5s
+        Windows allows — and this is the only corroboration left afterwards.
+
+        The window must stay tight around when the agent was last alive: an
+        orderly shutdown long afterwards is a different event, and accepting it
+        would explain away the outage in between.
+
+        Bounded subprocess, and any failure or timeout means NO evidence: an
+        unexpected reboot must never be explained away by a broken query.
+        """
+        if window_end <= window_start:
+            return False
+
+        def _iso(epoch):
+            return datetime.datetime.fromtimestamp(
+                epoch, tz=datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+
+        query = (
+            "*[System[(EventID=1074 or EventID=6006) and "
+            f"TimeCreated[@SystemTime>='{_iso(window_start)}' and "
+            f"@SystemTime<='{_iso(window_end)}']]]"
+        )
+
+        try:
+            result = subprocess.run(
+                ['wevtutil', 'qe', 'System', f'/q:{query}', '/c:1', '/rd:true', '/f:text'],
+                capture_output=True, text=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        except Exception as e:
+            logging.debug(f"Shutdown corroboration query failed: {e}")
+            return False
+
+        if result.returncode != 0:
+            logging.debug(
+                f"Shutdown corroboration query returned {result.returncode}: "
+                f"{(result.stderr or '').strip()[:200]}"
+            )
+            return False
+
+        return bool((result.stdout or '').strip())
+
     def _classify_startup_session(self):
         """Detect anomalous prior shutdowns and queue a warning event if needed.
 
@@ -5445,6 +5807,18 @@ class OwletteService(win32serviceutil.ServiceFramework):
                     action = 'external_reboot'
                     details = (
                         f'boot detected after clean shutdown signal, '
+                        f'last alive {gap}s before boot'
+                    )
+                elif last_alive > 0 and self._clean_shutdown_in_event_log(
+                        last_alive - SHUTDOWN_EVIDENCE_LEAD_SECONDS,
+                        last_alive + SHUTDOWN_EVIDENCE_TRAIL_SECONDS):
+                    # Same verdict as intent=='external_clean' above, reached the
+                    # other way: the agent lost the race to write its own signal,
+                    # but Windows kept the receipt.
+                    action = 'external_reboot'
+                    details = (
+                        f'clean shutdown corroborated by Windows event log (1074/6006); '
+                        f'agent captured no shutdown signal, '
                         f'last alive {gap}s before boot'
                     )
                 else:
@@ -5741,13 +6115,14 @@ class OwletteService(win32serviceutil.ServiceFramework):
             storage = get_storage()
             encrypted = storage._fernet.encrypt(api_key.encode('utf-8')).decode('utf-8')
 
-            config = shared_utils.read_config()
-            if 'cortex' not in config:
-                config['cortex'] = {}
-            config['cortex']['apiKeyEncrypted'] = encrypted
-            config['cortex']['provider'] = provider
-            config['cortex']['enabled'] = True
-            shared_utils.write_config(config)
+            # write_config takes (key path, value) — the whole branch is written
+            # in one call so the three fields land together, and re-reading the
+            # existing branch first keeps any other cortex settings intact.
+            cortex = dict((shared_utils.read_config() or {}).get('cortex') or {})
+            cortex['apiKeyEncrypted'] = encrypted
+            cortex['provider'] = provider
+            cortex['enabled'] = True
+            shared_utils.write_config(['cortex'], cortex)
 
             logging.info(f"Cortex API key provisioned (provider={provider})")
             return "Cortex API key provisioned successfully"
@@ -6801,6 +7176,13 @@ with open(out_path, 'wb') as f:
         logging.info(f"  Firebase         : {_fb_status}")
         logging.info(f"  Processes        : {_proc_count} configured")
         logging.info(_sep)
+        # Its own thread, not the 5s loop: a desktop-app edit is operator-facing
+        # and should reach the dashboard in a second or two, not wait out a tick.
+        try:
+            self.start_local_config_watcher()
+        except Exception as e:
+            logging.error(f"Failed to start the local config watcher: {e}")
+
         logging.info("Starting main service loop...")
 
         try:

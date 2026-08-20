@@ -22,12 +22,17 @@ import registry_utils
 import hardware_profile
 import display_manager
 import nvapi_display
+import config_sync
 
 # OAuth REST modules — deliberately not firebase_admin
 from auth_manager import AuthManager, AuthenticationError, TokenRefreshError
 from firestore_rest_client import FirestoreRestClient, SERVER_TIMESTAMP, DELETE_FIELD, timestamp_to_ms
 
 from connection_manager import ConnectionManager, ConnectionState, ConnectionEvent
+
+# Per-request cap once shutdown starts. Windows gives roughly 5s at OS shutdown,
+# so anything that can outlast the window is worse than not trying.
+SHUTDOWN_REQUEST_TIMEOUT = 3.0
 
 
 # Display events `POST /api/agent/alert` can route. Mirrors DISPLAY_EVENT_ROUTING
@@ -613,6 +618,21 @@ class FirebaseClient:
         except Exception as e:
             self.logger.warning(f"Could not pre-populate seen commands: {e}")
 
+    def enter_shutdown_mode(self, timeout_seconds: float = SHUTDOWN_REQUEST_TIMEOUT):
+        """Cap every remaining Firestore request for the shutdown path.
+
+        Windows allows roughly 5s at OS shutdown; the default 30s per request
+        outlives that, so one stalled call ate the whole window and the writes
+        that record a clean stop never landed.
+        """
+        try:
+            if self.db:
+                self.db.set_request_timeout(timeout_seconds)
+            self.logger.info(
+                f"Firestore request timeout capped at {timeout_seconds}s for shutdown")
+        except Exception as e:
+            self.logger.debug(f"Could not cap the Firestore request timeout: {e}")
+
     def stop(self, intentional: bool = False):
         """Stop all background threads and set machine offline.
 
@@ -867,6 +887,21 @@ class FirebaseClient:
                         # One-shot: without clearing, a later change that happens to
                         # hash the same (web reverting a value) is dropped forever.
                         self._last_uploaded_config_hash = None
+                        return
+
+                    # Second echo guard, and the one that catches our own
+                    # merge:true writes: upload_config hashes the PAYLOAD it
+                    # sends while this hashes the doc that comes back, and the
+                    # post-write doc is a superset whenever remote-only fields
+                    # exist, so the hash above never matches. Agent-originated
+                    # writes mirror themselves into the cache, so an echo that
+                    # equals the cache carries nothing new. Must be checked
+                    # BEFORE the cache is overwritten below.
+                    if config_sync.configs_equal(config_data, self.cached_config):
+                        self.logger.debug(
+                            f"Skipping config echo identical to the cached doc "
+                            f"(hash: {incoming_hash[:8]}...)"
+                        )
                         return
 
                     self.logger.info(f"Config change detected in Firestore (hash: {incoming_hash[:8]}...)")
@@ -1230,13 +1265,22 @@ class FirebaseClient:
         try:
             config_ref = self.db.collection('config').document(self.site_id)\
                 .collection('machines').document(self.machine_id)
-            config_ref.set({
+            patch = {
                 'displays': {
                     'autoRestore': {
                         'circuitBreaker': state_patch,
                     },
                 },
-            }, merge=True)
+            }
+            config_ref.set(patch, merge=True)
+            # This is the config doc's second writer. Without mirroring the write
+            # into the cache it echoes back through the config listener as a
+            # foreign change and pulls the whole doc over config.json, taking any
+            # pending local edit with it. config.json gets the same patch because
+            # the breaker's own counter is read back off disk — remote, cache and
+            # local have to move together or the count never advances.
+            self._merge_into_cached_config(patch)
+            self._mirror_config_patch_to_disk(patch)
         except Exception as e:
             self.logger.warning(
                 f"Failed to update display autoRestore circuit-breaker state: {e}"
@@ -1891,9 +1935,15 @@ class FirebaseClient:
 
     # Configuration
 
-    def get_config(self) -> Optional[Dict]:
+    def get_config(self, raise_on_error: bool = False) -> Optional[Dict]:
         """
         Get machine configuration from Firestore (or cache if offline).
+
+        Args:
+            raise_on_error: propagate a failed fetch instead of falling back to
+                the cache. Startup reconciliation needs this: a returned None
+                otherwise reads as "no document exists" and seeds installer
+                defaults over a live one on a transient 5xx.
 
         Returns:
             Configuration dict or None if not available
@@ -1911,6 +1961,8 @@ class FirebaseClient:
             except Exception as e:
                 self.logger.error(f"Failed to get config from Firestore: {e}")
                 self.connection_manager.report_error(e, "Get config")
+                if raise_on_error:
+                    raise
 
         if self.cached_config:
             self.logger.info("Using cached config (offline mode)")
@@ -1952,47 +2004,178 @@ class FirebaseClient:
             self.logger.error(f"Failed to upload config to Firestore: {e}")
             self.connection_manager.report_error(e, "Upload config")
 
-    def sync_config_on_startup(self) -> str:
+    def push_local_config(self, local_config: Dict, reason: str = 'local change') -> bool:
+        """Upload a locally-originated config edit and re-anchor the echo guard.
+
+        Nothing has uploaded local edits since the Tkinter GUI was removed in
+        3.0.0, so an edit made on the machine survived only until the next pull.
+
+        The re-read afterwards is what makes the echo guard work: upload_config
+        hashes the PAYLOAD it sends, but the listener hashes the document it
+        receives, and with merge=True the post-write document is a superset
+        whenever remote-only fields exist. Anchoring the hash and the cache on
+        the document Firestore actually holds means the echo is recognised.
+
+        That anchoring is also why the post-write document has to be CHECKED,
+        not just trusted: a web edit landing between the write and the re-read
+        is carried back in it, and the listener only ever delivers a given
+        document once, so suppressing that echo would lose the edit for good —
+        and the next startup would then read local as newer and destroy it in
+        the cloud too. When the document holds more than we sent, it is applied
+        locally through the same callback a listener delivery uses.
+
+        Returns True when the write landed.
         """
-        Pull config from Firestore on startup (Firestore = source of truth).
-        If Firestore has no config for this machine, seed it with local config.
+        if not self.connected or not self.db:
+            self.logger.warning("Cannot push local config - not connected to Firestore")
+            return False
+
+        payload = config_sync.normalize(local_config)
+        if not payload:
+            self.logger.warning("Cannot push local config - nothing to send")
+            return False
+
+        base_before = self.cached_config
+
+        try:
+            config_ref = self.db.collection('config').document(self.site_id)\
+                .collection('machines').document(self.machine_id)
+
+            # Hash BEFORE the write, or the listener thread can fire in the gap
+            # between write and hash and loop on our own change.
+            self._last_uploaded_config_hash = hashlib.md5(
+                json.dumps(payload, sort_keys=True).encode()
+            ).hexdigest()
+
+            config_ref.set(payload, merge=True)
+
+            post_write = self.get_config()  # also refreshes cached_config + the disk cache
+            anchor = post_write if post_write is not None else payload
+            config_hash = hashlib.md5(
+                json.dumps(anchor, sort_keys=True).encode()
+            ).hexdigest()
+            self._last_uploaded_config_hash = config_hash
+
+            self.logger.info(
+                f"Local config change pushed to Firestore ({reason}, hash: {config_hash[:8]}...)"
+            )
+
+            if post_write is not None:
+                expected = config_sync.deep_merge(
+                    config_sync.normalize(base_before), payload)
+                if not config_sync.configs_equal(post_write, expected):
+                    # Something landed between the write and the re-read — a
+                    # dashboard edit. Anchoring the guards on this document would
+                    # make the listener's single delivery of it look like our own
+                    # echo and the edit would never reach config.json. Roll the
+                    # cache back instead: the delivery then passes both guards and
+                    # applies through the ordinary path, on the listener's thread.
+                    self.logger.warning(
+                        "Config push came back carrying changes we did not send "
+                        "(concurrent dashboard edit) — leaving them for the config "
+                        "listener to apply"
+                    )
+                    self._last_uploaded_config_hash = None
+                    self._restore_cached_config(base_before)
+
+            return True
+
+        except Exception as e:
+            # Write failed — clear, or a later legitimate change is suppressed.
+            self._last_uploaded_config_hash = None
+            self.logger.warning(f"Failed to push local config to Firestore ({reason}): {e}")
+            self.connection_manager.report_error(e, "Push local config")
+            return False
+
+    def sync_config_on_startup(self) -> str:
+        """Reconcile config.json against Firestore at startup.
+
+        Three-way, against the last-known-remote cache: whoever moved since the
+        last sync wins, and cloud wins a genuine conflict (loudly). An
+        unconditional pull was silently reverting every local edit made while
+        the cloud sat still.
 
         Returns:
             'pulled'  - config was pulled from Firestore and applied locally
+            'pushed'  - local config was newer and was uploaded
+            'in_sync' - local and Firestore already agree; nothing applied
             'seeded'  - local config was uploaded as seed (new machine)
-            'offline' - Firestore unreachable, using local config as-is
+            'offline' - Firestore unreachable or the push failed; local config
+                        left as-is
         """
         if not self.connected or not self.db:
             self.logger.warning("Cannot sync config on startup - not connected to Firestore")
             return 'offline'
 
         try:
-            firestore_config = self.get_config()
+            # Snapshot the cache first: get_config() overwrites it.
+            base = self.cached_config
 
-            if firestore_config and 'processes' in firestore_config:
-                config_hash = hashlib.md5(
-                    json.dumps(firestore_config, sort_keys=True).encode()
-                ).hexdigest()
-                self._last_uploaded_config_hash = config_hash
-                self.logger.info(f"Config pulled from Firestore (hash: {config_hash[:8]}...)")
+            # raise_on_error, because a None from a FAILED read is indistinguishable
+            # from a None for an ABSENT document — and the absent branch seeds,
+            # which on a transient 5xx would put installer defaults over an
+            # operator's dashboard-configured processes.
+            try:
+                firestore_config = self.get_config(raise_on_error=True)
+            except Exception as e:
+                self.logger.warning(
+                    f"Config sync on startup: Firestore read failed ({e}) - "
+                    f"using local config as-is"
+                )
+                return 'offline'
 
-                # Same callback the listener uses
-                if self.config_update_callback:
-                    self.config_update_callback(firestore_config)
+            local_config = shared_utils.read_config()
 
-                return 'pulled'
-            else:
-                local_config = shared_utils.read_config()
+            # A falsy document still falls back to the cache; a stale snapshot
+            # cannot decide who is newer either.
+            if base is not None and firestore_config is base:
+                self.logger.warning(
+                    "Config sync on startup: no Firestore document read - using local config as-is"
+                )
+                return 'offline'
+
+            action, conflict = config_sync.decide_startup_sync(
+                base, local_config, firestore_config)
+
+            if action == 'seed':
                 if local_config:
-                    config_for_firestore = {
-                        k: v for k, v in local_config.items() if k != 'firebase'
-                    }
-                    self.upload_config(config_for_firestore)
+                    self.upload_config(config_sync.normalize(local_config))
                     self.logger.info("New machine - seeded Firestore with local config")
                     return 'seeded'
-                else:
-                    self.logger.warning("No local config to seed Firestore with")
-                    return 'offline'
+                self.logger.warning("No local config to seed Firestore with")
+                return 'offline'
+
+            config_hash = hashlib.md5(
+                json.dumps(firestore_config, sort_keys=True).encode()
+            ).hexdigest()
+
+            if action == 'in_sync':
+                # No callback: applying a config identical to the one on disk
+                # only rewrites the file and re-runs every launch-mode diff.
+                self._last_uploaded_config_hash = config_hash
+                self.logger.info(f"Config in sync with Firestore (hash: {config_hash[:8]}...)")
+                return 'in_sync'
+
+            if action == 'push':
+                self.logger.info("Config sync on startup: local changes pushed to Firestore")
+                if self.push_local_config(local_config, reason='newer local config at startup'):
+                    return 'pushed'
+                return 'offline'
+
+            if conflict:
+                self.logger.warning(
+                    f"Config conflict: cloud and local both changed since last sync; "
+                    f"cloud wins. Discarding local differences in {conflict}"
+                )
+
+            self._last_uploaded_config_hash = config_hash
+            self.logger.info(f"Config pulled from Firestore (hash: {config_hash[:8]}...)")
+
+            # Same callback the listener uses
+            if self.config_update_callback:
+                self.config_update_callback(firestore_config)
+
+            return 'pulled'
 
         except Exception as e:
             self.logger.error(f"Failed to sync config on startup: {e}")
@@ -2007,6 +2190,63 @@ class FirebaseClient:
                 self.logger.debug(f"Loaded cached config from {self.config_cache_path}")
         except Exception as e:
             self.logger.error(f"Failed to load cached config: {e}")
+
+    def _merge_into_cached_config(self, patch: Dict):
+        """Fold an agent-originated config write into the last-known-remote cache.
+
+        Keeps the cache equal to what Firestore now holds so the write's own
+        echo is recognised by the config listener instead of being applied as a
+        foreign change.
+        """
+        try:
+            merged = config_sync.deep_merge(self.cached_config or {}, patch)
+            self.cached_config = merged
+            self._save_cached_config(merged)
+        except Exception as e:
+            self.logger.debug(f"Could not mirror a config write into the cache: {e}")
+
+    def _mirror_config_patch_to_disk(self, patch: Dict):
+        """Fold an agent-originated config write into config.json too.
+
+        Suppressing a write's own echo means config.json no longer learns about
+        it for free. The auto-restore breaker counts by reading
+        displays.autoRestore.circuitBreaker.failures back off DISK, so without
+        this the counter reads 0 forever, the breaker never trips, and a machine
+        re-applies display topology on every drift.
+
+        _invalidate_config_cache is shared_utils' documented "call after any
+        in-process write" hook; write_json_to_file holds the cross-process JSON
+        mutex.
+        """
+        try:
+            local = shared_utils.read_config()
+            if not local:
+                return
+            merged = config_sync.deep_merge(local, patch)
+            if merged == local:
+                return
+            shared_utils.write_json_to_file(merged, shared_utils.CONFIG_PATH)
+            shared_utils._invalidate_config_cache(merged)
+        except Exception as e:
+            self.logger.debug(f"Could not mirror a config write into config.json: {e}")
+
+    def _restore_cached_config(self, snapshot: Optional[Dict]):
+        """Roll the cache back to a pre-write snapshot, on disk as well as in memory.
+
+        Leaving the cache anchored on a document we did not fully author would
+        make the listener's single delivery of it look like a self-echo, and a
+        restart before that delivery would read the foreign edit as ours and
+        overwrite it in the cloud.
+        """
+        self.cached_config = snapshot
+        try:
+            if snapshot is None:
+                if os.path.exists(self.config_cache_path):
+                    os.remove(self.config_cache_path)
+            else:
+                self._save_cached_config(snapshot)
+        except Exception as e:
+            self.logger.debug(f"Could not roll the config cache back: {e}")
 
     def _save_cached_config(self, config: Dict):
         """Save config to disk cache."""

@@ -56,6 +56,73 @@ def graceful_terminate(monkeypatch):
     return gt
 
 
+class TestProvisionCortexKey:
+    """The same shape of bug on the key-provisioning path.
+
+    _handle_provision_cortex_key called shared_utils.write_config(config) with
+    one argument against a two-parameter (keys, value) signature, so every
+    provisioning attempt raised TypeError into the broad except and came back as
+    a plain "Error: ..." string — the key was never stored.
+    """
+
+    @pytest.fixture
+    def provision(self, monkeypatch):
+        import owlette_service
+        from owlette_service import OwletteService
+
+        fernet = MagicMock()
+        fernet.encrypt.return_value = b'encrypted-blob'
+        storage = MagicMock()
+        storage._fernet = fernet
+        monkeypatch.setitem(
+            __import__('sys').modules, 'secure_storage',
+            SimpleNamespace(get_storage=lambda: storage),
+        )
+        monkeypatch.setattr(
+            owlette_service.shared_utils, 'read_config',
+            lambda *a, **k: {'firebase': {'enabled': True},
+                             'cortex': {'model': 'claude-opus-4'}},
+        )
+        writes = MagicMock()
+        monkeypatch.setattr(owlette_service.shared_utils, 'write_config', writes)
+
+        svc = SimpleNamespace()
+        svc._handle_provision_cortex_key = (
+            OwletteService._handle_provision_cortex_key.__get__(svc, OwletteService)
+        )
+        return svc, writes
+
+    def test_the_key_is_actually_stored(self, provision):
+        svc, writes = provision
+
+        result = svc._handle_provision_cortex_key(
+            {'api_key': 'sk-ant-test', 'provider': 'anthropic'})
+
+        assert result == "Cortex API key provisioned successfully"
+        writes.assert_called_once()
+        keys, value = writes.call_args[0]
+        # The regression guard: two arguments, matching write_config(keys, value).
+        assert keys == ['cortex']
+        assert value['apiKeyEncrypted'] == 'encrypted-blob'
+        assert value['provider'] == 'anthropic'
+        assert value['enabled'] is True
+
+    def test_existing_cortex_settings_survive(self, provision):
+        svc, writes = provision
+
+        svc._handle_provision_cortex_key({'api_key': 'sk-ant-test'})
+
+        _keys, value = writes.call_args[0]
+        # Writing the whole branch must not drop siblings already on disk.
+        assert value['model'] == 'claude-opus-4'
+
+    def test_a_missing_key_is_rejected_before_any_write(self, provision):
+        svc, writes = provision
+
+        assert svc._handle_provision_cortex_key({'api_key': ''}) == "Error: No API key provided"
+        writes.assert_not_called()
+
+
 def test_kill_passes_int_pid_not_config_dict(graceful_terminate):
     """OWL-03: graceful_terminate must receive the int PID, never the dict."""
     svc = _make_service()

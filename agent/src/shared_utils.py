@@ -1844,11 +1844,30 @@ def read_config(keys=None, process_list_id=None):
     return config
 
 def write_config(keys, value):
+    """Set one nested key path in config.json, creating missing intermediates.
+
+    `item.get(key, {})` used to walk into a detached dict whenever an
+    intermediate was absent, so the write landed nowhere and was reported as a
+    success — a silent no-op on any path the config had not grown yet.
+
+    Raises ValueError when an intermediate exists but is not a dict: overwriting
+    a scalar with a dict to make room would destroy whatever it held.
+    """
     config = read_json_from_file(CONFIG_PATH)
 
     item = config
-    for key in keys[:-1]:
-        item = item.get(key, {})
+    for depth, key in enumerate(keys[:-1]):
+        child = item.get(key)
+        if child is None:
+            child = {}
+            item[key] = child
+        elif not isinstance(child, dict):
+            raise ValueError(
+                f"Cannot write config path {'.'.join(map(str, keys))}: "
+                f"{'.'.join(map(str, keys[:depth + 1]))} holds "
+                f"{type(child).__name__}, not an object"
+            )
+        item = child
 
     item[keys[-1]] = value
 
